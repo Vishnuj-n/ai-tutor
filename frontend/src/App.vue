@@ -1,21 +1,36 @@
 <script setup>
-import HelloWorld from './components/HelloWorld.vue'</script>
+import Sidebar from './components/Sidebar.vue'
+</script>
 
 <template>
-  <img id="logo" alt="Wails logo" src="./assets/images/logo-universal.png"/>
-  <HelloWorld/>
+  <div class="app-shell">
+    <Sidebar />
+
+    <main class="content-shell">
+      <RouterView />
+    </main>
+  </div>
 </template>
 
-<style>
-#logo {
-  display: block;
-  width: 50%;
-  height: 50%;
-  margin: auto;
-  padding: 10% 0 0;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  background-origin: content-box;
+<style scoped>
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  background: var(--background);
+}
+
+.content-shell {
+  flex: 1;
+  padding: 24px;
+}
+
+@media (max-width: 960px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .content-shell {
+    padding: 16px;
+  }
 }
 </style>

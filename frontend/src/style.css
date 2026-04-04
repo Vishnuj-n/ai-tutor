@@ -1,26 +1,31 @@
-html {
-    background-color: rgba(27, 38, 54, 1);
-    text-align: center;
-    color: white;
+:root {
+    --background: #f9f9fb;
+    --surface-container: #ebeef2;
+    --surface-container-low: #f2f4f7;
+    --surface-container-lowest: #ffffff;
+    --surface-bright: rgba(255, 255, 255, 0.72);
+    --primary: #005bc1;
+    --primary-dim: #004faa;
+    --on-primary: #ffffff;
+    --on-surface: #2d3338;
+    --muted-text: #64707d;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
 }
 
 body {
-    margin: 0;
-    color: white;
-    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-    sans-serif;
-}
-
-@font-face {
-    font-family: "Nunito";
-    font-style: normal;
-    font-weight: 400;
-    src: local(""),
-    url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
-}
-
-#app {
-    height: 100vh;
-    text-align: center;
+    background: var(--background);
+    color: var(--on-surface);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    text-rendering: optimizeLegibility;
 }
