@@ -14,14 +14,25 @@ import Sidebar from './components/Sidebar.vue'
 
 <style scoped>
 .app-shell {
-  min-height: 100vh;
+  width: 100%;
+  height: 100vh;
   display: flex;
   background: var(--background);
+  overflow: hidden;
 }
 
 .content-shell {
   flex: 1;
-  padding: 24px;
+  min-height: 0;
+  padding: 16px 20px;
+  overflow-y: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.content-shell::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 @media (max-width: 960px) {

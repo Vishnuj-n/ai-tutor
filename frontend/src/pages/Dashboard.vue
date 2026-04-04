@@ -70,13 +70,13 @@ const focusItems = [
 <style scoped>
 .page {
   display: grid;
-  gap: 24px;
+  gap: 16px;
 }
 
 .topbar {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .search-shell {
@@ -84,14 +84,14 @@ const focusItems = [
   background: var(--surface-container-low);
   color: var(--muted-text);
   border-radius: 12px;
-  padding: 13px 16px;
+  padding: 11px 14px;
   max-width: 440px;
 }
 
 .profile {
   background: var(--surface-container-low);
   border-radius: 12px;
-  padding: 13px 16px;
+  padding: 11px 14px;
   font-weight: 600;
   color: var(--on-surface);
 }
@@ -99,15 +99,15 @@ const focusItems = [
 .hero h1 {
   margin: 0;
   font-family: 'Manrope', sans-serif;
-  font-size: 54px;
+  font-size: 48px;
   letter-spacing: -0.02em;
   line-height: 1;
   color: var(--on-surface);
 }
 
 .hero p {
-  margin: 12px 0 0;
-  font-size: 22px;
+  margin: 8px 0 0;
+  font-size: 18px;
   color: var(--muted-text);
 }
 
@@ -118,19 +118,19 @@ const focusItems = [
 .grid-top {
   display: grid;
   grid-template-columns: 2fr 1fr;
-  gap: 16px;
+  gap: 12px;
 }
 
 .grid-bottom {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
-  gap: 16px;
+  gap: 12px;
 }
 
 .card {
   background: var(--surface-container-lowest);
   border-radius: 16px;
-  padding: 24px;
+  padding: 18px;
 }
 
 .eyebrow {
@@ -143,10 +143,10 @@ const focusItems = [
 }
 
 .feature-card h2 {
-  margin: 14px 0 14px;
+  margin: 10px 0;
   max-width: 540px;
-  font-size: 44px;
-  line-height: 1.1;
+  font-size: 32px;
+  line-height: 1.12;
   letter-spacing: -0.02em;
   font-family: 'Manrope', sans-serif;
 }
@@ -154,37 +154,37 @@ const focusItems = [
 .muted {
   margin: 0;
   color: var(--muted-text);
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .primary-btn {
-  margin-top: 24px;
+  margin-top: 16px;
   border: 0;
   border-radius: 12px;
-  padding: 12px 28px;
+  padding: 10px 24px;
   color: var(--on-primary);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
 }
 
 .big-number {
-  margin: 18px 0 42px;
+  margin: 10px 0 24px;
   color: var(--on-surface);
-  font-size: 68px;
+  font-size: 56px;
   line-height: 0.95;
   font-family: 'Manrope', sans-serif;
 }
 
 .big-number span {
-  font-size: 24px;
+  font-size: 18px;
   color: var(--muted-text);
   font-family: 'Inter', sans-serif;
 }
 
 .chip-group {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .chips {
@@ -197,29 +197,29 @@ const focusItems = [
   background: var(--surface-container-low);
   color: var(--on-surface);
   border-radius: 999px;
-  padding: 7px 10px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .chart-card h3,
 .list-card h3 {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   font-family: 'Manrope', sans-serif;
-  font-size: 30px;
+  font-size: 24px;
   letter-spacing: -0.01em;
 }
 
 .bars {
-  height: 200px;
+  height: 136px;
   background: var(--surface-container-low);
   border-radius: 14px;
-  padding: 16px;
+  padding: 12px;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: end;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .bar {
@@ -233,15 +233,15 @@ const focusItems = [
 
 .list-card {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   align-content: start;
 }
 
 .focus-item {
   display: flex;
-  gap: 14px;
+  gap: 10px;
   align-items: center;
-  padding: 14px;
+  padding: 10px 12px;
   border-radius: 14px;
   background: var(--surface-container-low);
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
@@ -265,24 +265,24 @@ const focusItems = [
 }
 
 .focus-meta {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   color: var(--muted-text);
   text-transform: uppercase;
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.08em;
 }
 
 @media (max-width: 1200px) {
   .hero h1 {
-    font-size: 46px;
+    font-size: 42px;
   }
 
   .hero p {
-    font-size: 19px;
+    font-size: 17px;
   }
 
   .feature-card h2 {
-    font-size: 36px;
+    font-size: 30px;
   }
 }
 
