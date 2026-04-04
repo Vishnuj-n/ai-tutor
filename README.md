@@ -1,19 +1,111 @@
-# README
+# AI Tutor
 
-## About
+AI Tutor is a local-first desktop app that guides learners through a structured study loop.
 
-This is the official Wails Vue template.
+It is not a chatbot, PDF viewer, or standalone flashcard app. It is a guided tutor system:
 
-You can configure the project by editing `wails.json`. More information about the project settings can be found
-here: https://wails.io/docs/reference/project-config
+1. Read concepts
+2. Understand with contextual AI help
+3. Review with FSRS spaced repetition
 
-## Live Development
+## Product Overview
 
-To run in live development mode, run `wails dev` in the project directory. This will run a Vite development
-server that will provide very fast hot reload of your frontend changes. If you want to develop in a browser
-and have access to your Go methods, there is also a dev server that runs on http://localhost:34115. Connect
-to this in your browser, and you can call your Go code from devtools.
+### What
 
-## Building
+- A guided learning workflow that always suggests the next best action
+- Local storage for content, embeddings, progress, and scheduling state
+- Topic-scoped AI for explanations and quiz generation only
 
-To build a redistributable, production mode package, use `wails build`.
+### Why
+
+- Keep user data private and fully local by default
+- Reduce decision fatigue with a clear daily study flow
+- Keep implementation simple and maintainable for a solo developer
+
+### How
+
+- Backend and desktop shell: Go + Wails
+- Frontend: Vue multi-page app with left sidebar navigation
+- Local data: SQLite + chromem-go embeddings
+- LLM layer: OpenAI-compatible API (stateless requests)
+
+## Core Features
+
+- Dashboard:
+	- Today tasks (due reviews, new topics)
+	- Progress summary
+- Reader:
+	- Structured content view (not raw PDF)
+	- Ask AI panel (primary placement)
+	- Mark as Learned action
+- Quiz:
+	- Topic-based quiz sets generated from learned content
+	- JSON-backed quiz payloads
+- Flashcards:
+	- FSRS actions: Again, Hard, Good, Easy
+	- Explain action (secondary Ask AI placement)
+- Socratic Tutor:
+	- Guided questioning mode scoped to current topic
+- Settings:
+	- Base URL, API key, model, phase-2 cloud endpoint placeholder
+- Sync button:
+	- Manual trigger for future sync (timestamp + hash versioning)
+
+## Local-First and Offline Behavior
+
+Works offline:
+
+- Reading
+- FSRS review
+- Scheduling
+- Local progress and content access
+
+Requires internet:
+
+- Ask AI
+- Quiz generation
+
+Failure rule:
+
+- If AI is unavailable, show clear error and do not simulate output
+
+## Tech Stack
+
+- Go
+- Wails
+- Vue (multi-page)
+- SQLite
+- chromem-go
+- OpenAI-compatible LLM API
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.22+
+- Node.js 20+
+- Wails CLI
+
+### Development
+
+```bash
+wails doctor
+wails dev
+```
+
+### Build
+
+```bash
+wails build
+```
+
+## Documentation
+
+- System design: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
+- User and interaction flow: [doc/APP_FLOW.md](doc/APP_FLOW.md)
+
+## Constraints
+
+- Keep the system simple and implementation-ready
+- Avoid unnecessary abstraction and premature optimization
+- Do not use LangChain, agent orchestration, or chatbot-style memory
