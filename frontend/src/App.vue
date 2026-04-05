@@ -26,7 +26,6 @@ import Sidebar from './components/Sidebar.vue'
   min-height: 0;
   padding: 16px 20px;
   overflow-y: auto;
-  -ms-overflow-style: none;
   scrollbar-width: none;
 }
 

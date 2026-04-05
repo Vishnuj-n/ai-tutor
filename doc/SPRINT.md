@@ -41,76 +41,53 @@ Because:
 
 ## Goal
 
-Get a **fully navigable app UI** with no real logic.
+Build a fully navigable UI shell with no backend logic.
+
+## Constraints
+
+* UI only
+* No API calls
+* No state management
+* No backend logic
+
+## Required Work
+
+* Setup Wails + Vue + Vue Router
+* Build `App.vue` layout:
+  * fixed sidebar
+  * flex main content
+  * page background `#f9f9fb`
+* Create `Sidebar.vue` and pages:
+  * Dashboard
+  * Reader
+  * Quiz
+  * Flashcards
+  * Socratic Tutor
+  * Settings
+* Implement route navigation and active highlighting
+* Build Dashboard layout to mirror screenshot:
+  * hero greeting
+  * current session card
+  * due reviews card
+  * weekly insights
+  * curated focus list
+
+## Output
+
+* App runs
+* Sidebar navigation works
+* All pages render
+* Dashboard matches the reference structure
+* UI follows design system: no borders, layered surfaces, whitespace-based separation
+
+## Done
+
+* No broken routes
+* No console errors
+* Clean, minimal UI
+* Simple, readable code
 
 ---
-
-## Tasks
-
-### 1. Setup
-
-* Initialize Wails v2 + Vue
-* Setup Vue Router
-
----
-
-### 2. Sidebar Layout
-
-Create:
-
-* Sidebar.vue
-
-Sections:
-
-* Dashboard
-* Reader
-* Quiz
-* Flashcards
-* Socratic Tutor
-* Settings (bottom)
-* Sync button (bottom)
-
----
-
-### 3. Pages (Empty but Visible)
-
-Create pages:
-
-```text
-pages/
-- Dashboard.vue
-- Reader.vue
-- Quiz.vue
-- Flashcards.vue
-- Socratic.vue
-- Settings.vue
-```
-
-Each page should:
-
-* Render title
-* Have placeholder content
-
----
-
-### 4. Routing
-
-Ensure:
-
-* Clicking sidebar changes page
-* No broken navigation
-
----
-
-## Output of Sprint 1
-
-* App opens
-* Sidebar works
-* All pages visible
-* Clean layout
-
----
-
 # Sprint 2 — Reader + Basic RAG (Ask AI)
 
 ## Goal
