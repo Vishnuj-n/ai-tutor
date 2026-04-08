@@ -25,6 +25,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Initialize database
 	dbPath := filepath.Join(os.TempDir(), "ai-tutor.db")
+	_ = os.Remove(dbPath)
 	if err := InitDB(dbPath); err != nil {
 		fmt.Printf("Error initializing database: %v\n", err)
 		return
@@ -46,7 +47,7 @@ func (a *App) startup(ctx context.Context) {
 		}
 		fmt.Printf("Loaded %d chunks for topic %s\n", len(chunks), topicID)
 		for _, chunk := range chunks {
-			embedStore.AddChunk(chunk["id"], chunk["text"])
+			embedStore.AddChunk(chunk)
 		}
 	}
 

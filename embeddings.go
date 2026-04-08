@@ -9,21 +9,38 @@ import (
 
 // EmbeddingStore manages embeddings and retrieval
 type EmbeddingStore struct {
-	// Maps chunk_id -> vector representation (for now, just term frequencies)
-	vectors map[string]map[string]float64
+	// Maps chunk_id -> vector entry with metadata used by retrieval and filtering.
+	vectors map[string]VectorEntry
+}
+
+// VectorEntry stores a chunk vector and metadata for retrieval-time filtering/scoring.
+type VectorEntry struct {
+	Vector          map[string]float64
+	ChunkID         string
+	TopicID         string
+	ParentID        string
+	ImportanceScore float64
+	WeaknessScore   float64
 }
 
 // NewEmbeddingStore creates a new embedding store
 func NewEmbeddingStore() *EmbeddingStore {
 	return &EmbeddingStore{
-		vectors: make(map[string]map[string]float64),
+		vectors: make(map[string]VectorEntry),
 	}
 }
 
 // AddChunk embeds and stores a chunk
-func (s *EmbeddingStore) AddChunk(chunkID string, text string) {
-	vector := s.TFVector(text)
-	s.vectors[chunkID] = vector
+func (s *EmbeddingStore) AddChunk(chunk Chunk) {
+	vector := s.TFVector(chunk.Text)
+	s.vectors[chunk.ID] = VectorEntry{
+		Vector:          vector,
+		ChunkID:         chunk.ID,
+		TopicID:         chunk.TopicID,
+		ParentID:        chunk.ParentID,
+		ImportanceScore: chunk.ImportanceScore,
+		WeaknessScore:   chunk.WeaknessScore,
+	}
 }
 
 // TFVector creates a simple term frequency vector from text
@@ -105,29 +122,34 @@ func (s *EmbeddingStore) CosineSimilarity(vec1, vec2 map[string]float64) float64
 
 // RetrievalResult represents a single chunk result
 type RetrievalResult struct {
-	ChunkID  string
-	Text     string
-	ParentID string
-	Score    float64
+	ChunkID         string
+	Text            string
+	TopicID         string
+	ParentID        string
+	ImportanceScore float64
+	WeaknessScore   float64
+	Score           float64
 }
 
 // SearchTopK retrieves the top-k most similar chunks for a query
-func (s *EmbeddingStore) SearchTopK(query string, chunks []map[string]string, k int) []RetrievalResult {
+func (s *EmbeddingStore) SearchTopK(query string, chunks []Chunk, k int) []RetrievalResult {
 	queryVector := s.TFVector(query)
 
 	var results []RetrievalResult
 	for _, chunk := range chunks {
-		chunkID := chunk["id"]
-		text := chunk["text"]
-		parentID := chunk["parent_id"]
+		chunkID := chunk.ID
+		text := chunk.Text
 
-		if vector, exists := s.vectors[chunkID]; exists {
-			score := s.CosineSimilarity(queryVector, vector)
+		if entry, exists := s.vectors[chunkID]; exists {
+			score := s.CosineSimilarity(queryVector, entry.Vector)
 			results = append(results, RetrievalResult{
-				ChunkID:  chunkID,
-				Text:     text,
-				ParentID: parentID,
-				Score:    score,
+				ChunkID:         chunkID,
+				Text:            text,
+				TopicID:         entry.TopicID,
+				ParentID:        entry.ParentID,
+				ImportanceScore: entry.ImportanceScore,
+				WeaknessScore:   entry.WeaknessScore,
+				Score:           score,
 			})
 		}
 	}

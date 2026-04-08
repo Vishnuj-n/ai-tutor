@@ -9,6 +9,16 @@ import (
 
 var db *sql.DB
 
+// Chunk represents a retrieval chunk with metadata and future scoring hooks.
+type Chunk struct {
+	ID              string
+	TopicID         string
+	ParentID        string
+	Text            string
+	ImportanceScore float64
+	WeaknessScore   float64
+}
+
 // InitDB initializes the SQLite database and creates tables
 func InitDB(dbPath string) error {
 	var err error
@@ -60,6 +70,8 @@ func createTables() error {
 		parent_id TEXT NOT NULL,
 		chunk_text TEXT NOT NULL,
 		token_count INTEGER DEFAULT 0,
+		importance_score REAL DEFAULT 0,
+		weakness_score REAL DEFAULT 0,
 		embedding_ref TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (topic_id) REFERENCES topics(id),
@@ -185,9 +197,9 @@ Disadvantages of Round Robin:
 
 	for _, chunk := range chunks {
 		_, err = db.Exec(`
-			INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count)
-			VALUES (?, ?, ?, ?, ?)
-		`, chunk.id, topic1, chunk.pID, chunk.text, len(chunk.text)/4)
+			INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, chunk.id, topic1, chunk.pID, chunk.text, len(chunk.text)/4, 0.0, 0.0)
 		if err != nil {
 			return err
 		}
@@ -236,10 +248,10 @@ func GetTopicContent(topicID string) (map[string]interface{}, error) {
 	}, nil
 }
 
-// GetChunksForTopic retrieves all chunks for a topic
-func GetChunksForTopic(topicID string) ([]map[string]string, error) {
+// GetChunksForTopic retrieves all chunks for a topic.
+func GetChunksForTopic(topicID string) ([]Chunk, error) {
 	rows, err := db.Query(`
-		SELECT id, topic_id, parent_id, chunk_text
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
 		FROM chunks
 		WHERE topic_id = ?
 	`, topicID)
@@ -248,18 +260,20 @@ func GetChunksForTopic(topicID string) ([]map[string]string, error) {
 	}
 	defer rows.Close()
 
-	var chunks []map[string]string
+	var chunks []Chunk
 	for rows.Next() {
-		var id, topicID, parentID, text string
-		if err := rows.Scan(&id, &topicID, &parentID, &text); err != nil {
+		var chunk Chunk
+		if err := rows.Scan(
+			&chunk.ID,
+			&chunk.TopicID,
+			&chunk.ParentID,
+			&chunk.Text,
+			&chunk.ImportanceScore,
+			&chunk.WeaknessScore,
+		); err != nil {
 			return nil, err
 		}
-		chunks = append(chunks, map[string]string{
-			"id":        id,
-			"topic_id":  topicID,
-			"parent_id": parentID,
-			"text":      text,
-		})
+		chunks = append(chunks, chunk)
 	}
 
 	return chunks, nil

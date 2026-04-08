@@ -58,26 +58,29 @@ func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, 
 		return nil, fmt.Errorf("no relevant content found for your question")
 	}
 
-	// Step 4: Build context by expanding to parent sections
+	// Step 4: Apply heuristic scoring (V1 no-op, V2 weak-area boost)
+	results = ApplyHeuristicScoring(results)
+
+	// Step 5: Build context by expanding to parent sections
 	ctx, err := BuildContext(results, topicID)
 	if err != nil {
 		return nil, fmt.Errorf("could not build context: %w", err)
 	}
 
-	// Step 5: Assemble prompt
+	// Step 6: Assemble prompt
 	prompt := BuildRAGPrompt(
 		content["title"].(string),
 		userQuestion,
 		ctx,
 	)
 
-	// Step 6: Call LLM
+	// Step 7: Call LLM
 	answer, err := r.llm.GenerateAnswer(prompt)
 	if err != nil {
 		return nil, fmt.Errorf("LLM error: %w", err)
 	}
 
-	// Step 7: Build response with citations
+	// Step 8: Build response with citations
 	citedHeadings := []string{}
 	for _, section := range ctx.Sections {
 		// Extract heading from the formatted section
@@ -102,4 +105,10 @@ func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, 
 	}
 
 	return result, nil
+}
+
+// ApplyHeuristicScoring is an explicit retrieval-stage hook for reranking.
+// V1 behavior is pass-through to preserve existing ranking.
+func ApplyHeuristicScoring(results []RetrievalResult) []RetrievalResult {
+	return results
 }

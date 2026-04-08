@@ -53,6 +53,9 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - The UI sends the active topic identifier with the request
 - Backend validates that the topic exists and is eligible for retrieval
 - Retrieval queries only the embeddings associated with that topic
+- Each chunk uses one canonical chunk_id shared across stores:
+  - SQLite stores relational metadata (for example `importance_score`, `weakness_score`)
+  - ChromaDB stores the vector under the same chunk_id
 
 ## 4. Content Structure
 
@@ -73,8 +76,9 @@ Source material is stored in a parent-child retrieval layout:
 
 - Parse content into heading-aware parent sections first
 - Split oversized sections with token-aware fallback chunking
+- Assign a stable, unique chunk_id to every child chunk at ingest time
 - Store embeddings on child chunks
-- Keep a parent reference so retrieval can return the original section text
+- Keep parent and topic references so retrieval can return original section text and enforce scope
 
 ## 5. Retrieval Pipeline
 
@@ -93,12 +97,19 @@ User question
   -> validate active topic
   -> embed query
   -> search topic-scoped child chunks
+  -> ApplyHeuristicScoring (V1: no-op/basic boost, V2: weak-area boosting)
   -> select top-k matches
   -> expand matches to parent sections
   -> assemble prompt within token budget
   -> call OpenAI-compatible model once
   -> return answer with section labels/citations
 ```
+
+Heuristic scoring contract:
+
+- `ApplyHeuristicScoring` must be a named pipeline step, even if minimal in V1
+- V1 behavior can be pass-through or simple deterministic boosts
+- V2 plugs in learner-state-aware ranking (for example weakness-based boost)
 
 ## 6. Prompt Assembly
 
@@ -118,6 +129,12 @@ Prompt payload should include:
 - Active topic metadata
 - Retrieved parent sections or section excerpts
 - Output instructions
+
+Embedding metadata requirements (ingestion-time):
+
+- Every ChromaDB vector record must include `topic_id` and `parent_id`
+- Record the same `chunk_id` used in SQLite as the Chroma record id
+- Keep metadata minimal but sufficient for fast filter-first retrieval
 
 Prompt rules:
 
@@ -212,5 +229,13 @@ RAG should be traceable back to the source material and the current study state.
 
 - Topic records identify the active scope
 - Parent records store human-readable section text
-- Chunk records store embeddings and retrieval metadata
+- Chunk records store identifiers, retrieval metadata, and scoring hooks
 - The UI uses the returned section labels to show where the answer came from
+
+SQLite schema hooks (required now to avoid later migrations):
+
+- Keep scoring columns on chunk-level records, including:
+  - `importance_score`
+  - `weakness_score`
+- Keep `topic_id` and `parent_id` persisted with each chunk row
+- Treat these fields as forward-compatible hooks in V1 (they may be default/unused initially)
