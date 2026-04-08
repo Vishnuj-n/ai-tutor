@@ -3,3 +3,4 @@ node_modules
 frontend/dist
 onnx\model_int8.onnx
 .env
+context.md

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/joho/godotenv"
 )
 
 // App struct
@@ -22,6 +24,9 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Load local .env if present. Missing file is fine.
+	_ = godotenv.Load()
 
 	// Initialize database
 	dbPath := filepath.Join(os.TempDir(), "ai-tutor.db")
@@ -51,24 +56,8 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	// Initialize LLM provider (user should set real config in settings)
-	llmConfig := &LLMConfig{
-		BaseURL:   os.Getenv("LLM_BASE_URL"),
-		APIKey:    os.Getenv("LLM_API_KEY"),
-		Model:     os.Getenv("LLM_MODEL"),
-		TimeoutMs: 30000,
-	}
-
-	// Use defaults if env vars not set
-	if llmConfig.BaseURL == "" {
-		llmConfig.BaseURL = "http://localhost:8000"
-	}
-	if llmConfig.Model == "" {
-		llmConfig.Model = "gpt-3.5-turbo"
-	}
-	if llmConfig.APIKey == "" {
-		llmConfig.APIKey = "sk-test"
-	}
+	// Initialize LLM provider from .env / environment variables.
+	llmConfig := LoadLLMConfigFromEnv()
 
 	llmProvider := NewLLMProvider(llmConfig)
 

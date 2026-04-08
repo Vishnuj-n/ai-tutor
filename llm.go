@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +17,71 @@ type LLMConfig struct {
 	APIKey    string
 	Model     string
 	TimeoutMs int
+}
+
+// LoadLLMConfigFromEnv loads provider config from environment variables.
+// Supports multiple key aliases so different providers can share one config path.
+func LoadLLMConfigFromEnv() *LLMConfig {
+	config := &LLMConfig{
+		BaseURL: firstEnv(
+			"LLM_BASE_URL",
+			"OPENAI_ENDPOINT",
+			"OPENAI_BASE_URL",
+			"BASE_URL",
+		),
+		APIKey: firstEnv(
+			"LLM_API_KEY",
+			"OPENAI_API_KEY",
+			"API_KEY",
+		),
+		Model: firstEnv(
+			"LLM_MODEL",
+			"BASE_MODEL",
+			"OPENAI_MODEL",
+			"MODEL",
+		),
+		TimeoutMs: firstEnvInt(30000,
+			"LLM_TIMEOUT_MS",
+			"OPENAI_TIMEOUT_MS",
+			"TIMEOUT_MS",
+		),
+	}
+
+	if config.BaseURL == "" {
+		config.BaseURL = "http://localhost:8000"
+	}
+	if config.Model == "" {
+		config.Model = "openai/gpt-oss-120b"
+	}
+	if config.APIKey == "" {
+		config.APIKey = "sk-test"
+	}
+
+	return config
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstEnvInt(defaultValue int, keys ...string) int {
+	for _, key := range keys {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		value, err := strconv.Atoi(raw)
+		if err == nil {
+			return value
+		}
+	}
+	return defaultValue
 }
 
 // LLMProvider handles communication with OpenAI-compatible APIs.
