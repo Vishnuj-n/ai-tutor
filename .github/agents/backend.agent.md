@@ -17,6 +17,7 @@ You are responsible only for Go backend development in a Wails application.
 - Do not use LangChain or any AI orchestration framework.
 - Do not build agentic pipelines, chat memory, or autonomous loops.
 - Do not mix business logic with raw SQL calls.
+- Do not create standalone documentation files such as sprint notes, implementation guides, or progress reports; documentation creation is reserved for the documentation agent.
 
 ## Architecture Rules
 - Keep implementation simple, explicit, and easy to maintain.

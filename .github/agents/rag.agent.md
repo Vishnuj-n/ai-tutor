@@ -16,6 +16,7 @@ You are responsible only for AI logic and prompt design.
 - Do not implement database schema, SQL queries, or repository code.
 - Do not introduce LangChain, agent frameworks, or multi-step orchestration systems.
 - Do not add chat memory or stateful conversation assumptions.
+- Do not create standalone documentation files such as sprint notes, implementation guides, or progress reports; documentation creation is reserved for the documentation agent.
 
 ## RAG Constraints
 - Retrieval must always be scoped to topic_id.

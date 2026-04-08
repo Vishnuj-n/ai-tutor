@@ -17,6 +17,7 @@ You are responsible only for Vue frontend development in a Wails application.
 - Do not add complex state management unless explicitly requested.
 - Do not add unnecessary UI libraries.
 - Do not turn Ask AI into a general chatbot page.
+- Do not create standalone documentation files such as sprint notes, implementation guides, or progress reports; documentation creation is reserved for the documentation agent.
 
 ## UI Constraints
 - Use a left sidebar navigation layout.
