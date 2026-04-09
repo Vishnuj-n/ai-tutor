@@ -104,6 +104,7 @@ wails build
 - System design: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
 - User and interaction flow: [doc/APP_FLOW.md](doc/APP_FLOW.md)
 - Retrieval pipeline: [doc/RAG.md](doc/RAG.md)
+- Project structure: [doc/PROJECT_STRUCTURE.md](doc/PROJECT_STRUCTURE.md)
 
 ## Constraints
 

@@ -86,6 +86,19 @@ func createTables() error {
 		review_enabled INTEGER DEFAULT 0,
 		FOREIGN KEY (topic_id) REFERENCES topics(id)
 	);
+
+	CREATE TABLE IF NOT EXISTS fsrs_cards (
+		id TEXT PRIMARY KEY,
+		topic_id TEXT NOT NULL,
+		prompt TEXT NOT NULL,
+		answer TEXT NOT NULL,
+		state_json TEXT,
+		due_at TEXT,
+		suspended INTEGER DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (topic_id) REFERENCES topics(id)
+	);
 	`
 
 	_, err := db.Exec(schema)

@@ -7,26 +7,39 @@
 
     <div class="hero">
       <h1>Good Morning.</h1>
-      <p>Your weekly progress is at <strong>85%</strong> of your focus goal.</p>
+      <p>Your plan today is <strong>{{ plan.totalMinutes }}</strong> minutes with a balanced learning loop.</p>
     </div>
 
     <div class="grid-top">
       <article class="card feature-card">
         <p class="eyebrow">Current Session</p>
-        <h2>Deep Dive: Cognitive Architectures in Neural Networks</h2>
-        <p class="muted">Continue your review of the primary thesis. 12 pages remaining for today's milestone.</p>
-        <button type="button" class="primary-btn">Start Session</button>
+        <template v-if="loading">
+          <h2>Preparing your schedule...</h2>
+          <p class="muted">Building today's priorities from review and learning needs.</p>
+        </template>
+        <template v-else-if="error">
+          <h2>Plan unavailable</h2>
+          <p class="muted">{{ error }}</p>
+        </template>
+        <template v-else-if="currentTask">
+          <h2>{{ currentTask.title }}</h2>
+          <p class="muted">{{ currentTask.meta || defaultTaskMeta(currentTask) }}</p>
+          <button type="button" class="primary-btn" @click="startTask(currentTask)">Start Session</button>
+        </template>
+        <template v-else>
+          <h2>No tasks for now</h2>
+          <p class="muted">You're clear for today. Use exploration mode or start a new topic.</p>
+        </template>
       </article>
 
       <article class="card side-card">
         <p class="eyebrow">Due Reviews</p>
-        <p class="big-number">14 <span>cards</span></p>
+        <p class="big-number">{{ plan.dueReviewCards }} <span>cards</span></p>
         <div class="chip-group">
           <p class="eyebrow">Active Topics</p>
           <div class="chips">
-            <span>AI Ethics</span>
-            <span>Neuroscience</span>
-            <span>Philosophy</span>
+            <span v-for="topic in plan.activeTopics" :key="topic">{{ topic }}</span>
+            <span v-if="plan.activeTopics.length === 0">No active topics yet</span>
           </div>
         </div>
       </article>
@@ -47,24 +60,88 @@
 
       <article class="card list-card">
         <h3>Curated Focus</h3>
-        <div class="focus-item" v-for="item in focusItems" :key="item.title">
+        <div class="focus-item" v-for="item in focusItems" :key="item.id">
           <div class="dot"></div>
           <div>
             <p class="focus-title">{{ item.title }}</p>
-            <p class="focus-meta">{{ item.meta }}</p>
+            <p class="focus-meta">{{ item.meta || defaultTaskMeta(item) }}</p>
           </div>
         </div>
+        <p v-if="!loading && focusItems.length === 0" class="muted">No additional tasks queued.</p>
       </article>
     </div>
   </section>
 </template>
 
 <script setup>
-const focusItems = [
-  { title: 'Post-Structuralism Basics', meta: '85% mastered - 12 cards' },
-  { title: 'Synaptic Plasticity', meta: '42% mastered - 48 cards' },
-  { title: 'Advanced Game Theory', meta: 'New topic - 4 cards' },
-]
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { getTodayPlan } from '../services/appApi'
+
+const router = useRouter()
+
+const loading = ref(true)
+const error = ref('')
+const tasks = ref([])
+const plan = ref({
+  totalMinutes: 90,
+  dueReviewCards: 0,
+  activeTopics: [],
+})
+
+const currentTask = computed(() => tasks.value[0] || null)
+const focusItems = computed(() => tasks.value.slice(1))
+
+onMounted(async () => {
+  await loadPlan()
+})
+
+async function loadPlan() {
+  try {
+    loading.value = true
+    error.value = ''
+
+    const response = await getTodayPlan()
+    if (response.error) {
+      error.value = response.error
+      return
+    }
+
+    plan.value = {
+      totalMinutes: response.total_minutes || 90,
+      dueReviewCards: response.due_review_cards || 0,
+      activeTopics: response.active_topics || [],
+    }
+
+    tasks.value = response.tasks || []
+  } catch (err) {
+    error.value = err.message || 'Failed to load today plan'
+  } finally {
+    loading.value = false
+  }
+}
+
+function defaultTaskMeta(task) {
+  return `${task.estimate_minutes || 15} min session`
+}
+
+function startTask(task) {
+  const actionRoutes = {
+    review: '/flashcards',
+    read: '/reader',
+    quiz: '/quiz',
+    socratic: '/socratic',
+    explore: '/reader',
+  }
+
+  const path = actionRoutes[task.action_type] || '/dashboard'
+  if (task.topic_id) {
+    router.push({ path, query: { topic: task.topic_id } })
+    return
+  }
+
+  router.push(path)
+}
 </script>
 
 <style scoped>

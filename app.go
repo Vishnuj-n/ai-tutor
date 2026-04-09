@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -13,6 +14,7 @@ import (
 type App struct {
 	ctx         context.Context
 	ragPipeline *RAGPipeline
+	scheduler   *SchedulerService
 }
 
 // NewApp creates a new App application struct
@@ -63,6 +65,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Create RAG pipeline
 	a.ragPipeline = NewRAGPipeline(embedStore, llmProvider)
+	a.scheduler = NewSchedulerService()
 
 	fmt.Println("App initialized successfully")
 }
@@ -115,5 +118,31 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		"cited_sections":   result.CitedSections,
 		"chunks_retrieved": result.ChunksRetrieved,
 		"sections_used":    result.SectionsUsed,
+	}
+}
+
+// GetTodayPlan returns a unified daily schedule (review + learning + quiz/socratic when applicable).
+func (a *App) GetTodayPlan() map[string]interface{} {
+	if a.scheduler == nil {
+		return map[string]interface{}{
+			"error": "scheduler not initialized",
+		}
+	}
+
+	plan, err := a.scheduler.BuildTodayPlan(time.Now())
+	if err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"date":             plan.Date,
+		"total_minutes":    plan.TotalMinutes,
+		"review_minutes":   plan.ReviewMinutes,
+		"learning_minutes": plan.LearningMinutes,
+		"due_review_cards": plan.DueReviewCards,
+		"active_topics":    plan.ActiveTopics,
+		"tasks":            plan.Tasks,
 	}
 }

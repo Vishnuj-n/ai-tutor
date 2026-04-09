@@ -58,13 +58,12 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { askAI as askAIRequest, getTopicContent } from '../services/appApi'
 
-// Helper to call wails methods
-function callWailsMethod(methodName, ...args) {
-  return window.go.main.App[methodName](...args)
-}
+const route = useRoute()
 
-const topicID = ref('os-scheduling')
+const topicID = ref(route.query.topic || 'os-scheduling')
 const topicTitle = ref('Loading...')
 const sections = ref([])
 const sectionCount = ref(0)
@@ -82,7 +81,7 @@ onMounted(async () => {
 async function loadTopicContent() {
   try {
     loading.value = true
-    const content = await callWailsMethod('GetTopicContent', topicID.value)
+    const content = await getTopicContent(topicID.value)
     
     if (content.error) {
       error.value = content.error
@@ -107,7 +106,7 @@ async function askAI() {
     aiError.value = ''
     aiResponse.value = null
     
-    const result = await callWailsMethod('AskAI', topicID.value, question.value)
+    const result = await askAIRequest(topicID.value, question.value)
     
     if (result.error) {
       aiError.value = result.error
