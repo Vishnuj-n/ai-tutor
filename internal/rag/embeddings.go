@@ -1,15 +1,17 @@
-package main
+package rag
 
 import (
 	"fmt"
 	"math"
 	"sort"
 	"strings"
+
+	"ai-tutor/internal/db"
+	"ai-tutor/internal/models"
 )
 
 // EmbeddingStore manages embeddings and retrieval
 type EmbeddingStore struct {
-	// Maps chunk_id -> vector entry with metadata used by retrieval and filtering.
 	vectors map[string]VectorEntry
 }
 
@@ -31,7 +33,7 @@ func NewEmbeddingStore() *EmbeddingStore {
 }
 
 // AddChunk embeds and stores a chunk
-func (s *EmbeddingStore) AddChunk(chunk Chunk) {
+func (s *EmbeddingStore) AddChunk(chunk models.Chunk) {
 	vector := s.TFVector(chunk.Text)
 	s.vectors[chunk.ID] = VectorEntry{
 		Vector:          vector,
@@ -52,7 +54,6 @@ func (s *EmbeddingStore) TFVector(text string) map[string]float64 {
 		vector[word]++
 	}
 
-	// Normalize
 	totalWords := float64(len(words))
 	for key := range vector {
 		vector[key] = vector[key] / totalWords
@@ -63,13 +64,11 @@ func (s *EmbeddingStore) TFVector(text string) map[string]float64 {
 
 // Tokenize breaks text into lowercase words
 func (s *EmbeddingStore) Tokenize(text string) []string {
-	// Simple tokenization: lowercase and split on non-alphanumeric
 	text = strings.ToLower(text)
 	words := strings.FieldsFunc(text, func(r rune) bool {
 		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
 	})
 
-	// Filter stop words
 	stopWords := map[string]bool{
 		"the": true, "a": true, "an": true, "and": true, "or": true,
 		"in": true, "on": true, "at": true, "to": true, "for": true,
@@ -97,7 +96,6 @@ func (s *EmbeddingStore) CosineSimilarity(vec1, vec2 map[string]float64) float64
 	magnitude1 := 0.0
 	magnitude2 := 0.0
 
-	// Compute dot product and magnitude for vec2
 	for word, freq2 := range vec2 {
 		magnitude2 += freq2 * freq2
 		if freq1, exists := vec1[word]; exists {
@@ -105,7 +103,6 @@ func (s *EmbeddingStore) CosineSimilarity(vec1, vec2 map[string]float64) float64
 		}
 	}
 
-	// Compute magnitude for vec1
 	for _, freq1 := range vec1 {
 		magnitude1 += freq1 * freq1
 	}
@@ -132,7 +129,7 @@ type RetrievalResult struct {
 }
 
 // SearchTopK retrieves the top-k most similar chunks for a query
-func (s *EmbeddingStore) SearchTopK(query string, chunks []Chunk, k int) []RetrievalResult {
+func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int) []RetrievalResult {
 	queryVector := s.TFVector(query)
 
 	var results []RetrievalResult
@@ -154,12 +151,10 @@ func (s *EmbeddingStore) SearchTopK(query string, chunks []Chunk, k int) []Retri
 		}
 	}
 
-	// Sort by score descending
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
 	})
 
-	// Return top-k
 	if len(results) > k {
 		results = results[:k]
 	}
@@ -170,7 +165,7 @@ func (s *EmbeddingStore) SearchTopK(query string, chunks []Chunk, k int) []Retri
 // RetrievalContext holds the retrieved context for RAG
 type RetrievalContext struct {
 	TopicID   string
-	Sections  map[string]string // parent_id -> section content
+	Sections  map[string]string
 	ChunkHits int
 }
 
@@ -186,7 +181,7 @@ func BuildContext(results []RetrievalResult, topicID string) (*RetrievalContext,
 
 	for _, result := range results {
 		if !seenParents[result.ParentID] {
-			section, err := GetParentSection(result.ParentID)
+			section, err := db.GetParentSection(result.ParentID)
 			if err != nil {
 				return nil, err
 			}
@@ -198,4 +193,9 @@ func BuildContext(results []RetrievalResult, topicID string) (*RetrievalContext,
 	}
 
 	return context, nil
+}
+
+// ApplyHeuristicScoring is an explicit retrieval-stage hook for reranking.
+func ApplyHeuristicScoring(results []RetrievalResult) []RetrievalResult {
+	return results
 }

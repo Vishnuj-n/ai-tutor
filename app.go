@@ -7,14 +7,19 @@ import (
 	"path/filepath"
 	"time"
 
+	"ai-tutor/internal/db"
+	"ai-tutor/internal/llm"
+	"ai-tutor/internal/rag"
+	"ai-tutor/internal/scheduler"
+
 	"github.com/joho/godotenv"
 )
 
 // App struct
 type App struct {
 	ctx         context.Context
-	ragPipeline *RAGPipeline
-	scheduler   *SchedulerService
+	ragPipeline *rag.Pipeline
+	scheduler   *scheduler.Service
 }
 
 // NewApp creates a new App application struct
@@ -37,21 +42,21 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 
-	if err := InitDB(dbPath); err != nil {
+	if err := db.Init(dbPath); err != nil {
 		fmt.Printf("Error initializing database: %v\n", err)
 		return
 	}
 	fmt.Printf("Database initialized at %s\n", dbPath)
 
 	// Initialize embeddings
-	embedStore := NewEmbeddingStore()
+	embedStore := rag.NewEmbeddingStore()
 
 	// Load all chunks for all available topics and add to embedding store
 	// For now, just load the hardcoded topic
 	topicIDs := []string{"os-scheduling"}
 
 	for _, topicID := range topicIDs {
-		chunks, err := GetChunksForTopic(topicID)
+		chunks, err := db.GetChunksForTopic(topicID)
 		if err != nil {
 			fmt.Printf("Warning: could not load chunks for topic %s: %v\n", topicID, err)
 			continue
@@ -63,13 +68,13 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	// Initialize LLM provider from .env / environment variables.
-	llmConfig := LoadLLMConfigFromEnv()
+	llmConfig := llm.LoadConfigFromEnv()
 
-	llmProvider := NewLLMProvider(llmConfig)
+	llmProvider := llm.NewProvider(llmConfig)
 
 	// Create RAG pipeline
-	a.ragPipeline = NewRAGPipeline(embedStore, llmProvider)
-	a.scheduler = NewSchedulerService()
+	a.ragPipeline = rag.NewPipeline(embedStore, llmProvider)
+	a.scheduler = scheduler.New()
 
 	fmt.Println("App initialized successfully")
 }
@@ -81,7 +86,7 @@ func (a *App) Greet(name string) string {
 
 // GetTopicContent retrieves the content for a specific topic
 func (a *App) GetTopicContent(topicID string) map[string]interface{} {
-	content, err := GetTopicContent(topicID)
+	content, err := db.GetTopicContent(topicID)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),

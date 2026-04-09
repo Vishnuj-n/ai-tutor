@@ -1,26 +1,29 @@
-package main
+package rag
 
 import (
 	"fmt"
 	"strings"
+
+	"ai-tutor/internal/db"
+	"ai-tutor/internal/llm"
 )
 
-// RAGPipeline orchestrates retrieval and generation
-type RAGPipeline struct {
+// Pipeline orchestrates retrieval and generation
+type Pipeline struct {
 	embedStore *EmbeddingStore
-	llm        *LLMProvider
+	llm        *llm.Provider
 }
 
-// NewRAGPipeline creates a new RAG pipeline
-func NewRAGPipeline(embedStore *EmbeddingStore, llm *LLMProvider) *RAGPipeline {
-	return &RAGPipeline{
+// NewPipeline creates a new RAG pipeline
+func NewPipeline(embedStore *EmbeddingStore, llmProvider *llm.Provider) *Pipeline {
+	return &Pipeline{
 		embedStore: embedStore,
-		llm:        llm,
+		llm:        llmProvider,
 	}
 }
 
-// RAGResponse contains the final response with citations
-type RAGResponse struct {
+// Response contains the final response with citations
+type Response struct {
 	Answer              string
 	CitedSections       []string
 	TopicID             string
@@ -30,15 +33,15 @@ type RAGResponse struct {
 }
 
 // ProcessQuery runs the full RAG pipeline
-func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, error) {
+func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error) {
 	// Step 1: Validate topic exists
-	content, err := GetTopicContent(topicID)
+	content, err := db.GetTopicContent(topicID)
 	if err != nil {
 		return nil, fmt.Errorf("topic not found: %w", err)
 	}
 
 	// Step 2: Retrieve chunks
-	chunks, err := GetChunksForTopic(topicID)
+	chunks, err := db.GetChunksForTopic(topicID)
 	if err != nil {
 		return nil, fmt.Errorf("could not retrieve chunks: %w", err)
 	}
@@ -52,7 +55,7 @@ func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, 
 	if len(chunks) < topK {
 		topK = len(chunks)
 	}
-	results := r.embedStore.SearchTopK(userQuestion, chunks, topK)
+	results := p.embedStore.SearchTopK(userQuestion, chunks, topK)
 
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no relevant content found for your question")
@@ -68,14 +71,14 @@ func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, 
 	}
 
 	// Step 6: Assemble prompt
-	prompt := BuildRAGPrompt(
+	prompt := buildPrompt(
 		content["title"].(string),
 		userQuestion,
 		ctx,
 	)
 
 	// Step 7: Call LLM
-	answer, err := r.llm.GenerateAnswer(prompt)
+	answer, err := p.llm.GenerateAnswer(prompt)
 	if err != nil {
 		return nil, fmt.Errorf("LLM error: %w", err)
 	}
@@ -83,7 +86,6 @@ func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, 
 	// Step 8: Build response with citations
 	citedHeadings := []string{}
 	for _, section := range ctx.Sections {
-		// Extract heading from the formatted section
 		lines := strings.Split(section, "\n")
 		if len(lines) > 0 {
 			heading := strings.TrimPrefix(lines[0], "**")
@@ -92,7 +94,7 @@ func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, 
 		}
 	}
 
-	result := &RAGResponse{
+	result := &Response{
 		Answer:          answer,
 		CitedSections:   citedHeadings,
 		TopicID:         topicID,
@@ -107,8 +109,20 @@ func (r *RAGPipeline) ProcessQuery(topicID, userQuestion string) (*RAGResponse, 
 	return result, nil
 }
 
-// ApplyHeuristicScoring is an explicit retrieval-stage hook for reranking.
-// V1 behavior is pass-through to preserve existing ranking.
-func ApplyHeuristicScoring(results []RetrievalResult) []RetrievalResult {
-	return results
+func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) string {
+	sectionText := ""
+	for _, section := range ctx.Sections {
+		sectionText += section + "\n\n"
+	}
+
+	return fmt.Sprintf(`You are a helpful tutor assisting a student learn about: %s
+
+Retrieved course material:
+%s
+
+Student's question: %s
+
+Please provide a clear, concise answer based only on the material above.
+If the material doesn't contain enough information to answer the question, say so.
+Keep your response focused and educational.`, topicTitle, sectionText, userQuestion)
 }

@@ -1,4 +1,4 @@
-package main
+package llm
 
 import (
 	"bytes"
@@ -11,18 +11,18 @@ import (
 	"strings"
 )
 
-// LLMConfig holds LLM provider configuration.
-type LLMConfig struct {
+// Config holds LLM provider configuration.
+type Config struct {
 	BaseURL   string
 	APIKey    string
 	Model     string
 	TimeoutMs int
 }
 
-// LoadLLMConfigFromEnv loads provider config from environment variables.
+// LoadConfigFromEnv loads provider config from environment variables.
 // Supports multiple key aliases so different providers can share one config path.
-func LoadLLMConfigFromEnv() *LLMConfig {
-	config := &LLMConfig{
+func LoadConfigFromEnv() *Config {
+	config := &Config{
 		BaseURL: firstEnv(
 			"LLM_BASE_URL",
 			"OPENAI_ENDPOINT",
@@ -84,30 +84,30 @@ func firstEnvInt(defaultValue int, keys ...string) int {
 	return defaultValue
 }
 
-// LLMProvider handles communication with OpenAI-compatible APIs.
-type LLMProvider struct {
-	config *LLMConfig
+// Provider handles communication with OpenAI-compatible APIs.
+type Provider struct {
+	config *Config
 }
 
-// NewLLMProvider creates a new LLM provider.
-func NewLLMProvider(config *LLMConfig) *LLMProvider {
-	return &LLMProvider{config: config}
+// NewProvider creates a new LLM provider.
+func NewProvider(config *Config) *Provider {
+	return &Provider{config: config}
 }
 
-// OpenAIRequest follows the OpenAI API format.
-type OpenAIRequest struct {
+// openAIRequest follows the OpenAI API format.
+type openAIRequest struct {
 	Model    string          `json:"model"`
-	Messages []OpenAIMessage `json:"messages"`
+	Messages []openAIMessage `json:"messages"`
 }
 
-// OpenAIMessage represents a message in the OpenAI API.
-type OpenAIMessage struct {
+// openAIMessage represents a message in the OpenAI API.
+type openAIMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// OpenAIResponse follows the OpenAI API response format.
-type OpenAIResponse struct {
+// openAIResponse follows the OpenAI API response format.
+type openAIResponse struct {
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
@@ -116,14 +116,14 @@ type OpenAIResponse struct {
 }
 
 // GenerateAnswer calls the LLM to generate an answer.
-func (l *LLMProvider) GenerateAnswer(prompt string) (string, error) {
-	if l.config == nil || l.config.BaseURL == "" {
+func (p *Provider) GenerateAnswer(prompt string) (string, error) {
+	if p.config == nil || p.config.BaseURL == "" {
 		return "", fmt.Errorf("LLM config not configured")
 	}
 
-	requestBody := OpenAIRequest{
-		Model: l.config.Model,
-		Messages: []OpenAIMessage{
+	requestBody := openAIRequest{
+		Model: p.config.Model,
+		Messages: []openAIMessage{
 			{
 				Role:    "user",
 				Content: prompt,
@@ -136,14 +136,14 @@ func (l *LLMProvider) GenerateAnswer(prompt string) (string, error) {
 		return "", err
 	}
 
-	url := strings.TrimSuffix(l.config.BaseURL, "/") + "/v1/chat/completions"
+	url := strings.TrimSuffix(p.config.BaseURL, "/") + "/v1/chat/completions"
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
 		return "", err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+l.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -157,7 +157,7 @@ func (l *LLMProvider) GenerateAnswer(prompt string) (string, error) {
 		return "", fmt.Errorf("LLM API error (status %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	var apiResp OpenAIResponse
+	var apiResp openAIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return "", err
 	}
@@ -167,23 +167,4 @@ func (l *LLMProvider) GenerateAnswer(prompt string) (string, error) {
 	}
 
 	return apiResp.Choices[0].Message.Content, nil
-}
-
-// BuildRAGPrompt builds the final RAG prompt for the LLM.
-func BuildRAGPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) string {
-	sectionText := ""
-	for _, section := range ctx.Sections {
-		sectionText += section + "\n\n"
-	}
-
-	return fmt.Sprintf(`You are a helpful tutor assisting a student learn about: %s
-
-Retrieved course material:
-%s
-
-Student's question: %s
-
-Please provide a clear, concise answer based only on the material above.
-If the material doesn't contain enough information to answer the question, say so.
-Keep your response focused and educational.`, topicTitle, sectionText, userQuestion)
 }

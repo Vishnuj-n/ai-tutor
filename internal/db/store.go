@@ -1,33 +1,25 @@
-package main
+package db
 
 import (
 	"database/sql"
 	"log"
 
+	"ai-tutor/internal/models"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var db *sql.DB
+var conn *sql.DB
 
-// Chunk represents a retrieval chunk with metadata and future scoring hooks.
-type Chunk struct {
-	ID              string
-	TopicID         string
-	ParentID        string
-	Text            string
-	ImportanceScore float64
-	WeaknessScore   float64
-}
-
-// InitDB initializes the SQLite database and creates tables
-func InitDB(dbPath string) error {
+// Init initializes the SQLite database and creates tables
+func Init(dbPath string) error {
 	var err error
-	db, err = sql.Open("sqlite3", dbPath)
+	conn, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := conn.Ping(); err != nil {
 		return err
 	}
 
@@ -101,14 +93,14 @@ func createTables() error {
 	);
 	`
 
-	_, err := db.Exec(schema)
+	_, err := conn.Exec(schema)
 	return err
 }
 
 func seedData() error {
 	// Check if topics already exist
 	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM topics").Scan(&count)
+	err := conn.QueryRow("SELECT COUNT(*) FROM topics").Scan(&count)
 	if err != nil {
 		return err
 	}
@@ -120,7 +112,7 @@ func seedData() error {
 	topic1 := "os-scheduling"
 	title1 := "Operating Systems: Scheduling"
 
-	_, err = db.Exec(`
+	_, err = conn.Exec(`
 		INSERT INTO topics (id, title, status)
 		VALUES (?, ?, ?)
 	`, topic1, title1, "reading")
@@ -132,7 +124,7 @@ func seedData() error {
 	parent1 := "parent-1"
 	parent2 := "parent-2"
 
-	_, err = db.Exec(`
+	_, err = conn.Exec(`
 		INSERT INTO parents (id, topic_id, heading, order_index, content_text)
 		VALUES (?, ?, ?, ?, ?)
 	`, parent1, topic1, "Round Robin Scheduling", 1, `
@@ -150,7 +142,7 @@ Key characteristics:
 		return err
 	}
 
-	_, err = db.Exec(`
+	_, err = conn.Exec(`
 		INSERT INTO parents (id, topic_id, heading, order_index, content_text)
 		VALUES (?, ?, ?, ?, ?)
 	`, parent2, topic1, "Advantages and Disadvantages", 2, `
@@ -209,7 +201,7 @@ Disadvantages of Round Robin:
 	}
 
 	for _, chunk := range chunks {
-		_, err = db.Exec(`
+		_, err = conn.Exec(`
 			INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, chunk.id, topic1, chunk.pID, chunk.text, len(chunk.text)/4, 0.0, 0.0)
@@ -224,12 +216,12 @@ Disadvantages of Round Robin:
 // GetTopicContent retrieves all parent sections for a topic
 func GetTopicContent(topicID string) (map[string]interface{}, error) {
 	var title string
-	err := db.QueryRow("SELECT title FROM topics WHERE id = ?", topicID).Scan(&title)
+	err := conn.QueryRow("SELECT title FROM topics WHERE id = ?", topicID).Scan(&title)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := db.Query(`
+	rows, err := conn.Query(`
 		SELECT id, heading, content_text, order_index
 		FROM parents
 		WHERE topic_id = ?
@@ -262,8 +254,8 @@ func GetTopicContent(topicID string) (map[string]interface{}, error) {
 }
 
 // GetChunksForTopic retrieves all chunks for a topic.
-func GetChunksForTopic(topicID string) ([]Chunk, error) {
-	rows, err := db.Query(`
+func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
+	rows, err := conn.Query(`
 		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
 		FROM chunks
 		WHERE topic_id = ?
@@ -273,9 +265,9 @@ func GetChunksForTopic(topicID string) ([]Chunk, error) {
 	}
 	defer rows.Close()
 
-	var chunks []Chunk
+	var chunks []models.Chunk
 	for rows.Next() {
-		var chunk Chunk
+		var chunk models.Chunk
 		if err := rows.Scan(
 			&chunk.ID,
 			&chunk.TopicID,
@@ -295,7 +287,7 @@ func GetChunksForTopic(topicID string) ([]Chunk, error) {
 // GetParentSection retrieves a parent section by ID
 func GetParentSection(parentID string) (map[string]string, error) {
 	var id, heading, content string
-	err := db.QueryRow(`
+	err := conn.QueryRow(`
 		SELECT id, heading, content_text
 		FROM parents
 		WHERE id = ?
@@ -309,4 +301,78 @@ func GetParentSection(parentID string) (map[string]string, error) {
 		"heading": heading,
 		"content": content,
 	}, nil
+}
+
+// QueryDueReviewCards counts cards due by the given time
+func QueryDueReviewCards(now string) (int, error) {
+	var count int
+	err := conn.QueryRow(`
+		SELECT COUNT(*)
+		FROM fsrs_cards
+		WHERE suspended = 0
+		  AND due_at IS NOT NULL
+		  AND due_at <= ?
+	`, now).Scan(&count)
+	return count, err
+}
+
+// QueryActiveTopics returns top N active topic titles
+func QueryActiveTopics(limit int) ([]string, error) {
+	rows, err := conn.Query(`
+		SELECT title
+		FROM topics
+		WHERE status IN ('reading', 'learned')
+		ORDER BY updated_at DESC, created_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var active []string
+	for rows.Next() {
+		var title string
+		if err := rows.Scan(&title); err != nil {
+			return nil, err
+		}
+		active = append(active, title)
+	}
+	return active, nil
+}
+
+// QueryLearningTopics returns topics ready for learning
+func QueryLearningTopics(limit int) ([]models.TopicSummary, error) {
+	rows, err := conn.Query(`
+		SELECT id, title, status
+		FROM topics
+		WHERE status IN ('unseen', 'reading')
+		ORDER BY updated_at ASC, created_at ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var topics []models.TopicSummary
+	for rows.Next() {
+		var topic models.TopicSummary
+		if err := rows.Scan(&topic.ID, &topic.Title, &topic.Status); err != nil {
+			return nil, err
+		}
+		topics = append(topics, topic)
+	}
+	return topics, nil
+}
+
+// CountLearnedTopics returns the count of fully learned topics
+func CountLearnedTopics() (int, error) {
+	var count int
+	err := conn.QueryRow(`
+		SELECT COUNT(*)
+		FROM topics
+		WHERE status = 'learned'
+	`).Scan(&count)
+	return count, err
 }

@@ -1,4 +1,4 @@
-package main
+package models
 
 // ScheduledTask represents one actionable study task for the day.
 type ScheduledTask struct {
@@ -27,4 +27,14 @@ type TopicSummary struct {
 	ID     string
 	Title  string
 	Status string
+}
+
+// Chunk represents a retrieval chunk with metadata and future scoring hooks.
+type Chunk struct {
+	ID              string
+	TopicID         string
+	ParentID        string
+	Text            string
+	ImportanceScore float64
+	WeaknessScore   float64
 }
