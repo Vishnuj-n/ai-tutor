@@ -10,3 +10,8 @@ wailsjs/
 test_notes/
 build/
 .exe
+
+# User data (local SQLite + uploads)
+*.db
+uploads/
+.config/

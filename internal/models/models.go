@@ -38,3 +38,23 @@ type Chunk struct {
 	ImportanceScore float64
 	WeaknessScore   float64
 }
+
+// Notebook represents a user-uploaded document (PDF, text, etc)
+type Notebook struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	FilePath   string `json:"file_path"`
+	FileType   string `json:"file_type"` // "pdf", "txt", "md"
+	TopicID    string `json:"topic_id,omitempty"`
+	UploadedAt string `json:"uploaded_at"`
+	PageCount  int    `json:"page_count,omitempty"`
+	ChunkCount int    `json:"chunk_count"`
+}
+
+// NotebookChunk links a chunk to a notebook (many chunks per notebook)
+type NotebookChunk struct {
+	ID         string
+	NotebookID string
+	ChunkID    string
+	PageNum    int // for PDFs
+}

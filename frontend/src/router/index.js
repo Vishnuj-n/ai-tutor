@@ -6,6 +6,7 @@ import Quiz from '../pages/Quiz.vue'
 import Flashcards from '../pages/Flashcards.vue'
 import Socratic from '../pages/Socratic.vue'
 import Settings from '../pages/Settings.vue'
+import Notebook from '../pages/Notebook.vue'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -14,6 +15,7 @@ const routes = [
   { path: '/quiz', name: 'quiz', component: Quiz },
   { path: '/flashcards', name: 'flashcards', component: Flashcards },
   { path: '/socratic', name: 'socratic', component: Socratic },
+  { path: '/notebooks', name: 'notebooks', component: Notebook },
   { path: '/settings', name: 'settings', component: Settings },
 ]
 

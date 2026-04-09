@@ -28,6 +28,7 @@
 const topItems = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/reader', label: 'Reader' },
+  { to: '/notebooks', label: 'Notebooks' },
   { to: '/quiz', label: 'Quiz' },
   { to: '/flashcards', label: 'Flashcards' },
   { to: '/socratic', label: 'Socratic Tutor' },

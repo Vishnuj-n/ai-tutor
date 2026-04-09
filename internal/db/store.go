@@ -91,6 +91,28 @@ func createTables() error {
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (topic_id) REFERENCES topics(id)
 	);
+
+	CREATE TABLE IF NOT EXISTS notebooks (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL,
+		file_path TEXT NOT NULL,
+		file_type TEXT DEFAULT 'pdf',
+		topic_id TEXT,
+		page_count INTEGER,
+		chunk_count INTEGER DEFAULT 0,
+		uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (topic_id) REFERENCES topics(id)
+	);
+
+	CREATE TABLE IF NOT EXISTS notebook_chunks (
+		id TEXT PRIMARY KEY,
+		notebook_id TEXT NOT NULL,
+		chunk_id TEXT NOT NULL,
+		page_num INTEGER DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (notebook_id) REFERENCES notebooks(id),
+		FOREIGN KEY (chunk_id) REFERENCES chunks(id)
+	);
 	`
 
 	_, err := conn.Exec(schema)
@@ -375,4 +397,105 @@ func CountLearnedTopics() (int, error) {
 		WHERE status = 'learned'
 	`).Scan(&count)
 	return count, err
+}
+
+// CreateNotebook saves a notebook record to the database
+func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int) error {
+	_, err := conn.Exec(`
+		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, page_count)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, id, title, filePath, fileType, topicID, pageCount)
+	return err
+}
+
+// GetNotebooks retrieves all notebooks, optionally filtered by topic
+func GetNotebooks(topicID string) ([]models.Notebook, error) {
+	query := "SELECT id, title, file_path, file_type, topic_id, page_count, chunk_count, uploaded_at FROM notebooks"
+	args := []interface{}{}
+
+	if topicID != "" {
+		query += " WHERE topic_id = ?"
+		args = append(args, topicID)
+	}
+	query += " ORDER BY uploaded_at DESC"
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notebooks []models.Notebook
+	for rows.Next() {
+		var nb models.Notebook
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt); err != nil {
+			return nil, err
+		}
+		notebooks = append(notebooks, nb)
+	}
+	return notebooks, nil
+}
+
+// GetNotebookByID retrieves a single notebook by ID
+func GetNotebookByID(notebookID string) (*models.Notebook, error) {
+	var nb models.Notebook
+	err := conn.QueryRow(`
+		SELECT id, title, file_path, file_type, topic_id, page_count, chunk_count, uploaded_at
+		FROM notebooks
+		WHERE id = ?
+	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &nb, nil
+}
+
+// LinkChunksToNotebook associates chunks with a notebook
+func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
+	for _, chunkID := range chunkIDs {
+		id := "nb-chunk-" + notebookID + "-" + chunkID // simple composite ID
+		_, err := conn.Exec(`
+			INSERT INTO notebook_chunks (id, notebook_id, chunk_id)
+			VALUES (?, ?, ?)
+		`, id, notebookID, chunkID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UpdateNotebookChunkCount updates the chunk count for a notebook
+func UpdateNotebookChunkCount(notebookID string, count int) error {
+	_, err := conn.Exec(`
+		UPDATE notebooks
+		SET chunk_count = ?
+		WHERE id = ?
+	`, count, notebookID)
+	return err
+}
+
+// DeleteNotebook removes a notebook and its chunk links
+func DeleteNotebook(notebookID string) error {
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec("DELETE FROM notebooks WHERE id = ?", notebookID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit().Error
 }

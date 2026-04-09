@@ -9,6 +9,7 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
+	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
 	"ai-tutor/internal/scheduler"
 
@@ -17,9 +18,11 @@ import (
 
 // App struct
 type App struct {
-	ctx         context.Context
-	ragPipeline *rag.Pipeline
-	scheduler   *scheduler.Service
+	ctx               context.Context
+	ragPipeline       *rag.Pipeline
+	scheduler         *scheduler.Service
+	notebookService   *notebook.Service
+	notebookUploadDir string
 }
 
 // NewApp creates a new App application struct
@@ -75,6 +78,16 @@ func (a *App) startup(ctx context.Context) {
 	// Create RAG pipeline
 	a.ragPipeline = rag.NewPipeline(embedStore, llmProvider)
 	a.scheduler = scheduler.New()
+
+	// Initialize notebook service
+	notebookDir, err := resolveNotebookDir()
+	if err != nil {
+		fmt.Printf("Error resolving notebook directory: %v\n", err)
+		return
+	}
+	a.notebookUploadDir = notebookDir
+	a.notebookService = notebook.NewService(notebookDir)
+	fmt.Printf("Notebook service initialized at %s\n", notebookDir)
 
 	fmt.Println("App initialized successfully")
 }
@@ -168,4 +181,19 @@ func resolveDBPath() (string, error) {
 	}
 
 	return filepath.Join(appDir, "ai-tutor.db"), nil
+}
+
+func resolveNotebookDir() (string, error) {
+	baseDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	appDir := filepath.Join(baseDir, "ai-tutor")
+	uploadDir := filepath.Join(appDir, "uploads")
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		return "", err
+	}
+
+	return uploadDir, nil
 }
