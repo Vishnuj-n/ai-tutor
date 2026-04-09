@@ -55,7 +55,7 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - Retrieval queries only the embeddings associated with that topic
 - Each chunk uses one canonical chunk_id shared across stores:
   - SQLite stores relational metadata (for example `importance_score`, `weakness_score`)
-  - ChromaDB stores the vector under the same chunk_id
+  - Use the Go client for the Chroma vector database to persist and query vector embeddings; record the Chroma vector under the same `chunk_id` so stores remain synchronized
 
 ## 4. Content Structure
 
@@ -132,8 +132,8 @@ Prompt payload should include:
 
 Embedding metadata requirements (ingestion-time):
 
-- Every ChromaDB vector record must include `topic_id` and `parent_id`
-- Record the same `chunk_id` used in SQLite as the Chroma record id
+- When using Chroma, create vector records via the Go client and include `topic_id` and `parent_id` metadata.
+- Ensure the Chroma record id matches the SQLite `chunk_id` so records can be cross-referenced.
 - Keep metadata minimal but sufficient for fast filter-first retrieval
 
 Prompt rules:

@@ -17,7 +17,7 @@ A local-first desktop tutoring system with deterministic workflows and topic-sco
 - Go + Wails host core services and desktop runtime
 - Vue multi-page UI invokes typed backend commands
 - SQLite is the source of truth for study state
-- chromem-go stores/query embeddings for topic retrieval
+ - Use the Go client for the Chroma vector database to store and query embeddings for topic retrieval
 - OpenAI-compatible API is used only for reasoning tasks
 
 ## 2. High-Level Component Design
@@ -115,7 +115,7 @@ Hybrid chunking with parent-document retrieval extension.
 1. Parse source into heading-based parent sections.
 2. Create child chunks from each parent section.
 3. If a section exceeds token target, split by token budget.
-4. Embed child chunks and persist embedding references.
+4. Embed child chunks and persist embedding references (persist vectors in Chroma via the Go client and store the Chroma record id in `embedding_ref`).
 5. On retrieval, fetch top-k child chunks then expand to parent sections.
 
 ## 6. RAG Pipeline (Topic-Scoped)
