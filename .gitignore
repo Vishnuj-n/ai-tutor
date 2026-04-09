@@ -7,3 +7,6 @@ context.md
 
 # Wails generated bindings
 wailsjs/
+test_notes/
+build/
+.exe

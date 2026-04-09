@@ -30,14 +30,18 @@ func (a *App) startup(ctx context.Context) {
 	// Load local .env if present. Missing file is fine.
 	_ = godotenv.Load()
 
-	// Initialize database
-	dbPath := filepath.Join(os.TempDir(), "ai-tutor.db")
-	_ = os.Remove(dbPath)
+	// Initialize persistent database
+	dbPath, err := resolveDBPath()
+	if err != nil {
+		fmt.Printf("Error resolving database path: %v\n", err)
+		return
+	}
+
 	if err := InitDB(dbPath); err != nil {
 		fmt.Printf("Error initializing database: %v\n", err)
 		return
 	}
-	fmt.Println("Database initialized")
+	fmt.Printf("Database initialized at %s\n", dbPath)
 
 	// Initialize embeddings
 	embedStore := NewEmbeddingStore()
@@ -145,4 +149,18 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"active_topics":    plan.ActiveTopics,
 		"tasks":            plan.Tasks,
 	}
+}
+
+func resolveDBPath() (string, error) {
+	baseDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	appDir := filepath.Join(baseDir, "ai-tutor")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(appDir, "ai-tutor.db"), nil
 }
