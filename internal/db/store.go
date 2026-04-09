@@ -252,7 +252,9 @@ func GetTopicContent(topicID string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var sections []map[string]interface{}
 	for rows.Next() {
@@ -285,7 +287,9 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var chunks []models.Chunk
 	for rows.Next() {
@@ -350,7 +354,9 @@ func QueryActiveTopics(limit int) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var active []string
 	for rows.Next() {
@@ -375,7 +381,9 @@ func QueryLearningTopics(limit int) ([]models.TopicSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var topics []models.TopicSummary
 	for rows.Next() {
@@ -423,7 +431,9 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var notebooks []models.Notebook
 	for rows.Next() {
@@ -485,7 +495,9 @@ func DeleteNotebook(notebookID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	_, err = tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID)
 	if err != nil {
@@ -497,5 +509,5 @@ func DeleteNotebook(notebookID string) error {
 		return err
 	}
 
-	return tx.Commit().Error
+	return tx.Commit()
 }

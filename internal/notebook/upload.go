@@ -23,7 +23,7 @@ type Service struct {
 // NewService creates a new notebook service
 func NewService(uploadDir string) *Service {
 	// Ensure directory exists
-	os.MkdirAll(uploadDir, 0o755)
+	_ = os.MkdirAll(uploadDir, 0o755) // ignore error, non-fatal
 	return &Service{
 		config: UploadConfig{
 			UploadDir:   uploadDir,

@@ -46,6 +46,14 @@ You are responsible only for AI logic and prompt design.
 5. Validate prompt for stateless use and topic scoping.
 6. Return prompt text ready to plug into code with minimal explanation.
 
+## Validation and Testing
+When implementing RAG prompts in backend code, coordinate with backend agent to ensure:
+1. Run `golangci-lint ./...` after prompt integration
+2. Run `go build ./...` to verify compilation with new prompts
+3. Run `go vet ./...` to check for issues
+4. Run `go test ./...` if RAG pipeline tests exist
+5. Test prompt on actual data to verify output structure matches contract
+
 ## Output Style
 - Clear prompt templates.
 - Minimal explanation.

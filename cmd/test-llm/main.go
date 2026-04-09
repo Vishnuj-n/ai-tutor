@@ -103,7 +103,11 @@ func main() {
 		fmt.Printf("❌ Error calling API: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Printf("Warning: failed to close response body: %v\n", err)
+		}
+	}()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
