@@ -88,6 +88,7 @@ Build a fully navigable UI shell with no backend logic.
 * Simple, readable code
 
 ---
+---
 # Sprint 2 — Reader + Basic RAG (Ask AI)
 
 ## Goal
@@ -96,79 +97,31 @@ Make **Reader + Ask AI actually work**
 
 ---
 
-## Tasks
+## Summary
 
-### 1. Minimal Data Setup
+Sprint 2 delivered a working RAG-based "Ask AI" feature integrated into the Reader page. Key components: a small SQLite seed dataset (topic "os-scheduling"), TF‑IDF embeddings for retrieval, a simple RAG pipeline that expands chunks to parent sections, prompt assembly, and an OpenAI‑compatible LLM call. The frontend connects via Wails to `AskAI(topicID, question)` and displays answers with citations.
 
-Hardcode 1–2 topics:
+## Included
 
-```go
-Topic: "Operating Systems"
-Content: "Round Robin Scheduling..."
-```
+- **Data & DB**: SQLite schema and seed data (`db.go`)  
+- **Embeddings & Retrieval**: TF‑IDF vectors, tokenization, cosine similarity, top‑k search (`embeddings.go`)  
+- **RAG Pipeline**: retrieval → parent expansion → prompt assembly → LLM call → citations (`rag.go`)  
+- **Backend API**: `GetTopicContent`, `GetAvailableTopics`, `AskAI` (`app.go`)  
+- **Reader UI**: topic sections + Ask AI panel (`frontend/src/pages/Reader.vue`)
 
-Store in SQLite or even in-memory (initially OK)
+## Run (dev)
 
----
+- Install SQLite driver: `go get -u github.com/mattn/go-sqlite3`  
+- Set LLM env vars: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`  
+- Start dev server: `wails dev`
 
-### 2. Chunking (Basic)
+## Limitations (MVP)
 
-* Split content into small chunks
-* Assign parent_id
+- Single hardcoded topic, TF‑IDF embeddings (non‑neural), DB in temp, requires online LLM, no quiz/FSRS yet.
 
-Keep simple (no over-engineering)
+## Next steps
 
----
-
-### 3. Embeddings
-
-* Use local embedding model
-* Store vectors
-
----
-
-### 4. RAG Pipeline (Core)
-
-Implement:
-
-```text
-Question → Embed → Search → Parent → Prompt → LLM → Answer
-```
-
----
-
-### 5. Backend Function
-
-```go
-func AskAI(topicID string, question string) string
-```
-
----
-
-### 6. Reader UI
-
-* Show topic content
-* Add Ask AI panel:
-
-  * input
-  * button
-  * response area
-
----
-
-### 7. Connect Frontend → Backend
-
-* Call AskAI from Vue
-* Display result
-
----
-
-## Output of Sprint 2
-
-* Open Reader
-* Read topic
-* Ask question
-* Get answer from your content
+- Settings UI, persistent config, add topics, quiz generation, FSRS, neural embeddings.
 
 ---
 
