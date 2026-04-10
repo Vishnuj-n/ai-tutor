@@ -22,13 +22,15 @@
         
         <div
           class="drop-zone"
-          @click="$refs.fileInput.click()"
+          @click="triggerFilePicker"
           @dragover.prevent="isDragging = true"
           @dragleave.prevent="isDragging = false"
           @drop.prevent="handleFileDrop"
           :class="{ dragging: isDragging }"
         >
-          <span>Click to upload or drag files here</span>
+          <p class="drop-title">Drop files here</p>
+          <button type="button" class="upload-cta">Choose File</button>
+          <p class="drop-hint">or drag and drop PDF, TXT, MD up to 50 MB</p>
         </div>
 
         <div v-if="uploadProgress > 0 && uploadProgress < 100" class="progress">
@@ -101,6 +103,12 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import {
+  getAvailableTopics,
+  getNotebooks as fetchNotebooks,
+  uploadNotebook as apiUploadNotebook,
+  deleteNotebook as apiDeleteNotebook,
+} from '../services/appApi'
 
 const fileInput = ref(null)
 const isDragging = ref(false)
@@ -120,26 +128,32 @@ onMounted(async () => {
 
 async function loadTopics() {
   try {
-    // TODO: Replace with actual API call
-    availableTopics.value = [
-      { id: 'os-scheduling', title: 'Operating Systems: Scheduling' }
-    ]
+    const topics = await getAvailableTopics()
+    availableTopics.value = Array.isArray(topics) ? topics : []
   } catch (error) {
     console.error('Failed to load topics:', error)
+    availableTopics.value = []
   }
 }
 
 async function loadNotebooks() {
   loading.value = true
   try {
-    // TODO: Replace with actual API call to window.go.main.App.GetNotebooks()
-    // For now, use mock data
-    notebooks.value = []
+    const result = await fetchNotebooks('')
+    if (Array.isArray(result) && result.length > 0 && result[0].error) {
+      throw new Error(result[0].error)
+    }
+    notebooks.value = Array.isArray(result) ? result : []
   } catch (error) {
     console.error('Failed to load notebooks:', error)
+    notebooks.value = []
   } finally {
     loading.value = false
   }
+}
+
+function triggerFilePicker() {
+  fileInput.value?.click()
 }
 
 function handleFileSelect(event) {
@@ -160,6 +174,7 @@ function handleFileDrop(event) {
 async function uploadFile(file) {
   uploadError.value = ''
   uploadSuccess.value = false
+  uploadProgress.value = 10
 
   // Validate file type
   const validTypes = ['application/pdf', 'text/plain', 'text/markdown']
@@ -179,13 +194,16 @@ async function uploadFile(file) {
     // Read file as Buffer/bytes
     const arrayBuffer = await file.arrayBuffer()
     const bytes = new Uint8Array(arrayBuffer)
+    uploadProgress.value = 50
 
-    // TODO: Call backend upload API
-    // const result = await window.go.main.App.UploadNotebook(
-    //   Array.from(bytes),
-    //   file.name,
-    //   selectedTopic.value
-    // )
+    const result = await apiUploadNotebook(
+      Array.from(bytes),
+      file.name,
+      selectedTopic.value,
+    )
+    if (result?.error) {
+      throw new Error(result.error)
+    }
 
     uploadProgress.value = 100
     uploadSuccess.value = true
@@ -196,7 +214,7 @@ async function uploadFile(file) {
       uploadProgress.value = 0
       uploadSuccess.value = false
       fileInput.value.value = ''
-      loadNotebooks()
+      void loadNotebooks()
     }, 2000)
   } catch (error) {
     uploadError.value = `Upload failed: ${error.message}`
@@ -220,11 +238,14 @@ async function deleteNotebook(notebookId) {
   }
 
   try {
-    // TODO: Call backend delete API
-    // await window.go.main.App.DeleteNotebook(notebookId)
+    const result = await apiDeleteNotebook(notebookId)
+    if (result?.error) {
+      throw new Error(result.error)
+    }
     await loadNotebooks()
   } catch (error) {
     console.error('Failed to delete notebook:', error)
+    uploadError.value = `Delete failed: ${error.message}`
   }
 }
 
@@ -279,10 +300,9 @@ function formatDate(dateString) {
 }
 
 .upload-card {
-  background: var(--surface-container);
-  border-radius: 12px;
+  background: var(--surface-container-low);
+  border-radius: 16px;
   padding: 24px;
-  border: 2px solid var(--outline-variant);
 }
 
 .upload-icon {
@@ -300,25 +320,56 @@ function formatDate(dateString) {
 .upload-card p {
   margin: 0 0 16px;
   font-size: 14px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .drop-zone {
-  border: 2px dashed var(--primary);
-  border-radius: 8px;
-  padding: 32px;
+  border: 1px solid rgba(45, 51, 56, 0.2);
+  border-radius: 14px;
+  padding: 28px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.2s;
-  background: var(--primary-dim);
-  opacity: 0.1;
+  transition: all 0.2s ease;
+  background: var(--surface-container-lowest);
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
 }
 
 .drop-zone:hover,
 .drop-zone.dragging {
-  background: var(--primary-dim);
-  opacity: 0.2;
+  background: rgba(0, 91, 193, 0.06);
   border-color: var(--primary);
+}
+
+.drop-title {
+  margin: 0;
+  font-size: 18px;
+  font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.upload-cta {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--on-primary);
+  background: linear-gradient(15deg, var(--primary), var(--primary-dim));
+  cursor: pointer;
+}
+
+.drop-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
 }
 
 .progress {

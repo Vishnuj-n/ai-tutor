@@ -22,3 +22,15 @@ export function askAI(topicID, question) {
 export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
+
+export function getNotebooks(topicID = '') {
+  return appBridge().GetNotebooks(topicID)
+}
+
+export function uploadNotebook(fileBytes, fileName, topicID = '') {
+  return appBridge().UploadNotebook(fileBytes, fileName, topicID)
+}
+
+export function deleteNotebook(notebookID) {
+  return appBridge().DeleteNotebook(notebookID)
+}

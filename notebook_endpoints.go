@@ -29,10 +29,6 @@ func (a *App) UploadNotebook(fileData []byte, fileName string, topicID string) m
 	}
 
 	// Create notebook record in database
-	if topicID == "" {
-		topicID = "0" // no topic association
-	}
-
 	err = db.CreateNotebook(uploadResult.ID, fileName, uploadResult.FilePath, uploadResult.FileType, topicID, meta.PageCount)
 	if err != nil {
 		return map[string]interface{}{

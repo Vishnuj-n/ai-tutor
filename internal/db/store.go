@@ -409,16 +409,21 @@ func CountLearnedTopics() (int, error) {
 
 // CreateNotebook saves a notebook record to the database
 func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int) error {
+	var topicValue interface{}
+	if topicID != "" {
+		topicValue = topicID
+	}
+
 	_, err := conn.Exec(`
 		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, page_count)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, id, title, filePath, fileType, topicID, pageCount)
+	`, id, title, filePath, fileType, topicValue, pageCount)
 	return err
 }
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
 func GetNotebooks(topicID string) ([]models.Notebook, error) {
-	query := "SELECT id, title, file_path, file_type, topic_id, page_count, chunk_count, uploaded_at FROM notebooks"
+	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), page_count, chunk_count, uploaded_at FROM notebooks"
 	args := []interface{}{}
 
 	if topicID != "" {
@@ -450,7 +455,7 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
 	err := conn.QueryRow(`
-		SELECT id, title, file_path, file_type, topic_id, page_count, chunk_count, uploaded_at
+		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), page_count, chunk_count, uploaded_at
 		FROM notebooks
 		WHERE id = ?
 	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
