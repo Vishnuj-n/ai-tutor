@@ -111,6 +111,40 @@ Heuristic scoring contract:
 - V1 behavior can be pass-through or simple deterministic boosts
 - V2 plugs in learner-state-aware ranking (for example weakness-based boost)
 
+## 5.1 Vector Storage and Retrieval Implementation
+
+### What
+
+Embeddings are stored in a `sqlite-vec` virtual table with integer rowids and JSON serialization.
+
+### Why
+
+- SQLite extensions are connection-scoped, so a single persistent connection is required.
+- The `sqlite-vec` virtual table requires integer rowids, not string IDs.
+- `database/sql` parameter binding requires concrete Go types; float32 slices must be serialized.
+
+### How
+
+**Storage:**
+- Application maintains a single SQLite connection with vec0 extension loaded (via `db.Init()` and connection pool constraints).
+- Each chunk has a stable string `chunk_id` stored in the `chunks` table.
+- The `chunk_vectors` table maps chunk IDs to integer SQLite rowids and stores embeddings as JSON strings.
+- On insert, `UpsertChunkVector()` resolves the string chunk_id to its integer rowid before inserting into vec0.
+
+**Serialization:**
+- `vectorToJSON()` converts float32 slices to compact JSON strings before passing to database parameters.
+- This avoids database/sql type binding errors and keeps the storage format compatible with direct SQL inspection.
+
+**Retrieval:**
+- `SearchVectorsForTopic()` embeds the query, searches the vec0 table for cosine-distance matches within the topic, returns matching chunk IDs and distances.
+- Results are joined with chunks/parents to populate context for prompt assembly.
+- Integer rowid-to-chunk_id mapping is transparent to the RAG pipeline layer.
+
+**Architectural Constraints:**
+- Connection pool is fixed at 1 active connection (`SetMaxOpenConns(1)`). Do not change this.
+- String chunk IDs must always be resolved to integer rowids before vec0 operations.
+- Embeddings must always be JSON-serialized before SQL binding.
+
 ## 6. Prompt Assembly
 
 ### What

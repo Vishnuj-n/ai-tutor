@@ -46,6 +46,7 @@ It is not a chatbot, PDF viewer, or standalone flashcard app. It is a guided tut
 	- Explain action (secondary Ask AI placement)
 - Socratic Tutor:
 	- Guided questioning mode scoped to current topic
+	- Enter to send, Shift+Enter for new line
 - Settings:
 	- Base URL, API key, model, phase-2 cloud endpoint placeholder
 - Sync button:

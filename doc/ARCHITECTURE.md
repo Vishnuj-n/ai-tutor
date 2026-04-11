@@ -171,6 +171,32 @@ Embedding generation must be deterministic and available without external vector
 - At startup, validate these assets before enabling ingestion/retrieval features.
 - If a required local dependency is missing, show explicit setup guidance and fail clearly.
 
+## 6.2 SQLite Connection Pool and vec0 Extension Management
+
+### What
+
+SQLite database maintains a single persistent connection with the sqlite-vec (vec0) extension loaded.
+
+### Why
+
+SQLite extensions are connection-scoped. If the application opens multiple DB connections (via pooling), only the first connection will have the extension loaded. Subsequent connections will fail to access the vec0 virtual table with "no such module: vec0" errors.
+
+### How
+
+- **Single Connection Pool:** `SetMaxOpenConns(1)` and `SetMaxIdleConns(1)` enforce exactly one active database connection.
+- **Extension Loading:** At `db.Init()`, the SQLite connection loads the vec0 extension via driver-level `sqliteConn.LoadExtension()` (not SQL `LOAD_EXTENSION`).
+- **Vector Table Storage:** All vectors are stored in a vec0 virtual table with integer rowids (not string IDs). Application chunk IDs are mapped to SQLite rowids before insert/query operations.
+- **Vector Serialization:** Float32 embedding vectors are serialized to JSON strings before binding to database parameters, since `database/sql` does not support slice types directly.
+
+**Architectural Constraints:**
+- Do not increase `MaxOpenConns` from 1; this is a permanent requirement.
+- All vector operations must resolve string chunk IDs to integer rowids first (via `lookupChunkRowID()`).
+- All embeddings must be JSON-serialized before DB binding (via `vectorToJSON()`).
+
+**Resource Cleanup:**
+- Call `db.Close()` in test cleanup handlers to release the connection before temp directory removal (prevents Windows file lock errors).
+- On application shutdown, the connection is automatically closed by the database driver.
+
 ## 7. Scheduling System
 
 ## 7.1 Reading Scheduler

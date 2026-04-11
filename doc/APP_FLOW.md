@@ -179,18 +179,33 @@ Transforms short-term understanding into durable memory.
 
 ### What
 
-Optional guided questioning mode within topic scope.
+Topic-scoped RAG-powered chat interface for guided questioning and explanation.
 
 ### Why
 
-Promotes deeper reasoning without becoming a general chatbot.
+Promotes deeper reasoning without becoming a general chatbot. Maintains strict topic scope and single-turn logic like Ask AI.
 
 ### How
 
-- Select active topic
-- Present guided question sequence
-- Evaluate user response heuristically
-- Offer next question or recommend returning to Reader/Flashcards
+1. Select active topic from sidebar or jump from Dashboard.
+2. Socratic page shows topic name and empty chat canvas.
+3. Submit questions using topic-scoped retrieval (powered by RAG pipeline).
+4. Responses are displayed with citations to source sections.
+5. User can ask follow-up questions within the same topic.
+
+Keyboard behavior:
+
+- **Enter (without Shift):** Submit the current message
+- **Shift+Enter:** Insert a newline without submitting
+- **Ctrl+C / native copy:** Standard text selection and copying
+
+Conversation rules:
+
+- Retrieval is strictly scoped to active topic
+- No cross-topic search or global knowledge base
+- No conversation memory; each response is independent
+- User can switch topics, which clears the chat history
+- Responses include section/parent labels for traceability
 
 ## 10. Settings and Sync Flow
 

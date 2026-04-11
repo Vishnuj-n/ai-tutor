@@ -78,11 +78,11 @@
           class="composer-input"
           placeholder="Ask a grounded question about your material..."
           :disabled="isLoading"
-          @keydown.enter.ctrl.prevent="submitQuestion"
+          @keydown="handleComposerKeydown"
         ></textarea>
 
         <div class="composer-footer">
-          <p>Ctrl+Enter to send</p>
+          <p>Enter to send, Shift+Enter for new line</p>
           <button type="submit" class="send-btn" :disabled="!canSend">
             {{ isLoading ? 'Thinking...' : 'Send' }}
           </button>
@@ -231,6 +231,19 @@ async function submitQuestion() {
     isLoading.value = false
     await scrollToBottom()
   }
+}
+
+function handleComposerKeydown(event) {
+  if (event.key !== 'Enter') {
+    return
+  }
+
+  if (event.shiftKey || event.isComposing) {
+    return
+  }
+
+  event.preventDefault()
+  void submitQuestion()
 }
 
 function formatNotebookLabel(notebook) {
