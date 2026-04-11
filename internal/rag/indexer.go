@@ -69,7 +69,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 		if !shouldReindex && vi.config.RecomputeOnHashMismatch {
 			// Check if source text hash still matches
-			shouldReindex = !vi.doesHashMatch(chunk, chunkHashRefs)
+			shouldReindex = !doesHashMatch(chunk, chunkHashRefs)
 		}
 
 		if shouldReindex {
@@ -119,7 +119,7 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 }
 
 // doesHashMatch checks if a chunk's source text hash matches the prefetched stored hash.
-func (vi *VectorIndexer) doesHashMatch(chunk models.Chunk, chunkHashRefs map[string]string) bool {
+func doesHashMatch(chunk models.Chunk, chunkHashRefs map[string]string) bool {
 	storedHash, ok := chunkHashRefs[chunk.ID]
 	if !ok {
 		return false
