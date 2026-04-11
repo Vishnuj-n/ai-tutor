@@ -22,6 +22,8 @@ import (
 type App struct {
 	ctx               context.Context
 	ragPipeline       *rag.Pipeline
+	embedStore        *rag.EmbeddingStore
+	embedder          *embeddings.OnnxEmbedder
 	scheduler         *scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
@@ -100,10 +102,12 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
+	a.embedder = embedder
 	a.aiReady = embedder != nil && a.aiInitError == ""
 
 	// Initialize retrieval store with vector-first retrieval and lexical fallback
 	embedStore := rag.NewEmbeddingStore(embedder)
+	a.embedStore = embedStore
 
 	// Load chunks for lexical fallback retrieval path.
 	topicIDs, err := db.GetAllTopicIDs()

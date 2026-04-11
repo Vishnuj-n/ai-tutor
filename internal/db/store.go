@@ -54,6 +54,10 @@ func Init(dbPath, vec0DllPath string) error {
 		return err
 	}
 
+	if err := ensureNotebookSchema(); err != nil {
+		return err
+	}
+
 	// Seed initial data
 	if err := seedData(); err != nil {
 		log.Printf("Warning: could not seed data: %v", err)
@@ -136,6 +140,7 @@ func createTables() error {
 		file_path TEXT NOT NULL,
 		file_type TEXT DEFAULT 'pdf',
 		topic_id TEXT,
+		status TEXT DEFAULT 'uploaded',
 		page_count INTEGER,
 		chunk_count INTEGER DEFAULT 0,
 		uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -155,6 +160,41 @@ func createTables() error {
 
 	_, err := conn.Exec(schema)
 	return err
+}
+
+func ensureNotebookSchema() error {
+	rows, err := conn.Query("PRAGMA table_info(notebooks)")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	hasStatus := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+			return scanErr
+		}
+		if name == "status" {
+			hasStatus = true
+			break
+		}
+	}
+
+	if !hasStatus {
+		if _, alterErr := conn.Exec("ALTER TABLE notebooks ADD COLUMN status TEXT DEFAULT 'uploaded'"); alterErr != nil {
+			return alterErr
+		}
+	}
+
+	return rows.Err()
 }
 
 func seedData() error {
@@ -453,15 +493,136 @@ func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int
 	}
 
 	_, err := conn.Exec(`
-		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, page_count)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, id, title, filePath, fileType, topicValue, pageCount)
+		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, status, page_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, id, title, filePath, fileType, topicValue, "uploaded", pageCount)
 	return err
+}
+
+// NotebookParentInput is a parent section row used by notebook ingestion transactions.
+type NotebookParentInput struct {
+	ID         string
+	Heading    string
+	Content    string
+	OrderIndex int
+}
+
+// NotebookChunkInput is a chunk row used by notebook ingestion transactions.
+type NotebookChunkInput struct {
+	ID         string
+	ParentID   string
+	Text       string
+	TokenCount int
+	PageNum    int
+}
+
+// CreateParentSection inserts a parent section row.
+func CreateParentSection(id, topicID, heading string, orderIndex int, content string) error {
+	_, err := conn.Exec(`
+		INSERT INTO parents (id, topic_id, heading, order_index, content_text)
+		VALUES (?, ?, ?, ?, ?)
+	`, id, topicID, heading, orderIndex, content)
+	return err
+}
+
+// CreateChunk inserts a chunk row.
+func CreateChunk(id, topicID, parentID, text string, tokenCount int) error {
+	_, err := conn.Exec(`
+		INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
+		VALUES (?, ?, ?, ?, ?, 0, 0)
+	`, id, topicID, parentID, text, tokenCount)
+	return err
+}
+
+// UpdateNotebookStatus updates the notebook ingestion status.
+func UpdateNotebookStatus(notebookID string, status string) error {
+	_, err := conn.Exec(`
+		UPDATE notebooks
+		SET status = ?
+		WHERE id = ?
+	`, status, notebookID)
+	return err
+}
+
+// IngestNotebookContent performs a transactional relational commit for notebook sections/chunks.
+func IngestNotebookContent(notebookID string, topicID string, parents []NotebookParentInput, chunks []NotebookChunkInput) error {
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+	if topicID == "" {
+		return fmt.Errorf("topic id is required for ingestion")
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.Exec(`
+		UPDATE notebooks
+		SET status = ?, chunk_count = 0
+		WHERE id = ?
+	`, "processing", notebookID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID); err != nil {
+		return err
+	}
+
+	parentPrefix := fmt.Sprintf("nbp_%s_%%", notebookID)
+	chunkPrefix := fmt.Sprintf("nbc_%s_%%", notebookID)
+
+	if _, err := tx.Exec("DELETE FROM chunks WHERE id LIKE ?", chunkPrefix); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM parents WHERE id LIKE ?", parentPrefix); err != nil {
+		return err
+	}
+
+	for _, parent := range parents {
+		if _, err := tx.Exec(`
+			INSERT INTO parents (id, topic_id, heading, order_index, content_text)
+			VALUES (?, ?, ?, ?, ?)
+		`, parent.ID, topicID, parent.Heading, parent.OrderIndex, parent.Content); err != nil {
+			return err
+		}
+	}
+
+	for _, chunk := range chunks {
+		if _, err := tx.Exec(`
+			INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
+			VALUES (?, ?, ?, ?, ?, 0, 0)
+		`, chunk.ID, topicID, chunk.ParentID, chunk.Text, chunk.TokenCount); err != nil {
+			return err
+		}
+
+		linkID := "nb-chunk-" + notebookID + "-" + chunk.ID
+		if _, err := tx.Exec(`
+			INSERT INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
+			VALUES (?, ?, ?, ?)
+		`, linkID, notebookID, chunk.ID, chunk.PageNum); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE notebooks
+		SET chunk_count = ?, status = ?
+		WHERE id = ?
+	`, len(chunks), "chunked", notebookID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
 func GetNotebooks(topicID string) ([]models.Notebook, error) {
-	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), page_count, chunk_count, uploaded_at FROM notebooks"
+	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), page_count, chunk_count, uploaded_at FROM notebooks"
 	args := []interface{}{}
 
 	if topicID != "" {
@@ -481,7 +642,7 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 	var notebooks []models.Notebook
 	for rows.Next() {
 		var nb models.Notebook
-		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt); err != nil {
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt); err != nil {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
@@ -493,10 +654,10 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
 	err := conn.QueryRow(`
-		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), page_count, chunk_count, uploaded_at
+		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), page_count, chunk_count, uploaded_at
 		FROM notebooks
 		WHERE id = ?
-	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
+	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil

@@ -10,6 +10,16 @@
       "source": "tw93/Waza",
       "sourceType": "github",
       "computedHash": "931b07dd71fa1484a88251d7694f0053880cd683d06c7fdabdcbf06eafed5890"
+    },
+    "think": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "computedHash": "db0c712bd25eb4a9b5656df1211caafe692e93935a071ff3c8307004e357941e"
+    },
+    "write": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "computedHash": "b929f140350eaf98df74f446f15d89b00b115356397bf1690599bcdcf3629315"
     }
   }
 }

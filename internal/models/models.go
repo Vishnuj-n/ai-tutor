@@ -46,6 +46,7 @@ type Notebook struct {
 	FilePath   string `json:"file_path"`
 	FileType   string `json:"file_type"` // "pdf", "txt", "md"
 	TopicID    string `json:"topic_id,omitempty"`
+	Status     string `json:"status"`
 	UploadedAt string `json:"uploaded_at"`
 	PageCount  int    `json:"page_count,omitempty"`
 	ChunkCount int    `json:"chunk_count"`

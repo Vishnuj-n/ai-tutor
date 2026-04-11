@@ -36,6 +36,7 @@
         <div v-if="uploadProgress > 0 && uploadProgress < 100" class="progress">
           <div class="progress-bar" :style="{ width: uploadProgress + '%' }"></div>
           <span>{{ uploadProgress }}%</span>
+          <p v-if="ingestionStatusMessage" class="progress-label">{{ ingestionStatusMessage }}</p>
         </div>
 
         <div v-if="uploadError" class="error-message">
@@ -80,6 +81,7 @@
               <p class="meta">{{ notebook.file_type.toUpperCase() }}</p>
               <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
               <p class="meta">{{ notebook.chunk_count }} chunks</p>
+              <p class="meta">Status: {{ formatStatus(notebook.status) }}</p>
               <p v-if="notebook.chunk_count === 0" class="meta pending-index">
                 Not indexed for RAG yet
               </p>
@@ -108,13 +110,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import {
   getAvailableTopics,
   getNotebooks as fetchNotebooks,
   uploadNotebook as apiUploadNotebook,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
+import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
 
 const fileInput = ref(null)
 const isDragging = ref(false)
@@ -125,12 +128,42 @@ const selectedTopic = ref('')
 const notebooks = ref([])
 const availableTopics = ref([])
 const loading = ref(false)
+const ingestionStatusMessage = ref('')
+const ingestionNotebookID = ref('')
 
 onMounted(async () => {
+  EventsOn('ingestion-progress', handleIngestionProgress)
+
   // Load available topics and notebooks
   await loadTopics()
   await loadNotebooks()
 })
+
+onUnmounted(() => {
+  EventsOff('ingestion-progress')
+})
+
+function handleIngestionProgress(payload) {
+  if (!payload) {
+    return
+  }
+
+  if (!ingestionNotebookID.value && payload.notebook_id) {
+    ingestionNotebookID.value = payload.notebook_id
+  }
+
+  if (ingestionNotebookID.value && payload.notebook_id && payload.notebook_id !== ingestionNotebookID.value) {
+    return
+  }
+
+  if (typeof payload.percent === 'number') {
+    uploadProgress.value = payload.percent
+  }
+
+  if (payload.message) {
+    ingestionStatusMessage.value = payload.message
+  }
+}
 
 async function loadTopics() {
   try {
@@ -185,6 +218,8 @@ function handleFileDrop(event) {
 async function uploadFile(file) {
   uploadError.value = ''
   uploadSuccess.value = false
+  ingestionStatusMessage.value = ''
+  ingestionNotebookID.value = ''
   uploadProgress.value = 10
 
   // Validate file type
@@ -212,6 +247,14 @@ async function uploadFile(file) {
       throw new Error(result.error)
     }
 
+    if (result?.status === 'indexed') {
+      ingestionStatusMessage.value = 'Vector indexing complete'
+    } else if (result?.status === 'partial_indexed') {
+      ingestionStatusMessage.value = 'Vector indexing completed with partial failures'
+    } else if (result?.status === 'chunked') {
+      ingestionStatusMessage.value = 'Chunking complete'
+    }
+
     uploadProgress.value = 100
     uploadSuccess.value = true
     selectedTopic.value = ''
@@ -220,6 +263,8 @@ async function uploadFile(file) {
     setTimeout(() => {
       uploadProgress.value = 0
       uploadSuccess.value = false
+      ingestionStatusMessage.value = ''
+      ingestionNotebookID.value = ''
       fileInput.value.value = ''
       void loadNotebooks()
     }, 2000)
@@ -268,6 +313,13 @@ function getFileIcon(fileType) {
 function getTopicTitle(topicId) {
   const topic = availableTopics.value.find((t) => t.id === topicId)
   return topic ? topic.title : 'No topic'
+}
+
+function formatStatus(status) {
+  if (!status) {
+    return 'uploaded'
+  }
+  return status.replaceAll('_', ' ')
 }
 
 function formatDate(dateString) {
@@ -397,6 +449,13 @@ function formatDate(dateString) {
   color: var(--muted-text);
   margin-top: 8px;
   text-align: center;
+}
+
+.progress-label {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-text);
 }
 
 .error-message {
