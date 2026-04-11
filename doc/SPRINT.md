@@ -1,3 +1,132 @@
+# SPRINT.md — AI Tutor
+
+## Current State
+
+**Sprints 1–3: Complete.**
+
+Delivered the UI shell (all pages navigable), Ask AI in the Reader (RAG-based retrieval + LLM), and Socratic tutor mode (guided follow-up questions instead of direct answers). Backend uses SQLite, lexical retrieval, and OpenAI-compatible LLM calls. Frontend wires results via Wails bindings. No LangChain, no chat memory, no over-engineering.
+
+PR size: ~6900 lines across backend/frontend/database because the work spans SQLite schema, embeddings, RAG pipeline, UI pages, and Wails bindings for each feature. UI page like Socratic.vue runs 535 lines on its own (multi-section state, styling, API calls). Normal for full-stack without scaffolding tools.
+
+---
+
+# Sprint 4 — Quiz Generation
+
+## Goal
+
+Generate quiz questions from reading material and score answers.
+
+## Core Work
+
+1. **Generate questions from content**
+   - Receive topic ID from frontend
+   - LLM reads section and creates multiple-choice questions linked to specific passages
+   - Store in SQLite with source references
+
+2. **Score answers**
+   - Backend scores user response against key
+   - Return numeric score, explanation, and hint for wrong answers
+   - Use LLM for open-ended questions where a rubric doesn't fit
+
+3. **Quiz page UI**
+   - Display one question per screen
+   - Show feedback immediately
+   - User advances manually (no auto-progress)
+
+## Backend API
+
+- `GenerateQuiz(topicID string) []Question` – returns generated questions with answer keys
+- `ScoreAnswer(questionID, userAnswer string) Score` – returns score and feedback
+- SQLite: `questions`, `user_answers` tables
+
+## Dependencies
+
+- Reuse existing content from Reader (no change)
+- Reuse existing LLM provider (extend it)
+- No FSRS yet; just store attempts
+
+## Definition of Done
+
+- Quiz page displays questions without crashing
+- Answers score correctly  
+- Wrong answers include a hint
+- App handles network failure gracefully
+
+---
+
+# Sprint 5 — FSRS Scheduler + Flashcards + Progress
+
+## Goal
+
+Schedule flashcard reviews using FSRS and show learning progress.
+
+## Core Work
+
+1. **FSRS algorithm**
+   - Implement FSRS (or integrate proven library) in Go
+   - Calculate next review date based on answer quality
+   - Store review history in SQLite
+
+2. **Flashcards page**
+   - Show cards due for review today
+   - User marks each as easy/good/hard
+   - App calculates next review and moves to next card
+   - Display running stats (cards learned, cards in learning, new cards)
+
+3. **Progress dashboard**
+   - Total cards reviewed
+   - Cards mastered
+   - Review calendar for next 30 days
+   - Streak (optional)
+
+4. **Data model**
+   - Link quiz answers to FSRS state
+   - Track intervals and difficulty of each card
+   - Persist all review history
+
+## Backend API
+
+- `GetFlashcards(dueOnly bool) []Card` – returns cards with next review dates
+- `RecordReview(cardID string, quality int) Card` – updates FSRS state and returns next card
+- `GetProgress() Progress` – returns metrics
+- SQLite: `flashcards`, `review_history`, `card_state` tables
+
+## Workflow
+
+1. User answers quiz → stored in `user_answers`
+2. First quiz answer creates flashcard entry in `card_state` (new)
+3. User reviews on Flashcards page, marks easy/good/hard
+4. Backend recalculates interval, updates `review_history` and `card_state`
+5. Dashboard pulls from `card_state` for progress counts
+
+## Dependencies
+
+- Quiz scores feed into cards (no quiz changes needed)
+- Reader unchanged
+- Ask AI unchanged
+
+## Definition of Done
+
+- Flashcards page shows due cards
+- FSRS calculation works (mark easy/good/hard)
+- Next review date updates correctly
+- Dashboard shows progress
+- Data persists across sessions
+
+---
+
+## Architecture Rules
+
+Across all sprints:
+
+- No LangChain, no complex orchestration
+- LLM calls are direct HTTP (OpenAI-compatible API)
+- Business logic lives in Go; UI wires the results
+- One request in, one response out
+- Repository pattern for all SQLite access
+- Pointers only when modifying data
+- Avoid unnecessary interfaces
+- No premature optimization
 # SPRINT.md — AI Tutor (Sprint 1 → Sprint 3)
 
 ## Goal (Overall)
