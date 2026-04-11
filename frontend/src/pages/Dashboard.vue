@@ -7,7 +7,10 @@
 
     <div class="hero">
       <h1>Good Morning.</h1>
-      <p>Your plan today is <strong>{{ plan.totalMinutes }}</strong> minutes with a balanced learning loop.</p>
+      <p>
+        Your plan today is <strong>{{ plan.totalMinutes }}</strong> minutes with a balanced learning
+        loop.
+      </p>
     </div>
 
     <div class="grid-top">
@@ -24,7 +27,9 @@
         <template v-else-if="currentTask">
           <h2>{{ currentTask.title }}</h2>
           <p class="muted">{{ currentTask.meta || defaultTaskMeta(currentTask) }}</p>
-          <button type="button" class="primary-btn" @click="startTask(currentTask)">Start Session</button>
+          <button type="button" class="primary-btn" @click="startTask(currentTask)">
+            Start Session
+          </button>
         </template>
         <template v-else>
           <h2>No tasks for now</h2>
@@ -60,7 +65,7 @@
 
       <article class="card list-card">
         <h3>Curated Focus</h3>
-        <div class="focus-item" v-for="item in focusItems" :key="item.id">
+        <div v-for="item in focusItems" :key="item.id" class="focus-item">
           <div class="dot"></div>
           <div>
             <p class="focus-title">{{ item.title }}</p>
@@ -321,7 +326,9 @@ function startTask(task) {
   padding: 10px 12px;
   border-radius: 14px;
   background: var(--surface-container-low);
-  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .focus-item:hover {

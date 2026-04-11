@@ -1,7 +1,3 @@
 {
-  "gopls": {
-    "buildFlags": [
-      "-tags=tokenizers"
-    ]
-  }
+  "go.buildTags": "tokenizers"
 }

@@ -1,0 +1,11 @@
+# Ignore artifacts:
+dist
+build
+wailsjs
+
+# Ignore all .md files:
+*.md
+
+# Ignore node_modules
+node_modules
+.yarn

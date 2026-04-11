@@ -11,22 +11,22 @@
         <div class="upload-icon">📄</div>
         <h3>Upload Document</h3>
         <p>Drag and drop or click to select PDF, TXT, or MD files</p>
-        
+
         <input
-          type="file"
           ref="fileInput"
-          @change="handleFileSelect"
+          type="file"
           accept=".pdf,.txt,.md"
           style="display: none"
+          @change="handleFileSelect"
         />
-        
+
         <div
           class="drop-zone"
+          :class="{ dragging: isDragging }"
           @click="triggerFilePicker"
           @dragover.prevent="isDragging = true"
           @dragleave.prevent="isDragging = false"
           @drop.prevent="handleFileDrop"
-          :class="{ dragging: isDragging }"
         >
           <p class="drop-title">Drop files here</p>
           <button type="button" class="upload-cta">Choose File</button>
@@ -42,9 +42,7 @@
           {{ uploadError }}
         </div>
 
-        <div v-if="uploadSuccess" class="success-message">
-          ✓ Upload successful!
-        </div>
+        <div v-if="uploadSuccess" class="success-message">✓ Upload successful!</div>
       </div>
 
       <!-- Topic Selection -->
@@ -63,9 +61,9 @@
     <!-- Notebooks List -->
     <div class="notebooks-list">
       <h2>Your Notebooks</h2>
-      
+
       <div v-if="loading" class="loading">Loading notebooks...</div>
-      
+
       <div v-if="!loading && notebooks.length === 0" class="empty-state">
         <p>No notebooks yet. Upload your first document above!</p>
       </div>
@@ -77,23 +75,21 @@
             <div class="notebook-info">
               <h3>{{ notebook.title }}</h3>
               <p class="meta">{{ notebook.file_type.toUpperCase() }}</p>
-              <p class="meta" v-if="notebook.page_count > 0">{{ notebook.page_count }} pages</p>
+              <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
               <p class="meta">{{ notebook.chunk_count }} chunks</p>
             </div>
           </div>
 
-          <div class="notebook-topic" v-if="notebook.topic_id">
+          <div v-if="notebook.topic_id" class="notebook-topic">
             <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
           </div>
 
-          <div class="notebook-date">
-            Uploaded: {{ formatDate(notebook.uploaded_at) }}
-          </div>
+          <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
 
           <div class="notebook-actions">
-            <button @click="viewNotebook(notebook.id)" class="btn-view">View</button>
-            <button @click="downloadNotebook(notebook.id)" class="btn-download">Download</button>
-            <button @click="deleteNotebook(notebook.id)" class="btn-delete">Delete</button>
+            <button class="btn-view" @click="viewNotebook(notebook.id)">View</button>
+            <button class="btn-download" @click="downloadNotebook(notebook.id)">Download</button>
+            <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
           </div>
         </div>
       </div>
@@ -196,11 +192,7 @@ async function uploadFile(file) {
     const bytes = new Uint8Array(arrayBuffer)
     uploadProgress.value = 50
 
-    const result = await apiUploadNotebook(
-      Array.from(bytes),
-      file.name,
-      selectedTopic.value,
-    )
+    const result = await apiUploadNotebook(Array.from(bytes), file.name, selectedTopic.value)
     if (result?.error) {
       throw new Error(result.error)
     }
@@ -208,7 +200,7 @@ async function uploadFile(file) {
     uploadProgress.value = 100
     uploadSuccess.value = true
     selectedTopic.value = ''
-    
+
     // Reset after 2 seconds
     setTimeout(() => {
       uploadProgress.value = 0
@@ -253,13 +245,13 @@ function getFileIcon(fileType) {
   const icons = {
     pdf: '📕',
     txt: '📄',
-    md: '📝'
+    md: '📝',
   }
   return icons[fileType] || '📄'
 }
 
 function getTopicTitle(topicId) {
-  const topic = availableTopics.value.find(t => t.id === topicId)
+  const topic = availableTopics.value.find((t) => t.id === topicId)
   return topic ? topic.title : 'Unknown'
 }
 
@@ -532,7 +524,9 @@ function formatDate(dateString) {
   gap: 8px;
 }
 
-.btn-view, .btn-download, .btn-delete {
+.btn-view,
+.btn-download,
+.btn-delete {
   flex: 1;
   padding: 8px 12px;
   border: none;
