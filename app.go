@@ -26,6 +26,7 @@ type App struct {
 	ragPipeline       *rag.Pipeline
 	embedStore        *rag.EmbeddingStore
 	embedder          *embeddings.OnnxEmbedder
+	llmProvider       *llm.Provider
 	scheduler         *scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
@@ -134,6 +135,7 @@ func (a *App) startup(ctx context.Context) {
 	llmConfig := llm.LoadConfigFromEnv()
 
 	llmProvider := llm.NewProvider(llmConfig)
+	a.llmProvider = llmProvider
 
 	// Create RAG pipeline
 	a.ragPipeline = rag.NewPipeline(embedStore, llmProvider)

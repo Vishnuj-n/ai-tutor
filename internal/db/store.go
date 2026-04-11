@@ -516,6 +516,13 @@ type NotebookChunkInput struct {
 	PageNum    int
 }
 
+// NotebookTopicIngestionGroup contains topic-scoped parent/chunk rows for one notebook ingestion run.
+type NotebookTopicIngestionGroup struct {
+	TopicID string
+	Parents []NotebookParentInput
+	Chunks  []NotebookChunkInput
+}
+
 // CreateParentSection inserts a parent section row.
 func CreateParentSection(id, topicID, heading string, orderIndex int, content string) error {
 	_, err := conn.Exec(`
@@ -541,6 +548,23 @@ func UpdateNotebookStatus(notebookID string, status string) error {
 		SET status = ?
 		WHERE id = ?
 	`, status, notebookID)
+	return err
+}
+
+// EnsureTopic inserts a topic if it does not already exist.
+func EnsureTopic(topicID, title string) error {
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if title == "" {
+		title = topicID
+	}
+
+	_, err := conn.Exec(`
+		INSERT INTO topics (id, title, status)
+		VALUES (?, ?, 'reading')
+		ON CONFLICT(id) DO UPDATE SET title = excluded.title
+	`, topicID, title)
 	return err
 }
 
@@ -614,6 +638,91 @@ func IngestNotebookContent(notebookID string, topicID string, parents []Notebook
 		SET chunk_count = ?, status = ?
 		WHERE id = ?
 	`, len(chunks), "chunked", notebookID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// IngestNotebookContentByTopic ingests notebook content into multiple topic buckets in one transaction.
+func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicIngestionGroup) error {
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+	if len(groups) == 0 {
+		return fmt.Errorf("at least one topic group is required")
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.Exec(`
+		UPDATE notebooks
+		SET status = ?, chunk_count = 0, topic_id = NULL
+		WHERE id = ?
+	`, "processing", notebookID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID); err != nil {
+		return err
+	}
+
+	parentPrefix := fmt.Sprintf("nbp_%s_%%", notebookID)
+	chunkPrefix := fmt.Sprintf("nbc_%s_%%", notebookID)
+
+	if _, err := tx.Exec("DELETE FROM chunks WHERE id LIKE ?", chunkPrefix); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM parents WHERE id LIKE ?", parentPrefix); err != nil {
+		return err
+	}
+
+	totalChunks := 0
+	for _, group := range groups {
+		if group.TopicID == "" {
+			return fmt.Errorf("topic id is required for each ingestion group")
+		}
+
+		for _, parent := range group.Parents {
+			if _, err := tx.Exec(`
+				INSERT INTO parents (id, topic_id, heading, order_index, content_text)
+				VALUES (?, ?, ?, ?, ?)
+			`, parent.ID, group.TopicID, parent.Heading, parent.OrderIndex, parent.Content); err != nil {
+				return err
+			}
+		}
+
+		for _, chunk := range group.Chunks {
+			if _, err := tx.Exec(`
+				INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
+				VALUES (?, ?, ?, ?, ?, 0, 0)
+			`, chunk.ID, group.TopicID, chunk.ParentID, chunk.Text, chunk.TokenCount); err != nil {
+				return err
+			}
+
+			linkID := "nb-chunk-" + notebookID + "-" + chunk.ID
+			if _, err := tx.Exec(`
+				INSERT INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
+				VALUES (?, ?, ?, ?)
+			`, linkID, notebookID, chunk.ID, chunk.PageNum); err != nil {
+				return err
+			}
+
+			totalChunks++
+		}
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE notebooks
+		SET chunk_count = ?, status = ?
+		WHERE id = ?
+	`, totalChunks, "chunked", notebookID); err != nil {
 		return err
 	}
 

@@ -45,21 +45,6 @@
 
         <div v-if="uploadSuccess" class="success-message">✓ Upload successful!</div>
       </div>
-
-      <!-- Topic Selection -->
-      <div class="topic-selection">
-        <label>Link to Topic (Optional)</label>
-        <select v-model="selectedTopic">
-          <option value="">No topic</option>
-          <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
-            {{ topic.title }}
-          </option>
-        </select>
-        <p v-if="availableTopics.length === 0" class="topic-warning">
-          No topics found in the database. Uploads will be saved without RAG topic linking.
-        </p>
-        <p class="help-text">Linking creates chunks and adds to RAG for Q&A</p>
-      </div>
     </div>
 
     <!-- Notebooks List -->
@@ -124,7 +109,6 @@ const isDragging = ref(false)
 const uploadProgress = ref(0)
 const uploadError = ref('')
 const uploadSuccess = ref(false)
-const selectedTopic = ref('')
 const notebooks = ref([])
 const availableTopics = ref([])
 const loading = ref(false)
@@ -242,7 +226,7 @@ async function uploadFile(file) {
     const bytes = new Uint8Array(arrayBuffer)
     uploadProgress.value = 50
 
-    const result = await apiUploadNotebook(Array.from(bytes), file.name, selectedTopic.value)
+    const result = await apiUploadNotebook(Array.from(bytes), file.name)
     if (result?.error) {
       throw new Error(result.error)
     }
@@ -257,8 +241,6 @@ async function uploadFile(file) {
 
     uploadProgress.value = 100
     uploadSuccess.value = true
-    selectedTopic.value = ''
-
     // Reset after 2 seconds
     setTimeout(() => {
       uploadProgress.value = 0
@@ -352,9 +334,7 @@ function formatDate(dateString) {
 }
 
 .upload-section {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 24px;
+  display: block;
   margin-bottom: 48px;
 }
 
@@ -474,43 +454,6 @@ function formatDate(dateString) {
   color: #2e7d32;
   border-radius: 6px;
   font-size: 14px;
-}
-
-.topic-selection {
-  background: var(--surface-container);
-  border-radius: 12px;
-  padding: 24px;
-  border: 1px solid rgba(45, 51, 56, 0.16);
-}
-
-.topic-selection label {
-  display: block;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--on-surface);
-}
-
-.topic-selection select {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid rgba(45, 51, 56, 0.2);
-  border-radius: 6px;
-  background: var(--surface-container-lowest);
-  color: var(--on-surface);
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-
-.topic-warning {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: #b1532a;
-}
-
-.help-text {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted-text);
 }
 
 .notebooks-list {
@@ -653,10 +596,6 @@ function formatDate(dateString) {
 }
 
 @media (max-width: 768px) {
-  .upload-section {
-    grid-template-columns: 1fr;
-  }
-
   .notebook-grid {
     grid-template-columns: 1fr;
   }
