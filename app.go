@@ -93,7 +93,12 @@ func (a *App) startup(ctx context.Context) {
 	if err != nil {
 		a.aiInitError = err.Error()
 		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
+		a.aiReady = false
 	} else {
+		a.aiReady = true
+		a.aiInitError = ""
+		a.embedder = embedder
+
 		if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
 			fmt.Printf("Warning: could not initialize vector table; Ask AI will use lexical fallback: %v\n", err)
 		} else {
@@ -101,14 +106,17 @@ func (a *App) startup(ctx context.Context) {
 				RecomputeOnHashMismatch: true,
 				ForceReindex:            false,
 			})
-			if err := indexer.IndexAllTopics(); err != nil {
-				fmt.Printf("Warning: vector indexing failed: %v\n", err)
-			}
+			go func() {
+				if err := indexer.IndexAllTopics(); err != nil {
+					fmt.Printf("Warning: vector indexing failed: %v\n", err)
+				}
+			}()
 		}
 	}
 
-	a.embedder = embedder
-	a.aiReady = embedder != nil
+	if a.embedder == nil {
+		a.embedder = embedder
+	}
 
 	// Initialize retrieval store with vector-first retrieval and lexical fallback
 	embedStore := rag.NewEmbeddingStore(embedder)

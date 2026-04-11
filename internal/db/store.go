@@ -18,9 +18,26 @@ import (
 var conn *sql.DB
 var embeddingDimension int32 = 0 // Will be set during DB initialization with vec0
 
+// Close releases the active SQLite connection.
+func Close() error {
+	if conn == nil {
+		return nil
+	}
+	err := conn.Close()
+	conn = nil
+	return err
+}
+
 // Init initializes the SQLite database and creates tables
 // vec0DllPath should be the absolute path to vec0.dll (sqlite-vec extension)
 func Init(dbPath, vec0DllPath string) error {
+	if conn != nil {
+		if err := conn.Close(); err != nil {
+			return fmt.Errorf("failed to close previous database connection: %w", err)
+		}
+		conn = nil
+	}
+
 	var err error
 	conn, err = sql.Open("sqlite3", dbPath)
 	if err != nil {

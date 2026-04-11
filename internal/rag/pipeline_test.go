@@ -15,6 +15,11 @@ func initRagTestDB(t *testing.T) {
 	if err := db.Init(tempDB, ""); err != nil {
 		t.Fatalf("failed to init rag test db: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("failed to close rag test db: %v", err)
+		}
+	})
 }
 
 func TestBuildContextParentOrderIsDeterministic(t *testing.T) {

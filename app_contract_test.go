@@ -18,6 +18,11 @@ func initTestDB(t *testing.T) {
 	if err := db.Init(tempDB, ""); err != nil {
 		t.Fatalf("failed to init test db: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("failed to close test db: %v", err)
+		}
+	})
 }
 
 func initTestPipeline(t *testing.T) *rag.Pipeline {
