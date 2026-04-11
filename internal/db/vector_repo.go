@@ -8,11 +8,6 @@ import (
 	"strings"
 )
 
-const (
-	vec0ErrSubstr         = "vec0"
-	chunkVectorsErrSubstr = "chunk_vectors"
-)
-
 func upsertChunkVectorRepo(chunkID string, vector []float32) error {
 	if len(vector) != int(embeddingDimension) {
 		return fmt.Errorf("vector dimension mismatch: got %d, expected %d", len(vector), embeddingDimension)
@@ -131,6 +126,19 @@ func lookupChunkRowIDRepo(chunkID string) (int64, error) {
 }
 
 func isVectorUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
 	errText := strings.ToLower(err.Error())
-	return strings.Contains(errText, vec0ErrSubstr) || strings.Contains(errText, chunkVectorsErrSubstr)
+	switch {
+	case strings.Contains(errText, "no such module: vec0"):
+		return true
+	case strings.Contains(errText, "no such table: chunk_vectors"):
+		return true
+	case strings.Contains(errText, "no such function: distance"):
+		return true
+	default:
+		return false
+	}
 }

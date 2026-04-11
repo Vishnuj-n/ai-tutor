@@ -52,6 +52,14 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 	log.Printf("Indexing %d chunks for topic %s", len(chunks), topicID)
 
+	chunkHashRefs := map[string]string{}
+	if vi.config.RecomputeOnHashMismatch && !vi.config.ForceReindex {
+		chunkHashRefs, err = db.GetChunkEmbeddingRefsForTopic(topicID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch embedding refs for topic %s: %w", topicID, err)
+		}
+	}
+
 	// Index each chunk
 	reindexed := 0
 	skipped := 0
@@ -61,13 +69,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 		if !shouldReindex && vi.config.RecomputeOnHashMismatch {
 			// Check if source text hash still matches
-			matches, err := vi.doesHashMatch(chunk)
-			if err != nil {
-				log.Printf("Warning: hash check failed for chunk %s: %v", chunk.ID, err)
-				shouldReindex = true // Recompute on error to be safe
-			} else {
-				shouldReindex = !matches
-			}
+			shouldReindex = !vi.doesHashMatch(chunk, chunkHashRefs)
 		}
 
 		if shouldReindex {
@@ -116,18 +118,18 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 	return nil
 }
 
-// doesHashMatch checks if a chunk's source text hash matches the stored hash.
-func (vi *VectorIndexer) doesHashMatch(chunk models.Chunk) (bool, error) {
-	storedHash, err := db.GetChunkEmbeddingRef(chunk.ID)
-	if err != nil {
-		return false, err
+// doesHashMatch checks if a chunk's source text hash matches the prefetched stored hash.
+func (vi *VectorIndexer) doesHashMatch(chunk models.Chunk, chunkHashRefs map[string]string) bool {
+	storedHash, ok := chunkHashRefs[chunk.ID]
+	if !ok {
+		return false
 	}
 	if storedHash == "" {
-		return false, nil
+		return false
 	}
 
 	currentHash := computeTextHash(chunk.Text)
-	return storedHash == currentHash, nil
+	return storedHash == currentHash
 }
 
 // computeTextHash computes MD5 hash of text for change detection.

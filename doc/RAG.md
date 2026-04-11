@@ -165,7 +165,7 @@ Prompt payload should include:
 Embedding metadata requirements (ingestion-time):
 
 - Persist `topic_id`, `parent_id`, and `chunk_id` in SQLite chunk rows.
-- Persist vectors in `sqlite-vec` using the same `chunk_id` key.
+- Persist vectors in sqlite-vec by integer SQLite rowid, resolved from relational chunk_id.
 - Keep metadata minimal but sufficient for fast topic-filtered retrieval.
 
 Prompt rules:

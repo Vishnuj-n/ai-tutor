@@ -151,10 +151,10 @@ func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) (string
 		trimmedRunes := utf8.RuneCountInString(trimmed)
 
 		if trimmedRunes == originalRunes || float64(trimmedRunes)/float64(originalRunes) >= minUsedSectionRatio {
+			sectionText += trimmed
 			usedParentIDs = append(usedParentIDs, parentID)
 		}
 
-		sectionText += trimmed
 		if utf8.RuneCountInString(sectionText) >= maxContextRunes {
 			break
 		}
