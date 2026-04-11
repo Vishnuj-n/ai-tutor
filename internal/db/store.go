@@ -808,6 +808,10 @@ func GetAllTopicIDs() ([]string, error) {
 		topicIDs = append(topicIDs, topicID)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return topicIDs, nil
 }
 
@@ -849,4 +853,49 @@ func UpdateChunkEmbedding(chunkID string, hash string) error {
 		UPDATE chunks SET embedding_ref = ? WHERE id = ?
 	`, hash, chunkID)
 	return err
+}
+
+// GetChunkEmbeddingRef returns the stored embedding_ref hash for a topic-scoped chunk.
+func GetChunkEmbeddingRef(topicID, chunkID string) (string, error) {
+	var hash string
+	if err := conn.QueryRow(`
+		SELECT COALESCE(embedding_ref, '') FROM chunks WHERE id = ? AND topic_id = ?
+	`, chunkID, topicID).Scan(&hash); err != nil {
+		return "", err
+	}
+
+	return hash, nil
+}
+
+// GetChunkEmbeddingRefsForTopic returns embedding_ref values for all chunks in a topic.
+func GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {
+	rows, err := conn.Query(`
+		SELECT id, COALESCE(embedding_ref, '')
+		FROM chunks
+		WHERE topic_id = ?
+	`, topicID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close chunk embedding refs rows: %v", closeErr)
+		}
+	}()
+
+	refs := make(map[string]string)
+	for rows.Next() {
+		var chunkID string
+		var hash string
+		if err := rows.Scan(&chunkID, &hash); err != nil {
+			return nil, err
+		}
+		refs[chunkID] = hash
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return refs, nil
 }

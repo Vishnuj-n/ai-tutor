@@ -11,8 +11,15 @@ module.exports = {
   env: {
     browser: true,
     es2021: true,
-    node: true,
   },
+  overrides: [
+    {
+      files: ['*.cjs'],
+      env: {
+        node: true,
+      },
+    },
+  ],
   rules: {
     'vue/multi-word-component-names': 'off',
     'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],

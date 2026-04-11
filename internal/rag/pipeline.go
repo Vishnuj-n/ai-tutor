@@ -8,6 +8,11 @@ import (
 	"ai-tutor/internal/llm"
 )
 
+const (
+	maxPromptTokens     = 3000
+	minUsedSectionRatio = 0.5
+)
+
 // Pipeline orchestrates retrieval and generation
 type Pipeline struct {
 	embedStore *EmbeddingStore
@@ -76,10 +81,10 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 		topicTitle = "Topic"
 	}
 
-	prompt := buildPrompt(
+	prompt, promptParentIDs := buildPrompt(
 		topicTitle,
 		userQuestion,
-		ctx,
+		*ctx,
 	)
 
 	// Step 7: Call LLM
@@ -89,8 +94,8 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	}
 
 	// Step 8: Build response with citations in deterministic parent order.
-	citedHeadings := make([]string, 0, len(ctx.ParentIDs))
-	for _, parentID := range ctx.ParentIDs {
+	citedHeadings := make([]string, 0, len(promptParentIDs))
+	for _, parentID := range promptParentIDs {
 		section, ok := ctx.Sections[parentID]
 		if !ok {
 			continue
@@ -111,7 +116,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 		CitedSections:   citedHeadings,
 		TopicID:         topicID,
 		ChunksRetrieved: ctx.ChunkHits,
-		SectionsUsed:    len(ctx.Sections),
+		SectionsUsed:    len(promptParentIDs),
 	}
 
 	if len(results) > 0 {
@@ -121,22 +126,47 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	return result, nil
 }
 
-func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) string {
-	const maxContextChars = 6000
-
+func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string, []string) {
 	sectionText := ""
+	usedParentIDs := make([]string, 0, len(ctx.ParentIDs))
 	for _, parentID := range ctx.ParentIDs {
 		section, ok := ctx.Sections[parentID]
 		if !ok {
 			continue
 		}
-		sectionText += section + "\n\n"
-		if len(sectionText) >= maxContextChars {
-			sectionText = sectionText[:maxContextChars]
+
+		candidate := section + "\n\n"
+		candidatePrompt := formatPrompt(topicTitle, sectionText+candidate, userQuestion)
+		if countPromptTokens(candidatePrompt) <= maxPromptTokens {
+			sectionText += candidate
+			usedParentIDs = append(usedParentIDs, parentID)
+			continue
+		}
+
+		trimmed := trimToTokenBudget(topicTitle, userQuestion, sectionText, candidate, maxPromptTokens)
+		if trimmed == "" {
+			break
+		}
+
+		originalRunes := len([]rune(candidate))
+		trimmedRunes := len([]rune(trimmed))
+
+		if trimmedRunes == originalRunes || float64(trimmedRunes)/float64(originalRunes) >= minUsedSectionRatio {
+			sectionText += trimmed
+			usedParentIDs = append(usedParentIDs, parentID)
+		}
+
+		if countPromptTokens(formatPrompt(topicTitle, sectionText, userQuestion)) >= maxPromptTokens {
 			break
 		}
 	}
 
+	prompt := formatPrompt(topicTitle, sectionText, userQuestion)
+
+	return prompt, usedParentIDs
+}
+
+func formatPrompt(topicTitle, sectionText, userQuestion string) string {
 	return fmt.Sprintf(`You are an AI tutor.
 
 Topic: %s
@@ -153,4 +183,41 @@ Retrieved course material:
 Student's question: %s
 
 Answer:`, topicTitle, sectionText, userQuestion)
+}
+
+func trimToTokenBudget(topicTitle, userQuestion, existingSections, candidate string, tokenLimit int) string {
+	if tokenLimit <= 0 || candidate == "" {
+		return ""
+	}
+
+	runes := []rune(candidate)
+	low := 0
+	high := len(runes)
+	best := 0
+
+	for low <= high {
+		mid := (low + high) / 2
+		trialSections := existingSections + string(runes[:mid])
+		trialPrompt := formatPrompt(topicTitle, trialSections, userQuestion)
+
+		if countPromptTokens(trialPrompt) <= tokenLimit {
+			best = mid
+			low = mid + 1
+			continue
+		}
+
+		high = mid - 1
+	}
+
+	if best <= 0 {
+		return ""
+	}
+
+	return string(runes[:best])
+}
+
+func countPromptTokens(prompt string) int {
+	// Conservative upper bound: byte count is always >= model token count.
+	// Using an upper bound keeps prompt assembly safely within the configured limit.
+	return len([]byte(prompt))
 }

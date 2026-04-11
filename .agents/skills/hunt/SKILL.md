@@ -60,7 +60,7 @@ Add one targeted instrument: a log line, a failing assertion, or the smallest te
 
 ## Outcome
 
-```
+```text
 Root cause:  [what was wrong, file:line]
 Fix:         [what changed, file:line]
 Confirmed:   [evidence or test that proves the fix]

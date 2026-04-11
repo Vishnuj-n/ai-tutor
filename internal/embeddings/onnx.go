@@ -30,8 +30,8 @@ type OnnxEmbedder struct {
 	mu            sync.Mutex
 }
 
-// NewOnnxEmbedder creates a new ONNX embedder from model and tokenizer paths.
-func NewOnnxEmbedder(modelPath, tokenizerPath string) (*OnnxEmbedder, error) {
+// NewOnnxEmbedder creates a new ONNX embedder from model, tokenizer, and runtime paths.
+func NewOnnxEmbedder(modelPath, tokenizerPath, configuredRuntimePath string) (*OnnxEmbedder, error) {
 	log.Printf("Initializing OnnxEmbedder")
 
 	if _, err := os.Stat(tokenizerPath); err != nil {
@@ -55,7 +55,7 @@ func NewOnnxEmbedder(modelPath, tokenizerPath string) (*OnnxEmbedder, error) {
 		}
 	}
 
-	runtimePath, err := resolveRuntimeLibraryPath(modelPath)
+	runtimePath, err := resolveRuntimeLibraryPath(configuredRuntimePath, modelPath)
 	if err != nil {
 		return nil, err
 	}
@@ -256,17 +256,14 @@ func (e *OnnxEmbedder) tokenize(text string) ([]int64, []int64, []int64, error) 
 		}
 	}
 
-	if len(ids) > e.maxSeqLen {
-		ids = ids[:e.maxSeqLen]
-		mask = mask[:e.maxSeqLen]
-		typeIDs = typeIDs[:e.maxSeqLen]
+	targetLen := len(ids)
+	if targetLen > e.maxSeqLen {
+		targetLen = e.maxSeqLen
 	}
 
-	for len(ids) < e.maxSeqLen {
-		ids = append(ids, e.padID)
-		mask = append(mask, 0)
-		typeIDs = append(typeIDs, 0)
-	}
+	ids = ids[:targetLen]
+	mask = mask[:targetLen]
+	typeIDs = typeIDs[:targetLen]
 
 	return ids, mask, typeIDs, nil
 }
@@ -581,7 +578,17 @@ func destroyValues(values []ort.Value) {
 	}
 }
 
-func resolveRuntimeLibraryPath(modelPath string) (string, error) {
+func resolveRuntimeLibraryPath(configuredPath, modelPath string) (string, error) {
+	if configuredPath != "" {
+		if _, err := os.Stat(configuredPath); err == nil {
+			abs, absErr := filepath.Abs(configuredPath)
+			if absErr == nil {
+				return abs, nil
+			}
+			return configuredPath, nil
+		}
+	}
+
 	modelDir := filepath.Dir(modelPath)
 	var candidates []string
 
