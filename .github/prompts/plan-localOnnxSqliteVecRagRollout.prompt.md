@@ -25,19 +25,19 @@ Add tests for: tokenizer+ONNX embedding smoke, sqlite extension load, vector tab
 Ensure Windows build/package includes required native assets (`onnxruntime.dll`, `vec0.dll`) and runtime model/tokenizer files, verify behavior on a clean machine, and document troubleshooting for missing DLL, wrong architecture, or extension-tag build mismatch.
 
 **Relevant files**
-- `c:/Users/vishn/PROJECT/ai-tutor/doc/RAG.md` - source-of-truth pipeline contract and runtime constraints to implement.
-- `c:/Users/vishn/PROJECT/ai-tutor/app.go` - startup composition, dependency wiring, current hardcoded indexing bootstrap.
-- `c:/Users/vishn/PROJECT/ai-tutor/internal/rag/pipeline.go` - retrieval orchestration order, heuristic hook, parent expansion integration.
-- `c:/Users/vishn/PROJECT/ai-tutor/internal/rag/embeddings.go` - current lexical retrieval path to replace with vector DB-backed search.
-- `c:/Users/vishn/PROJECT/ai-tutor/internal/db/store.go` - DB init, schema creation, extension loading, vector search helper insertion points.
-- `c:/Users/vishn/PROJECT/ai-tutor/internal/llm/provider.go` - keep stateless model call behavior unchanged while swapping retrieval backend.
-- `c:/Users/vishn/PROJECT/ai-tutor/go.mod` - add/lock tokenizer + ONNX runtime dependencies.
-- `c:/Users/vishn/PROJECT/ai-tutor/asset/tokenizer.json` - canonical tokenizer rules for chunk/query embedding consistency.
-- `c:/Users/vishn/PROJECT/ai-tutor/asset/model_int8.onnx` - local embedding model artifact used by ONNX runtime.
-- `c:/Users/vishn/PROJECT/ai-tutor/asset/onnxruntime.dll` - Windows runtime dependency for ONNX inference.
-- `c:/Users/vishn/PROJECT/ai-tutor/asset/vec0.dll` - sqlite-vec extension binary for vector search.
-- `c:/Users/vishn/PROJECT/ai-tutor/frontend/src/services/appApi.js` - confirm API contract remains stable (no behavioral contract break).
-- `c:/Users/vishn/PROJECT/ai-tutor/frontend/src/pages/Reader.vue` - verify Ask AI flow remains contextual and unchanged.
+- `doc/RAG.md` - source-of-truth pipeline contract and runtime constraints to implement.
+- `app.go` - startup composition, dependency wiring, current hardcoded indexing bootstrap.
+- `internal/rag/pipeline.go` - retrieval orchestration order, heuristic hook, parent expansion integration.
+- `internal/rag/embeddings.go` - current lexical retrieval path to replace with vector DB-backed search.
+- `internal/db/store.go` - DB init, schema creation, extension loading, vector search helper insertion points.
+- `internal/llm/provider.go` - keep stateless model call behavior unchanged while swapping retrieval backend.
+- `go.mod` - add/lock tokenizer + ONNX runtime dependencies.
+- `asset/tokenizer.json` - canonical tokenizer rules for chunk/query embedding consistency.
+- `asset/model_int8.onnx` - local embedding model artifact used by ONNX runtime.
+- `asset/onnxruntime.dll` - Windows runtime dependency for ONNX inference.
+- `asset/vec0.dll` - sqlite-vec extension binary for vector search.
+- `frontend/src/services/appApi.js` - confirm API contract remains stable (no behavioral contract break).
+- `frontend/src/pages/Reader.vue` - verify Ask AI flow remains contextual and unchanged.
 
 **Verification**
 1. Build validation: compile with required CGO and sqlite extension settings and confirm successful startup on Windows.

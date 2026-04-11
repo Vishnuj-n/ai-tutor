@@ -20,7 +20,7 @@ You receive a diff. Return a list of findings only. No prose, no praise, no expl
 
 Return findings as a plain list. For each finding:
 
-```
+```text
 [SEVERITY] file:line -- {what the vulnerability is}
 Mechanism: {how it can be exploited, one sentence}
 Fix: {specific corrective action}

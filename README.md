@@ -87,6 +87,18 @@ Failure rule:
 - Go 1.22+
 - Node.js 20+
 - Wails CLI
+- CGO-capable compiler toolchain
+- Local RAG assets in `asset/`:
+	- `tokenizer.json`
+	- `model_int8.onnx`
+	- `onnxruntime.dll` (Windows) / `libonnxruntime.dylib` (macOS) / `libonnxruntime.so` (Linux)
+	- `vec0.dll` (Windows) / `vec0.dylib` (macOS) / `vec0.so` (Linux)
+
+Run dependency checks before development:
+
+```bash
+./sync-deps.sh
+```
 
 ### Development
 
@@ -100,6 +112,20 @@ wails dev -tags sqlite_extension
 ```bash
 wails build -tags sqlite_extension
 ```
+
+## Local RAG Troubleshooting
+
+- `Ask AI unavailable` on startup:
+	- Run `./sync-deps.sh`
+	- Confirm all required files exist under `asset/`
+- `no such module: vec0`:
+	- Ensure build includes `-tags sqlite_extension`
+	- Ensure platform-specific `vec0` library exists in `asset/`
+- ONNX runtime load failure:
+	- Ensure platform-specific ONNX runtime library exists in `asset/`
+	- Rebuild with `CGO_ENABLED=1`
+- Build fails due to missing C compiler:
+	- Install MSVC Build Tools (Windows) or equivalent platform toolchain
 
 ## Documentation
 

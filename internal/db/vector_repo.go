@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 )
 
 func upsertChunkVectorRepo(chunkID string, vector []float32) error {
@@ -44,6 +45,11 @@ func upsertChunkVectorRepo(chunkID string, vector []float32) error {
 }
 
 func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int) ([]string, error) {
+	if embeddingDimension <= 0 {
+		log.Printf("warning: vector search skipped for topic %s because embedding dimension is not initialized", topicID)
+		return []string{}, nil
+	}
+
 	if len(queryVector) != int(embeddingDimension) {
 		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), embeddingDimension)
 	}
@@ -62,6 +68,11 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int) ([]
 		LIMIT ?
 	`, topicID, queryVectorJSON, k)
 	if err != nil {
+		errText := strings.ToLower(err.Error())
+		if strings.Contains(errText, "vec0") || strings.Contains(errText, "chunk_vectors") {
+			log.Printf("warning: vector search unavailable for topic %s, using lexical fallback: %v", topicID, err)
+			return []string{}, nil
+		}
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
 	defer func() {
@@ -77,6 +88,10 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int) ([]
 			return nil, err
 		}
 		chunkIDs = append(chunkIDs, chunkID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return chunkIDs, nil

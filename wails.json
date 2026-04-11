@@ -5,9 +5,7 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
-  "tags": [
-    "sqlite_extension"
-  ],
+  "build:tags": "sqlite_extension",
   "author": {
     "name": "Vishnu J Narayanan",
     "email": "144352066+Vishnuj-n@users.noreply.github.com"

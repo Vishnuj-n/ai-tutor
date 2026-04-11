@@ -22,12 +22,14 @@ fi
 case $TARGET in
     dev)
         echo "Building AI Tutor (dev, with sqlite extension support)..."
+        mkdir -p "$OUTPUT_DIR"
         go build -tags sqlite_extension -o "$OUTPUT_DIR/$BINARY_NAME" .
         echo "✓ Build complete: $OUTPUT_DIR/$BINARY_NAME"
         ;;
     prod)
         echo "Building AI Tutor with Wails (prod)..."
-        CGO_ENABLED=1 wails build -platform windows/amd64 -o ai-tutor.exe
+        mkdir -p "$OUTPUT_DIR"
+        CGO_ENABLED=1 wails build -tags sqlite_extension -platform windows/amd64 -o "$OUTPUT_DIR/ai-tutor.exe"
         echo "✓ Wails build complete"
         ;;
     clean)
