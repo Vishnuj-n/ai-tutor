@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // AssetValidator checks for required runtime assets (models, tokenizers, extensions).
@@ -21,6 +22,7 @@ func NewAssetValidator(assetDir string) *AssetValidator {
 
 // ValidateAll checks that all required assets exist and are readable.
 func (av *AssetValidator) ValidateAll() error {
+	onnxRuntimeName, vec0Name := runtimeLibraryNames()
 	required := []struct {
 		name     string
 		isFile   bool
@@ -28,8 +30,8 @@ func (av *AssetValidator) ValidateAll() error {
 	}{
 		{"tokenizer.json", true, false},
 		{"model_int8.onnx", true, false},
-		{"onnxruntime.dll", true, false},
-		{"vec0.dll", true, false},
+		{onnxRuntimeName, true, false},
+		{vec0Name, true, false},
 	}
 
 	missing := []string{}
@@ -66,12 +68,14 @@ func (av *AssetValidator) ModelPath() string {
 
 // OnnxRuntimePath returns the full path to onnxruntime.dll.
 func (av *AssetValidator) OnnxRuntimePath() string {
-	return av.GetAssetPath("onnxruntime.dll")
+	onnxRuntimeName, _ := runtimeLibraryNames()
+	return av.GetAssetPath(onnxRuntimeName)
 }
 
 // Vec0DllPath returns the full path to vec0.dll.
 func (av *AssetValidator) Vec0DllPath() string {
-	return av.GetAssetPath("vec0.dll")
+	_, vec0Name := runtimeLibraryNames()
+	return av.GetAssetPath(vec0Name)
 }
 
 // PrepareRuntimeAssets copies runtime DLLs to an app-data subdirectory and returns absolute paths.
@@ -82,7 +86,8 @@ func (av *AssetValidator) PrepareRuntimeAssets(appDir string) (map[string]string
 		return nil, fmt.Errorf("failed to create runtime directory: %w", err)
 	}
 
-	assets := []string{"onnxruntime.dll", "vec0.dll"}
+	onnxRuntimeName, vec0Name := runtimeLibraryNames()
+	assets := []string{onnxRuntimeName, vec0Name}
 	out := make(map[string]string, len(assets))
 
 	for _, name := range assets {
@@ -103,6 +108,17 @@ func (av *AssetValidator) PrepareRuntimeAssets(appDir string) (map[string]string
 }
 
 func copyFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if dstInfo, dstErr := os.Stat(dst); dstErr == nil {
+		if srcInfo.Size() == dstInfo.Size() && srcInfo.ModTime().Equal(dstInfo.ModTime()) {
+			return nil
+		}
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -123,5 +139,20 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
+	if err := os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
+		return err
+	}
+
 	return out.Sync()
+}
+
+func runtimeLibraryNames() (onnxRuntimeName string, vec0Name string) {
+	switch runtime.GOOS {
+	case "windows":
+		return "onnxruntime.dll", "vec0.dll"
+	case "darwin":
+		return "libonnxruntime.dylib", "vec0.dylib"
+	default:
+		return "libonnxruntime.so", "vec0.so"
+	}
 }

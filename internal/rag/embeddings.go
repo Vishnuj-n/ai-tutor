@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
@@ -16,6 +17,7 @@ import (
 type EmbeddingStore struct {
 	vectors  map[string]VectorEntry
 	embedder *embeddings.OnnxEmbedder
+	mu       sync.RWMutex
 }
 
 // VectorEntry stores a chunk vector and metadata for retrieval-time filtering/scoring.
@@ -39,6 +41,8 @@ func NewEmbeddingStore(embedder *embeddings.OnnxEmbedder) *EmbeddingStore {
 // AddChunk embeds and stores a chunk
 func (s *EmbeddingStore) AddChunk(chunk models.Chunk) {
 	vector := s.TFVector(chunk.Text)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.vectors[chunk.ID] = VectorEntry{
 		Vector:          vector,
 		ChunkID:         chunk.ID,
@@ -153,7 +157,7 @@ func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int) 
 						continue
 					}
 
-					// vec0 ordering is by similarity; assign a monotonic score for reranking hook.
+					// Positional rank score from vec0 ordering (higher rank => higher score).
 					score := float64(len(chunkIDs) - i)
 					results = append(results, RetrievalResult{
 						ChunkID:         chunk.ID,
@@ -183,6 +187,8 @@ func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int) 
 	queryVector := s.TFVector(query)
 
 	var results []RetrievalResult
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, chunk := range chunks {
 		chunkID := chunk.ID
 		text := chunk.Text

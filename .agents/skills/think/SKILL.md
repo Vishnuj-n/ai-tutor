@@ -32,7 +32,7 @@ Get approval before proceeding. If the user rejects, ask specifically what did n
 - More than 3 components exchanging data? Draw an ASCII diagram. Look for cycles.
 - Every meaningful test path listed: happy path, errors, edge cases.
 - Can this be rolled back without touching data?
-- Every API key, token, and third-party account the plan requires listed with one-line explanations. No credential requests mid-implementation.
+- Every API key, token, and third-party account required by the plan is listed with one-line explanations. No credential requests mid-implementation.
 - Every MCP server, external API, and third-party CLI the plan depends on verified as reachable before approval.
 
 **No placeholders in approved plans.** Every step must be concrete before approval. Forbidden patterns: TBD, TODO, "implement later," "similar to step N," "details to be determined." A plan with placeholders is a promise to plan later.

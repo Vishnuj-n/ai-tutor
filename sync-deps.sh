@@ -4,6 +4,8 @@
 
 set -e
 
+MISSING_ASSETS=0
+
 echo "================================"
 echo "AI Tutor: Syncing Dependencies"
 echo "================================"
@@ -45,24 +47,38 @@ if [ -f "asset/tokenizer.json" ]; then
     echo "✓ asset/tokenizer.json present"
 else
     echo "❌ asset/tokenizer.json MISSING (required for ONNX)"
+    MISSING_ASSETS=1
 fi
 
 if [ -f "asset/model_int8.onnx" ]; then
     echo "✓ asset/model_int8.onnx present"
 else
     echo "❌ asset/model_int8.onnx MISSING (required for ONNX)"
+    MISSING_ASSETS=1
 fi
 
 if [ -f "asset/onnxruntime.dll" ]; then
     echo "✓ asset/onnxruntime.dll present"
 else
     echo "❌ asset/onnxruntime.dll MISSING (required for Windows build)"
+    MISSING_ASSETS=1
 fi
 
 if [ -f "asset/vec0.dll" ]; then
     echo "✓ asset/vec0.dll present"
 else
     echo "❌ asset/vec0.dll MISSING (required for sqlite-vec)"
+    MISSING_ASSETS=1
+fi
+
+if [ "$MISSING_ASSETS" -eq 1 ]; then
+    echo ""
+    echo "================================"
+    echo "❌ Dependency sync failed: required assets are missing"
+    echo "================================"
+    echo ""
+    echo "Fix missing assets in asset/ and rerun ./sync-deps.sh"
+    exit 1
 fi
 
 echo ""

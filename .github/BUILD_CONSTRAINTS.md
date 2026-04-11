@@ -4,11 +4,16 @@ This document captures the build-time requirements for compiling the AI Tutor wi
 
 ## Required Environment Variables at Build Time
 
-```bash
-# Windows x86-64 build
-export CGO_ENABLED=1
-export GOOS=windows
-export GOARCH=amd64
+```text
+# Windows x86-64 build (CMD)
+set CGO_ENABLED=1
+set GOOS=windows
+set GOARCH=amd64
+
+# Windows x86-64 build (PowerShell)
+$env:CGO_ENABLED="1"
+$env:GOOS="windows"
+$env:GOARCH="amd64"
 
 # Recommended: Ensure MSVC toolchain is available (for CGO compilation)
 # On Windows: Run from Visual Studio Developer Command Prompt or set up MinGW
@@ -19,13 +24,15 @@ export GOARCH=amd64
 ### Windows (x86-64, with sqlite extension support)
 
 **Development build**:
-```bash
-CGO_ENABLED=1 go build -tags sqlite_extension -o build/bin/windows/ai-tutor.exe .
+```text
+CMD: set CGO_ENABLED=1 && go build -tags sqlite_extension -o build/bin/windows/ai-tutor.exe .
+PowerShell: $env:CGO_ENABLED="1"; go build -tags sqlite_extension -o build/bin/windows/ai-tutor.exe .
 ```
 
 **Production build (Wails)**:
-```bash
-CGO_ENABLED=1 wails build -tags sqlite_extension -platform windows/amd64 -o ai-tutor.exe
+```text
+CMD: set CGO_ENABLED=1 && wails build -tags sqlite_extension -platform windows/amd64 -o ai-tutor.exe
+PowerShell: $env:CGO_ENABLED="1"; wails build -tags sqlite_extension -platform windows/amd64 -o ai-tutor.exe
 ```
 
 ### macOS / Linux

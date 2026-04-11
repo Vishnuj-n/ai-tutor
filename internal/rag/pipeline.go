@@ -3,6 +3,7 @@ package rag
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
@@ -76,7 +77,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 		topicTitle = "Topic"
 	}
 
-	prompt := buildPrompt(
+	prompt, promptParentIDs := buildPrompt(
 		topicTitle,
 		userQuestion,
 		ctx,
@@ -89,8 +90,8 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	}
 
 	// Step 8: Build response with citations in deterministic parent order.
-	citedHeadings := make([]string, 0, len(ctx.ParentIDs))
-	for _, parentID := range ctx.ParentIDs {
+	citedHeadings := make([]string, 0, len(promptParentIDs))
+	for _, parentID := range promptParentIDs {
 		section, ok := ctx.Sections[parentID]
 		if !ok {
 			continue
@@ -111,7 +112,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 		CitedSections:   citedHeadings,
 		TopicID:         topicID,
 		ChunksRetrieved: ctx.ChunkHits,
-		SectionsUsed:    len(ctx.Sections),
+		SectionsUsed:    len(promptParentIDs),
 	}
 
 	if len(results) > 0 {
@@ -121,23 +122,38 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	return result, nil
 }
 
-func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) string {
-	const maxContextChars = 6000
+func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) (string, []string) {
+	const maxContextRunes = 6000
 
 	sectionText := ""
+	usedParentIDs := make([]string, 0, len(ctx.ParentIDs))
 	for _, parentID := range ctx.ParentIDs {
 		section, ok := ctx.Sections[parentID]
 		if !ok {
 			continue
 		}
-		sectionText += section + "\n\n"
-		if len(sectionText) >= maxContextChars {
-			sectionText = sectionText[:maxContextChars]
+
+		candidate := section + "\n\n"
+		remaining := maxContextRunes - utf8.RuneCountInString(sectionText)
+		if remaining <= 0 {
+			break
+		}
+
+		candidateRunes := utf8.RuneCountInString(candidate)
+		if candidateRunes <= remaining {
+			sectionText += candidate
+			usedParentIDs = append(usedParentIDs, parentID)
+			continue
+		}
+
+		sectionText += trimToRunes(candidate, remaining)
+		usedParentIDs = append(usedParentIDs, parentID)
+		if utf8.RuneCountInString(sectionText) >= maxContextRunes {
 			break
 		}
 	}
 
-	return fmt.Sprintf(`You are an AI tutor.
+	prompt := fmt.Sprintf(`You are an AI tutor.
 
 Topic: %s
 
@@ -153,4 +169,17 @@ Retrieved course material:
 Student's question: %s
 
 Answer:`, topicTitle, sectionText, userQuestion)
+
+	return prompt, usedParentIDs
+}
+
+func trimToRunes(input string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(input)
+	if len(runes) <= maxRunes {
+		return input
+	}
+	return string(runes[:maxRunes])
 }

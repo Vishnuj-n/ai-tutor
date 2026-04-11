@@ -1,7 +1,7 @@
 # Phase 1: Baseline AskAI API Contract and Behavior
 
 ## Current API Signature 
-**File**: `app.go` line 123+
+**File**: `app.go`
 
 ```go
 func (a *App) AskAI(topicID string, question string) map[string]interface{}
@@ -21,10 +21,11 @@ askAI(topicID, question) -> Promise<Response>
   "answer": "string",                      // the LLM-generated answer text
   "cited_sections": ["string", "string"],  // array of cited parent section headings
   "chunks_retrieved": 5,                   // number of chunks matched via lexical search
-  "sections_used": 2,                      // number of unique parent sections expanded from chunks
-  "error": null or absent                  // no error field on success
+   "sections_used": 2                       // number of unique parent sections expanded from chunks
 }
 ```
+
+Success contract: the `error` key is absent.
 
 **Error response** (map[string]interface{}):
 ```json

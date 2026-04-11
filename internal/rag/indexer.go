@@ -117,11 +117,17 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 }
 
 // doesHashMatch checks if a chunk's source text hash matches the stored hash.
-func (vi *VectorIndexer) doesHashMatch(_ models.Chunk) (bool, error) {
-	// For now, we don't store hashes in the DB yet
-	// Phase 5 TODO: add text_hash column to chunks table
-	// For MVP, always return false to force reindexing
-	return false, nil
+func (vi *VectorIndexer) doesHashMatch(chunk models.Chunk) (bool, error) {
+	storedHash, err := db.GetChunkEmbeddingRef(chunk.ID)
+	if err != nil {
+		return false, err
+	}
+	if storedHash == "" {
+		return false, nil
+	}
+
+	currentHash := computeTextHash(chunk.Text)
+	return storedHash == currentHash, nil
 }
 
 // computeTextHash computes MD5 hash of text for change detection.
@@ -129,6 +135,3 @@ func computeTextHash(text string) string {
 	hash := md5.Sum([]byte(text))
 	return fmt.Sprintf("%x", hash)
 }
-
-// Helper function to be added to db/store.go later:
-// UpdateChunkEmbedding(chunkID, textHash) updates the embedding_ref with a hash

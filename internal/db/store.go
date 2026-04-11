@@ -808,6 +808,10 @@ func GetAllTopicIDs() ([]string, error) {
 		topicIDs = append(topicIDs, topicID)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return topicIDs, nil
 }
 
@@ -849,4 +853,16 @@ func UpdateChunkEmbedding(chunkID string, hash string) error {
 		UPDATE chunks SET embedding_ref = ? WHERE id = ?
 	`, hash, chunkID)
 	return err
+}
+
+// GetChunkEmbeddingRef returns the stored embedding_ref hash for a chunk.
+func GetChunkEmbeddingRef(chunkID string) (string, error) {
+	var hash string
+	if err := conn.QueryRow(`
+		SELECT COALESCE(embedding_ref, '') FROM chunks WHERE id = ?
+	`, chunkID).Scan(&hash); err != nil {
+		return "", err
+	}
+
+	return hash, nil
 }
