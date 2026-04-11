@@ -1,54 +1,38 @@
 package embeddings
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
-	"unicode"
+	"sync"
+
+	"github.com/sugarme/tokenizer"
+	"github.com/sugarme/tokenizer/pretrained"
+	ort "github.com/yalue/onnxruntime_go"
 )
 
 // OnnxEmbedder handles embedding generation using ONNX Runtime.
-// Tokenization is implemented in pure Go and loaded from tokenizer.json.
 type OnnxEmbedder struct {
-	// session   *ort.Session  // TODO: uncomment when onnxruntime_go is available
-	tokenizer     *wordPieceTokenizer
+	tokenizer     *tokenizer.Tokenizer
+	session       *ort.DynamicAdvancedSession
+	inputInfo     []ort.InputOutputInfo
+	outputInfo    []ort.InputOutputInfo
 	dimCount      int32
+	maxSeqLen     int
+	padID         int64
 	modelPath     string
 	tokenizerPath string
-	maxSeqLen     int
-}
-
-type tokenizerConfig struct {
-	Normalizer struct {
-		Lowercase bool `json:"lowercase"`
-	} `json:"normalizer"`
-	Model struct {
-		Type                    string         `json:"type"`
-		UnkToken                string         `json:"unk_token"`
-		ContinuingSubwordPrefix string         `json:"continuing_subword_prefix"`
-		MaxInputCharsPerWord    int            `json:"max_input_chars_per_word"`
-		Vocab                   map[string]int `json:"vocab"`
-	} `json:"model"`
-}
-
-type wordPieceTokenizer struct {
-	vocab                   map[string]int
-	unkToken                string
-	continuingSubwordPrefix string
-	maxInputCharsPerWord    int
-	doLowercase             bool
-	clsID                   int
-	sepID                   int
-	padID                   int
-	unkID                   int
+	runtimeOwned  bool
+	mu            sync.Mutex
 }
 
 // NewOnnxEmbedder creates a new ONNX embedder from model and tokenizer paths.
-// It loads tokenizer.json in pure Go and prepares token IDs/masks for ONNX input tensors.
 func NewOnnxEmbedder(modelPath, tokenizerPath string) (*OnnxEmbedder, error) {
-	log.Printf("Initializing OnnxEmbedder (pure Go tokenizer)")
+	log.Printf("Initializing OnnxEmbedder")
 
 	if _, err := os.Stat(tokenizerPath); err != nil {
 		return nil, fmt.Errorf("failed to access tokenizer file %s: %w", tokenizerPath, err)
@@ -58,54 +42,115 @@ func NewOnnxEmbedder(modelPath, tokenizerPath string) (*OnnxEmbedder, error) {
 		return nil, fmt.Errorf("failed to access model file %s: %w", modelPath, err)
 	}
 
-	tok, err := loadWordPieceTokenizer(tokenizerPath)
+	tok, err := pretrained.FromFile(tokenizerPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load tokenizer %s: %w", tokenizerPath, err)
+	}
+
+	padID := int64(0)
+	for _, candidate := range []string{"[PAD]", "<pad>", "<PAD>"} {
+		if id, ok := tok.TokenToId(candidate); ok {
+			padID = int64(id)
+			break
+		}
+	}
+
+	runtimePath, err := resolveRuntimeLibraryPath(modelPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: In Phase 10, initialize ONNX Runtime environment and load model session
-	// For now, assume standard Nomic v1.5 embedding dimension (384)
-	dimCount := int32(384)
+	runtimeOwned := false
+	if !ort.IsInitialized() {
+		ort.SetSharedLibraryPath(runtimePath)
+		if err := ort.InitializeEnvironment(ort.WithLogLevelError()); err != nil {
+			return nil, fmt.Errorf("failed to initialize ONNX runtime: %w", err)
+		}
+		runtimeOwned = true
+	}
 
-	return &OnnxEmbedder{
+	inputInfo, outputInfo, err := ort.GetInputOutputInfo(modelPath)
+	if err != nil {
+		if runtimeOwned {
+			_ = ort.DestroyEnvironment()
+		}
+		return nil, fmt.Errorf("failed to inspect model I/O: %w", err)
+	}
+	if len(inputInfo) == 0 {
+		if runtimeOwned {
+			_ = ort.DestroyEnvironment()
+		}
+		return nil, fmt.Errorf("model has no inputs")
+	}
+	if len(outputInfo) == 0 {
+		if runtimeOwned {
+			_ = ort.DestroyEnvironment()
+		}
+		return nil, fmt.Errorf("model has no outputs")
+	}
+
+	maxSeqLen := inferMaxSeqLen(inputInfo, 256)
+
+	session, err := ort.NewDynamicAdvancedSession(
+		modelPath,
+		extractIONames(inputInfo),
+		extractIONames(outputInfo),
+		nil,
+	)
+	if err != nil {
+		if runtimeOwned {
+			_ = ort.DestroyEnvironment()
+		}
+		return nil, fmt.Errorf("failed to create ONNX session: %w", err)
+	}
+
+	embedder := &OnnxEmbedder{
 		tokenizer:     tok,
-		dimCount:      dimCount,
+		session:       session,
+		inputInfo:     inputInfo,
+		outputInfo:    outputInfo,
+		dimCount:      0,
+		maxSeqLen:     maxSeqLen,
+		padID:         padID,
 		modelPath:     modelPath,
 		tokenizerPath: tokenizerPath,
-		maxSeqLen:     256,
-	}, nil
+		runtimeOwned:  runtimeOwned,
+	}
+
+	warmupVec, err := embedder.embedInternal("warmup")
+	if err != nil {
+		_ = embedder.Close()
+		return nil, fmt.Errorf("failed warmup inference: %w", err)
+	}
+	if len(warmupVec) == 0 {
+		_ = embedder.Close()
+		return nil, fmt.Errorf("warmup inference returned an empty vector")
+	}
+	embedder.dimCount = int32(len(warmupVec))
+
+	log.Printf("OnnxEmbedder initialized (seq=%d dim=%d runtime=%s)", embedder.maxSeqLen, embedder.dimCount, runtimePath)
+
+	return embedder, nil
 }
 
 // Embed generates an embedding vector for the given text.
-// Returns a placeholder vector of the correct dimension.
-// TODO: In Phase 10, replace with actual ONNX inference.
 func (e *OnnxEmbedder) Embed(text string) ([]float32, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, fmt.Errorf("input text is empty")
 	}
-	if e.tokenizer == nil {
-		return nil, fmt.Errorf("tokenizer not initialized")
-	}
 
-	inputIDs, attentionMask, err := e.tokenizer.Encode(text, e.maxSeqLen)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	vector, err := e.embedInternal(text)
 	if err != nil {
 		return nil, err
 	}
-
-	log.Printf("Tokenized text into %d ids with %d active mask entries", len(inputIDs), sumMask(attentionMask))
-
-	// TODO: Replace this with actual ONNX inference in Phase 10
-	// Planned ONNX inputs:
-	// - input_ids:      int64[maxSeqLen]
-	// - attention_mask: int64[maxSeqLen]
-	_ = inputIDs
-	_ = attentionMask
-
-	// For now, return a placeholder vector (all zeros) of correct dimension
-	// This allows the rest of the RAG pipeline to compile and test
-	vector := make([]float32, e.dimCount)
-	for i := range vector {
-		vector[i] = 0.0 // Placeholder: would be filled by ONNX inference
+	if e.dimCount == 0 {
+		e.dimCount = int32(len(vector))
+	}
+	if len(vector) != int(e.dimCount) {
+		return nil, fmt.Errorf("embedding dimension mismatch: got %d, expected %d", len(vector), e.dimCount)
 	}
 
 	return vector, nil
@@ -118,194 +163,457 @@ func (e *OnnxEmbedder) GetDimension() int32 {
 
 // Close cleans up the embedder resources.
 func (e *OnnxEmbedder) Close() error {
-	// TODO: In Phase 10, call session.Destroy() and ort.Shutdown()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	var firstErr error
+	if e.session != nil {
+		if err := e.session.Destroy(); err != nil {
+			firstErr = err
+		}
+		e.session = nil
+	}
+	if e.runtimeOwned && ort.IsInitialized() {
+		if err := ort.DestroyEnvironment(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		e.runtimeOwned = false
+	}
+
+	if firstErr != nil {
+		return fmt.Errorf("failed to close embedder resources: %w", firstErr)
+	}
+
 	return nil
 }
 
-func loadWordPieceTokenizer(tokenizerPath string) (*wordPieceTokenizer, error) {
-	raw, err := os.ReadFile(tokenizerPath)
+func (e *OnnxEmbedder) embedInternal(text string) ([]float32, error) {
+	if e.tokenizer == nil {
+		return nil, fmt.Errorf("tokenizer not initialized")
+	}
+	if e.session == nil {
+		return nil, fmt.Errorf("onnx session not initialized")
+	}
+
+	inputIDs, attentionMask, tokenTypeIDs, err := e.tokenize(text)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read tokenizer file %s: %w", tokenizerPath, err)
+		return nil, err
 	}
 
-	var cfg tokenizerConfig
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse tokenizer file %s: %w", tokenizerPath, err)
+	shape := ort.NewShape(1, int64(len(inputIDs)))
+	inputs, err := e.buildInputValues(shape, inputIDs, attentionMask, tokenTypeIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer destroyValues(inputs)
+
+	outputs := make([]ort.Value, len(e.outputInfo))
+	if err := e.session.Run(inputs, outputs); err != nil {
+		return nil, fmt.Errorf("onnx inference failed: %w", err)
+	}
+	defer destroyValues(outputs)
+
+	vector, err := extractEmbedding(outputs, e.outputInfo, attentionMask)
+	if err != nil {
+		return nil, err
 	}
 
-	if cfg.Model.Type != "WordPiece" {
-		return nil, fmt.Errorf("unsupported tokenizer model type: %s", cfg.Model.Type)
-	}
-	if len(cfg.Model.Vocab) == 0 {
-		return nil, fmt.Errorf("tokenizer vocab is empty")
-	}
-
-	clsID, ok := cfg.Model.Vocab["[CLS]"]
-	if !ok {
-		return nil, fmt.Errorf("tokenizer vocab missing [CLS]")
-	}
-	sepID, ok := cfg.Model.Vocab["[SEP]"]
-	if !ok {
-		return nil, fmt.Errorf("tokenizer vocab missing [SEP]")
-	}
-	padID, ok := cfg.Model.Vocab["[PAD]"]
-	if !ok {
-		return nil, fmt.Errorf("tokenizer vocab missing [PAD]")
-	}
-
-	unkToken := cfg.Model.UnkToken
-	if strings.TrimSpace(unkToken) == "" {
-		unkToken = "[UNK]"
-	}
-	unkID, ok := cfg.Model.Vocab[unkToken]
-	if !ok {
-		return nil, fmt.Errorf("tokenizer vocab missing unknown token %s", unkToken)
-	}
-
-	maxChars := cfg.Model.MaxInputCharsPerWord
-	if maxChars <= 0 {
-		maxChars = 100
-	}
-
-	prefix := cfg.Model.ContinuingSubwordPrefix
-	if prefix == "" {
-		prefix = "##"
-	}
-
-	return &wordPieceTokenizer{
-		vocab:                   cfg.Model.Vocab,
-		unkToken:                unkToken,
-		continuingSubwordPrefix: prefix,
-		maxInputCharsPerWord:    maxChars,
-		doLowercase:             cfg.Normalizer.Lowercase,
-		clsID:                   clsID,
-		sepID:                   sepID,
-		padID:                   padID,
-		unkID:                   unkID,
-	}, nil
+	normalizeL2(vector)
+	return vector, nil
 }
 
-func (t *wordPieceTokenizer) Encode(text string, maxLen int) ([]int64, []int64, error) {
-	if strings.TrimSpace(text) == "" {
-		return nil, nil, fmt.Errorf("input text is empty")
+func (e *OnnxEmbedder) tokenize(text string) ([]int64, []int64, []int64, error) {
+	enc, err := e.tokenizer.EncodeSingle(text, true)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("tokenizer encode failed: %w", err)
 	}
-	if maxLen < 2 {
-		return nil, nil, fmt.Errorf("max sequence length must be at least 2")
-	}
-
-	normalized := text
-	if t.doLowercase {
-		normalized = strings.ToLower(normalized)
+	if len(enc.Ids) == 0 {
+		return nil, nil, nil, fmt.Errorf("tokenizer returned no token ids")
 	}
 
-	words := splitBertTokens(normalized)
-	ids := make([]int64, 0, maxLen)
-	ids = append(ids, int64(t.clsID))
-
-	for _, word := range words {
-		wordIDs := t.encodeWord(word)
-		for _, id := range wordIDs {
-			ids = append(ids, int64(id))
-			if len(ids) == maxLen-1 {
-				break
-			}
-		}
-		if len(ids) == maxLen-1 {
-			break
-		}
-	}
-
-	ids = append(ids, int64(t.sepID))
-
-	if len(ids) > maxLen {
-		ids = ids[:maxLen]
-		ids[maxLen-1] = int64(t.sepID)
+	ids := make([]int64, len(enc.Ids))
+	for i, v := range enc.Ids {
+		ids[i] = int64(v)
 	}
 
 	mask := make([]int64, len(ids))
-	for i := range mask {
-		mask[i] = 1
+	if len(enc.AttentionMask) == len(ids) {
+		for i, v := range enc.AttentionMask {
+			if v > 0 {
+				mask[i] = 1
+			}
+		}
+	} else {
+		for i := range mask {
+			mask[i] = 1
+		}
 	}
 
-	for len(ids) < maxLen {
-		ids = append(ids, int64(t.padID))
+	typeIDs := make([]int64, len(ids))
+	if len(enc.TypeIds) == len(ids) {
+		for i, v := range enc.TypeIds {
+			typeIDs[i] = int64(v)
+		}
+	}
+
+	if len(ids) > e.maxSeqLen {
+		ids = ids[:e.maxSeqLen]
+		mask = mask[:e.maxSeqLen]
+		typeIDs = typeIDs[:e.maxSeqLen]
+	}
+
+	for len(ids) < e.maxSeqLen {
+		ids = append(ids, e.padID)
 		mask = append(mask, 0)
+		typeIDs = append(typeIDs, 0)
 	}
 
-	return ids, mask, nil
+	return ids, mask, typeIDs, nil
 }
 
-func (t *wordPieceTokenizer) encodeWord(word string) []int {
-	runes := []rune(word)
-	if len(runes) == 0 {
-		return nil
-	}
-	if len(runes) > t.maxInputCharsPerWord {
-		return []int{t.unkID}
-	}
-
-	pieces := make([]int, 0, len(runes))
-	start := 0
-	for start < len(runes) {
-		end := len(runes)
-		found := false
-		for start < end {
-			sub := string(runes[start:end])
-			if start > 0 {
-				sub = t.continuingSubwordPrefix + sub
-			}
-
-			id, ok := t.vocab[sub]
-			if ok {
-				pieces = append(pieces, id)
-				start = end
-				found = true
-				break
-			}
-			end--
-		}
-
-		if !found {
-			return []int{t.unkID}
-		}
-	}
-
-	return pieces
-}
-
-func splitBertTokens(text string) []string {
-	parts := make([]string, 0)
-	var current []rune
-
-	flush := func() {
-		if len(current) > 0 {
-			parts = append(parts, string(current))
-			current = current[:0]
-		}
-	}
-
-	for _, r := range text {
-		switch {
-		case unicode.IsSpace(r):
-			flush()
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			current = append(current, r)
+func (e *OnnxEmbedder) buildInputValues(shape ort.Shape, ids, attentionMask, tokenTypeIDs []int64) ([]ort.Value, error) {
+	values := make([]ort.Value, 0, len(e.inputInfo))
+	for i, info := range e.inputInfo {
+		source := pickInputSource(info.Name, i)
+		var data []int64
+		switch source {
+		case "attention_mask":
+			data = attentionMask
+		case "token_type_ids":
+			data = tokenTypeIDs
 		default:
-			flush()
-			parts = append(parts, string(r))
+			data = ids
 		}
+
+		value, err := tensorFromInputData(info, shape, data)
+		if err != nil {
+			destroyValues(values)
+			return nil, err
+		}
+		values = append(values, value)
 	}
 
-	flush()
-	return parts
+	return values, nil
 }
 
-func sumMask(mask []int64) int {
-	total := 0
-	for _, v := range mask {
-		if v > 0 {
-			total++
+func tensorFromInputData(info ort.InputOutputInfo, shape ort.Shape, data []int64) (ort.Value, error) {
+	switch info.DataType {
+	case ort.TensorElementDataTypeInt64:
+		t, err := ort.NewTensor(shape, data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create int64 tensor for %s: %w", info.Name, err)
+		}
+		return t, nil
+	case ort.TensorElementDataTypeInt32:
+		casted := make([]int32, len(data))
+		for i, v := range data {
+			casted[i] = int32(v)
+		}
+		t, err := ort.NewTensor(shape, casted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create int32 tensor for %s: %w", info.Name, err)
+		}
+		return t, nil
+	default:
+		return nil, fmt.Errorf("unsupported input dtype for %s: %s", info.Name, info.DataType)
+	}
+}
+
+func extractEmbedding(outputs []ort.Value, outputInfo []ort.InputOutputInfo, attentionMask []int64) ([]float32, error) {
+	for i, output := range outputs {
+		if output == nil {
+			continue
+		}
+
+		if tensor, ok := output.(*ort.Tensor[float32]); ok {
+			vector, err := poolFloat32Tensor(tensor, attentionMask)
+			if err == nil && len(vector) > 0 {
+				return vector, nil
+			}
+		}
+
+		if tensor, ok := output.(*ort.Tensor[float64]); ok {
+			vector, err := poolFloat64Tensor(tensor, attentionMask)
+			if err == nil && len(vector) > 0 {
+				return vector, nil
+			}
+		}
+
+		if i < len(outputInfo) {
+			log.Printf("Skipping unsupported output %s dtype=%s", outputInfo[i].Name, outputInfo[i].DataType)
 		}
 	}
-	return total
+
+	return nil, fmt.Errorf("model did not return a supported float embedding tensor")
+}
+
+func poolFloat32Tensor(t *ort.Tensor[float32], attentionMask []int64) ([]float32, error) {
+	shape := t.GetShape()
+	data := t.GetData()
+	if len(data) == 0 {
+		return nil, fmt.Errorf("output tensor is empty")
+	}
+
+	switch len(shape) {
+	case 1:
+		vector := make([]float32, len(data))
+		copy(vector, data)
+		return vector, nil
+	case 2:
+		rows := int(shape[0])
+		cols := int(shape[1])
+		if rows <= 0 || cols <= 0 {
+			return nil, fmt.Errorf("invalid 2D output shape: %v", shape)
+		}
+		if rows == 1 {
+			vector := make([]float32, cols)
+			copy(vector, data[:cols])
+			return vector, nil
+		}
+		return meanPool2D(data, rows, cols, attentionMask), nil
+	case 3:
+		batch := int(shape[0])
+		seqLen := int(shape[1])
+		hidden := int(shape[2])
+		if batch <= 0 || seqLen <= 0 || hidden <= 0 {
+			return nil, fmt.Errorf("invalid 3D output shape: %v", shape)
+		}
+		return meanPool3D(data, seqLen, hidden, attentionMask), nil
+	default:
+		return nil, fmt.Errorf("unsupported output tensor rank: %d", len(shape))
+	}
+}
+
+func poolFloat64Tensor(t *ort.Tensor[float64], attentionMask []int64) ([]float32, error) {
+	shape := t.GetShape()
+	data := t.GetData()
+	if len(data) == 0 {
+		return nil, fmt.Errorf("output tensor is empty")
+	}
+
+	toFloat32 := func(in []float64) []float32 {
+		out := make([]float32, len(in))
+		for i, v := range in {
+			out[i] = float32(v)
+		}
+		return out
+	}
+
+	switch len(shape) {
+	case 1:
+		return toFloat32(data), nil
+	case 2:
+		rows := int(shape[0])
+		cols := int(shape[1])
+		if rows <= 0 || cols <= 0 {
+			return nil, fmt.Errorf("invalid 2D output shape: %v", shape)
+		}
+		if rows == 1 {
+			return toFloat32(data[:cols]), nil
+		}
+		pooled := meanPool2DFloat64(data, rows, cols, attentionMask)
+		return toFloat32(pooled), nil
+	case 3:
+		seqLen := int(shape[1])
+		hidden := int(shape[2])
+		if seqLen <= 0 || hidden <= 0 {
+			return nil, fmt.Errorf("invalid 3D output shape: %v", shape)
+		}
+		pooled := meanPool3DFloat64(data, seqLen, hidden, attentionMask)
+		return toFloat32(pooled), nil
+	default:
+		return nil, fmt.Errorf("unsupported output tensor rank: %d", len(shape))
+	}
+}
+
+func meanPool3D(data []float32, seqLen, hidden int, attentionMask []int64) []float32 {
+	vector := make([]float32, hidden)
+	count := float32(0)
+	for tokenIdx := 0; tokenIdx < seqLen; tokenIdx++ {
+		if tokenIdx < len(attentionMask) && attentionMask[tokenIdx] == 0 {
+			continue
+		}
+		offset := tokenIdx * hidden
+		for d := 0; d < hidden; d++ {
+			vector[d] += data[offset+d]
+		}
+		count++
+	}
+	if count == 0 {
+		count = 1
+	}
+	for i := range vector {
+		vector[i] /= count
+	}
+	return vector
+}
+
+func meanPool2D(data []float32, rows, cols int, attentionMask []int64) []float32 {
+	vector := make([]float32, cols)
+	count := float32(0)
+	for row := 0; row < rows; row++ {
+		if row < len(attentionMask) && attentionMask[row] == 0 {
+			continue
+		}
+		offset := row * cols
+		for col := 0; col < cols; col++ {
+			vector[col] += data[offset+col]
+		}
+		count++
+	}
+	if count == 0 {
+		count = 1
+	}
+	for i := range vector {
+		vector[i] /= count
+	}
+	return vector
+}
+
+func meanPool3DFloat64(data []float64, seqLen, hidden int, attentionMask []int64) []float64 {
+	vector := make([]float64, hidden)
+	count := float64(0)
+	for tokenIdx := 0; tokenIdx < seqLen; tokenIdx++ {
+		if tokenIdx < len(attentionMask) && attentionMask[tokenIdx] == 0 {
+			continue
+		}
+		offset := tokenIdx * hidden
+		for d := 0; d < hidden; d++ {
+			vector[d] += data[offset+d]
+		}
+		count++
+	}
+	if count == 0 {
+		count = 1
+	}
+	for i := range vector {
+		vector[i] /= count
+	}
+	return vector
+}
+
+func meanPool2DFloat64(data []float64, rows, cols int, attentionMask []int64) []float64 {
+	vector := make([]float64, cols)
+	count := float64(0)
+	for row := 0; row < rows; row++ {
+		if row < len(attentionMask) && attentionMask[row] == 0 {
+			continue
+		}
+		offset := row * cols
+		for col := 0; col < cols; col++ {
+			vector[col] += data[offset+col]
+		}
+		count++
+	}
+	if count == 0 {
+		count = 1
+	}
+	for i := range vector {
+		vector[i] /= count
+	}
+	return vector
+}
+
+func normalizeL2(vector []float32) {
+	if len(vector) == 0 {
+		return
+	}
+
+	var sum float64
+	for _, value := range vector {
+		sum += float64(value * value)
+	}
+	if sum == 0 {
+		return
+	}
+
+	norm := float32(math.Sqrt(sum))
+	for i := range vector {
+		vector[i] /= norm
+	}
+}
+
+func extractIONames(info []ort.InputOutputInfo) []string {
+	names := make([]string, len(info))
+	for i, item := range info {
+		names[i] = item.Name
+	}
+	return names
+}
+
+func pickInputSource(name string, index int) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.Contains(lower, "attention") && strings.Contains(lower, "mask"):
+		return "attention_mask"
+	case strings.Contains(lower, "token") && strings.Contains(lower, "type"):
+		return "token_type_ids"
+	case strings.Contains(lower, "segment"):
+		return "token_type_ids"
+	case strings.Contains(lower, "input") && strings.Contains(lower, "id"):
+		return "input_ids"
+	case index == 1:
+		return "attention_mask"
+	case index >= 2:
+		return "token_type_ids"
+	default:
+		return "input_ids"
+	}
+}
+
+func inferMaxSeqLen(inputInfo []ort.InputOutputInfo, fallback int) int {
+	for _, info := range inputInfo {
+		if len(info.Dimensions) >= 2 {
+			dim := int(info.Dimensions[1])
+			if dim > 0 && dim <= 4096 {
+				return dim
+			}
+		}
+	}
+	return fallback
+}
+
+func destroyValues(values []ort.Value) {
+	for _, value := range values {
+		if value != nil {
+			_ = value.Destroy()
+		}
+	}
+}
+
+func resolveRuntimeLibraryPath(modelPath string) (string, error) {
+	modelDir := filepath.Dir(modelPath)
+	var candidates []string
+
+	switch runtime.GOOS {
+	case "windows":
+		candidates = []string{
+			filepath.Join(modelDir, "onnxruntime.dll"),
+			"onnxruntime.dll",
+		}
+	case "darwin":
+		candidates = []string{
+			filepath.Join(modelDir, "libonnxruntime.dylib"),
+			"libonnxruntime.dylib",
+		}
+	default:
+		candidates = []string{
+			filepath.Join(modelDir, "libonnxruntime.so"),
+			filepath.Join(modelDir, "onnxruntime.so"),
+			"libonnxruntime.so",
+			"onnxruntime.so",
+		}
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			abs, absErr := filepath.Abs(candidate)
+			if absErr == nil {
+				return abs, nil
+			}
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to locate ONNX runtime shared library near %s", modelPath)
 }

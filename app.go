@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -81,7 +83,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	fmt.Printf("Database initialized at %s\n", dbPath)
 
-	// Initialize ONNX embedder (Phase 10 wiring still pending for real inference output)
+	// Initialize ONNX embedder for local vector generation.
 	var embedder *embeddings.OnnxEmbedder
 	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath())
 	if err != nil {
@@ -206,6 +208,56 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		"cited_sections":   result.CitedSections,
 		"chunks_retrieved": result.ChunksRetrieved,
 		"sections_used":    result.SectionsUsed,
+	}
+}
+
+// GetEmbeddingDiagnostics runs a live embedding call and returns quick sanity metrics.
+func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
+	if !a.aiReady || a.embedder == nil {
+		reason := a.aiInitError
+		if reason == "" {
+			reason = "local AI runtime is not ready"
+		}
+		return map[string]interface{}{
+			"error": "Embedding diagnostics unavailable: " + reason,
+		}
+	}
+
+	input := strings.TrimSpace(text)
+	if input == "" {
+		input = "quick embedding diagnostic sentence"
+	}
+
+	vector, err := a.embedder.Embed(input)
+	if err != nil {
+		return map[string]interface{}{
+			"error": "embedding run failed: " + err.Error(),
+		}
+	}
+
+	declaredDim := int(a.embedder.GetDimension())
+	length := len(vector)
+	count := length
+	if count > 8 {
+		count = 8
+	}
+
+	sample := make([]float32, count)
+	copy(sample, vector[:count])
+
+	var sumSquares float64
+	for _, value := range vector {
+		sumSquares += float64(value * value)
+	}
+
+	return map[string]interface{}{
+		"ok":                  true,
+		"input_chars":         len(input),
+		"declared_dimension":  declaredDim,
+		"vector_length":       length,
+		"dimension_match":     length == declaredDim,
+		"sample_norm_l2":      math.Sqrt(sumSquares),
+		"sample_first_values": sample,
 	}
 }
 
