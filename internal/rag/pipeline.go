@@ -3,10 +3,14 @@ package rag
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
+)
+
+const (
+	maxPromptTokens     = 3000
+	minUsedSectionRatio = 0.5
 )
 
 // Pipeline orchestrates retrieval and generation
@@ -123,9 +127,6 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 }
 
 func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string, []string) {
-	const maxContextRunes = 6000
-	const minUsedSectionRatio = 0.5
-
 	sectionText := ""
 	usedParentIDs := make([]string, 0, len(ctx.ParentIDs))
 	for _, parentID := range ctx.ParentIDs {
@@ -135,32 +136,38 @@ func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string,
 		}
 
 		candidate := section + "\n\n"
-		remaining := maxContextRunes - utf8.RuneCountInString(sectionText)
-		if remaining <= 0 {
-			break
-		}
-
-		originalRunes := utf8.RuneCountInString(candidate)
-		if originalRunes <= remaining {
+		candidatePrompt := formatPrompt(topicTitle, sectionText+candidate, userQuestion)
+		if countPromptTokens(candidatePrompt) <= maxPromptTokens {
 			sectionText += candidate
 			usedParentIDs = append(usedParentIDs, parentID)
 			continue
 		}
 
-		trimmed := trimToRunes(candidate, remaining)
-		trimmedRunes := utf8.RuneCountInString(trimmed)
+		trimmed := trimToTokenBudget(topicTitle, userQuestion, sectionText, candidate, maxPromptTokens)
+		if trimmed == "" {
+			break
+		}
+
+		originalRunes := len([]rune(candidate))
+		trimmedRunes := len([]rune(trimmed))
 
 		if trimmedRunes == originalRunes || float64(trimmedRunes)/float64(originalRunes) >= minUsedSectionRatio {
 			sectionText += trimmed
 			usedParentIDs = append(usedParentIDs, parentID)
 		}
 
-		if utf8.RuneCountInString(sectionText) >= maxContextRunes {
+		if countPromptTokens(formatPrompt(topicTitle, sectionText, userQuestion)) >= maxPromptTokens {
 			break
 		}
 	}
 
-	prompt := fmt.Sprintf(`You are an AI tutor.
+	prompt := formatPrompt(topicTitle, sectionText, userQuestion)
+
+	return prompt, usedParentIDs
+}
+
+func formatPrompt(topicTitle, sectionText, userQuestion string) string {
+	return fmt.Sprintf(`You are an AI tutor.
 
 Topic: %s
 
@@ -176,17 +183,41 @@ Retrieved course material:
 Student's question: %s
 
 Answer:`, topicTitle, sectionText, userQuestion)
-
-	return prompt, usedParentIDs
 }
 
-func trimToRunes(input string, maxRunes int) string {
-	if maxRunes <= 0 {
+func trimToTokenBudget(topicTitle, userQuestion, existingSections, candidate string, tokenLimit int) string {
+	if tokenLimit <= 0 || candidate == "" {
 		return ""
 	}
-	runes := []rune(input)
-	if len(runes) <= maxRunes {
-		return input
+
+	runes := []rune(candidate)
+	low := 0
+	high := len(runes)
+	best := 0
+
+	for low <= high {
+		mid := (low + high) / 2
+		trialSections := existingSections + string(runes[:mid])
+		trialPrompt := formatPrompt(topicTitle, trialSections, userQuestion)
+
+		if countPromptTokens(trialPrompt) <= tokenLimit {
+			best = mid
+			low = mid + 1
+			continue
+		}
+
+		high = mid - 1
 	}
-	return string(runes[:maxRunes])
+
+	if best <= 0 {
+		return ""
+	}
+
+	return string(runes[:best])
+}
+
+func countPromptTokens(prompt string) int {
+	// Conservative upper bound: byte count is always >= model token count.
+	// Using an upper bound keeps prompt assembly safely within the configured limit.
+	return len([]byte(prompt))
 }
