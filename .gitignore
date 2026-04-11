@@ -1,7 +1,9 @@
 build/bin
 node_modules
 frontend/dist
-asset/
+asset/model_int8.onnx
+asset/onnxruntime.dll
+asset/vec0.dll
 .env
 context.md
 
