@@ -673,6 +673,38 @@ func GetAllTopicIDs() ([]string, error) {
 	return topicIDs, nil
 }
 
+// GetAllTopics returns all topics as id/title pairs.
+func GetAllTopics() ([]map[string]string, error) {
+	rows, err := conn.Query("SELECT id, title FROM topics ORDER BY title")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close topics rows: %v", closeErr)
+		}
+	}()
+
+	topics := make([]map[string]string, 0)
+	for rows.Next() {
+		var id string
+		var title string
+		if err := rows.Scan(&id, &title); err != nil {
+			return nil, err
+		}
+		topics = append(topics, map[string]string{
+			"id":    id,
+			"title": title,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return topics, nil
+}
+
 // UpdateChunkEmbedding updates the embedding_ref (hash) for a chunk to track changes.
 func UpdateChunkEmbedding(chunkID string, hash string) error {
 	_, err := conn.Exec(`

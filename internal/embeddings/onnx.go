@@ -1,30 +1,34 @@
+//go:build !tokenizers
+
 package embeddings
 
 import (
 	"fmt"
 	"log"
-
-	"github.com/daulet/tokenizers"
+	"os"
+	"strings"
 )
 
-// OnnxEmbedder handles embedding generation using ONNX Runtime and HuggingFace tokenizer.
-// NOTE: This is a temporary stub. Phase 10 will wire in actual yalue/onnxruntime_go binding.
+// OnnxEmbedder handles embedding generation using ONNX Runtime.
+// This default build does not require CGO tokenizers to keep local tests/builds portable.
 type OnnxEmbedder struct {
-	tokenizer *tokenizers.Tokenizer
 	// session   *ort.Session  // TODO: uncomment when onnxruntime_go is available
-	dimCount  int32
-	modelPath string
+	dimCount      int32
+	modelPath     string
+	tokenizerPath string
 }
 
 // NewOnnxEmbedder creates a new ONNX embedder from model and tokenizer paths.
 // For now, validates files exist and sets up dimension info without full ONNX loading.
 func NewOnnxEmbedder(modelPath, tokenizerPath string) (*OnnxEmbedder, error) {
-	log.Printf("Initializing OnnxEmbedder (stub mode - full ONNX binding in Phase 10)")
+	log.Printf("Initializing OnnxEmbedder (fallback mode without CGO tokenizers)")
 
-	// Load tokenizer from HuggingFace tokenizer.json
-	tok, err := tokenizers.FromFile(tokenizerPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load tokenizer from %s: %w", tokenizerPath, err)
+	if _, err := os.Stat(tokenizerPath); err != nil {
+		return nil, fmt.Errorf("failed to access tokenizer file %s: %w", tokenizerPath, err)
+	}
+
+	if _, err := os.Stat(modelPath); err != nil {
+		return nil, fmt.Errorf("failed to access model file %s: %w", modelPath, err)
 	}
 
 	// TODO: In Phase 10, initialize ONNX Runtime environment and load model session
@@ -32,9 +36,9 @@ func NewOnnxEmbedder(modelPath, tokenizerPath string) (*OnnxEmbedder, error) {
 	dimCount := int32(384)
 
 	return &OnnxEmbedder{
-		tokenizer: tok,
-		dimCount:  dimCount,
-		modelPath: modelPath,
+		dimCount:      dimCount,
+		modelPath:     modelPath,
+		tokenizerPath: tokenizerPath,
 	}, nil
 }
 
@@ -42,19 +46,18 @@ func NewOnnxEmbedder(modelPath, tokenizerPath string) (*OnnxEmbedder, error) {
 // Returns a placeholder vector of the correct dimension.
 // TODO: In Phase 10, replace with actual ONNX inference.
 func (e *OnnxEmbedder) Embed(text string) ([]float32, error) {
-	if e.tokenizer == nil {
-		return nil, fmt.Errorf("embedder not initialized")
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("input text is empty")
 	}
 
-	// Tokenize the input text using the tokenizer
-	// Encode returns []uint32 (token IDs) directly
-	tokenIDs := e.tokenizer.Encode(text, false)
-	if tokenIDs == nil {
-		return nil, fmt.Errorf("tokenization returned nil")
+	// Default fallback tokenization for portability in environments without tokenizers native libs.
+	tokens := strings.Fields(strings.ToLower(text))
+	if len(tokens) == 0 {
+		return nil, fmt.Errorf("tokenization returned empty token set")
 	}
 
 	// Log tokenization for debugging
-	log.Printf("Tokenized text into %d tokens", len(tokenIDs))
+	log.Printf("Tokenized text into %d tokens (fallback mode)", len(tokens))
 
 	// TODO: Replace this with actual ONNX inference in Phase 10
 	// For now, return a placeholder vector (all zeros) of correct dimension
@@ -74,10 +77,6 @@ func (e *OnnxEmbedder) GetDimension() int32 {
 
 // Close cleans up the embedder resources.
 func (e *OnnxEmbedder) Close() error {
-	if e.tokenizer != nil {
-		// Tokenizer doesn't need explicit cleanup in this binding
-		e.tokenizer = nil
-	}
 	// TODO: In Phase 10, call session.Destroy() and ort.Shutdown()
 	return nil
 }

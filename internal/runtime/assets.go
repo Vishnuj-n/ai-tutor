@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -71,4 +72,56 @@ func (av *AssetValidator) OnnxRuntimePath() string {
 // Vec0DllPath returns the full path to vec0.dll.
 func (av *AssetValidator) Vec0DllPath() string {
 	return av.GetAssetPath("vec0.dll")
+}
+
+// PrepareRuntimeAssets copies runtime DLLs to an app-data subdirectory and returns absolute paths.
+// This avoids reliance on the process working directory when loading native dependencies.
+func (av *AssetValidator) PrepareRuntimeAssets(appDir string) (map[string]string, error) {
+	runtimeDir := filepath.Join(appDir, "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create runtime directory: %w", err)
+	}
+
+	assets := []string{"onnxruntime.dll", "vec0.dll"}
+	out := make(map[string]string, len(assets))
+
+	for _, name := range assets {
+		src := av.GetAssetPath(name)
+		dst := filepath.Join(runtimeDir, name)
+		if err := copyFile(src, dst); err != nil {
+			return nil, fmt.Errorf("failed to stage %s: %w", name, err)
+		}
+
+		absDst, err := filepath.Abs(dst)
+		if err != nil {
+			absDst = dst
+		}
+		out[name] = absDst
+	}
+
+	return out, nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = in.Close()
+	}()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = out.Close()
+	}()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+
+	return out.Sync()
 }

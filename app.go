@@ -25,6 +25,8 @@ type App struct {
 	scheduler         *scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
+	aiReady           bool
+	aiInitError       string
 }
 
 // NewApp creates a new App application struct
@@ -43,8 +45,21 @@ func (a *App) startup(ctx context.Context) {
 	// Validate required assets for local RAG
 	assetValidator := runtime.NewAssetValidator("asset")
 	if err := assetValidator.ValidateAll(); err != nil {
+		a.aiInitError = err.Error()
 		fmt.Printf("Warning: local RAG assets missing: %v\n", err)
 		fmt.Println("Ask AI features may be unavailable. Ensure asset/ contains tokenizer.json, model_int8.onnx, onnxruntime.dll, vec0.dll")
+	}
+
+	appDir, err := resolveAppDir()
+	if err != nil {
+		fmt.Printf("Error resolving app directory: %v\n", err)
+		return
+	}
+
+	runtimeAssets, err := assetValidator.PrepareRuntimeAssets(appDir)
+	if err != nil {
+		a.aiInitError = err.Error()
+		fmt.Printf("Warning: could not stage runtime assets to app-data: %v\n", err)
 	}
 
 	// Initialize persistent database
@@ -55,6 +70,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	vec0DllPath := assetValidator.Vec0DllPath()
+	if stagedVec0Path, ok := runtimeAssets["vec0.dll"]; ok {
+		vec0DllPath = stagedVec0Path
+	}
 	if err := db.Init(dbPath, vec0DllPath); err != nil {
 		fmt.Printf("Error initializing database: %v\n", err)
 		return
@@ -65,9 +83,11 @@ func (a *App) startup(ctx context.Context) {
 	var embedder *embeddings.OnnxEmbedder
 	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath())
 	if err != nil {
+		a.aiInitError = err.Error()
 		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
 	} else {
 		if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
+			a.aiInitError = err.Error()
 			fmt.Printf("Warning: could not initialize vector table: %v\n", err)
 		} else {
 			indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
@@ -79,6 +99,8 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 	}
+
+	a.aiReady = embedder != nil && a.aiInitError == ""
 
 	// Initialize retrieval store with vector-first retrieval and lexical fallback
 	embedStore := rag.NewEmbeddingStore(embedder)
@@ -142,18 +164,26 @@ func (a *App) GetTopicContent(topicID string) map[string]interface{} {
 
 // GetAvailableTopics returns a list of available topics
 func (a *App) GetAvailableTopics() []map[string]string {
-	// TODO: Implement database query to get all topics
-	// For now, return hardcoded list
-	return []map[string]string{
-		{
-			"id":    "os-scheduling",
-			"title": "Operating Systems: Scheduling",
-		},
+	topics, err := db.GetAllTopics()
+	if err != nil {
+		return []map[string]string{}
 	}
+
+	return topics
 }
 
 // AskAI processes a question using RAG pipeline
 func (a *App) AskAI(topicID string, question string) map[string]interface{} {
+	if !a.aiReady {
+		reason := a.aiInitError
+		if reason == "" {
+			reason = "local AI runtime is not ready"
+		}
+		return map[string]interface{}{
+			"error": "Ask AI unavailable: " + reason,
+		}
+	}
+
 	if a.ragPipeline == nil {
 		return map[string]interface{}{
 			"error": "RAG pipeline not initialized",
@@ -201,7 +231,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 }
 
-func resolveDBPath() (string, error) {
+func resolveAppDir() (string, error) {
 	baseDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
@@ -212,16 +242,23 @@ func resolveDBPath() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(appDir, "ai-tutor.db"), nil
+	return appDir, nil
 }
 
-func resolveNotebookDir() (string, error) {
-	baseDir, err := os.UserConfigDir()
+func resolveDBPath() (string, error) {
+	appDir, err := resolveAppDir()
 	if err != nil {
 		return "", err
 	}
 
-	appDir := filepath.Join(baseDir, "ai-tutor")
+	return filepath.Join(appDir, "ai-tutor.db"), nil
+}
+
+func resolveNotebookDir() (string, error) {
+	appDir, err := resolveAppDir()
+	if err != nil {
+		return "", err
+	}
 	uploadDir := filepath.Join(appDir, "uploads")
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		return "", err

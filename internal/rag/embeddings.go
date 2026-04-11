@@ -216,6 +216,7 @@ func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int) 
 type RetrievalContext struct {
 	TopicID   string
 	Sections  map[string]string
+	ParentIDs []string
 	ChunkHits int
 }
 
@@ -224,6 +225,7 @@ func BuildContext(results []RetrievalResult, topicID string) (*RetrievalContext,
 	context := &RetrievalContext{
 		TopicID:   topicID,
 		Sections:  make(map[string]string),
+		ParentIDs: make([]string, 0),
 		ChunkHits: len(results),
 	}
 
@@ -238,6 +240,7 @@ func BuildContext(results []RetrievalResult, topicID string) (*RetrievalContext,
 			heading := section["heading"]
 			content := section["content"]
 			context.Sections[result.ParentID] = fmt.Sprintf("**%s**\n%s", heading, content)
+			context.ParentIDs = append(context.ParentIDs, result.ParentID)
 			seenParents[result.ParentID] = true
 		}
 	}
