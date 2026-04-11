@@ -15,7 +15,7 @@ The goal is to move from "blind retrieval" to "intent-aware retrieval" by adding
 ## 2. Retrieval Evolution
 Moving beyond simple cosine similarity to improve the signal-to-noise ratio.
 
-* **Heuristic Re-ranking:** After fetching the top 10 chunks from `chromem-go`, apply a secondary scoring layer in Go:
+* **Heuristic Re-ranking:** After fetching the top 10 chunks from `sqlite-vec`, apply a secondary scoring layer in Go:
     * Boost chunks that match the `topic_id` exactly.
     * Boost chunks with high `importance_score`.
     * Prioritize "Parent" sections over "Child" fragments if similarity is nearly equal.

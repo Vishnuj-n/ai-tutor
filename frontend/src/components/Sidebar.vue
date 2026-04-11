@@ -98,7 +98,9 @@ const topItems = [
   font-size: 15px;
   font-weight: 500;
   background: transparent;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .menu-item:hover {
