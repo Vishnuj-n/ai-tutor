@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -597,15 +596,6 @@ func insertChunkRow(exec sqlExecer, topicID string, chunk NotebookChunkInput) er
 	return err
 }
 
-func linkNotebookChunkRow(exec sqlExecer, notebookID string, chunk NotebookChunkInput) error {
-	linkID := "nb-chunk-" + notebookID + "-" + chunk.ID
-	_, err := exec.Exec(`
-		INSERT INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
-		VALUES (?, ?, ?, ?)
-	`, linkID, notebookID, chunk.ID, chunk.PageNum)
-	return err
-}
-
 // CreateParentSection inserts a parent section row.
 func CreateParentSection(id, topicID, heading string, orderIndex int, content string) error {
 	return insertParentRow(conn, topicID, NotebookParentInput{
@@ -674,90 +664,12 @@ func EnsureTopic(topicID, title string) error {
 
 // IngestNotebookContent performs a transactional relational commit for notebook sections/chunks.
 func IngestNotebookContent(notebookID string, topicID string, parents []NotebookParentInput, chunks []NotebookChunkInput) error {
-	if topicID == "" {
-		return fmt.Errorf("topic id is required for ingestion")
-	}
-	group := NotebookTopicIngestionGroup{
-		TopicID: topicID,
-		Parents: parents,
-		Chunks:  chunks,
-	}
-	return IngestNotebookContentByTopic(notebookID, []NotebookTopicIngestionGroup{group})
+	return ingestNotebookContentRepo(notebookID, topicID, parents, chunks)
 }
 
 // IngestNotebookContentByTopic ingests notebook content into multiple topic buckets in one transaction.
 func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicIngestionGroup) error {
-	if notebookID == "" {
-		return fmt.Errorf("notebook id is required")
-	}
-	if len(groups) == 0 {
-		return fmt.Errorf("at least one topic group is required")
-	}
-
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if _, err := tx.Exec(`
-		UPDATE notebooks
-		SET status = ?, chunk_count = 0
-		WHERE id = ?
-	`, "processing", notebookID); err != nil {
-		return err
-	}
-
-	if _, err := tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID); err != nil {
-		return err
-	}
-
-	parentPrefix := fmt.Sprintf("nbp_%s_%%", notebookID)
-	chunkPrefix := fmt.Sprintf("nbc_%s_%%", notebookID)
-
-	if _, err := tx.Exec("DELETE FROM chunks WHERE id LIKE ?", chunkPrefix); err != nil {
-		return err
-	}
-	if _, err := tx.Exec("DELETE FROM parents WHERE id LIKE ?", parentPrefix); err != nil {
-		return err
-	}
-
-	totalChunks := 0
-	for _, group := range groups {
-		if group.TopicID == "" {
-			return fmt.Errorf("topic id is required for each ingestion group")
-		}
-
-		for _, parent := range group.Parents {
-			if err := insertParentRow(tx, group.TopicID, parent); err != nil {
-				return err
-			}
-		}
-
-		for _, chunk := range group.Chunks {
-			if err := insertChunkRow(tx, group.TopicID, chunk); err != nil {
-				return err
-			}
-
-			if err := linkNotebookChunkRow(tx, notebookID, chunk); err != nil {
-				return err
-			}
-
-			totalChunks++
-		}
-	}
-
-	if _, err := tx.Exec(`
-		UPDATE notebooks
-		SET chunk_count = ?, status = ?, topic_id = ?
-		WHERE id = ?
-	`, totalChunks, "chunked", groups[0].TopicID, notebookID); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return ingestNotebookContentByTopicRepo(notebookID, groups)
 }
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
@@ -835,192 +747,7 @@ func UpdateNotebookChunkCount(notebookID string, count int) error {
 
 // DeleteNotebook removes a notebook and its chunk links
 func DeleteNotebook(notebookID string) error {
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	chunkRows, err := tx.Query(`
-		SELECT chunk_id
-		FROM notebook_chunks
-		WHERE notebook_id = ?
-	`, notebookID)
-	if err != nil {
-		return err
-	}
-
-	chunkIDs := make([]string, 0)
-	for chunkRows.Next() {
-		var chunkID string
-		if scanErr := chunkRows.Scan(&chunkID); scanErr != nil {
-			_ = chunkRows.Close()
-			return scanErr
-		}
-		chunkIDs = append(chunkIDs, chunkID)
-	}
-	if rowsErr := chunkRows.Err(); rowsErr != nil {
-		_ = chunkRows.Close()
-		return rowsErr
-	}
-	_ = chunkRows.Close()
-
-	parentIDs := make(map[string]struct{})
-	hasChunkVectors := false
-	if exists, tableErr := doesTableExistTx(tx, "chunk_vectors"); tableErr != nil {
-		return tableErr
-	} else {
-		hasChunkVectors = exists
-	}
-
-	for _, chunkID := range chunkIDs {
-		var parentID string
-		var chunkRowID int64
-		if parentErr := tx.QueryRow(`
-			SELECT rowid, parent_id FROM chunks WHERE id = ?
-		`, chunkID).Scan(&chunkRowID, &parentID); parentErr == nil {
-			parentIDs[parentID] = struct{}{}
-
-			if hasChunkVectors {
-				if _, delVecErr := tx.Exec(`
-					DELETE FROM chunk_vectors WHERE rowid = ?
-				`, chunkRowID); delVecErr != nil {
-					return delVecErr
-				}
-			}
-		}
-
-		if _, delChunkErr := tx.Exec(`
-			DELETE FROM chunks WHERE id = ?
-		`, chunkID); delChunkErr != nil {
-			return delChunkErr
-		}
-	}
-
-	_, err = tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("DELETE FROM notebooks WHERE id = ?", notebookID)
-	if err != nil {
-		return err
-	}
-
-	for parentID := range parentIDs {
-		var count int
-		if countErr := tx.QueryRow(`
-			SELECT COUNT(*) FROM chunks WHERE parent_id = ?
-		`, parentID).Scan(&count); countErr != nil {
-			return countErr
-		}
-		if count == 0 {
-			if _, delParentErr := tx.Exec(`
-				DELETE FROM parents WHERE id = ?
-			`, parentID); delParentErr != nil {
-				return delParentErr
-			}
-		}
-	}
-
-	topicRows, err := tx.Query(`
-		SELECT id
-		FROM topics
-		WHERE id LIKE ?
-	`, "nb-"+notebookID+"-%")
-	if err != nil {
-		return err
-	}
-
-	autoTopicIDs := make([]string, 0)
-	for topicRows.Next() {
-		var topicID string
-		if scanErr := topicRows.Scan(&topicID); scanErr != nil {
-			_ = topicRows.Close()
-			return scanErr
-		}
-		autoTopicIDs = append(autoTopicIDs, topicID)
-	}
-	if rowsErr := topicRows.Err(); rowsErr != nil {
-		_ = topicRows.Close()
-		return rowsErr
-	}
-	_ = topicRows.Close()
-
-	for _, topicID := range autoTopicIDs {
-		var parentCount int
-		if parentCountErr := tx.QueryRow(`
-			SELECT COUNT(*) FROM parents WHERE topic_id = ?
-		`, topicID).Scan(&parentCount); parentCountErr != nil {
-			return parentCountErr
-		}
-
-		var chunkCount int
-		if chunkCountErr := tx.QueryRow(`
-			SELECT COUNT(*) FROM chunks WHERE topic_id = ?
-		`, topicID).Scan(&chunkCount); chunkCountErr != nil {
-			return chunkCountErr
-		}
-
-		if parentCount == 0 && chunkCount == 0 {
-			if _, delProgressErr := tx.Exec(`
-				DELETE FROM topic_progress WHERE topic_id = ?
-			`, topicID); delProgressErr != nil {
-				return delProgressErr
-			}
-			if _, delTopicErr := tx.Exec(`
-				DELETE FROM topics WHERE id = ?
-			`, topicID); delTopicErr != nil {
-				return delTopicErr
-			}
-		}
-	}
-
-	return tx.Commit()
-}
-
-func doesTableExistTx(tx *sql.Tx, tableName string) (bool, error) {
-	var count int
-	err := tx.QueryRow(`
-		SELECT COUNT(1)
-		FROM sqlite_master
-		WHERE type = 'table' AND name = ?
-	`, tableName).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-func vectorToJSON(vector []float32) (string, error) {
-	if len(vector) == 0 {
-		return "[]", nil
-	}
-
-	values := make([]float64, len(vector))
-	for i, value := range vector {
-		values[i] = float64(value)
-	}
-
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		return "", err
-	}
-
-	return string(encoded), nil
-}
-
-func lookupChunkRowID(chunkID string) (int64, error) {
-	var rowID int64
-	if err := conn.QueryRow(`
-		SELECT rowid FROM chunks WHERE id = ?
-	`, chunkID).Scan(&rowID); err != nil {
-		return 0, err
-	}
-
-	return rowID, nil
+	return deleteNotebookRepo(notebookID)
 }
 
 // Vector Search and Storage Functions
@@ -1051,85 +778,13 @@ func createVectorTable() error {
 // UpsertChunkVector stores or updates a chunk embedding vector.
 // Returns true if inserted, false if updated.
 func UpsertChunkVector(chunkID string, vector []float32) error {
-	if len(vector) != int(embeddingDimension) {
-		return fmt.Errorf("vector dimension mismatch: got %d, expected %d", len(vector), embeddingDimension)
-	}
-
-	vectorJSON, err := vectorToJSON(vector)
-	if err != nil {
-		return fmt.Errorf("failed to encode vector: %w", err)
-	}
-
-	rowID, err := lookupChunkRowID(chunkID)
-	if err != nil {
-		return fmt.Errorf("failed to resolve chunk rowid for %s: %w", chunkID, err)
-	}
-
-	// Check if chunk vector already exists
-	var exists int
-	err = conn.QueryRow(`
-		SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?
-	`, rowID).Scan(&exists)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-
-	if exists > 0 {
-		// Update existing
-		_, err = conn.Exec(`
-			UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?
-		`, vectorJSON, rowID)
-		return err
-	} else {
-		// Insert new
-		_, err = conn.Exec(`
-			INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)
-		`, rowID, vectorJSON)
-		return err
-	}
+	return upsertChunkVectorRepo(chunkID, vector)
 }
 
 // SearchVectorsForTopic finds the top-k most similar vectors for a topic-scoped query.
 // Returns list of chunk IDs ordered by similarity (highest first).
 func SearchVectorsForTopic(topicID string, queryVector []float32, k int) ([]string, error) {
-	if len(queryVector) != int(embeddingDimension) {
-		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), embeddingDimension)
-	}
-
-	queryVectorJSON, err := vectorToJSON(queryVector)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode query vector: %w", err)
-	}
-
-	// Use vec0 distance search, scoped to topic
-	// Note: vec0's distance metric is typically L2 (euclidean) or cosine depending on build
-	rows, err := conn.Query(`
-		SELECT c.id
-		FROM chunk_vectors cv
-		JOIN chunks c ON c.rowid = cv.rowid
-		WHERE c.topic_id = ?
-		ORDER BY distance(cv.embedding, ?) ASC
-		LIMIT ?
-	`, topicID, queryVectorJSON, k)
-	if err != nil {
-		return nil, fmt.Errorf("vector search failed: %w", err)
-	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			log.Printf("warning: failed to close vector search rows: %v", closeErr)
-		}
-	}()
-
-	var chunkIDs []string
-	for rows.Next() {
-		var chunkID string
-		if err := rows.Scan(&chunkID); err != nil {
-			return nil, err
-		}
-		chunkIDs = append(chunkIDs, chunkID)
-	}
-
-	return chunkIDs, nil
+	return searchVectorsForTopicRepo(topicID, queryVector, k)
 }
 
 // GetAllTopicIDs returns all topic IDs currently in the database.
