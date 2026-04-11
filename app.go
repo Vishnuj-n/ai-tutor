@@ -57,6 +57,7 @@ func (a *App) startup(ctx context.Context) {
 
 	appDir, err := resolveAppDir()
 	if err != nil {
+		a.aiInitError = err.Error()
 		fmt.Printf("Error resolving app directory: %v\n", err)
 		return
 	}
@@ -70,6 +71,7 @@ func (a *App) startup(ctx context.Context) {
 	// Initialize persistent database
 	dbPath, err := resolveDBPath()
 	if err != nil {
+		a.aiInitError = err.Error()
 		fmt.Printf("Error resolving database path: %v\n", err)
 		return
 	}
@@ -79,6 +81,7 @@ func (a *App) startup(ctx context.Context) {
 		vec0DllPath = stagedVec0Path
 	}
 	if err := db.Init(dbPath, vec0DllPath); err != nil {
+		a.aiInitError = err.Error()
 		fmt.Printf("Error initializing database: %v\n", err)
 		return
 	}
@@ -92,8 +95,7 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
 	} else {
 		if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
-			a.aiInitError = err.Error()
-			fmt.Printf("Warning: could not initialize vector table: %v\n", err)
+			fmt.Printf("Warning: could not initialize vector table; Ask AI will use lexical fallback: %v\n", err)
 		} else {
 			indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
 				RecomputeOnHashMismatch: true,
@@ -106,7 +108,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.embedder = embedder
-	a.aiReady = embedder != nil && a.aiInitError == ""
+	a.aiReady = embedder != nil
 
 	// Initialize retrieval store with vector-first retrieval and lexical fallback
 	embedStore := rag.NewEmbeddingStore(embedder)

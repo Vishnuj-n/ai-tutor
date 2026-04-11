@@ -147,6 +147,11 @@ function handleIngestionProgress(payload) {
   if (payload.message) {
     ingestionStatusMessage.value = payload.message
   }
+
+  const terminalStates = new Set(['indexed', 'partial_indexed', 'failed', 'chunked'])
+  if (typeof payload.status === 'string' && terminalStates.has(payload.status)) {
+    void loadNotebooks()
+  }
 }
 
 async function loadTopics() {

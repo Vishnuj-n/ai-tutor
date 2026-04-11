@@ -25,7 +25,7 @@ CGO_ENABLED=1 go build -tags sqlite_extension -o build/bin/windows/ai-tutor.exe 
 
 **Production build (Wails)**:
 ```bash
-CGO_ENABLED=1 wails build -platform windows/amd64 -o ai-tutor.exe
+CGO_ENABLED=1 wails build -tags sqlite_extension -platform windows/amd64 -o ai-tutor.exe
 ```
 
 ### macOS / Linux

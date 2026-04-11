@@ -129,6 +129,8 @@ func (a *App) processNotebookAutoIngestion(notebookID string, doc *notebook.Extr
 		topicTitles = []string{"General"}
 	}
 
+	_ = db.UpdateNotebookTopic(notebookID, topicIDs[0])
+
 	emitIngestionProgress(a, ingestionProgressPayload{
 		NotebookID: notebookID,
 		Status:     "analyzing",

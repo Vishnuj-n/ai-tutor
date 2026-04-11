@@ -91,13 +91,13 @@ Failure rule:
 
 ```bash
 wails doctor
-wails dev
+wails dev -tags sqlite_extension
 ```
 
 ### Build
 
 ```bash
-wails build
+wails build -tags sqlite_extension
 ```
 
 ## Documentation
