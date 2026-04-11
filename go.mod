@@ -3,7 +3,6 @@ module ai-tutor
 go 1.24.11
 
 require (
-	github.com/daulet/tokenizers v0.1.1
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.18

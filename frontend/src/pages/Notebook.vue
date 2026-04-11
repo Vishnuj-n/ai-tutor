@@ -54,6 +54,9 @@
             {{ topic.title }}
           </option>
         </select>
+        <p v-if="availableTopics.length === 0" class="topic-warning">
+          No topics found in the database. Uploads will be saved without RAG topic linking.
+        </p>
         <p class="help-text">Linking creates chunks and adds to RAG for Q&A</p>
       </div>
     </div>
@@ -77,11 +80,18 @@
               <p class="meta">{{ notebook.file_type.toUpperCase() }}</p>
               <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
               <p class="meta">{{ notebook.chunk_count }} chunks</p>
+              <p v-if="notebook.chunk_count === 0" class="meta pending-index">
+                Not indexed for RAG yet
+              </p>
             </div>
           </div>
 
           <div v-if="notebook.topic_id" class="notebook-topic">
             <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
+          </div>
+
+          <div v-else class="notebook-topic">
+            <span class="badge muted">No topic linked</span>
           </div>
 
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
@@ -125,7 +135,12 @@ onMounted(async () => {
 async function loadTopics() {
   try {
     const topics = await getAvailableTopics()
-    availableTopics.value = Array.isArray(topics) ? topics : []
+    const topicList = Array.isArray(topics)
+      ? topics
+      : Array.isArray(topics?.topics)
+        ? topics.topics
+        : []
+    availableTopics.value = topicList
   } catch (error) {
     console.error('Failed to load topics:', error)
     availableTopics.value = []
@@ -252,7 +267,7 @@ function getFileIcon(fileType) {
 
 function getTopicTitle(topicId) {
   const topic = availableTopics.value.find((t) => t.id === topicId)
-  return topic ? topic.title : 'Unknown'
+  return topic ? topic.title : 'No topic'
 }
 
 function formatDate(dateString) {
@@ -281,7 +296,7 @@ function formatDate(dateString) {
 .subtitle {
   margin: 8px 0 0;
   font-size: 14px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .upload-section {
@@ -379,7 +394,7 @@ function formatDate(dateString) {
 .progress span {
   display: block;
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
   margin-top: 8px;
   text-align: center;
 }
@@ -406,7 +421,7 @@ function formatDate(dateString) {
   background: var(--surface-container);
   border-radius: 12px;
   padding: 24px;
-  border: 2px solid var(--outline-variant);
+  border: 1px solid rgba(45, 51, 56, 0.16);
 }
 
 .topic-selection label {
@@ -419,18 +434,24 @@ function formatDate(dateString) {
 .topic-selection select {
   width: 100%;
   padding: 10px;
-  border: 1px solid var(--outline);
+  border: 1px solid rgba(45, 51, 56, 0.2);
   border-radius: 6px;
-  background: var(--surface);
+  background: var(--surface-container-lowest);
   color: var(--on-surface);
   font-size: 14px;
   margin-bottom: 12px;
 }
 
+.topic-warning {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #b1532a;
+}
+
 .help-text {
   margin: 0;
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .notebooks-list {
@@ -446,7 +467,7 @@ function formatDate(dateString) {
 .loading {
   text-align: center;
   padding: 32px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .empty-state {
@@ -454,7 +475,7 @@ function formatDate(dateString) {
   padding: 48px;
   background: var(--surface-container);
   border-radius: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .notebook-grid {
@@ -496,7 +517,11 @@ function formatDate(dateString) {
 .meta {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
+}
+
+.pending-index {
+  color: #b1532a;
 }
 
 .notebook-topic {
@@ -505,7 +530,7 @@ function formatDate(dateString) {
 
 .badge {
   display: inline-block;
-  background: var(--primary-dim);
+  background: var(--surface-container-low);
   color: var(--primary);
   padding: 4px 8px;
   border-radius: 4px;
@@ -513,9 +538,13 @@ function formatDate(dateString) {
   font-weight: 600;
 }
 
+.badge.muted {
+  color: var(--muted-text);
+}
+
 .notebook-date {
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
   margin-bottom: 12px;
 }
 
@@ -547,8 +576,8 @@ function formatDate(dateString) {
 }
 
 .btn-download {
-  background: var(--secondary);
-  color: var(--on-secondary);
+  background: var(--surface-container-low);
+  color: var(--on-surface);
 }
 
 .btn-download:hover {
@@ -556,8 +585,8 @@ function formatDate(dateString) {
 }
 
 .btn-delete {
-  background: var(--error-dim);
-  color: var(--error);
+  background: #ffe9e8;
+  color: #b5423d;
 }
 
 .btn-delete:hover {

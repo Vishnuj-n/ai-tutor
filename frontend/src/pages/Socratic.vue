@@ -1,554 +1,557 @@
 <template>
-  <section class="page">
-    <div class="header">
+  <section class="socratic-page">
+    <header class="page-header">
       <p class="eyebrow">Socratic Tutor</p>
       <h1>Guided Thinking</h1>
-      <p class="subtitle">Ask questions and develop deeper understanding</p>
-    </div>
+    </header>
 
-    <!-- Topic Selector -->
-    <article class="panel topic-selector">
-      <label for="topic-select" class="label">Select Topic</label>
-      <select
-        id="topic-select"
-        v-model="selectedTopic"
-        class="select-input"
-        @change="onTopicChange"
-      >
-        <option value="">-- Choose a topic --</option>
-        <option v-for="topic in availableTopics" :key="topic" :value="topic">
-          {{ formatTopicName(topic) }}
-        </option>
-      </select>
-      <p v-if="!selectedTopic" class="helper-text">Select a topic to begin asking questions</p>
-    </article>
+    <article class="chat-shell">
+      <div class="chat-toolbar">
+        <div class="control-group">
+          <label for="topic-select">Topic</label>
+          <select id="topic-select" v-model="selectedTopicID" @change="handleTopicChange">
+            <option value="">Choose topic</option>
+            <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
+              {{ topic.title }}
+            </option>
+          </select>
+        </div>
 
-    <!-- Chat Interface -->
-    <article v-if="selectedTopic" class="panel chat-container">
-      <!-- Messages Thread -->
-      <div class="messages-wrapper">
+        <div class="control-group">
+          <label for="notebook-select">Notebook</label>
+          <select id="notebook-select" v-model="selectedNotebookID" @change="handleNotebookChange">
+            <option value="">All notebooks</option>
+            <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
+              {{ formatNotebookLabel(notebook) }}
+            </option>
+          </select>
+        </div>
+
+        <button type="button" class="clear-btn" @click="clearConversation">Clear Chat</button>
+      </div>
+
+      <p v-if="selectionHint" class="selection-hint">{{ selectionHint }}</p>
+
+      <div ref="threadRef" class="chat-thread">
         <div v-if="messages.length === 0" class="empty-state">
-          <p class="empty-icon">💭</p>
-          <h3>Start a Conversation</h3>
+          <h3>Start the conversation</h3>
           <p>
-            Ask a question about <strong>{{ formatTopicName(selectedTopic) }}</strong> and explore
-            the topic through guided discussion.
+            Pick a topic (or a notebook linked to a topic), then ask a question to test retrieval and
+            citations.
           </p>
         </div>
 
-        <div v-else class="messages-list">
-          <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.role]">
-            <div class="message-content">
-              <p class="message-text">{{ msg.text }}</p>
+        <div v-for="(message, idx) in messages" :key="idx" :class="['bubble-row', message.role]">
+          <article class="bubble">
+            <p class="message-text">{{ message.text }}</p>
 
-              <!-- AI Response Metadata -->
-              <template v-if="msg.role === 'ai'">
-                <div v-if="msg.citations && msg.citations.length > 0" class="citations">
-                  <p class="citation-label">📚 Based on:</p>
-                  <ul class="citation-list">
-                    <li v-for="(citation, cidx) in msg.citations" :key="cidx">
-                      {{ citation }}
-                    </li>
-                  </ul>
-                </div>
-                <div v-if="msg.error" class="error-badge">⚠️ {{ msg.error }}</div>
-              </template>
+            <div v-if="message.role === 'assistant' && message.error" class="message-error">
+              {{ message.error }}
             </div>
-          </div>
 
-          <!-- Loading State -->
-          <div v-if="isLoading" class="message ai loading-message">
-            <div class="message-content">
-              <div class="typing-indicator"><span></span><span></span><span></span></div>
-              <p class="typing-text">Thinking...</p>
+            <div
+              v-if="message.role === 'assistant' && message.citations && message.citations.length > 0"
+              class="citations"
+            >
+              <p class="citation-label">Citations</p>
+              <ul>
+                <li v-for="(citation, citationIdx) in message.citations" :key="citationIdx">
+                  {{ citation }}
+                </li>
+              </ul>
             </div>
-          </div>
+          </article>
+        </div>
+
+        <div v-if="isLoading" class="bubble-row assistant">
+          <article class="bubble loading-bubble">
+            <span></span>
+            <span></span>
+            <span></span>
+          </article>
         </div>
       </div>
 
-      <!-- Input Area -->
-      <div class="input-area">
+      <form class="composer" @submit.prevent="submitQuestion">
         <textarea
           v-model="inputQuestion"
-          placeholder="Ask a question to deepen your understanding..."
-          class="input-field"
+          class="composer-input"
+          placeholder="Ask a grounded question about your material..."
           :disabled="isLoading"
-          @keydown.enter.ctrl="submitQuestion"
+          @keydown.enter.ctrl.prevent="submitQuestion"
         ></textarea>
-        <div class="input-footer">
-          <p class="helper-small">💡 Tip: Press Ctrl+Enter to send</p>
-          <button
-            type="button"
-            class="send-btn"
-            :disabled="isLoading || !inputQuestion.trim()"
-            @click="submitQuestion"
-          >
-            {{ isLoading ? 'Sending...' : 'Ask' }}
+
+        <div class="composer-footer">
+          <p>Ctrl+Enter to send</p>
+          <button type="submit" class="send-btn" :disabled="!canSend">
+            {{ isLoading ? 'Thinking...' : 'Send' }}
           </button>
         </div>
-      </div>
+      </form>
     </article>
 
-    <!-- Error State -->
-    <article v-if="globalError" class="panel error-panel">
-      <p class="error-icon">⚠️</p>
-      <p class="error-message">{{ globalError }}</p>
-    </article>
+    <p v-if="globalError" class="global-error">{{ globalError }}</p>
   </section>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import {
   askAI as askAIRequest,
   getAvailableTopics as fetchAvailableTopics,
+  getNotebooks as fetchNotebooks,
 } from '../services/appApi'
 
-const selectedTopic = ref('')
+const availableTopics = ref([])
+const notebooks = ref([])
+const selectedTopicID = ref('')
+const selectedNotebookID = ref('')
 const inputQuestion = ref('')
 const messages = ref([])
 const isLoading = ref(false)
 const globalError = ref('')
-const availableTopics = ref([])
+const threadRef = ref(null)
+
+const selectedNotebook = computed(() =>
+  notebooks.value.find((notebook) => notebook.id === selectedNotebookID.value)
+)
+
+const effectiveTopicID = computed(() => {
+  if (selectedTopicID.value) {
+    return selectedTopicID.value
+  }
+
+  if (selectedNotebook.value && selectedNotebook.value.topic_id) {
+    return selectedNotebook.value.topic_id
+  }
+
+  return ''
+})
+
+const canSend = computed(() => {
+  return !isLoading.value && inputQuestion.value.trim().length > 0 && effectiveTopicID.value !== ''
+})
+
+const selectionHint = computed(() => {
+  if (selectedNotebook.value && !selectedNotebook.value.topic_id && !selectedTopicID.value) {
+    return 'Selected notebook has no linked topic yet. Choose a topic to run RAG.'
+  }
+
+  if (!effectiveTopicID.value) {
+    return 'Choose a topic or select a notebook that is linked to a topic.'
+  }
+
+  const topic = availableTopics.value.find((item) => item.id === effectiveTopicID.value)
+  return topic ? `Current retrieval scope: ${topic.title}` : ''
+})
 
 onMounted(async () => {
-  await loadTopics()
+  await Promise.all([loadTopics(), loadNotebooks()])
 })
 
 async function loadTopics() {
   try {
-    globalError.value = ''
     const result = await fetchAvailableTopics()
+    const list = Array.isArray(result) ? result : Array.isArray(result?.topics) ? result.topics : []
+    availableTopics.value = list
 
-    if (result.error) {
-      globalError.value = result.error
-      availableTopics.value = []
-      return
+    if (!selectedTopicID.value && availableTopics.value.length > 0) {
+      selectedTopicID.value = availableTopics.value[0].id
     }
-
-    availableTopics.value = result.topics || []
   } catch (err) {
     globalError.value = `Failed to load topics: ${err.message}`
     availableTopics.value = []
   }
 }
 
-function onTopicChange() {
+async function loadNotebooks() {
+  try {
+    const result = await fetchNotebooks('')
+    notebooks.value = Array.isArray(result) ? result.filter((item) => !item.error) : []
+  } catch (err) {
+    globalError.value = `Failed to load notebooks: ${err.message}`
+    notebooks.value = []
+  }
+}
+
+function handleTopicChange() {
+  globalError.value = ''
+}
+
+function handleNotebookChange() {
+  globalError.value = ''
+  const notebook = selectedNotebook.value
+  if (notebook && notebook.topic_id) {
+    selectedTopicID.value = notebook.topic_id
+  }
+}
+
+function clearConversation() {
   messages.value = []
   inputQuestion.value = ''
   globalError.value = ''
 }
 
 async function submitQuestion() {
-  const question = inputQuestion.value.trim()
+  if (!canSend.value) {
+    return
+  }
 
-  if (!question || !selectedTopic.value) return
+  const question = inputQuestion.value.trim()
+  const topicID = effectiveTopicID.value
+
+  messages.value.push({
+    role: 'user',
+    text: question,
+  })
+
+  inputQuestion.value = ''
+  isLoading.value = true
+  await scrollToBottom()
 
   try {
-    // Add user message to thread
-    messages.value.push({
-      role: 'user',
-      text: question,
-      timestamp: new Date(),
-    })
+    const result = await askAIRequest(topicID, question)
 
-    inputQuestion.value = ''
-    isLoading.value = true
-    globalError.value = ''
-
-    // Call backend
-    const result = await askAIRequest(selectedTopic.value, question)
-
-    // Add AI response to thread
     if (result.error) {
       messages.value.push({
-        role: 'ai',
-        text: 'I encountered an issue while processing your question.',
+        role: 'assistant',
+        text: 'Unable to answer this query right now.',
         error: result.error,
-        timestamp: new Date(),
       })
     } else {
       messages.value.push({
-        role: 'ai',
+        role: 'assistant',
         text: result.answer || 'No response generated.',
         citations: result.cited_sections || [],
-        chunks_retrieved: result.chunks_retrieved,
-        sections_used: result.sections_used,
-        timestamp: new Date(),
       })
     }
   } catch (err) {
-    globalError.value = `Error: ${err.message}`
-    // Remove the last user message on error
-    if (messages.value.length > 0 && messages.value[messages.value.length - 1].role === 'user') {
-      messages.value.pop()
-    }
+    globalError.value = `Chat request failed: ${err.message}`
   } finally {
     isLoading.value = false
+    await scrollToBottom()
   }
 }
 
-function formatTopicName(topicId) {
-  return topicId
-    .split('-')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ')
+function formatNotebookLabel(notebook) {
+  if (notebook.topic_id) {
+    const topic = availableTopics.value.find((item) => item.id === notebook.topic_id)
+    if (topic) {
+      return `${notebook.title} (${topic.title})`
+    }
+  }
+  return notebook.title
+}
+
+async function scrollToBottom() {
+  await nextTick()
+  if (!threadRef.value) {
+    return
+  }
+  threadRef.value.scrollTop = threadRef.value.scrollHeight
 }
 </script>
 
 <style scoped>
-* {
-  box-sizing: border-box;
-}
-
-.page {
+.socratic-page {
   display: grid;
-  gap: 24px;
-  height: 100%;
+  gap: 12px;
+  min-height: calc(100vh - 48px);
 }
 
-.header {
-  padding: 0 4px;
+.page-header {
+  padding: 2px 2px 0;
 }
 
 .eyebrow {
   margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--muted-text);
-  font-weight: 700;
 }
 
 h1 {
   margin: 8px 0 0;
-  font-size: 46px;
+  font-size: 42px;
   font-family: 'Manrope', sans-serif;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
-.subtitle {
-  margin: 12px 0 0;
-  font-size: 16px;
-  color: var(--muted-text);
-}
-
-.panel {
-  background: var(--surface-container-lowest);
-  border-radius: 16px;
-  padding: 24px;
-}
-
-.topic-selector {
+.chat-shell {
   display: grid;
-  gap: 12px;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 10px;
+  min-height: 0;
+  background: var(--surface-container-lowest);
+  border-radius: 18px;
+  padding: 14px;
 }
 
-.label {
-  font-size: 12px;
-  font-weight: 600;
+.chat-toolbar {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.control-group {
+  display: grid;
+  gap: 6px;
+}
+
+.control-group label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--muted-text);
-  margin: 0;
 }
 
-.select-input {
-  padding: 12px;
-  border: 1px solid var(--surface-container-low);
-  border-radius: 12px;
-  background: var(--surface-container-low);
+.control-group select {
+  width: 100%;
+  border: 1px solid rgba(45, 51, 56, 0.18);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface-container-highest);
   color: var(--on-surface);
-  font-family: inherit;
   font-size: 14px;
-  cursor: pointer;
   outline: none;
-  transition: border-color 0.2s;
 }
 
-.select-input:focus {
+.control-group select:focus {
   border-color: var(--primary);
 }
 
-.helper-text {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted-text);
-}
-
-.helper-small {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.chat-container {
-  display: flex;
-  flex-direction: column;
-  height: 600px;
-  gap: 16px;
-}
-
-.messages-wrapper {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
+.clear-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
   background: var(--surface-container-low);
-  border-radius: 12px;
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.selection-hint {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-container-low);
+  color: var(--muted-text);
+  font-size: 13px;
+}
+
+.chat-thread {
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--surface-container-highest);
+  border-radius: 14px;
+  display: grid;
+  gap: 10px;
 }
 
 .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
+  margin: auto;
   text-align: center;
-  gap: 12px;
-  color: var(--muted-text);
-}
-
-.empty-icon {
-  font-size: 48px;
-  margin: 0;
+  max-width: 440px;
+  padding: 24px;
 }
 
 .empty-state h3 {
   margin: 0;
-  font-size: 18px;
-  color: var(--on-surface);
+  font-size: 24px;
   font-family: 'Manrope', sans-serif;
 }
 
 .empty-state p {
-  margin: 0;
-  font-size: 14px;
-  max-width: 300px;
+  margin: 10px 0 0;
+  color: var(--muted-text);
+  line-height: 1.5;
 }
 
-.messages-list {
+.bubble-row {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
-.message {
-  display: flex;
-  gap: 12px;
-  animation: slideIn 0.3s ease-out;
-}
-
-.message.user {
+.bubble-row.user {
   justify-content: flex-end;
 }
 
-.message-content {
-  max-width: 70%;
-  padding: 12px;
-  border-radius: 12px;
-  word-break: break-word;
+.bubble {
+  max-width: 78%;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--surface-container-lowest);
+  border: 1px solid rgba(45, 51, 56, 0.14);
 }
 
-.message.user .message-content {
-  background: linear-gradient(135deg, var(--primary-dim), var(--primary));
+.bubble-row.user .bubble {
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
+  border: none;
   color: var(--on-primary);
-}
-
-.message.ai .message-content {
-  background: var(--surface-container-highest);
-  color: var(--on-surface);
-  border: 1px solid var(--surface-container);
 }
 
 .message-text {
   margin: 0;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.message-error {
+  margin-top: 8px;
+  padding: 8px;
+  background: #fff0f0;
+  color: #b43131;
+  border-radius: 10px;
+  font-size: 12px;
 }
 
 .citations {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--surface-container);
-  font-size: 12px;
+  margin-top: 9px;
+  border-top: 1px solid rgba(45, 51, 56, 0.12);
+  padding-top: 8px;
 }
 
 .citation-label {
-  margin: 0 0 8px;
-  font-weight: 600;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--muted-text);
 }
 
-.citation-list {
-  margin: 0;
-  padding-left: 20px;
-  list-style: disc;
+.citations ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
 }
 
-.citation-list li {
+.citations li {
   margin: 4px 0;
   font-size: 12px;
-  color: var(--on-surface);
   line-height: 1.4;
 }
 
-.error-badge {
-  margin-top: 8px;
-  padding: 8px;
-  background: #fff3cd;
-  border-radius: 6px;
-  font-size: 12px;
-  color: #856404;
-}
-
-.loading-message .message-content {
-  background: var(--surface-container-highest);
-  border: 1px solid var(--surface-container);
-}
-
-.typing-indicator {
+.loading-bubble {
+  width: 58px;
   display: flex;
-  gap: 4px;
-  height: 12px;
+  justify-content: space-between;
 }
 
-.typing-indicator span {
+.loading-bubble span {
   width: 8px;
   height: 8px;
-  background: var(--muted-text);
   border-radius: 50%;
-  animation: typing 1.4s infinite;
+  background: var(--muted-text);
+  animation: pulse 1.1s infinite ease-in-out;
 }
 
-.typing-indicator span:nth-child(2) {
-  animation-delay: 0.2s;
+.loading-bubble span:nth-child(2) {
+  animation-delay: 0.12s;
 }
 
-.typing-indicator span:nth-child(3) {
-  animation-delay: 0.4s;
+.loading-bubble span:nth-child(3) {
+  animation-delay: 0.24s;
 }
 
-.typing-text {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.input-area {
+.composer {
   display: grid;
-  gap: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--surface-container-low);
+  gap: 8px;
 }
 
-.input-field {
+.composer-input {
   width: 100%;
-  min-height: 80px;
-  max-height: 120px;
-  padding: 12px;
-  border: 1px solid var(--surface-container-low);
-  border-radius: 12px;
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-  font-family: inherit;
-  font-size: 14px;
+  min-height: 88px;
+  max-height: 160px;
   resize: vertical;
+  border: 1px solid rgba(45, 51, 56, 0.2);
+  border-radius: 12px;
+  background: var(--surface-container-lowest);
+  padding: 11px 12px;
+  color: var(--on-surface);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.5;
   outline: none;
-  transition: border-color 0.2s;
 }
 
-.input-field:focus {
+.composer-input:focus {
   border-color: var(--primary);
 }
 
-.input-field:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.input-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.composer-footer p {
+  margin: 0;
+  color: var(--muted-text);
+  font-size: 12px;
 }
 
 .send-btn {
-  padding: 10px 20px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 10px;
+  padding: 10px 16px;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   color: var(--on-primary);
-  font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.send-btn:hover:not(:disabled) {
-  opacity: 0.9;
 }
 
 .send-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
-.error-panel {
-  background: #fff3cd;
-  border: 1px solid #ffeaa7;
-  color: #856404;
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.error-icon {
-  font-size: 20px;
+.global-error {
   margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff0f0;
+  color: #b43131;
+  font-size: 13px;
 }
 
-.error-message {
-  margin: 0;
-  font-size: 14px;
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
+@keyframes pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.32;
     transform: translateY(0);
   }
-}
-
-@keyframes typing {
-  0%,
-  60%,
-  100% {
-    opacity: 0.5;
-  }
-  30% {
+  40% {
     opacity: 1;
+    transform: translateY(-2px);
   }
 }
 
-/* Scrollbar styling */
-.messages-wrapper::-webkit-scrollbar {
-  width: 6px;
-}
+@media (max-width: 980px) {
+  .socratic-page {
+    min-height: auto;
+  }
 
-.messages-wrapper::-webkit-scrollbar-track {
-  background: transparent;
-}
+  h1 {
+    font-size: 34px;
+  }
 
-.messages-wrapper::-webkit-scrollbar-thumb {
-  background: var(--surface-container);
-  border-radius: 3px;
-}
+  .chat-toolbar {
+    grid-template-columns: 1fr;
+  }
 
-.messages-wrapper::-webkit-scrollbar-thumb:hover {
-  background: var(--surface-container-high);
+  .clear-btn {
+    width: 100%;
+  }
+
+  .bubble {
+    max-width: 94%;
+  }
 }
 </style>

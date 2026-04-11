@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "check": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "computedHash": "138da691cb692ebc658b83a5b9c1a0eba70ff6f429bd02d378d445048a5f1689"
+    },
+    "design": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "computedHash": "931b07dd71fa1484a88251d7694f0053880cd683d06c7fdabdcbf06eafed5890"
+    }
+  }
+}
