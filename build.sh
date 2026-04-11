@@ -36,7 +36,6 @@ case $TARGET in
         echo "Cleaning build artifacts..."
         rm -rf "$OUTPUT_DIR"
         go clean
-        rm -rf build/bin
         echo "✓ Clean complete"
         ;;
     *)

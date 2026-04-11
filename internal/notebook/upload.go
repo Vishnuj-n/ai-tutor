@@ -24,8 +24,8 @@ type Service struct {
 }
 
 const (
-	chunkWordWindow  = 180
-	chunkWordOverlap = 40
+	ChunkWordWindow  = 180
+	ChunkWordOverlap = 40
 )
 
 // NewService creates a new notebook service
@@ -305,7 +305,7 @@ func (s *Service) BuildIngestionData(notebookID string, doc *ExtractedDocument) 
 			OrderIndex: sectionIndex + 1,
 		})
 
-		chunks := SplitIntoWordChunks(section.Text, chunkWordWindow, chunkWordOverlap)
+		chunks := SplitIntoWordChunks(section.Text, ChunkWordWindow, ChunkWordOverlap)
 		for chunkIndex, chunkText := range chunks {
 			chunkID := fmt.Sprintf("nbc_%s_%d_%d", notebookID, sectionIndex+1, chunkIndex+1)
 			data.Chunks = append(data.Chunks, ChunkRecord{
@@ -434,7 +434,7 @@ func splitMarkdownSections(content string) []ExtractedSection {
 
 func SplitIntoWordChunks(text string, chunkSize, overlap int) []string {
 	if chunkSize <= 0 {
-		chunkSize = chunkWordWindow
+		chunkSize = ChunkWordWindow
 	}
 	if overlap < 0 {
 		overlap = 0
