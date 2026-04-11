@@ -117,16 +117,9 @@ func copyFile(src, dst string) error {
 	if dstInfo, dstErr := os.Stat(dst); dstErr == nil {
 		if srcInfo.Size() == dstInfo.Size() {
 			srcHash, srcHashErr := fileSHA256(src)
-			if srcHashErr != nil {
-				return srcHashErr
-			}
-
 			dstHash, dstHashErr := fileSHA256(dst)
-			if dstHashErr != nil {
-				return dstHashErr
-			}
-
-			if srcHash == dstHash {
+			// Hash calculation failures are best-effort; proceed to copy if either hash fails
+			if srcHashErr == nil && dstHashErr == nil && srcHash == dstHash {
 				return nil
 			}
 		}

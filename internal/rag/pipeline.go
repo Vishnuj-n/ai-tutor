@@ -80,7 +80,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	prompt, promptParentIDs := buildPrompt(
 		topicTitle,
 		userQuestion,
-		ctx,
+		*ctx,
 	)
 
 	// Step 7: Call LLM
@@ -122,7 +122,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	return result, nil
 }
 
-func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) (string, []string) {
+func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string, []string) {
 	const maxContextRunes = 6000
 	const minUsedSectionRatio = 0.5
 
