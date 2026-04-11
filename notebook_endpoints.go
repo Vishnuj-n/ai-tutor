@@ -152,7 +152,7 @@ func (a *App) processNotebookAutoIngestion(notebookID string, doc *notebook.Extr
 		return
 	}
 
-	if err := db.IngestNotebookContentByTopic(notebookID, groups); err != nil {
+	if err := a.notebookService.IngestNotebookContentByTopic(notebookID, groups); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
 		emitIngestionProgress(a, ingestionProgressPayload{
 			NotebookID: notebookID,
@@ -611,7 +611,7 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 	}
 
 	// Get notebook to retrieve file path
-	nb, err := db.GetNotebookByID(notebookID)
+	nb, err := a.notebookService.GetNotebookByID(notebookID)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
@@ -632,7 +632,7 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 	}
 
 	// Delete database record
-	if err := db.DeleteNotebook(notebookID); err != nil {
+	if err := a.notebookService.DeleteNotebookRecords(notebookID); err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}
