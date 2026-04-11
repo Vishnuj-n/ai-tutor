@@ -251,6 +251,7 @@ Embeddings are generated locally with ONNX Runtime and stored in SQLite + `sqlit
 - Keeps the full RAG stack local-first and portable.
 - Removes dependency on external vector database services.
 - Supports deterministic retrieval with transparent SQL-level inspection.
+- Auditability and bias mitigation: unlike opaque "database-does-AI" extensions, separating ONNX embedding from SQLite vector indexing keeps tokenization and retrieval fully controllable, deterministic, explainable, and auditable.
 
 ### How
 
@@ -258,6 +259,7 @@ Step 1: Tokenize text with `asset/tokenizer.json`
 
 - Use a tokenizer compatible with Hugging Face tokenizer JSON format.
 - Apply the same tokenizer for document chunks and user queries.
+- Recommended implementation: use `github.com/daulet/tokenizers` (CGO wrapper over Hugging Face tokenizers) to parse `asset/tokenizer.json` directly in Go.
 
 Step 2: Generate embeddings with ONNX
 
@@ -291,3 +293,18 @@ Required for local Windows builds:
 - `asset/vec0.dll`
 
 If either dependency is missing, ingestion/retrieval must fail with an explicit setup error instead of synthetic fallback output.
+
+## 14. Build and Compilation Constraints
+
+### What
+
+The Go application relies on C bindings to interact with local runtime libraries.
+
+### Why
+
+Both `onnxruntime_go` and `sqlite-vec` operate outside pure Go memory for performance-critical inference and vector search.
+
+### How
+
+- CGO required: build with `CGO_ENABLED=1`.
+- SQLite extension loading: compile with sqlite extension support, for example `go build -tags sqlite_extension .`.

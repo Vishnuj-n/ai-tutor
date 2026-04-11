@@ -2,17 +2,20 @@ package rag
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 )
 
 // EmbeddingStore manages embeddings and retrieval
 type EmbeddingStore struct {
-	vectors map[string]VectorEntry
+	vectors  map[string]VectorEntry
+	embedder *embeddings.OnnxEmbedder
 }
 
 // VectorEntry stores a chunk vector and metadata for retrieval-time filtering/scoring.
@@ -26,9 +29,10 @@ type VectorEntry struct {
 }
 
 // NewEmbeddingStore creates a new embedding store
-func NewEmbeddingStore() *EmbeddingStore {
+func NewEmbeddingStore(embedder *embeddings.OnnxEmbedder) *EmbeddingStore {
 	return &EmbeddingStore{
-		vectors: make(map[string]VectorEntry),
+		vectors:  make(map[string]VectorEntry),
+		embedder: embedder,
 	}
 }
 
@@ -130,6 +134,52 @@ type RetrievalResult struct {
 
 // SearchTopK retrieves the top-k most similar chunks for a query
 func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int) []RetrievalResult {
+	// Preferred path: ONNX embed query and run sqlite-vec search scoped by topic.
+	if s.embedder != nil && len(chunks) > 0 {
+		queryVector, err := s.embedder.Embed(query)
+		if err == nil {
+			topicID := chunks[0].TopicID
+			chunkIDs, searchErr := db.SearchVectorsForTopic(topicID, queryVector, k)
+			if searchErr == nil && len(chunkIDs) > 0 {
+				chunkByID := make(map[string]models.Chunk, len(chunks))
+				for _, chunk := range chunks {
+					chunkByID[chunk.ID] = chunk
+				}
+
+				results := make([]RetrievalResult, 0, len(chunkIDs))
+				for i, chunkID := range chunkIDs {
+					chunk, ok := chunkByID[chunkID]
+					if !ok {
+						continue
+					}
+
+					// vec0 ordering is by similarity; assign a monotonic score for reranking hook.
+					score := float64(len(chunkIDs) - i)
+					results = append(results, RetrievalResult{
+						ChunkID:         chunk.ID,
+						Text:            chunk.Text,
+						TopicID:         chunk.TopicID,
+						ParentID:        chunk.ParentID,
+						ImportanceScore: chunk.ImportanceScore,
+						WeaknessScore:   chunk.WeaknessScore,
+						Score:           score,
+					})
+				}
+
+				if len(results) > 0 {
+					return results
+				}
+			}
+
+			if searchErr != nil {
+				log.Printf("Vector search unavailable, falling back to lexical retrieval: %v", searchErr)
+			}
+		} else {
+			log.Printf("Query embedding failed, falling back to lexical retrieval: %v", err)
+		}
+	}
+
+	// Fallback path: lexical cosine similarity on TF vectors.
 	queryVector := s.TFVector(query)
 
 	var results []RetrievalResult

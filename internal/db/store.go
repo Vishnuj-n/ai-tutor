@@ -2,7 +2,10 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"ai-tutor/internal/models"
 
@@ -10,9 +13,11 @@ import (
 )
 
 var conn *sql.DB
+var embeddingDimension int32 = 0 // Will be set during DB initialization with vec0
 
 // Init initializes the SQLite database and creates tables
-func Init(dbPath string) error {
+// vec0DllPath should be the absolute path to vec0.dll (sqlite-vec extension)
+func Init(dbPath, vec0DllPath string) error {
 	var err error
 	conn, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -21,6 +26,27 @@ func Init(dbPath string) error {
 
 	if err := conn.Ping(); err != nil {
 		return err
+	}
+
+	// Load sqlite-vec extension if available
+	if vec0DllPath != "" {
+		// Verify file exists before attempting to load
+		if _, err := os.Stat(vec0DllPath); err == nil {
+			// Use absolute path for the extension
+			absPath, err := filepath.Abs(vec0DllPath)
+			if err != nil {
+				absPath = vec0DllPath
+			}
+			// Try to load the extension
+			if _, err := conn.Exec(fmt.Sprintf("SELECT load_extension('%s')", absPath)); err != nil {
+				log.Printf("Warning: could not load sqlite-vec extension from %s: %v", absPath, err)
+				// Non-fatal; continue without vec0 for backward compat
+			} else {
+				log.Printf("Successfully loaded sqlite-vec extension from %s", absPath)
+			}
+		} else {
+			log.Printf("Warning: vec0.dll not found at %s", vec0DllPath)
+		}
 	}
 
 	// Create tables
@@ -34,6 +60,18 @@ func Init(dbPath string) error {
 	}
 
 	return nil
+}
+
+// InitWithVectorDimension initializes the database and creates the vec0 virtual table.
+// Called after ONNX embedder dimension is discovered.
+func InitWithVectorDimension(embeddingDim int32) error {
+	if embeddingDim <= 0 {
+		return fmt.Errorf("invalid embedding dimension: %d", embeddingDim)
+	}
+	embeddingDimension = embeddingDim
+
+	// Create vec0 virtual table with the discovered dimension
+	return createVectorTable()
 }
 
 func createTables() error {
@@ -515,4 +553,130 @@ func DeleteNotebook(notebookID string) error {
 	}
 
 	return tx.Commit()
+}
+
+// Vector Search and Storage Functions
+
+// createVectorTable creates the vec0 virtual table with the discovered embedding dimension.
+func createVectorTable() error {
+	if embeddingDimension <= 0 {
+		return fmt.Errorf("embedding dimension not initialized")
+	}
+
+	// Create vec0 virtual table for vector search
+	// Format: vec0(embedding float[dimension])
+	schema := fmt.Sprintf(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(
+			embedding float[%d]
+		);
+	`, embeddingDimension)
+
+	_, err := conn.Exec(schema)
+	if err != nil {
+		return fmt.Errorf("failed to create vec0 table: %w", err)
+	}
+
+	log.Printf("Created vec0 virtual table with embedding dimension %d", embeddingDimension)
+	return nil
+}
+
+// UpsertChunkVector stores or updates a chunk embedding vector.
+// Returns true if inserted, false if updated.
+func UpsertChunkVector(chunkID string, vector []float32) error {
+	if len(vector) != int(embeddingDimension) {
+		return fmt.Errorf("vector dimension mismatch: got %d, expected %d", len(vector), embeddingDimension)
+	}
+
+	// Check if chunk vector already exists
+	var exists int
+	err := conn.QueryRow(`
+		SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?
+	`, chunkID).Scan(&exists)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	if exists > 0 {
+		// Update existing
+		_, err = conn.Exec(`
+			UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?
+		`, vector, chunkID)
+		return err
+	} else {
+		// Insert new
+		_, err = conn.Exec(`
+			INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)
+		`, chunkID, vector)
+		return err
+	}
+}
+
+// SearchVectorsForTopic finds the top-k most similar vectors for a topic-scoped query.
+// Returns list of chunk IDs ordered by similarity (highest first).
+func SearchVectorsForTopic(topicID string, queryVector []float32, k int) ([]string, error) {
+	if len(queryVector) != int(embeddingDimension) {
+		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), embeddingDimension)
+	}
+
+	// Use vec0 distance search, scoped to topic
+	// Note: vec0's distance metric is typically L2 (euclidean) or cosine depending on build
+	rows, err := conn.Query(`
+		SELECT c.id
+		FROM chunk_vectors cv
+		JOIN chunks c ON c.id = cv.rowid
+		WHERE c.topic_id = ?
+		ORDER BY distance(cv.embedding, ?) ASC
+		LIMIT ?
+	`, topicID, queryVector, k)
+	if err != nil {
+		return nil, fmt.Errorf("vector search failed: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close vector search rows: %v", closeErr)
+		}
+	}()
+
+	var chunkIDs []string
+	for rows.Next() {
+		var chunkID string
+		if err := rows.Scan(&chunkID); err != nil {
+			return nil, err
+		}
+		chunkIDs = append(chunkIDs, chunkID)
+	}
+
+	return chunkIDs, nil
+}
+
+// GetAllTopicIDs returns all topic IDs currently in the database.
+func GetAllTopicIDs() ([]string, error) {
+	rows, err := conn.Query("SELECT id FROM topics ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close topic rows: %v", closeErr)
+		}
+	}()
+
+	var topicIDs []string
+	for rows.Next() {
+		var topicID string
+		if err := rows.Scan(&topicID); err != nil {
+			return nil, err
+		}
+		topicIDs = append(topicIDs, topicID)
+	}
+
+	return topicIDs, nil
+}
+
+// UpdateChunkEmbedding updates the embedding_ref (hash) for a chunk to track changes.
+func UpdateChunkEmbedding(chunkID string, hash string) error {
+	_, err := conn.Exec(`
+		UPDATE chunks SET embedding_ref = ? WHERE id = ?
+	`, hash, chunkID)
+	return err
 }

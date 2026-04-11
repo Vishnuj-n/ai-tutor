@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
+	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
 
 	"github.com/joho/godotenv"
@@ -38,6 +40,13 @@ func (a *App) startup(ctx context.Context) {
 	// Load local .env if present. Missing file is fine.
 	_ = godotenv.Load()
 
+	// Validate required assets for local RAG
+	assetValidator := runtime.NewAssetValidator("asset")
+	if err := assetValidator.ValidateAll(); err != nil {
+		fmt.Printf("Warning: local RAG assets missing: %v\n", err)
+		fmt.Println("Ask AI features may be unavailable. Ensure asset/ contains tokenizer.json, model_int8.onnx, onnxruntime.dll, vec0.dll")
+	}
+
 	// Initialize persistent database
 	dbPath, err := resolveDBPath()
 	if err != nil {
@@ -45,18 +54,41 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 
-	if err := db.Init(dbPath); err != nil {
+	vec0DllPath := assetValidator.Vec0DllPath()
+	if err := db.Init(dbPath, vec0DllPath); err != nil {
 		fmt.Printf("Error initializing database: %v\n", err)
 		return
 	}
 	fmt.Printf("Database initialized at %s\n", dbPath)
 
-	// Initialize embeddings
-	embedStore := rag.NewEmbeddingStore()
+	// Initialize ONNX embedder (Phase 10 wiring still pending for real inference output)
+	var embedder *embeddings.OnnxEmbedder
+	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath())
+	if err != nil {
+		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
+	} else {
+		if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
+			fmt.Printf("Warning: could not initialize vector table: %v\n", err)
+		} else {
+			indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
+				RecomputeOnHashMismatch: true,
+				ForceReindex:            false,
+			})
+			if err := indexer.IndexAllTopics(); err != nil {
+				fmt.Printf("Warning: vector indexing failed: %v\n", err)
+			}
+		}
+	}
 
-	// Load all chunks for all available topics and add to embedding store
-	// For now, just load the hardcoded topic
-	topicIDs := []string{"os-scheduling"}
+	// Initialize retrieval store with vector-first retrieval and lexical fallback
+	embedStore := rag.NewEmbeddingStore(embedder)
+
+	// Load chunks for lexical fallback retrieval path.
+	topicIDs, err := db.GetAllTopicIDs()
+	if err != nil {
+		fmt.Printf("Warning: could not list topics for lexical fallback: %v\n", err)
+		topicIDs = []string{"os-scheduling"}
+	}
 
 	for _, topicID := range topicIDs {
 		chunks, err := db.GetChunksForTopic(topicID)

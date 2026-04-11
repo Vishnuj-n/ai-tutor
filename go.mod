@@ -3,11 +3,15 @@ module ai-tutor
 go 1.24.11
 
 require (
+	github.com/daulet/tokenizers v0.1.1
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/wailsapp/wails/v2 v2.11.0
 )
+
+// ONNX Runtime binding: yalue/onnxruntime_go available but version constraints needed
+// Will be resolved at build time with: go get github.com/yalue/onnxruntime_go@latest
 
 require (
 	github.com/bep/debounce v1.2.1 // indirect
