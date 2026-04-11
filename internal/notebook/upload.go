@@ -1,12 +1,15 @@
 package notebook
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
+	pdfreader "github.com/ledongthuc/pdf"
 )
 
 // UploadConfig holds paths and limits for file uploads
@@ -19,6 +22,11 @@ type UploadConfig struct {
 type Service struct {
 	config UploadConfig
 }
+
+const (
+	chunkWordWindow  = 180
+	chunkWordOverlap = 40
+)
 
 // NewService creates a new notebook service
 func NewService(uploadDir string) *Service {
@@ -39,6 +47,44 @@ type UploadResult struct {
 	FilePath string
 	FileType string
 	Size     int64
+}
+
+// ExtractedSection is a normalized content section from an uploaded notebook.
+type ExtractedSection struct {
+	Heading string
+	Text    string
+	PageNum int
+}
+
+// ExtractedDocument represents normalized notebook content ready for chunking.
+type ExtractedDocument struct {
+	Title     string
+	PageCount int
+	WordCount int
+	Sections  []ExtractedSection
+}
+
+// ParentRecord is a parent section row prepared for DB insertion.
+type ParentRecord struct {
+	ID         string
+	Heading    string
+	Content    string
+	OrderIndex int
+}
+
+// ChunkRecord is a chunk row prepared for DB insertion and notebook linking.
+type ChunkRecord struct {
+	ID         string
+	ParentID   string
+	Text       string
+	TokenCount int
+	PageNum    int
+}
+
+// IngestionData is deterministic relational data derived from notebook content.
+type IngestionData struct {
+	Parents []ParentRecord
+	Chunks  []ChunkRecord
 }
 
 // SaveUploadedFile saves an uploaded file and returns metadata
@@ -113,6 +159,169 @@ func (s *Service) DeleteFile(filePath string) error {
 	return os.Remove(absPath)
 }
 
+// ExtractDocument loads and normalizes notebook text content for ingestion.
+func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedDocument, error) {
+	fileType = strings.ToLower(fileType)
+
+	doc := &ExtractedDocument{
+		Title: filepath.Base(filePath),
+	}
+
+	switch fileType {
+	case "txt":
+		raw, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read txt file: %w", err)
+		}
+		content := normalizeWhitespace(string(raw))
+		if content == "" {
+			return nil, fmt.Errorf("document has no readable content")
+		}
+		doc.PageCount = 1
+		doc.WordCount = len(strings.Fields(content))
+		doc.Sections = []ExtractedSection{{
+			Heading: "Document",
+			Text:    content,
+			PageNum: 1,
+		}}
+
+	case "md":
+		raw, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read markdown file: %w", err)
+		}
+		sections := splitMarkdownSections(string(raw))
+		if len(sections) == 0 {
+			return nil, fmt.Errorf("document has no readable content")
+		}
+		doc.PageCount = 1
+		doc.Sections = sections
+		for _, section := range sections {
+			doc.WordCount += len(strings.Fields(section.Text))
+		}
+
+	case "pdf":
+		file, reader, err := pdfreader.Open(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read pdf: %w", err)
+		}
+		defer func() {
+			_ = file.Close()
+		}()
+
+		totalPages := reader.NumPage()
+		doc.PageCount = totalPages
+
+		for pageIndex := 1; pageIndex <= totalPages; pageIndex++ {
+			page := reader.Page(pageIndex)
+			text, pageErr := page.GetPlainText(nil)
+			if pageErr != nil {
+				return nil, fmt.Errorf("failed to read pdf page %d: %w", pageIndex, pageErr)
+			}
+
+			normalized := normalizeWhitespace(text)
+			if normalized == "" {
+				continue
+			}
+
+			doc.WordCount += len(strings.Fields(normalized))
+			doc.Sections = append(doc.Sections, ExtractedSection{
+				Heading: fmt.Sprintf("Page %d", pageIndex),
+				Text:    normalized,
+				PageNum: pageIndex,
+			})
+		}
+
+		if len(doc.Sections) == 0 {
+			plainReader, plainErr := reader.GetPlainText()
+			if plainErr != nil {
+				return nil, fmt.Errorf("pdf did not contain extractable text: %w", plainErr)
+			}
+
+			var buf bytes.Buffer
+			if _, copyErr := io.Copy(&buf, plainReader); copyErr != nil {
+				return nil, fmt.Errorf("failed to read plain pdf text: %w", copyErr)
+			}
+
+			normalized := normalizeWhitespace(buf.String())
+			if normalized == "" {
+				return nil, fmt.Errorf("pdf did not contain extractable text")
+			}
+
+			doc.WordCount = len(strings.Fields(normalized))
+			doc.Sections = []ExtractedSection{{
+				Heading: "Document",
+				Text:    normalized,
+				PageNum: 1,
+			}}
+			if doc.PageCount == 0 {
+				doc.PageCount = 1
+			}
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported file type: %s", fileType)
+	}
+
+	if doc.PageCount <= 0 {
+		doc.PageCount = 1
+	}
+
+	return doc, nil
+}
+
+// BuildIngestionData creates deterministic parent/chunk records for DB transaction inserts.
+func (s *Service) BuildIngestionData(notebookID string, doc *ExtractedDocument) (*IngestionData, error) {
+	if doc == nil {
+		return nil, fmt.Errorf("document is nil")
+	}
+	if len(doc.Sections) == 0 {
+		return nil, fmt.Errorf("document has no sections to ingest")
+	}
+
+	data := &IngestionData{
+		Parents: make([]ParentRecord, 0, len(doc.Sections)),
+		Chunks:  make([]ChunkRecord, 0),
+	}
+
+	for sectionIndex, section := range doc.Sections {
+		if section.Text == "" {
+			continue
+		}
+
+		parentID := fmt.Sprintf("nbp_%s_%d", notebookID, sectionIndex+1)
+		heading := strings.TrimSpace(section.Heading)
+		if heading == "" {
+			heading = fmt.Sprintf("Section %d", sectionIndex+1)
+		}
+
+		data.Parents = append(data.Parents, ParentRecord{
+			ID:         parentID,
+			Heading:    heading,
+			Content:    section.Text,
+			OrderIndex: sectionIndex + 1,
+		})
+
+		chunks := splitIntoWordChunks(section.Text, chunkWordWindow, chunkWordOverlap)
+		for chunkIndex, chunkText := range chunks {
+			chunkID := fmt.Sprintf("nbc_%s_%d_%d", notebookID, sectionIndex+1, chunkIndex+1)
+			data.Chunks = append(data.Chunks, ChunkRecord{
+				ID:         chunkID,
+				ParentID:   parentID,
+				Text:       chunkText,
+				TokenCount: len(strings.Fields(chunkText)),
+				PageNum:    section.PageNum,
+			})
+		}
+	}
+
+	if len(data.Chunks) == 0 {
+		return nil, fmt.Errorf("document produced no chunks after normalization")
+	}
+
+	return data, nil
+}
+
 // sanitizeFileName removes potentially dangerous characters
 func sanitizeFileName(name string) string {
 	// Remove extension for processing
@@ -138,23 +347,107 @@ type FileMetadata struct {
 	Title     string
 }
 
-// ExtractMetadata returns basic metadata about a file (placeholder for PDF parsing)
+// ExtractMetadata returns metadata derived from normalized extraction output.
 func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetadata, error) {
-	fileInfo, err := os.Stat(filePath)
+	doc, err := s.ExtractDocument(filePath, fileType)
 	if err != nil {
 		return nil, err
 	}
 
-	meta := &FileMetadata{
-		Title: fileInfo.Name(),
+	return &FileMetadata{
+		Title:     doc.Title,
+		PageCount: doc.PageCount,
+		WordCount: doc.WordCount,
+	}, nil
+
+}
+
+func splitMarkdownSections(content string) []ExtractedSection {
+	lines := strings.Split(content, "\n")
+	sections := make([]ExtractedSection, 0)
+	currentHeading := "Document"
+	var body []string
+
+	flush := func() {
+		joined := normalizeWhitespace(strings.Join(body, "\n"))
+		if joined != "" {
+			sections = append(sections, ExtractedSection{
+				Heading: currentHeading,
+				Text:    joined,
+				PageNum: 1,
+			})
+		}
+		body = body[:0]
 	}
 
-	// For PDF files, this would use a PDF library to extract page count
-	// For now, return basic metadata
-	if fileType == "pdf" {
-		// TODO: use PDF library to extract page count
-		meta.PageCount = 1 // placeholder
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			flush()
+			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+			if heading == "" {
+				heading = "Section"
+			}
+			currentHeading = heading
+			continue
+		}
+		body = append(body, line)
+	}
+	flush()
+
+	if len(sections) == 0 {
+		normalized := normalizeWhitespace(content)
+		if normalized != "" {
+			sections = append(sections, ExtractedSection{
+				Heading: "Document",
+				Text:    normalized,
+				PageNum: 1,
+			})
+		}
 	}
 
-	return meta, nil
+	return sections
+}
+
+func splitIntoWordChunks(text string, chunkSize, overlap int) []string {
+	if chunkSize <= 0 {
+		chunkSize = chunkWordWindow
+	}
+	if overlap < 0 {
+		overlap = 0
+	}
+	if overlap >= chunkSize {
+		overlap = chunkSize / 2
+	}
+
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+
+	stride := chunkSize - overlap
+	chunks := make([]string, 0)
+
+	for start := 0; start < len(words); start += stride {
+		end := start + chunkSize
+		if end > len(words) {
+			end = len(words)
+		}
+
+		chunk := strings.Join(words[start:end], " ")
+		chunk = normalizeWhitespace(chunk)
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+
+		if end == len(words) {
+			break
+		}
+	}
+
+	return chunks
+}
+
+func normalizeWhitespace(input string) string {
+	return strings.TrimSpace(strings.Join(strings.Fields(input), " "))
 }

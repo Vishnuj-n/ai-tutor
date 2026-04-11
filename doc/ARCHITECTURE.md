@@ -17,7 +17,8 @@ A local-first desktop tutoring system with deterministic workflows and topic-sco
 - Go + Wails host core services and desktop runtime
 - Vue multi-page UI invokes typed backend commands
 - SQLite is the source of truth for study state
- - Use the Go client for the Chroma vector database to store and query embeddings for topic retrieval
+- SQLite + sqlite-vec store and query topic-scoped embeddings locally
+- ONNX Runtime is used for local embedding inference via `yalue/onnxruntime_go`
 - OpenAI-compatible API is used only for reasoning tasks
 
 ## 2. High-Level Component Design
@@ -115,7 +116,9 @@ Hybrid chunking with parent-document retrieval extension.
 1. Parse source into heading-based parent sections.
 2. Create child chunks from each parent section.
 3. If a section exceeds token target, split by token budget.
-4. Embed child chunks and persist embedding references (persist vectors in Chroma via the Go client and store the Chroma record id in `embedding_ref`).
+4. Tokenize chunk text using `asset/tokenizer.json`.
+5. Generate embeddings with `asset/model_int8.onnx` via ONNX Runtime.
+6. Persist vectors in a `sqlite-vec` virtual table and keep chunk metadata in SQLite relational tables.
 5. On retrieval, fetch top-k child chunks then expand to parent sections.
 
 ## 6. RAG Pipeline (Topic-Scoped)
@@ -147,6 +150,52 @@ Constraints:
 - No global retrieval by default
 - Strict token budget at prompt assembly stage
 - Stateless requests, no conversation memory
+
+## 6.1 Local Embedding Runtime Dependencies
+
+### What
+
+The embedding pipeline depends on local model/runtime assets.
+
+### Why
+
+Embedding generation must be deterministic and available without external vector services.
+
+### How
+
+- Required assets:
+  - `asset/tokenizer.json`
+  - `asset/model_int8.onnx`
+  - `asset/onnxruntime.dll` (Windows runtime)
+  - `asset/vec0.dll` (sqlite-vec extension on Windows builds)
+- At startup, validate these assets before enabling ingestion/retrieval features.
+- If a required local dependency is missing, show explicit setup guidance and fail clearly.
+
+## 6.2 SQLite Connection Pool and vec0 Extension Management
+
+### What
+
+SQLite database maintains a single persistent connection with the sqlite-vec (vec0) extension loaded.
+
+### Why
+
+SQLite extensions are connection-scoped. If the application opens multiple DB connections (via pooling), only the first connection will have the extension loaded. Subsequent connections will fail to access the vec0 virtual table with "no such module: vec0" errors.
+
+### How
+
+- **Single Connection Pool:** `SetMaxOpenConns(1)` and `SetMaxIdleConns(1)` enforce exactly one active database connection.
+- **Extension Loading:** At `db.Init()`, the SQLite connection loads the vec0 extension via driver-level `sqliteConn.LoadExtension()` (not SQL `LOAD_EXTENSION`).
+- **Vector Table Storage:** All vectors are stored in a vec0 virtual table with integer rowids (not string IDs). Application chunk IDs are mapped to SQLite rowids before insert/query operations.
+- **Vector Serialization:** Float32 embedding vectors are serialized to JSON strings before binding to database parameters, since `database/sql` does not support slice types directly.
+
+**Architectural Constraints:**
+- Do not increase `MaxOpenConns` from 1; this is a permanent requirement.
+- All vector operations must resolve string chunk IDs to integer rowids first (via `lookupChunkRowID()`).
+- All embeddings must be JSON-serialized before DB binding (via `vectorToJSON()`).
+
+**Resource Cleanup:**
+- Call `db.Close()` in test cleanup handlers to release the connection before temp directory removal (prevents Windows file lock errors).
+- On application shutdown, the connection is automatically closed by the database driver.
 
 ## 7. Scheduling System
 

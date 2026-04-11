@@ -21,24 +21,27 @@
 
       <article class="panel">
         <h2>Ask AI</h2>
-        <textarea 
+        <textarea
           v-model="question"
           placeholder="Ask for concept clarification in this topic..."
           :disabled="aiLoading || !topicID"
         ></textarea>
-        <button 
-          type="button" 
+        <button
+          type="button"
           class="primary-btn"
-          @click="askAI"
           :disabled="aiLoading || !question.trim() || !topicID"
+          @click="askAI"
         >
           {{ aiLoading ? 'Asking...' : 'Ask' }}
         </button>
-        
+
         <div v-if="aiResponse" class="response">
           <h3>Response</h3>
           <p class="answer">{{ aiResponse.answer }}</p>
-          <div v-if="aiResponse.cited_sections && aiResponse.cited_sections.length > 0" class="citations">
+          <div
+            v-if="aiResponse.cited_sections && aiResponse.cited_sections.length > 0"
+            class="citations"
+          >
             <p class="citation-label">Based on:</p>
             <ul>
               <li v-for="(section, idx) in aiResponse.cited_sections" :key="idx">
@@ -47,7 +50,7 @@
             </ul>
           </div>
         </div>
-        
+
         <div v-if="aiError" class="error-box">
           {{ aiError }}
         </div>
@@ -82,12 +85,12 @@ async function loadTopicContent() {
   try {
     loading.value = true
     const content = await getTopicContent(topicID.value)
-    
+
     if (content.error) {
       error.value = content.error
       return
     }
-    
+
     topicTitle.value = content.title
     sections.value = content.sections || []
     sectionCount.value = content.sections?.length || 0
@@ -100,19 +103,19 @@ async function loadTopicContent() {
 
 async function askAI() {
   if (!question.value.trim()) return
-  
+
   try {
     aiLoading.value = true
     aiError.value = ''
     aiResponse.value = null
-    
+
     const result = await askAIRequest(topicID.value, question.value)
-    
+
     if (result.error) {
       aiError.value = result.error
       return
     }
-    
+
     aiResponse.value = result
   } catch (err) {
     aiError.value = `Error: ${err.message}`
@@ -285,7 +288,8 @@ textarea:disabled {
   color: var(--on-surface);
 }
 
-.error, .error-box {
+.error,
+.error-box {
   padding: 12px;
   background: var(--surface-container-low);
   color: #c53030;

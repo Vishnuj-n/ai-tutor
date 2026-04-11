@@ -30,6 +30,8 @@ You are responsible only for Vue frontend development in a Wails application.
 - Use data(), methods, computed, props, and emits appropriately.
 - Avoid deeply nested component trees unless there is clear reuse value.
 - Keep logic out of templates beyond simple presentation expressions.
+- Run `npm run lint` to fix linting issues (ESLint + Prettier).
+- Run `npm run format` to auto-format code before committing.
 
 ## Working Process
 1. Confirm required pages or components and affected routes.

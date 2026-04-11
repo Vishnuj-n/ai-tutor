@@ -3,14 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
+	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
 
 	"github.com/joho/godotenv"
@@ -20,9 +24,14 @@ import (
 type App struct {
 	ctx               context.Context
 	ragPipeline       *rag.Pipeline
+	embedStore        *rag.EmbeddingStore
+	embedder          *embeddings.OnnxEmbedder
+	llmProvider       *llm.Provider
 	scheduler         *scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
+	aiReady           bool
+	aiInitError       string
 }
 
 // NewApp creates a new App application struct
@@ -38,25 +47,87 @@ func (a *App) startup(ctx context.Context) {
 	// Load local .env if present. Missing file is fine.
 	_ = godotenv.Load()
 
+	// Validate required assets for local RAG
+	assetValidator := runtime.NewAssetValidator("asset")
+	if err := assetValidator.ValidateAll(); err != nil {
+		a.aiInitError = err.Error()
+		fmt.Printf("Warning: local RAG assets missing: %v\n", err)
+		fmt.Println("Ask AI features may be unavailable. Ensure asset/ contains tokenizer.json, model_int8.onnx, onnxruntime.dll, vec0.dll")
+	}
+
+	appDir, err := resolveAppDir()
+	if err != nil {
+		a.aiInitError = err.Error()
+		fmt.Printf("Error resolving app directory: %v\n", err)
+		return
+	}
+
+	runtimeAssets, err := assetValidator.PrepareRuntimeAssets(appDir)
+	if err != nil {
+		a.aiInitError = err.Error()
+		fmt.Printf("Warning: could not stage runtime assets to app-data: %v\n", err)
+	}
+
 	// Initialize persistent database
 	dbPath, err := resolveDBPath()
 	if err != nil {
+		a.aiInitError = err.Error()
 		fmt.Printf("Error resolving database path: %v\n", err)
 		return
 	}
 
-	if err := db.Init(dbPath); err != nil {
+	vec0DllPath := assetValidator.Vec0DllPath()
+	if stagedVec0Path, ok := runtimeAssets["vec0.dll"]; ok {
+		vec0DllPath = stagedVec0Path
+	}
+	if err := db.Init(dbPath, vec0DllPath); err != nil {
+		a.aiInitError = err.Error()
 		fmt.Printf("Error initializing database: %v\n", err)
 		return
 	}
 	fmt.Printf("Database initialized at %s\n", dbPath)
 
-	// Initialize embeddings
-	embedStore := rag.NewEmbeddingStore()
+	// Initialize ONNX embedder for local vector generation.
+	var embedder *embeddings.OnnxEmbedder
+	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath())
+	if err != nil {
+		a.aiInitError = err.Error()
+		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
+		a.aiReady = false
+	} else {
+		a.aiReady = true
+		a.aiInitError = ""
+		a.embedder = embedder
 
-	// Load all chunks for all available topics and add to embedding store
-	// For now, just load the hardcoded topic
-	topicIDs := []string{"os-scheduling"}
+		if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
+			fmt.Printf("Warning: could not initialize vector table; Ask AI will use lexical fallback: %v\n", err)
+		} else {
+			indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
+				RecomputeOnHashMismatch: true,
+				ForceReindex:            false,
+			})
+			go func() {
+				if err := indexer.IndexAllTopics(); err != nil {
+					fmt.Printf("Warning: vector indexing failed: %v\n", err)
+				}
+			}()
+		}
+	}
+
+	if a.embedder == nil {
+		a.embedder = embedder
+	}
+
+	// Initialize retrieval store with vector-first retrieval and lexical fallback
+	embedStore := rag.NewEmbeddingStore(embedder)
+	a.embedStore = embedStore
+
+	// Load chunks for lexical fallback retrieval path.
+	topicIDs, err := db.GetAllTopicIDs()
+	if err != nil {
+		fmt.Printf("Warning: could not list topics for lexical fallback: %v\n", err)
+		topicIDs = []string{"os-scheduling"}
+	}
 
 	for _, topicID := range topicIDs {
 		chunks, err := db.GetChunksForTopic(topicID)
@@ -74,6 +145,7 @@ func (a *App) startup(ctx context.Context) {
 	llmConfig := llm.LoadConfigFromEnv()
 
 	llmProvider := llm.NewProvider(llmConfig)
+	a.llmProvider = llmProvider
 
 	// Create RAG pipeline
 	a.ragPipeline = rag.NewPipeline(embedStore, llmProvider)
@@ -110,18 +182,26 @@ func (a *App) GetTopicContent(topicID string) map[string]interface{} {
 
 // GetAvailableTopics returns a list of available topics
 func (a *App) GetAvailableTopics() []map[string]string {
-	// TODO: Implement database query to get all topics
-	// For now, return hardcoded list
-	return []map[string]string{
-		{
-			"id":    "os-scheduling",
-			"title": "Operating Systems: Scheduling",
-		},
+	topics, err := db.GetAllTopics()
+	if err != nil {
+		return []map[string]string{}
 	}
+
+	return topics
 }
 
 // AskAI processes a question using RAG pipeline
 func (a *App) AskAI(topicID string, question string) map[string]interface{} {
+	if !a.aiReady {
+		reason := a.aiInitError
+		if reason == "" {
+			reason = "local AI runtime is not ready"
+		}
+		return map[string]interface{}{
+			"error": "Ask AI unavailable: " + reason,
+		}
+	}
+
 	if a.ragPipeline == nil {
 		return map[string]interface{}{
 			"error": "RAG pipeline not initialized",
@@ -140,6 +220,56 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		"cited_sections":   result.CitedSections,
 		"chunks_retrieved": result.ChunksRetrieved,
 		"sections_used":    result.SectionsUsed,
+	}
+}
+
+// GetEmbeddingDiagnostics runs a live embedding call and returns quick sanity metrics.
+func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
+	if !a.aiReady || a.embedder == nil {
+		reason := a.aiInitError
+		if reason == "" {
+			reason = "local AI runtime is not ready"
+		}
+		return map[string]interface{}{
+			"error": "Embedding diagnostics unavailable: " + reason,
+		}
+	}
+
+	input := strings.TrimSpace(text)
+	if input == "" {
+		input = "quick embedding diagnostic sentence"
+	}
+
+	vector, err := a.embedder.Embed(input)
+	if err != nil {
+		return map[string]interface{}{
+			"error": "embedding run failed: " + err.Error(),
+		}
+	}
+
+	declaredDim := int(a.embedder.GetDimension())
+	length := len(vector)
+	count := length
+	if count > 8 {
+		count = 8
+	}
+
+	sample := make([]float32, count)
+	copy(sample, vector[:count])
+
+	var sumSquares float64
+	for _, value := range vector {
+		sumSquares += float64(value * value)
+	}
+
+	return map[string]interface{}{
+		"ok":                  true,
+		"input_chars":         len(input),
+		"declared_dimension":  declaredDim,
+		"vector_length":       length,
+		"dimension_match":     length == declaredDim,
+		"sample_norm_l2":      math.Sqrt(sumSquares),
+		"sample_first_values": sample,
 	}
 }
 
@@ -169,7 +299,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 }
 
-func resolveDBPath() (string, error) {
+func resolveAppDir() (string, error) {
 	baseDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
@@ -180,16 +310,23 @@ func resolveDBPath() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(appDir, "ai-tutor.db"), nil
+	return appDir, nil
 }
 
-func resolveNotebookDir() (string, error) {
-	baseDir, err := os.UserConfigDir()
+func resolveDBPath() (string, error) {
+	appDir, err := resolveAppDir()
 	if err != nil {
 		return "", err
 	}
 
-	appDir := filepath.Join(baseDir, "ai-tutor")
+	return filepath.Join(appDir, "ai-tutor.db"), nil
+}
+
+func resolveNotebookDir() (string, error) {
+	appDir, err := resolveAppDir()
+	if err != nil {
+		return "", err
+	}
 	uploadDir := filepath.Join(appDir, "uploads")
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		return "", err

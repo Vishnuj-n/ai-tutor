@@ -71,8 +71,13 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	}
 
 	// Step 6: Assemble prompt
+	topicTitle, _ := content["title"].(string)
+	if topicTitle == "" {
+		topicTitle = "Topic"
+	}
+
 	prompt := buildPrompt(
-		content["title"].(string),
+		topicTitle,
 		userQuestion,
 		ctx,
 	)
@@ -83,15 +88,22 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 		return nil, fmt.Errorf("LLM error: %w", err)
 	}
 
-	// Step 8: Build response with citations
-	citedHeadings := []string{}
-	for _, section := range ctx.Sections {
-		lines := strings.Split(section, "\n")
-		if len(lines) > 0 {
-			heading := strings.TrimPrefix(lines[0], "**")
-			heading = strings.TrimSuffix(heading, "**")
-			citedHeadings = append(citedHeadings, heading)
+	// Step 8: Build response with citations in deterministic parent order.
+	citedHeadings := make([]string, 0, len(ctx.ParentIDs))
+	for _, parentID := range ctx.ParentIDs {
+		section, ok := ctx.Sections[parentID]
+		if !ok {
+			continue
 		}
+
+		lines := strings.Split(section, "\n")
+		if len(lines) == 0 {
+			continue
+		}
+
+		heading := strings.TrimPrefix(lines[0], "**")
+		heading = strings.TrimSuffix(heading, "**")
+		citedHeadings = append(citedHeadings, heading)
 	}
 
 	result := &Response{
@@ -110,19 +122,35 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 }
 
 func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) string {
+	const maxContextChars = 6000
+
 	sectionText := ""
-	for _, section := range ctx.Sections {
+	for _, parentID := range ctx.ParentIDs {
+		section, ok := ctx.Sections[parentID]
+		if !ok {
+			continue
+		}
 		sectionText += section + "\n\n"
+		if len(sectionText) >= maxContextChars {
+			sectionText = sectionText[:maxContextChars]
+			break
+		}
 	}
 
-	return fmt.Sprintf(`You are a helpful tutor assisting a student learn about: %s
+	return fmt.Sprintf(`You are an AI tutor.
+
+Topic: %s
+
+Rules:
+- Use only the retrieved course material below.
+- If the material is insufficient, reply exactly: "I don't have enough information in the provided material to answer that confidently."
+- Do not use outside facts.
+- Keep the answer concise and instructional.
 
 Retrieved course material:
 %s
 
 Student's question: %s
 
-Please provide a clear, concise answer based only on the material above.
-If the material doesn't contain enough information to answer the question, say so.
-Keep your response focused and educational.`, topicTitle, sectionText, userQuestion)
+Answer:`, topicTitle, sectionText, userQuestion)
 }

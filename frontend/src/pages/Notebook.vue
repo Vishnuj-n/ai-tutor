@@ -11,22 +11,22 @@
         <div class="upload-icon">📄</div>
         <h3>Upload Document</h3>
         <p>Drag and drop or click to select PDF, TXT, or MD files</p>
-        
+
         <input
-          type="file"
           ref="fileInput"
-          @change="handleFileSelect"
+          type="file"
           accept=".pdf,.txt,.md"
           style="display: none"
+          @change="handleFileSelect"
         />
-        
+
         <div
           class="drop-zone"
+          :class="{ dragging: isDragging }"
           @click="triggerFilePicker"
           @dragover.prevent="isDragging = true"
           @dragleave.prevent="isDragging = false"
           @drop.prevent="handleFileDrop"
-          :class="{ dragging: isDragging }"
         >
           <p class="drop-title">Drop files here</p>
           <button type="button" class="upload-cta">Choose File</button>
@@ -36,36 +36,23 @@
         <div v-if="uploadProgress > 0 && uploadProgress < 100" class="progress">
           <div class="progress-bar" :style="{ width: uploadProgress + '%' }"></div>
           <span>{{ uploadProgress }}%</span>
+          <p v-if="ingestionStatusMessage" class="progress-label">{{ ingestionStatusMessage }}</p>
         </div>
 
         <div v-if="uploadError" class="error-message">
           {{ uploadError }}
         </div>
 
-        <div v-if="uploadSuccess" class="success-message">
-          ✓ Upload successful!
-        </div>
-      </div>
-
-      <!-- Topic Selection -->
-      <div class="topic-selection">
-        <label>Link to Topic (Optional)</label>
-        <select v-model="selectedTopic">
-          <option value="">No topic</option>
-          <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
-            {{ topic.title }}
-          </option>
-        </select>
-        <p class="help-text">Linking creates chunks and adds to RAG for Q&A</p>
+        <div v-if="uploadSuccess" class="success-message">✓ Upload successful!</div>
       </div>
     </div>
 
     <!-- Notebooks List -->
     <div class="notebooks-list">
       <h2>Your Notebooks</h2>
-      
+
       <div v-if="loading" class="loading">Loading notebooks...</div>
-      
+
       <div v-if="!loading && notebooks.length === 0" class="empty-state">
         <p>No notebooks yet. Upload your first document above!</p>
       </div>
@@ -77,23 +64,29 @@
             <div class="notebook-info">
               <h3>{{ notebook.title }}</h3>
               <p class="meta">{{ notebook.file_type.toUpperCase() }}</p>
-              <p class="meta" v-if="notebook.page_count > 0">{{ notebook.page_count }} pages</p>
+              <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
               <p class="meta">{{ notebook.chunk_count }} chunks</p>
+              <p class="meta">Status: {{ formatStatus(notebook.status) }}</p>
+              <p v-if="notebook.chunk_count === 0" class="meta pending-index">
+                Not indexed for RAG yet
+              </p>
             </div>
           </div>
 
-          <div class="notebook-topic" v-if="notebook.topic_id">
+          <div v-if="notebook.topic_id" class="notebook-topic">
             <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
           </div>
 
-          <div class="notebook-date">
-            Uploaded: {{ formatDate(notebook.uploaded_at) }}
+          <div v-else class="notebook-topic">
+            <span class="badge muted">No topic linked</span>
           </div>
 
+          <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
+
           <div class="notebook-actions">
-            <button @click="viewNotebook(notebook.id)" class="btn-view">View</button>
-            <button @click="downloadNotebook(notebook.id)" class="btn-download">Download</button>
-            <button @click="deleteNotebook(notebook.id)" class="btn-delete">Delete</button>
+            <button class="btn-view" @click="viewNotebook(notebook.id)">View</button>
+            <button class="btn-download" @click="downloadNotebook(notebook.id)">Download</button>
+            <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
           </div>
         </div>
       </div>
@@ -102,34 +95,74 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import {
   getAvailableTopics,
   getNotebooks as fetchNotebooks,
   uploadNotebook as apiUploadNotebook,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
+import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
 
 const fileInput = ref(null)
 const isDragging = ref(false)
 const uploadProgress = ref(0)
 const uploadError = ref('')
 const uploadSuccess = ref(false)
-const selectedTopic = ref('')
 const notebooks = ref([])
 const availableTopics = ref([])
 const loading = ref(false)
+const ingestionStatusMessage = ref('')
+const ingestionNotebookID = ref('')
 
 onMounted(async () => {
+  EventsOn('ingestion-progress', handleIngestionProgress)
+
   // Load available topics and notebooks
   await loadTopics()
   await loadNotebooks()
 })
 
+onUnmounted(() => {
+  EventsOff('ingestion-progress')
+})
+
+function handleIngestionProgress(payload) {
+  if (!payload) {
+    return
+  }
+
+  if (!ingestionNotebookID.value && payload.notebook_id) {
+    ingestionNotebookID.value = payload.notebook_id
+  }
+
+  if (ingestionNotebookID.value && payload.notebook_id && payload.notebook_id !== ingestionNotebookID.value) {
+    return
+  }
+
+  if (typeof payload.percent === 'number') {
+    uploadProgress.value = payload.percent
+  }
+
+  if (payload.message) {
+    ingestionStatusMessage.value = payload.message
+  }
+
+  const terminalStates = new Set(['indexed', 'partial_indexed', 'failed', 'chunked'])
+  if (typeof payload.status === 'string' && terminalStates.has(payload.status)) {
+    void loadNotebooks()
+  }
+}
+
 async function loadTopics() {
   try {
     const topics = await getAvailableTopics()
-    availableTopics.value = Array.isArray(topics) ? topics : []
+    const topicList = Array.isArray(topics)
+      ? topics
+      : Array.isArray(topics?.topics)
+        ? topics.topics
+        : []
+    availableTopics.value = topicList
   } catch (error) {
     console.error('Failed to load topics:', error)
     availableTopics.value = []
@@ -174,6 +207,8 @@ function handleFileDrop(event) {
 async function uploadFile(file) {
   uploadError.value = ''
   uploadSuccess.value = false
+  ingestionStatusMessage.value = ''
+  ingestionNotebookID.value = ''
   uploadProgress.value = 10
 
   // Validate file type
@@ -196,23 +231,27 @@ async function uploadFile(file) {
     const bytes = new Uint8Array(arrayBuffer)
     uploadProgress.value = 50
 
-    const result = await apiUploadNotebook(
-      Array.from(bytes),
-      file.name,
-      selectedTopic.value,
-    )
+    const result = await apiUploadNotebook(Array.from(bytes), file.name)
     if (result?.error) {
       throw new Error(result.error)
     }
 
+    if (result?.status === 'indexed') {
+      ingestionStatusMessage.value = 'Vector indexing complete'
+    } else if (result?.status === 'partial_indexed') {
+      ingestionStatusMessage.value = 'Vector indexing completed with partial failures'
+    } else if (result?.status === 'chunked') {
+      ingestionStatusMessage.value = 'Chunking complete'
+    }
+
     uploadProgress.value = 100
     uploadSuccess.value = true
-    selectedTopic.value = ''
-    
     // Reset after 2 seconds
     setTimeout(() => {
       uploadProgress.value = 0
       uploadSuccess.value = false
+      ingestionStatusMessage.value = ''
+      ingestionNotebookID.value = ''
       fileInput.value.value = ''
       void loadNotebooks()
     }, 2000)
@@ -253,14 +292,21 @@ function getFileIcon(fileType) {
   const icons = {
     pdf: '📕',
     txt: '📄',
-    md: '📝'
+    md: '📝',
   }
   return icons[fileType] || '📄'
 }
 
 function getTopicTitle(topicId) {
-  const topic = availableTopics.value.find(t => t.id === topicId)
-  return topic ? topic.title : 'Unknown'
+  const topic = availableTopics.value.find((t) => t.id === topicId)
+  return topic ? topic.title : 'No topic'
+}
+
+function formatStatus(status) {
+  if (!status) {
+    return 'uploaded'
+  }
+  return status.replaceAll('_', ' ')
 }
 
 function formatDate(dateString) {
@@ -289,13 +335,11 @@ function formatDate(dateString) {
 .subtitle {
   margin: 8px 0 0;
   font-size: 14px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .upload-section {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 24px;
+  display: block;
   margin-bottom: 48px;
 }
 
@@ -387,9 +431,16 @@ function formatDate(dateString) {
 .progress span {
   display: block;
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
   margin-top: 8px;
   text-align: center;
+}
+
+.progress-label {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-text);
 }
 
 .error-message {
@@ -410,37 +461,6 @@ function formatDate(dateString) {
   font-size: 14px;
 }
 
-.topic-selection {
-  background: var(--surface-container);
-  border-radius: 12px;
-  padding: 24px;
-  border: 2px solid var(--outline-variant);
-}
-
-.topic-selection label {
-  display: block;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--on-surface);
-}
-
-.topic-selection select {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid var(--outline);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--on-surface);
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-
-.help-text {
-  margin: 0;
-  font-size: 12px;
-  color: var(--on-surface-variant);
-}
-
 .notebooks-list {
   margin-top: 48px;
 }
@@ -454,7 +474,7 @@ function formatDate(dateString) {
 .loading {
   text-align: center;
   padding: 32px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .empty-state {
@@ -462,7 +482,7 @@ function formatDate(dateString) {
   padding: 48px;
   background: var(--surface-container);
   border-radius: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
 }
 
 .notebook-grid {
@@ -504,7 +524,11 @@ function formatDate(dateString) {
 .meta {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
+}
+
+.pending-index {
+  color: #b1532a;
 }
 
 .notebook-topic {
@@ -513,7 +537,7 @@ function formatDate(dateString) {
 
 .badge {
   display: inline-block;
-  background: var(--primary-dim);
+  background: var(--surface-container-low);
   color: var(--primary);
   padding: 4px 8px;
   border-radius: 4px;
@@ -521,9 +545,13 @@ function formatDate(dateString) {
   font-weight: 600;
 }
 
+.badge.muted {
+  color: var(--muted-text);
+}
+
 .notebook-date {
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--muted-text);
   margin-bottom: 12px;
 }
 
@@ -532,7 +560,9 @@ function formatDate(dateString) {
   gap: 8px;
 }
 
-.btn-view, .btn-download, .btn-delete {
+.btn-view,
+.btn-download,
+.btn-delete {
   flex: 1;
   padding: 8px 12px;
   border: none;
@@ -553,8 +583,8 @@ function formatDate(dateString) {
 }
 
 .btn-download {
-  background: var(--secondary);
-  color: var(--on-secondary);
+  background: var(--surface-container-low);
+  color: var(--on-surface);
 }
 
 .btn-download:hover {
@@ -562,8 +592,8 @@ function formatDate(dateString) {
 }
 
 .btn-delete {
-  background: var(--error-dim);
-  color: var(--error);
+  background: #ffe9e8;
+  color: #b5423d;
 }
 
 .btn-delete:hover {
@@ -571,10 +601,6 @@ function formatDate(dateString) {
 }
 
 @media (max-width: 768px) {
-  .upload-section {
-    grid-template-columns: 1fr;
-  }
-
   .notebook-grid {
     grid-template-columns: 1fr;
   }

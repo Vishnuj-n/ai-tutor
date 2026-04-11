@@ -40,7 +40,8 @@ Provide a local-first desktop assistant for studying and knowledge work that let
 2. Ingestion & Indexing
 	- Parse uploaded files to extract text and basic metadata (page counts for PDFs).
 	- Chunk documents into token-aware pieces suitable for embeddings.
-	- Persist chunk metadata in SQLite (`notebook_chunks`) and write vectors to Chroma using the Go client (`chromem-go`).
+	- Persist chunk metadata in SQLite (`notebook_chunks`) and write vectors to `sqlite-vec` (`vec0`) using stable chunk IDs.
+	- Generate embeddings locally from `asset/tokenizer.json` + `asset/model_int8.onnx` via ONNX Runtime.
 	- Include a background worker to perform chunking/embedding asynchronously with progress reporting.
 
 3. RAG and LLM Features
@@ -93,6 +94,7 @@ Provide a local-first desktop assistant for studying and knowledge work that let
 - Offline-capable: functional without network access except for optional external LLM/embedding providers.
 - Lightweight: modest resource usage; background tasks should be rate-limited and cancelable.
 - Maintainability-first code style: simple functions over deep abstractions; readability over cleverness.
+- Windows packaging for local RAG must include required native libs (`onnxruntime.dll`, `vec0.dll`).
 
 ## Architecture Guardrails (Mandatory)
 
@@ -110,8 +112,9 @@ Provide a local-first desktop assistant for studying and knowledge work that let
 
 - Uploading a PDF/TXT/MD via the Notebook UI saves the file to `uploads/` and inserts a `notebooks` row in SQLite.
 - Uploading a group of PDFs to a notebook stores all files, creates/updates notebook mappings, and shows those files under that notebook.
-- The ingestion worker can chunk and create `notebook_chunks` rows for a notebook and write vectors to the configured vector store.
-- Embeddings are persisted in Chroma via `chromem-go` with IDs synchronized to SQLite chunk records.
+- The ingestion worker can chunk and create `notebook_chunks` rows for a notebook and write vectors to `sqlite-vec`.
+- Embeddings are generated with ONNX Runtime using `asset/tokenizer.json` and `asset/model_int8.onnx`.
+- Embedding/vector rows are synchronized to SQLite chunk records via shared chunk IDs.
 - The frontend shows uploaded notebooks in the sidebar and allows selecting active notebook/topic across pages.
 - Scheduler produces a single global queue of tasks across notebooks/topics and respects priority ratings.
 - Clicking a scheduled task opens the exact target flow (for example Quiz) with notebook/topic context already set.

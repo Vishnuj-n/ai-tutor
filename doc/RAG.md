@@ -55,7 +55,7 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - Retrieval queries only the embeddings associated with that topic
 - Each chunk uses one canonical chunk_id shared across stores:
   - SQLite stores relational metadata (for example `importance_score`, `weakness_score`)
-  - Use the Go client for the Chroma vector database to persist and query vector embeddings; record the Chroma vector under the same `chunk_id` so stores remain synchronized
+  - `sqlite-vec` stores embedding vectors keyed by the same `chunk_id`
 
 ## 4. Content Structure
 
@@ -111,6 +111,40 @@ Heuristic scoring contract:
 - V1 behavior can be pass-through or simple deterministic boosts
 - V2 plugs in learner-state-aware ranking (for example weakness-based boost)
 
+## 5.1 Vector Storage and Retrieval Implementation
+
+### What
+
+Embeddings are stored in a `sqlite-vec` virtual table with integer rowids and JSON serialization.
+
+### Why
+
+- SQLite extensions are connection-scoped, so a single persistent connection is required.
+- The `sqlite-vec` virtual table requires integer rowids, not string IDs.
+- `database/sql` parameter binding requires concrete Go types; float32 slices must be serialized.
+
+### How
+
+**Storage:**
+- Application maintains a single SQLite connection with vec0 extension loaded (via `db.Init()` and connection pool constraints).
+- Each chunk has a stable string `chunk_id` stored in the `chunks` table.
+- The `chunk_vectors` table maps chunk IDs to integer SQLite rowids and stores embeddings as JSON strings.
+- On insert, `UpsertChunkVector()` resolves the string chunk_id to its integer rowid before inserting into vec0.
+
+**Serialization:**
+- `vectorToJSON()` converts float32 slices to compact JSON strings before passing to database parameters.
+- This avoids database/sql type binding errors and keeps the storage format compatible with direct SQL inspection.
+
+**Retrieval:**
+- `SearchVectorsForTopic()` embeds the query, searches the vec0 table for cosine-distance matches within the topic, returns matching chunk IDs and distances.
+- Results are joined with chunks/parents to populate context for prompt assembly.
+- Integer rowid-to-chunk_id mapping is transparent to the RAG pipeline layer.
+
+**Architectural Constraints:**
+- Connection pool is fixed at 1 active connection (`SetMaxOpenConns(1)`). Do not change this.
+- String chunk IDs must always be resolved to integer rowids before vec0 operations.
+- Embeddings must always be JSON-serialized before SQL binding.
+
 ## 6. Prompt Assembly
 
 ### What
@@ -132,9 +166,9 @@ Prompt payload should include:
 
 Embedding metadata requirements (ingestion-time):
 
-- When using Chroma, create vector records via the Go client and include `topic_id` and `parent_id` metadata.
-- Ensure the Chroma record id matches the SQLite `chunk_id` so records can be cross-referenced.
-- Keep metadata minimal but sufficient for fast filter-first retrieval
+- Persist `topic_id`, `parent_id`, and `chunk_id` in SQLite chunk rows.
+- Persist vectors in `sqlite-vec` using the same `chunk_id` key.
+- Keep metadata minimal but sufficient for fast topic-filtered retrieval.
 
 Prompt rules:
 
@@ -239,3 +273,72 @@ SQLite schema hooks (required now to avoid later migrations):
   - `weakness_score`
 - Keep `topic_id` and `parent_id` persisted with each chunk row
 - Treat these fields as forward-compatible hooks in V1 (they may be default/unused initially)
+
+## 12. Local Embedding Pipeline (Implementation Plan)
+
+### What
+
+Embeddings are generated locally with ONNX Runtime and stored in SQLite + `sqlite-vec`.
+
+### Why
+
+- Keeps the full RAG stack local-first and portable.
+- Removes dependency on external vector database services.
+- Supports deterministic retrieval with transparent SQL-level inspection.
+- Auditability and bias mitigation: unlike opaque "database-does-AI" extensions, separating ONNX embedding from SQLite vector indexing keeps tokenization and retrieval fully controllable, deterministic, explainable, and auditable.
+
+### How
+
+Step 1: Tokenize text with `asset/tokenizer.json`
+
+- Use a tokenizer compatible with Hugging Face tokenizer JSON format.
+- Apply the same tokenizer for document chunks and user queries.
+- Recommended implementation: use `github.com/daulet/tokenizers` (CGO wrapper over Hugging Face tokenizers) to parse `asset/tokenizer.json` directly in Go.
+
+Step 2: Generate embeddings with ONNX
+
+- Use `yalue/onnxruntime_go` to load `asset/model_int8.onnx`.
+- Build tensors for token IDs and attention mask.
+- Run inference and extract a fixed-size embedding vector.
+
+Step 3: Persist in SQLite + `sqlite-vec`
+
+- Store chunk text and metadata in relational tables.
+- Store vectors in a `sqlite-vec` virtual table (for example `vec0`).
+- Keep a stable key mapping so vector rows map 1:1 to chunk rows.
+
+Step 4: Retrieve top-k for active topic
+
+- Embed user query using the same tokenizer and ONNX model.
+- Execute topic-scoped vector similarity search (cosine or equivalent supported metric).
+- Expand child hits to parent sections before prompt assembly.
+
+Step 5: Generate answer
+
+- Build a token-budgeted prompt from retrieved parent sections plus the user question.
+- Call the configured OpenAI-compatible LLM once (stateless).
+- Return answer plus section labels/citations.
+
+## 13. Windows Runtime Assets
+
+Required for local Windows builds:
+
+- `asset/onnxruntime.dll`
+- `asset/vec0.dll`
+
+If either dependency is missing, ingestion/retrieval must fail with an explicit setup error instead of synthetic fallback output.
+
+## 14. Build and Compilation Constraints
+
+### What
+
+The Go application relies on C bindings to interact with local runtime libraries.
+
+### Why
+
+Both `onnxruntime_go` and `sqlite-vec` operate outside pure Go memory for performance-critical inference and vector search.
+
+### How
+
+- CGO required: build with `CGO_ENABLED=1`.
+- SQLite extension loading: compile with sqlite extension support, for example `go build -tags sqlite_extension .`.
