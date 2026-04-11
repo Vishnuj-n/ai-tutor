@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -114,8 +115,20 @@ func copyFile(src, dst string) error {
 	}
 
 	if dstInfo, dstErr := os.Stat(dst); dstErr == nil {
-		if srcInfo.Size() == dstInfo.Size() && srcInfo.ModTime().Equal(dstInfo.ModTime()) {
-			return nil
+		if srcInfo.Size() == dstInfo.Size() {
+			srcHash, srcHashErr := fileSHA256(src)
+			if srcHashErr != nil {
+				return srcHashErr
+			}
+
+			dstHash, dstHashErr := fileSHA256(dst)
+			if dstHashErr != nil {
+				return dstHashErr
+			}
+
+			if srcHash == dstHash {
+				return nil
+			}
 		}
 	}
 
@@ -144,4 +157,24 @@ func copyFile(src, dst string) error {
 	}
 
 	return out.Sync()
+}
+
+func fileSHA256(path string) ([32]byte, error) {
+	var digest [32]byte
+
+	file, err := os.Open(path)
+	if err != nil {
+		return digest, err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return digest, err
+	}
+
+	copy(digest[:], hasher.Sum(nil))
+	return digest, nil
 }
