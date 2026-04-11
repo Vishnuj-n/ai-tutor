@@ -52,6 +52,14 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 	log.Printf("Indexing %d chunks for topic %s", len(chunks), topicID)
 
+	chunkHashRefs := map[string]string{}
+	if vi.config.RecomputeOnHashMismatch && !vi.config.ForceReindex {
+		chunkHashRefs, err = db.GetChunkEmbeddingRefsForTopic(topicID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch embedding refs for topic %s: %w", topicID, err)
+		}
+	}
+
 	// Index each chunk
 	reindexed := 0
 	skipped := 0
@@ -61,13 +69,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 		if !shouldReindex && vi.config.RecomputeOnHashMismatch {
 			// Check if source text hash still matches
-			matches, err := vi.doesHashMatch(chunk)
-			if err != nil {
-				log.Printf("Warning: hash check failed for chunk %s: %v", chunk.ID, err)
-				shouldReindex = true // Recompute on error to be safe
-			} else {
-				shouldReindex = !matches
-			}
+			shouldReindex = !doesHashMatch(chunk, chunkHashRefs)
 		}
 
 		if shouldReindex {
@@ -116,12 +118,18 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 	return nil
 }
 
-// doesHashMatch checks if a chunk's source text hash matches the stored hash.
-func (vi *VectorIndexer) doesHashMatch(_ models.Chunk) (bool, error) {
-	// For now, we don't store hashes in the DB yet
-	// Phase 5 TODO: add text_hash column to chunks table
-	// For MVP, always return false to force reindexing
-	return false, nil
+// doesHashMatch checks if a chunk's source text hash matches the prefetched stored hash.
+func doesHashMatch(chunk models.Chunk, chunkHashRefs map[string]string) bool {
+	storedHash, ok := chunkHashRefs[chunk.ID]
+	if !ok {
+		return false
+	}
+	if storedHash == "" {
+		return false
+	}
+
+	currentHash := computeTextHash(chunk.Text)
+	return storedHash == currentHash
 }
 
 // computeTextHash computes MD5 hash of text for change detection.
@@ -129,6 +137,3 @@ func computeTextHash(text string) string {
 	hash := md5.Sum([]byte(text))
 	return fmt.Sprintf("%x", hash)
 }
-
-// Helper function to be added to db/store.go later:
-// UpdateChunkEmbedding(chunkID, textHash) updates the embedding_ref with a hash

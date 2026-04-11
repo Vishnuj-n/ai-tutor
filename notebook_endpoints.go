@@ -31,8 +31,7 @@ type ingestionProgressPayload struct {
 }
 
 // UploadNotebook handles file upload and creates notebook record
-func (a *App) UploadNotebook(fileData []byte, fileName string, topicID string) map[string]interface{} {
-	_ = topicID
+func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interface{} {
 	if a.notebookService == nil {
 		return map[string]interface{}{
 			"error": "notebook service not initialized",
@@ -405,7 +404,7 @@ func buildTopicGroups(notebookID string, doc *notebook.ExtractedDocument, topicI
 			OrderIndex: builder.order,
 		})
 
-		chunkTexts := splitWords(sectionText, 180, 40)
+		chunkTexts := notebook.SplitIntoWordChunks(sectionText, notebook.ChunkWordWindow, notebook.ChunkWordOverlap)
 		for chunkIndex, chunkText := range chunkTexts {
 			chunkID := fmt.Sprintf("nbc_%s_%02d_%04d_%03d", notebookID, topicIdx+1, builder.order, chunkIndex+1)
 			builder.chunks = append(builder.chunks, db.NotebookChunkInput{
@@ -482,42 +481,6 @@ func tokenizeSimple(text string) map[string]struct{} {
 		set[part] = struct{}{}
 	}
 	return set
-}
-
-func splitWords(text string, chunkSize, overlap int) []string {
-	words := strings.Fields(strings.TrimSpace(text))
-	if len(words) == 0 {
-		return nil
-	}
-	if chunkSize <= 0 {
-		chunkSize = 180
-	}
-	if overlap < 0 {
-		overlap = 0
-	}
-	if overlap >= chunkSize {
-		overlap = chunkSize / 2
-	}
-	if len(words) <= chunkSize {
-		return []string{strings.Join(words, " ")}
-	}
-
-	chunks := make([]string, 0)
-	step := chunkSize - overlap
-	for start := 0; start < len(words); start += step {
-		end := start + chunkSize
-		if end > len(words) {
-			end = len(words)
-		}
-		chunk := strings.Join(words[start:end], " ")
-		if strings.TrimSpace(chunk) != "" {
-			chunks = append(chunks, chunk)
-		}
-		if end == len(words) {
-			break
-		}
-	}
-	return chunks
 }
 
 func firstN(text string, n int) string {

@@ -76,6 +76,7 @@
         <textarea
           v-model="inputQuestion"
           class="composer-input"
+          aria-label="Question"
           placeholder="Ask a grounded question about your material..."
           :disabled="isLoading"
           @keydown="handleComposerKeydown"

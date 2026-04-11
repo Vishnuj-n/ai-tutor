@@ -1,10 +1,16 @@
 package runtime
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+)
+
+const (
+	onnxRuntimeDLL = "onnxruntime.dll"
+	vec0DLL        = "vec0.dll"
 )
 
 // AssetValidator checks for required runtime assets (models, tokenizers, extensions).
@@ -28,8 +34,8 @@ func (av *AssetValidator) ValidateAll() error {
 	}{
 		{"tokenizer.json", true, false},
 		{"model_int8.onnx", true, false},
-		{"onnxruntime.dll", true, false},
-		{"vec0.dll", true, false},
+		{onnxRuntimeDLL, true, false},
+		{vec0DLL, true, false},
 	}
 
 	missing := []string{}
@@ -66,12 +72,12 @@ func (av *AssetValidator) ModelPath() string {
 
 // OnnxRuntimePath returns the full path to onnxruntime.dll.
 func (av *AssetValidator) OnnxRuntimePath() string {
-	return av.GetAssetPath("onnxruntime.dll")
+	return av.GetAssetPath(onnxRuntimeDLL)
 }
 
 // Vec0DllPath returns the full path to vec0.dll.
 func (av *AssetValidator) Vec0DllPath() string {
-	return av.GetAssetPath("vec0.dll")
+	return av.GetAssetPath(vec0DLL)
 }
 
 // PrepareRuntimeAssets copies runtime DLLs to an app-data subdirectory and returns absolute paths.
@@ -82,7 +88,7 @@ func (av *AssetValidator) PrepareRuntimeAssets(appDir string) (map[string]string
 		return nil, fmt.Errorf("failed to create runtime directory: %w", err)
 	}
 
-	assets := []string{"onnxruntime.dll", "vec0.dll"}
+	assets := []string{onnxRuntimeDLL, vec0DLL}
 	out := make(map[string]string, len(assets))
 
 	for _, name := range assets {
@@ -103,6 +109,22 @@ func (av *AssetValidator) PrepareRuntimeAssets(appDir string) (map[string]string
 }
 
 func copyFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if dstInfo, dstErr := os.Stat(dst); dstErr == nil {
+		if srcInfo.Size() == dstInfo.Size() {
+			srcHash, srcHashErr := fileSHA256(src)
+			dstHash, dstHashErr := fileSHA256(dst)
+			// Hash calculation failures are best-effort; proceed to copy if either hash fails
+			if srcHashErr == nil && dstHashErr == nil && srcHash == dstHash {
+				return nil
+			}
+		}
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -123,5 +145,28 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
+	// Best-effort: sync timestamps but don't fail the copy if it fails
+	_ = os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime())
+
 	return out.Sync()
+}
+
+func fileSHA256(path string) ([32]byte, error) {
+	var digest [32]byte
+
+	file, err := os.Open(path)
+	if err != nil {
+		return digest, err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return digest, err
+	}
+
+	copy(digest[:], hasher.Sum(nil))
+	return digest, nil
 }

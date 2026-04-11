@@ -83,8 +83,17 @@ func TestAskAIResponseShape(t *testing.T) {
 		t.Fatalf("expected answer string, got: %#v", resp["answer"])
 	}
 
-	if _, ok := resp["cited_sections"].([]string); !ok {
-		t.Fatalf("expected cited_sections []string, got: %#v", resp["cited_sections"])
+	switch cited := resp["cited_sections"].(type) {
+	case []string:
+		// valid typed response
+	case []interface{}:
+		for idx, item := range cited {
+			if _, ok := item.(string); !ok {
+				t.Fatalf("expected cited_sections[%d] to be string, got: %#v", idx, item)
+			}
+		}
+	default:
+		t.Fatalf("expected cited_sections []string or []interface{}, got: %#v", resp["cited_sections"])
 	}
 
 	if _, ok := resp["chunks_retrieved"].(int); !ok {

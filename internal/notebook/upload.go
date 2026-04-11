@@ -24,8 +24,8 @@ type Service struct {
 }
 
 const (
-	chunkWordWindow  = 180
-	chunkWordOverlap = 40
+	ChunkWordWindow  = 180
+	ChunkWordOverlap = 40
 )
 
 // NewService creates a new notebook service
@@ -214,6 +214,9 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 
 		for pageIndex := 1; pageIndex <= totalPages; pageIndex++ {
 			page := reader.Page(pageIndex)
+			if page.V.IsNull() {
+				continue
+			}
 			text, pageErr := page.GetPlainText(nil)
 			if pageErr != nil {
 				return nil, fmt.Errorf("failed to read pdf page %d: %w", pageIndex, pageErr)
@@ -302,7 +305,7 @@ func (s *Service) BuildIngestionData(notebookID string, doc *ExtractedDocument) 
 			OrderIndex: sectionIndex + 1,
 		})
 
-		chunks := splitIntoWordChunks(section.Text, chunkWordWindow, chunkWordOverlap)
+		chunks := SplitIntoWordChunks(section.Text, ChunkWordWindow, ChunkWordOverlap)
 		for chunkIndex, chunkText := range chunks {
 			chunkID := fmt.Sprintf("nbc_%s_%d_%d", notebookID, sectionIndex+1, chunkIndex+1)
 			data.Chunks = append(data.Chunks, ChunkRecord{
@@ -349,16 +352,36 @@ type FileMetadata struct {
 
 // ExtractMetadata returns metadata derived from normalized extraction output.
 func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetadata, error) {
-	doc, err := s.ExtractDocument(filePath, fileType)
-	if err != nil {
-		return nil, err
-	}
+	fileType = strings.ToLower(fileType)
+	title := filepath.Base(filePath)
 
-	return &FileMetadata{
-		Title:     doc.Title,
-		PageCount: doc.PageCount,
-		WordCount: doc.WordCount,
-	}, nil
+	switch fileType {
+	case "txt", "md":
+		raw, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		wordCount := len(strings.Fields(normalizeWhitespace(string(raw))))
+		return &FileMetadata{Title: title, PageCount: 1, WordCount: wordCount}, nil
+	case "pdf":
+		file, reader, err := pdfreader.Open(filePath)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			_ = file.Close()
+		}()
+
+		pageCount := reader.NumPage()
+		if pageCount <= 0 {
+			pageCount = 1
+		}
+
+		// Lightweight metadata path for PDFs: avoid full text extraction.
+		return &FileMetadata{Title: title, PageCount: pageCount, WordCount: 0}, nil
+	default:
+		return nil, fmt.Errorf("unsupported file type: %s", fileType)
+	}
 
 }
 
@@ -409,9 +432,9 @@ func splitMarkdownSections(content string) []ExtractedSection {
 	return sections
 }
 
-func splitIntoWordChunks(text string, chunkSize, overlap int) []string {
+func SplitIntoWordChunks(text string, chunkSize, overlap int) []string {
 	if chunkSize <= 0 {
-		chunkSize = chunkWordWindow
+		chunkSize = ChunkWordWindow
 	}
 	if overlap < 0 {
 		overlap = 0

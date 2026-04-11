@@ -53,9 +53,7 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - The UI sends the active topic identifier with the request
 - Backend validates that the topic exists and is eligible for retrieval
 - Retrieval queries only the embeddings associated with that topic
-- Each chunk uses one canonical chunk_id shared across stores:
-  - SQLite stores relational metadata (for example `importance_score`, `weakness_score`)
-  - `sqlite-vec` stores embedding vectors keyed by the same `chunk_id`
+- Each chunk uses one canonical string `chunk_id` in relational tables, mapped to integer SQLite rowids for `sqlite-vec` storage.
 
 ## 4. Content Structure
 
@@ -167,7 +165,7 @@ Prompt payload should include:
 Embedding metadata requirements (ingestion-time):
 
 - Persist `topic_id`, `parent_id`, and `chunk_id` in SQLite chunk rows.
-- Persist vectors in `sqlite-vec` using the same `chunk_id` key.
+- Persist vectors in sqlite-vec by integer SQLite rowid, resolved from relational chunk_id.
 - Keep metadata minimal but sufficient for fast topic-filtered retrieval.
 
 Prompt rules:

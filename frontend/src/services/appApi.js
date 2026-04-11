@@ -28,7 +28,7 @@ export function getNotebooks(topicID = '') {
 }
 
 export function uploadNotebook(fileBytes, fileName) {
-  return appBridge().UploadNotebook(fileBytes, fileName, '')
+  return appBridge().UploadNotebook(fileBytes, fileName)
 }
 
 export function deleteNotebook(notebookID) {

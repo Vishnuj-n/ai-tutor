@@ -6,7 +6,10 @@ set -euo pipefail
 if [ -f Cargo.toml ]; then
   cargo check && cargo test
 elif [ -f tsconfig.json ]; then
-  npx tsc --noEmit && npm test
+  npx tsc --noEmit
+  if [ -f package.json ] && grep -qE '"test"\s*:' package.json; then
+    npm test
+  fi
 elif [ -f package.json ] && grep -q '"test"' package.json; then
   npm test
 elif [ -f Makefile ] && grep -q '^test:' Makefile; then
@@ -17,3 +20,4 @@ else
   echo "(no test command detected - ask the user for the verification command)"
   exit 1
 fi
+  

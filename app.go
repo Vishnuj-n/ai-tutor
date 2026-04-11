@@ -77,7 +77,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	vec0DllPath := assetValidator.Vec0DllPath()
-	if stagedVec0Path, ok := runtimeAssets["vec0.dll"]; ok {
+	if stagedVec0Path, ok := runtimeAssets[filepath.Base(vec0DllPath)]; ok {
 		vec0DllPath = stagedVec0Path
 	}
 	if err := db.Init(dbPath, vec0DllPath); err != nil {
@@ -89,7 +89,11 @@ func (a *App) startup(ctx context.Context) {
 
 	// Initialize ONNX embedder for local vector generation.
 	var embedder *embeddings.OnnxEmbedder
-	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath())
+	onnxRuntimePath := assetValidator.OnnxRuntimePath()
+	if stagedRuntimePath, ok := runtimeAssets[filepath.Base(onnxRuntimePath)]; ok {
+		onnxRuntimePath = stagedRuntimePath
+	}
+	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath(), onnxRuntimePath)
 	if err != nil {
 		a.aiInitError = err.Error()
 		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
@@ -112,10 +116,6 @@ func (a *App) startup(ctx context.Context) {
 				}
 			}()
 		}
-	}
-
-	if a.embedder == nil {
-		a.embedder = embedder
 	}
 
 	// Initialize retrieval store with vector-first retrieval and lexical fallback

@@ -204,7 +204,7 @@ Conversation rules:
 - Retrieval is strictly scoped to active topic
 - No cross-topic search or global knowledge base
 - No conversation memory; each response is independent
-- User can switch topics, which clears the chat history
+- User can clear chat history manually using the Clear Chat action
 - Responses include section/parent labels for traceability
 
 ## 10. Settings and Sync Flow

@@ -100,31 +100,31 @@ func deleteNotebookRepo(notebookID string) error {
 		_ = tx.Rollback()
 	}()
 
-	chunkRows, err := tx.Query(`
-		SELECT chunk_id
-		FROM notebook_chunks
-		WHERE notebook_id = ?
+	parentIDs := make(map[string]struct{})
+	parentRows, err := tx.Query(`
+		SELECT DISTINCT c.parent_id
+		FROM chunks c
+		JOIN notebook_chunks nc ON nc.chunk_id = c.id
+		WHERE nc.notebook_id = ?
 	`, notebookID)
 	if err != nil {
 		return err
 	}
 
-	chunkIDs := make([]string, 0)
-	for chunkRows.Next() {
-		var chunkID string
-		if scanErr := chunkRows.Scan(&chunkID); scanErr != nil {
-			_ = chunkRows.Close()
+	for parentRows.Next() {
+		var parentID string
+		if scanErr := parentRows.Scan(&parentID); scanErr != nil {
+			_ = parentRows.Close()
 			return scanErr
 		}
-		chunkIDs = append(chunkIDs, chunkID)
+		parentIDs[parentID] = struct{}{}
 	}
-	if rowsErr := chunkRows.Err(); rowsErr != nil {
-		_ = chunkRows.Close()
+	if rowsErr := parentRows.Err(); rowsErr != nil {
+		_ = parentRows.Close()
 		return rowsErr
 	}
-	_ = chunkRows.Close()
+	_ = parentRows.Close()
 
-	parentIDs := make(map[string]struct{})
 	hasChunkVectors := false
 	if exists, tableErr := doesTableExistTxRepo(tx, "chunk_vectors"); tableErr != nil {
 		return tableErr
@@ -132,28 +132,29 @@ func deleteNotebookRepo(notebookID string) error {
 		hasChunkVectors = exists
 	}
 
-	for _, chunkID := range chunkIDs {
-		var parentID string
-		var chunkRowID int64
-		if parentErr := tx.QueryRow(`
-			SELECT rowid, parent_id FROM chunks WHERE id = ?
-		`, chunkID).Scan(&chunkRowID, &parentID); parentErr == nil {
-			parentIDs[parentID] = struct{}{}
-
-			if hasChunkVectors {
-				if _, delVecErr := tx.Exec(`
-					DELETE FROM chunk_vectors WHERE rowid = ?
-				`, chunkRowID); delVecErr != nil {
-					return delVecErr
-				}
-			}
+	if hasChunkVectors {
+		if _, delVecErr := tx.Exec(`
+			DELETE FROM chunk_vectors
+			WHERE rowid IN (
+				SELECT c.rowid
+				FROM chunks c
+				JOIN notebook_chunks nc ON nc.chunk_id = c.id
+				WHERE nc.notebook_id = ?
+			)
+		`, notebookID); delVecErr != nil {
+			return delVecErr
 		}
+	}
 
-		if _, delChunkErr := tx.Exec(`
-			DELETE FROM chunks WHERE id = ?
-		`, chunkID); delChunkErr != nil {
-			return delChunkErr
-		}
+	if _, delChunkErr := tx.Exec(`
+		DELETE FROM chunks
+		WHERE id IN (
+			SELECT chunk_id
+			FROM notebook_chunks
+			WHERE notebook_id = ?
+		)
+	`, notebookID); delChunkErr != nil {
+		return delChunkErr
 	}
 
 	_, err = tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID)
