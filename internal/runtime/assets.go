@@ -5,7 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
+)
+
+const (
+	onnxRuntimeDLL = "onnxruntime.dll"
+	vec0DLL        = "vec0.dll"
 )
 
 // AssetValidator checks for required runtime assets (models, tokenizers, extensions).
@@ -22,7 +26,6 @@ func NewAssetValidator(assetDir string) *AssetValidator {
 
 // ValidateAll checks that all required assets exist and are readable.
 func (av *AssetValidator) ValidateAll() error {
-	onnxRuntimeName, vec0Name := runtimeLibraryNames()
 	required := []struct {
 		name     string
 		isFile   bool
@@ -30,8 +33,8 @@ func (av *AssetValidator) ValidateAll() error {
 	}{
 		{"tokenizer.json", true, false},
 		{"model_int8.onnx", true, false},
-		{onnxRuntimeName, true, false},
-		{vec0Name, true, false},
+		{onnxRuntimeDLL, true, false},
+		{vec0DLL, true, false},
 	}
 
 	missing := []string{}
@@ -68,14 +71,12 @@ func (av *AssetValidator) ModelPath() string {
 
 // OnnxRuntimePath returns the full path to onnxruntime.dll.
 func (av *AssetValidator) OnnxRuntimePath() string {
-	onnxRuntimeName, _ := runtimeLibraryNames()
-	return av.GetAssetPath(onnxRuntimeName)
+	return av.GetAssetPath(onnxRuntimeDLL)
 }
 
 // Vec0DllPath returns the full path to vec0.dll.
 func (av *AssetValidator) Vec0DllPath() string {
-	_, vec0Name := runtimeLibraryNames()
-	return av.GetAssetPath(vec0Name)
+	return av.GetAssetPath(vec0DLL)
 }
 
 // PrepareRuntimeAssets copies runtime DLLs to an app-data subdirectory and returns absolute paths.
@@ -86,8 +87,7 @@ func (av *AssetValidator) PrepareRuntimeAssets(appDir string) (map[string]string
 		return nil, fmt.Errorf("failed to create runtime directory: %w", err)
 	}
 
-	onnxRuntimeName, vec0Name := runtimeLibraryNames()
-	assets := []string{onnxRuntimeName, vec0Name}
+	assets := []string{onnxRuntimeDLL, vec0DLL}
 	out := make(map[string]string, len(assets))
 
 	for _, name := range assets {
@@ -144,15 +144,4 @@ func copyFile(src, dst string) error {
 	}
 
 	return out.Sync()
-}
-
-func runtimeLibraryNames() (onnxRuntimeName string, vec0Name string) {
-	switch runtime.GOOS {
-	case "windows":
-		return "onnxruntime.dll", "vec0.dll"
-	case "darwin":
-		return "libonnxruntime.dylib", "vec0.dylib"
-	default:
-		return "libonnxruntime.so", "vec0.so"
-	}
 }
