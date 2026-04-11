@@ -1,7 +1,8 @@
 build/bin
 node_modules
 frontend/dist
-onnx/model_int8.onnx
+asset/model_int8.onnx
+asset/
 .env
 context.md
 

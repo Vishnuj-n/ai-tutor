@@ -55,7 +55,7 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - Retrieval queries only the embeddings associated with that topic
 - Each chunk uses one canonical chunk_id shared across stores:
   - SQLite stores relational metadata (for example `importance_score`, `weakness_score`)
-  - Use the Go client for the Chroma vector database to persist and query vector embeddings; record the Chroma vector under the same `chunk_id` so stores remain synchronized
+  - `sqlite-vec` stores embedding vectors keyed by the same `chunk_id`
 
 ## 4. Content Structure
 
@@ -132,9 +132,9 @@ Prompt payload should include:
 
 Embedding metadata requirements (ingestion-time):
 
-- When using Chroma, create vector records via the Go client and include `topic_id` and `parent_id` metadata.
-- Ensure the Chroma record id matches the SQLite `chunk_id` so records can be cross-referenced.
-- Keep metadata minimal but sufficient for fast filter-first retrieval
+- Persist `topic_id`, `parent_id`, and `chunk_id` in SQLite chunk rows.
+- Persist vectors in `sqlite-vec` using the same `chunk_id` key.
+- Keep metadata minimal but sufficient for fast topic-filtered retrieval.
 
 Prompt rules:
 
@@ -239,3 +239,55 @@ SQLite schema hooks (required now to avoid later migrations):
   - `weakness_score`
 - Keep `topic_id` and `parent_id` persisted with each chunk row
 - Treat these fields as forward-compatible hooks in V1 (they may be default/unused initially)
+
+## 12. Local Embedding Pipeline (Implementation Plan)
+
+### What
+
+Embeddings are generated locally with ONNX Runtime and stored in SQLite + `sqlite-vec`.
+
+### Why
+
+- Keeps the full RAG stack local-first and portable.
+- Removes dependency on external vector database services.
+- Supports deterministic retrieval with transparent SQL-level inspection.
+
+### How
+
+Step 1: Tokenize text with `asset/tokenizer.json`
+
+- Use a tokenizer compatible with Hugging Face tokenizer JSON format.
+- Apply the same tokenizer for document chunks and user queries.
+
+Step 2: Generate embeddings with ONNX
+
+- Use `yalue/onnxruntime_go` to load `asset/model_int8.onnx`.
+- Build tensors for token IDs and attention mask.
+- Run inference and extract a fixed-size embedding vector.
+
+Step 3: Persist in SQLite + `sqlite-vec`
+
+- Store chunk text and metadata in relational tables.
+- Store vectors in a `sqlite-vec` virtual table (for example `vec0`).
+- Keep a stable key mapping so vector rows map 1:1 to chunk rows.
+
+Step 4: Retrieve top-k for active topic
+
+- Embed user query using the same tokenizer and ONNX model.
+- Execute topic-scoped vector similarity search (cosine or equivalent supported metric).
+- Expand child hits to parent sections before prompt assembly.
+
+Step 5: Generate answer
+
+- Build a token-budgeted prompt from retrieved parent sections plus the user question.
+- Call the configured OpenAI-compatible LLM once (stateless).
+- Return answer plus section labels/citations.
+
+## 13. Windows Runtime Assets
+
+Required for local Windows builds:
+
+- `asset/onnxruntime.dll`
+- `asset/vec0.dll`
+
+If either dependency is missing, ingestion/retrieval must fail with an explicit setup error instead of synthetic fallback output.

@@ -99,12 +99,12 @@ Make **Reader + Ask AI actually work**
 
 ## Summary
 
-Sprint 2 delivered a working RAG-based "Ask AI" feature integrated into the Reader page. Key components: a small SQLite seed dataset (topic "os-scheduling"), TF‑IDF embeddings for retrieval, a simple RAG pipeline that expands chunks to parent sections, prompt assembly, and an OpenAI‑compatible LLM call. The frontend connects via Wails to `AskAI(topicID, question)` and displays answers with citations.
+Sprint 2 delivered a working RAG-based "Ask AI" feature integrated into the Reader page. Key components: a small SQLite seed dataset (topic "os-scheduling"), temporary lexical retrieval for MVP validation, a simple RAG pipeline that expands chunks to parent sections, prompt assembly, and an OpenAI‑compatible LLM call. The frontend connects via Wails to `AskAI(topicID, question)` and displays answers with citations.
 
 ## Included
 
 - **Data & DB**: SQLite schema and seed data (`db.go`)  
-- **Embeddings & Retrieval**: TF‑IDF vectors, tokenization, cosine similarity, top‑k search (`embeddings.go`)  
+- **Embeddings & Retrieval (MVP)**: lexical vectors, tokenization, cosine similarity, top‑k search (`embeddings.go`)  
 - **RAG Pipeline**: retrieval → parent expansion → prompt assembly → LLM call → citations (`rag.go`)  
 - **Backend API**: `GetTopicContent`, `GetAvailableTopics`, `AskAI` (`app.go`)  
 - **Reader UI**: topic sections + Ask AI panel (`frontend/src/pages/Reader.vue`)
@@ -117,11 +117,11 @@ Sprint 2 delivered a working RAG-based "Ask AI" feature integrated into the Read
 
 ## Limitations (MVP)
 
-- Single hardcoded topic, TF‑IDF embeddings (non‑neural), DB in temp, requires online LLM, no quiz/FSRS yet.
+- Single hardcoded topic, temporary non-neural retrieval, DB in temp, requires online LLM, no quiz/FSRS yet.
 
 ## Next steps
 
-- Settings UI, persistent config, add topics, quiz generation, FSRS, neural embeddings.
+- Settings UI, persistent config, add topics, quiz generation, FSRS, ONNX INT8 embeddings + `sqlite-vec` retrieval.
 
 ---
 

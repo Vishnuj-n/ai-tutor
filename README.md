@@ -26,7 +26,7 @@ It is not a chatbot, PDF viewer, or standalone flashcard app. It is a guided tut
 
 - Backend and desktop shell: Go + Wails
 - Frontend: Vue multi-page app with left sidebar navigation
-- Local data: SQLite + chromem-go embeddings
+- Local data: SQLite + sqlite-vec embeddings
 - LLM layer: OpenAI-compatible API (stateless requests)
 
 ## Core Features
@@ -75,7 +75,8 @@ Failure rule:
 - Wails
 - Vue (multi-page)
 - SQLite
-- chromem-go
+- sqlite-vec
+- onnxruntime_go + ONNX INT8 embedding model
 - OpenAI-compatible LLM API
 
 ## Quick Start

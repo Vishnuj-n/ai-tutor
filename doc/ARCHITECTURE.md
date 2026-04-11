@@ -17,7 +17,8 @@ A local-first desktop tutoring system with deterministic workflows and topic-sco
 - Go + Wails host core services and desktop runtime
 - Vue multi-page UI invokes typed backend commands
 - SQLite is the source of truth for study state
- - Use the Go client for the Chroma vector database to store and query embeddings for topic retrieval
+- SQLite + sqlite-vec store and query topic-scoped embeddings locally
+- ONNX Runtime is used for local embedding inference via `yalue/onnxruntime_go`
 - OpenAI-compatible API is used only for reasoning tasks
 
 ## 2. High-Level Component Design
@@ -115,7 +116,9 @@ Hybrid chunking with parent-document retrieval extension.
 1. Parse source into heading-based parent sections.
 2. Create child chunks from each parent section.
 3. If a section exceeds token target, split by token budget.
-4. Embed child chunks and persist embedding references (persist vectors in Chroma via the Go client and store the Chroma record id in `embedding_ref`).
+4. Tokenize chunk text using `asset/tokenizer.json`.
+5. Generate embeddings with `asset/model_int8.onnx` via ONNX Runtime.
+6. Persist vectors in a `sqlite-vec` virtual table and keep chunk metadata in SQLite relational tables.
 5. On retrieval, fetch top-k child chunks then expand to parent sections.
 
 ## 6. RAG Pipeline (Topic-Scoped)
@@ -147,6 +150,26 @@ Constraints:
 - No global retrieval by default
 - Strict token budget at prompt assembly stage
 - Stateless requests, no conversation memory
+
+## 6.1 Local Embedding Runtime Dependencies
+
+### What
+
+The embedding pipeline depends on local model/runtime assets.
+
+### Why
+
+Embedding generation must be deterministic and available without external vector services.
+
+### How
+
+- Required assets:
+  - `asset/tokenizer.json`
+  - `asset/model_int8.onnx`
+  - `asset/onnxruntime.dll` (Windows runtime)
+  - `asset/vec0.dll` (sqlite-vec extension on Windows builds)
+- At startup, validate these assets before enabling ingestion/retrieval features.
+- If a required local dependency is missing, show explicit setup guidance and fail clearly.
 
 ## 7. Scheduling System
 
