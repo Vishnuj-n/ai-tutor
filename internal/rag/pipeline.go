@@ -124,6 +124,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 
 func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) (string, []string) {
 	const maxContextRunes = 6000
+	const minUsedSectionRatio = 0.5
 
 	sectionText := ""
 	usedParentIDs := make([]string, 0, len(ctx.ParentIDs))
@@ -139,15 +140,21 @@ func buildPrompt(topicTitle, userQuestion string, ctx *RetrievalContext) (string
 			break
 		}
 
-		candidateRunes := utf8.RuneCountInString(candidate)
-		if candidateRunes <= remaining {
+		originalRunes := utf8.RuneCountInString(candidate)
+		if originalRunes <= remaining {
 			sectionText += candidate
 			usedParentIDs = append(usedParentIDs, parentID)
 			continue
 		}
 
-		sectionText += trimToRunes(candidate, remaining)
-		usedParentIDs = append(usedParentIDs, parentID)
+		trimmed := trimToRunes(candidate, remaining)
+		trimmedRunes := utf8.RuneCountInString(trimmed)
+
+		if trimmedRunes == originalRunes || float64(trimmedRunes)/float64(originalRunes) >= minUsedSectionRatio {
+			usedParentIDs = append(usedParentIDs, parentID)
+		}
+
+		sectionText += trimmed
 		if utf8.RuneCountInString(sectionText) >= maxContextRunes {
 			break
 		}

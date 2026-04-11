@@ -404,7 +404,7 @@ func buildTopicGroups(notebookID string, doc *notebook.ExtractedDocument, topicI
 			OrderIndex: builder.order,
 		})
 
-		chunkTexts := notebook.SplitIntoWordChunks(sectionText, 180, 40)
+		chunkTexts := notebook.SplitIntoWordChunks(sectionText, notebook.ChunkWordWindow, notebook.ChunkWordOverlap)
 		for chunkIndex, chunkText := range chunkTexts {
 			chunkID := fmt.Sprintf("nbc_%s_%02d_%04d_%03d", notebookID, topicIdx+1, builder.order, chunkIndex+1)
 			builder.chunks = append(builder.chunks, db.NotebookChunkInput{

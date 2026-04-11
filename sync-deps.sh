@@ -57,19 +57,46 @@ else
     MISSING_ASSETS=1
 fi
 
-if [ -f "asset/onnxruntime.dll" ]; then
-    echo "✓ asset/onnxruntime.dll present"
-else
-    echo "❌ asset/onnxruntime.dll MISSING (required for Windows build)"
-    MISSING_ASSETS=1
-fi
+OS_NAME=$(uname -s 2>/dev/null || echo "unknown")
+case "$OS_NAME" in
+    CYGWIN*|MINGW*|MSYS*|Windows_NT)
+        RUNTIME_EXTS="dll"
+        ;;
+    Darwin*)
+        RUNTIME_EXTS="dylib"
+        ;;
+    Linux*)
+        RUNTIME_EXTS="so"
+        ;;
+    *)
+        # Unknown platform: try common runtime extensions.
+        RUNTIME_EXTS="dll dylib so"
+        ;;
+esac
 
-if [ -f "asset/vec0.dll" ]; then
-    echo "✓ asset/vec0.dll present"
-else
-    echo "❌ asset/vec0.dll MISSING (required for sqlite-vec)"
-    MISSING_ASSETS=1
-fi
+check_runtime_asset() {
+    local base_name="$1"
+    local label="$2"
+    local found_path=""
+
+    for ext in $RUNTIME_EXTS; do
+        local candidate="asset/${base_name}.${ext}"
+        if [ -f "$candidate" ]; then
+            found_path="$candidate"
+            break
+        fi
+    done
+
+    if [ -n "$found_path" ]; then
+        echo "✓ $found_path present"
+    else
+        echo "❌ asset/${base_name}.[${RUNTIME_EXTS// /|}] MISSING ($label)"
+        MISSING_ASSETS=1
+    fi
+}
+
+check_runtime_asset "onnxruntime" "required ONNX runtime library for this platform"
+check_runtime_asset "vec0" "required sqlite-vec library for this platform"
 
 if [ "$MISSING_ASSETS" -eq 1 ]; then
     echo ""

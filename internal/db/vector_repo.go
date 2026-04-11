@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	vec0ErrSubstr         = "vec0"
+	chunkVectorsErrSubstr = "chunk_vectors"
+)
+
 func upsertChunkVectorRepo(chunkID string, vector []float32) error {
 	if len(vector) != int(embeddingDimension) {
 		return fmt.Errorf("vector dimension mismatch: got %d, expected %d", len(vector), embeddingDimension)
@@ -68,8 +73,7 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int) ([]
 		LIMIT ?
 	`, topicID, queryVectorJSON, k)
 	if err != nil {
-		errText := strings.ToLower(err.Error())
-		if strings.Contains(errText, "vec0") || strings.Contains(errText, "chunk_vectors") {
+		if isVectorUnavailableError(err) {
 			log.Printf("warning: vector search unavailable for topic %s, using lexical fallback: %v", topicID, err)
 			return []string{}, nil
 		}
@@ -124,4 +128,9 @@ func lookupChunkRowIDRepo(chunkID string) (int64, error) {
 	}
 
 	return rowID, nil
+}
+
+func isVectorUnavailableError(err error) bool {
+	errText := strings.ToLower(err.Error())
+	return strings.Contains(errText, vec0ErrSubstr) || strings.Contains(errText, chunkVectorsErrSubstr)
 }
