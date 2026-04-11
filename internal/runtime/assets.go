@@ -152,9 +152,8 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
-	if err := os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
-		return err
-	}
+	// Best-effort: sync timestamps but don't fail the copy if it fails
+	_ = os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime())
 
 	return out.Sync()
 }
