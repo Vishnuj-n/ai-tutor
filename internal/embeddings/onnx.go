@@ -227,18 +227,22 @@ func (e *OnnxEmbedder) tokenize(text string) ([]int64, []int64, []int64, error) 
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("tokenizer encode failed: %w", err)
 	}
-	if len(enc.Ids) == 0 {
+	return buildTokenArrays(enc.Ids, enc.AttentionMask, enc.TypeIds, e.maxSeqLen)
+}
+
+func buildTokenArrays(sourceIDs []int, sourceMask []int, sourceTypeIDs []int, maxSeqLen int) ([]int64, []int64, []int64, error) {
+	if len(sourceIDs) == 0 {
 		return nil, nil, nil, fmt.Errorf("tokenizer returned no token ids")
 	}
 
-	ids := make([]int64, len(enc.Ids))
-	for i, v := range enc.Ids {
+	ids := make([]int64, len(sourceIDs))
+	for i, v := range sourceIDs {
 		ids[i] = int64(v)
 	}
 
 	mask := make([]int64, len(ids))
-	if len(enc.AttentionMask) == len(ids) {
-		for i, v := range enc.AttentionMask {
+	if len(sourceMask) == len(ids) {
+		for i, v := range sourceMask {
 			if v > 0 {
 				mask[i] = 1
 			}
@@ -250,22 +254,18 @@ func (e *OnnxEmbedder) tokenize(text string) ([]int64, []int64, []int64, error) 
 	}
 
 	typeIDs := make([]int64, len(ids))
-	if len(enc.TypeIds) == len(ids) {
-		for i, v := range enc.TypeIds {
+	if len(sourceTypeIDs) == len(ids) {
+		for i, v := range sourceTypeIDs {
 			typeIDs[i] = int64(v)
 		}
 	}
 
 	targetLen := len(ids)
-	if targetLen > e.maxSeqLen {
-		targetLen = e.maxSeqLen
+	if maxSeqLen > 0 && targetLen > maxSeqLen {
+		targetLen = maxSeqLen
 	}
 
-	ids = ids[:targetLen]
-	mask = mask[:targetLen]
-	typeIDs = typeIDs[:targetLen]
-
-	return ids, mask, typeIDs, nil
+	return ids[:targetLen], mask[:targetLen], typeIDs[:targetLen], nil
 }
 
 func (e *OnnxEmbedder) buildInputValues(shape ort.Shape, ids, attentionMask, tokenTypeIDs []int64) ([]ort.Value, error) {

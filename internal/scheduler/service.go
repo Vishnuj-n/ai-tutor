@@ -14,32 +14,64 @@ const (
 	MaxReviewMinutes         = 60
 )
 
-// Service builds one daily plan that can include all study modes.
-type Service struct{}
-
 // New creates a new scheduler service
 func New() *Service {
-	return &Service{}
+	return &Service{
+		queryDueReviewCards: db.QueryDueReviewCards,
+		queryActiveTopics:   db.QueryActiveTopics,
+		queryLearningTopics: db.QueryLearningTopics,
+		countLearnedTopics:  db.CountLearnedTopics,
+	}
+}
+
+type queryDueReviewCardsFn func(now string) (int, error)
+type queryActiveTopicsFn func(limit int) ([]string, error)
+type queryLearningTopicsFn func(limit int) ([]models.TopicSummary, error)
+type countLearnedTopicsFn func() (int, error)
+
+// Service builds one daily plan that can include all study modes.
+type Service struct {
+	queryDueReviewCards queryDueReviewCardsFn
+	queryActiveTopics   queryActiveTopicsFn
+	queryLearningTopics queryLearningTopicsFn
+	countLearnedTopics  countLearnedTopicsFn
+}
+
+func (s *Service) ensureQueryFns() {
+	if s.queryDueReviewCards == nil {
+		s.queryDueReviewCards = db.QueryDueReviewCards
+	}
+	if s.queryActiveTopics == nil {
+		s.queryActiveTopics = db.QueryActiveTopics
+	}
+	if s.queryLearningTopics == nil {
+		s.queryLearningTopics = db.QueryLearningTopics
+	}
+	if s.countLearnedTopics == nil {
+		s.countLearnedTopics = db.CountLearnedTopics
+	}
 }
 
 // BuildTodayPlan builds the complete daily schedule
 func (s *Service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
-	dueCards, err := db.QueryDueReviewCards(now.Format(time.RFC3339))
+	s.ensureQueryFns()
+
+	dueCards, err := s.queryDueReviewCards(now.Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
 
-	activeTopics, err := db.QueryActiveTopics(3)
+	activeTopics, err := s.queryActiveTopics(3)
 	if err != nil {
 		return nil, err
 	}
 
-	learningTopics, err := db.QueryLearningTopics(2)
+	learningTopics, err := s.queryLearningTopics(2)
 	if err != nil {
 		return nil, err
 	}
 
-	learnedTopicsCount, err := db.CountLearnedTopics()
+	learnedTopicsCount, err := s.countLearnedTopics()
 	if err != nil {
 		return nil, err
 	}
