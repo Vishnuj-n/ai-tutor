@@ -20,6 +20,9 @@ func TestBuildTodayPlanEmptyFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
+	if plan == nil {
+		t.Fatalf("BuildTodayPlan returned nil plan")
+	}
 
 	if plan.ReviewMinutes != 0 {
 		t.Fatalf("expected review minutes to be 0, got %d", plan.ReviewMinutes)
@@ -49,6 +52,9 @@ func TestBuildTodayPlanPrioritizesDueReviews(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
+	if plan == nil {
+		t.Fatalf("BuildTodayPlan returned nil plan")
+	}
 
 	if plan.ReviewMinutes != 20 {
 		t.Fatalf("expected review minutes to be 20, got %d", plan.ReviewMinutes)
@@ -70,7 +76,7 @@ func TestBuildTodayPlanPrioritizesDueReviews(t *testing.T) {
 		t.Fatalf("expected third task to be read priority-3, got %#v", plan.Tasks[2])
 	}
 
-	assertPlanMinutesWithinBudget(t, plan)
+	assertPlanMinutesWithinBudget(t, *plan)
 }
 
 func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
@@ -90,6 +96,9 @@ func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
+	if plan == nil {
+		t.Fatalf("BuildTodayPlan returned nil plan")
+	}
 
 	if plan.ReviewMinutes != MaxReviewMinutes {
 		t.Fatalf("expected review minutes to be capped at %d, got %d", MaxReviewMinutes, plan.ReviewMinutes)
@@ -101,7 +110,7 @@ func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
 		t.Fatalf("review minutes violated min-learning guardrail: review=%d", plan.ReviewMinutes)
 	}
 
-	assertPlanMinutesWithinBudget(t, plan)
+	assertPlanMinutesWithinBudget(t, *plan)
 }
 
 func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
@@ -116,6 +125,9 @@ func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
+	if plan == nil {
+		t.Fatalf("BuildTodayPlan returned nil plan")
+	}
 
 	if len(plan.Tasks) != 2 {
 		t.Fatalf("expected quiz and socratic tasks, got %#v", plan.Tasks)
@@ -127,7 +139,7 @@ func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
 		t.Fatalf("expected second task to be socratic priority-2, got %#v", plan.Tasks[1])
 	}
 
-	assertPlanMinutesWithinBudget(t, plan)
+	assertPlanMinutesWithinBudget(t, *plan)
 }
 
 func TestBuildTodayPlanQueryDueReviewCardsReturnsError(t *testing.T) {
@@ -202,7 +214,7 @@ func TestBuildTodayPlanCountLearnedTopicsReturnsError(t *testing.T) {
 	}
 }
 
-func assertPlanMinutesWithinBudget(t *testing.T, plan *models.TodayPlan) {
+func assertPlanMinutesWithinBudget(t *testing.T, plan models.TodayPlan) {
 	t.Helper()
 
 	totalTaskMinutes := 0
