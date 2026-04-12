@@ -5,18 +5,6 @@ import (
 	"fmt"
 )
 
-func ingestNotebookContentRepo(notebookID string, topicID string, parents []NotebookParentInput, chunks []NotebookChunkInput) error {
-	if topicID == "" {
-		return fmt.Errorf("topic id is required for ingestion")
-	}
-	group := NotebookTopicIngestionGroup{
-		TopicID: topicID,
-		Parents: parents,
-		Chunks:  chunks,
-	}
-	return ingestNotebookContentByTopicRepo(notebookID, []NotebookTopicIngestionGroup{group})
-}
-
 func ingestNotebookContentByTopicRepo(notebookID string, groups []NotebookTopicIngestionGroup) error {
 	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
