@@ -34,9 +34,9 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 
 		if _, err = tx.Exec(`
 			INSERT INTO questions (
-				id, topic_id, prompt, options_json, correct_answer, explanation, source_heading, source_snippet
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.SourceHeading, q.SourceSnippet); err != nil {
+				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet); err != nil {
 			return err
 		}
 	}
@@ -47,7 +47,7 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 
 func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
 	rows, err := conn.Query(`
-		SELECT id, topic_id, prompt, options_json, correct_answer, explanation, source_heading, source_snippet
+		SELECT id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet
 		FROM questions
 		WHERE topic_id = ?
 		ORDER BY created_at, id
@@ -70,6 +70,7 @@ func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
 			&optionsJSON,
 			&q.CorrectAnswer,
 			&q.Explanation,
+			&q.Hint,
 			&q.SourceHeading,
 			&q.SourceSnippet,
 		); err != nil {
@@ -94,7 +95,7 @@ func getQuestionByIDRepo(questionID string) (*models.QuizQuestion, error) {
 	var q models.QuizQuestion
 	var optionsJSON string
 	err := conn.QueryRow(`
-		SELECT id, topic_id, prompt, options_json, correct_answer, explanation, source_heading, source_snippet
+		SELECT id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet
 		FROM questions
 		WHERE id = ?
 	`, questionID).Scan(
@@ -104,6 +105,7 @@ func getQuestionByIDRepo(questionID string) (*models.QuizQuestion, error) {
 		&optionsJSON,
 		&q.CorrectAnswer,
 		&q.Explanation,
+		&q.Hint,
 		&q.SourceHeading,
 		&q.SourceSnippet,
 	)

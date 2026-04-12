@@ -140,7 +140,10 @@ func TestGetNotebookTopicTreeEmptyReturnsArray(t *testing.T) {
 	initTestDB(t)
 	app := &App{}
 
-	tree := app.GetNotebookTopicTree()
+	tree, err := app.GetNotebookTopicTree()
+	if err != nil {
+		t.Fatalf("GetNotebookTopicTree failed: %v", err)
+	}
 	if tree == nil {
 		t.Fatalf("expected empty array, got nil")
 	}
@@ -208,7 +211,10 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 		t.Fatalf("LinkChunksToNotebook notebookB failed: %v", err)
 	}
 
-	tree := app.GetNotebookTopicTree()
+	tree, err := app.GetNotebookTopicTree()
+	if err != nil {
+		t.Fatalf("GetNotebookTopicTree failed: %v", err)
+	}
 	if len(tree) != 2 {
 		t.Fatalf("expected 2 notebooks, got %#v", tree)
 	}

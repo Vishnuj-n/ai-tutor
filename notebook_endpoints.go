@@ -541,13 +541,13 @@ func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
 }
 
 // GetNotebookTopicTree returns notebook-scoped topic options for hierarchical selectors.
-func (a *App) GetNotebookTopicTree() []models.NotebookTopicTreeNode {
+func (a *App) GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
 	tree, err := db.GetNotebookTopicTree()
 	if err != nil {
-		return []models.NotebookTopicTreeNode{}
+		return nil, err
 	}
 
-	return tree
+	return tree, nil
 }
 
 func emitIngestionProgress(a *App, payload ingestionProgressPayload) {

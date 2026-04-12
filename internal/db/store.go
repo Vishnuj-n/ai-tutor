@@ -194,6 +194,7 @@ func createTables() error {
 		options_json TEXT NOT NULL,
 		correct_answer TEXT NOT NULL,
 		explanation TEXT,
+		hint TEXT,
 		source_heading TEXT,
 		source_snippet TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
