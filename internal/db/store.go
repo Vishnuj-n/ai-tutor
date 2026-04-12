@@ -303,6 +303,9 @@ func ensureQuestionsSchema() error {
 		}
 		columnsFound[name] = true
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	requiredColumns := map[string]string{
 		"hint":           "TEXT",

@@ -243,6 +243,10 @@ function onNext() {
 .page {
   display: grid;
   gap: 20px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .eyebrow {
@@ -265,6 +269,8 @@ h1 {
   background: var(--surface-container-lowest);
   border-radius: 16px;
   padding: 24px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .controls {
@@ -272,12 +278,15 @@ h1 {
   align-items: end;
   gap: 14px;
   flex-wrap: wrap;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .field {
   display: grid;
   gap: 8px;
-  min-width: min(420px, 100%);
+  flex: 1 1 auto;
+  min-width: clamp(200px, 100%, 420px);
 }
 
 .field span {
@@ -289,6 +298,8 @@ select {
   border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
   background: white;
   border-radius: 12px;
+  width: 100%;
+  box-sizing: border-box;
   padding: 10px 12px;
   font-size: 15px;
 }
@@ -296,10 +307,11 @@ select {
 .primary {
   border: 0;
   border-radius: 12px;
-  padding: 10px 16px;
+  padding: 8px 14px;
   background: #20222f;
   color: #fff;
   font-weight: 600;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -321,6 +333,8 @@ p {
 .question-card {
   display: grid;
   gap: 18px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .question-index {
@@ -333,6 +347,8 @@ p {
 .options {
   display: grid;
   gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .option {
@@ -342,6 +358,10 @@ p {
   border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
   border-radius: 12px;
   padding: 10px 12px;
+  width: 100%;
+  box-sizing: border-box;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .feedback {
@@ -371,6 +391,7 @@ p {
 .actions {
   display: flex;
   justify-content: flex-end;
+  padding-top: 8px;
 }
 
 .error {
