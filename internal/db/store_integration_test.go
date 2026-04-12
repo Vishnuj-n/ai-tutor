@@ -1,6 +1,7 @@
 package db
 
 import (
+	"ai-tutor/internal/models"
 	"strings"
 	"testing"
 )
@@ -318,4 +319,138 @@ func contains(items []string, target string) bool {
 
 func sanitizeWhitespace(input string) string {
 	return strings.Join(strings.Fields(input), " ")
+}
+
+func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-whitespace-test"
+	if err := CreateNotebook(notebookID, "Whitespace Test Notebook", "/tmp/ws.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Test 1: Whitespace-only notebookID should be rejected
+	groups := []NotebookTopicIngestionGroup{
+		{
+			TopicID: "valid-topic",
+			Parents: []NotebookParentInput{
+				{ID: "p1", Heading: "H", Content: "c", OrderIndex: 1},
+			},
+			Chunks: []NotebookChunkInput{},
+		},
+	}
+
+	err := IngestNotebookContentByTopic("   ", groups)
+	if err == nil {
+		t.Fatal("expected IngestNotebookContentByTopic to reject whitespace-only notebookID")
+	}
+	if !strings.Contains(err.Error(), "notebook id is required") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Test 2: Whitespace-only TopicID should be rejected
+	groups2 := []NotebookTopicIngestionGroup{
+		{
+			TopicID: "   ",
+			Parents: []NotebookParentInput{},
+			Chunks:  []NotebookChunkInput{},
+		},
+	}
+
+	err = IngestNotebookContentByTopic(notebookID, groups2)
+	if err == nil {
+		t.Fatal("expected IngestNotebookContentByTopic to reject whitespace-only TopicID")
+	}
+	if !strings.Contains(err.Error(), "topic id is required") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Test 3: Leading/trailing whitespace should be trimmed for valid IDs
+	validGroups := []NotebookTopicIngestionGroup{
+		{
+			TopicID: "  valid-topic-ws  ",
+			Parents: []NotebookParentInput{
+				{ID: "p-ws-1", Heading: "H", Content: "c", OrderIndex: 1},
+			},
+			Chunks: []NotebookChunkInput{
+				{ID: "c-ws-1", ParentID: "p-ws-1", Text: "chunk text", TokenCount: 2, PageNum: 1},
+			},
+		},
+	}
+
+	if err := EnsureTopic("valid-topic-ws", "Valid Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	// This should succeed - whitespace should be trimmed from TopicID
+	err = IngestNotebookContentByTopic("  "+notebookID+"  ", validGroups)
+	if err != nil {
+		t.Fatalf("IngestNotebookContentByTopic with trimmed IDs failed: %v", err)
+	}
+
+	// Verify that the topic without whitespace was used (not with whitespace)
+	assertCountEquals(t, `SELECT COUNT(*) FROM parents WHERE id = ?`, "p-ws-1", 1)
+	assertCountEquals(t, `SELECT COUNT(*) FROM chunks WHERE id = ?`, "c-ws-1", 1)
+}
+
+func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
+	initDBForTest(t, true, 0)
+
+	topicID := "quiz-mismatch-topic"
+	if err := EnsureTopic(topicID, "Quiz Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	// Create questions with mismatched TopicID
+	questions := []models.QuizQuestion{
+		{
+			ID:            "q1",
+			TopicID:       "different-topic",
+			Prompt:        "Question 1",
+			Options:       []string{"a", "b"},
+			CorrectAnswer: "a",
+			Explanation:   "Explanation",
+		},
+	}
+
+	// This should fail because question TopicID doesn't match the provided topicID
+	err := ReplaceQuestionsForTopic(topicID, questions)
+	if err == nil {
+		t.Fatal("expected ReplaceQuestionsForTopic to reject question with mismatched TopicID")
+	}
+	if !strings.Contains(err.Error(), "question topic id must match topic id") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Verify no questions were inserted
+	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 0)
+
+	// Test with valid matching TopicID (either explicit or "" to auto-assign)
+	validQuestions := []models.QuizQuestion{
+		{
+			ID:            "q2",
+			TopicID:       "", // Empty will be auto-assigned to topicID
+			Prompt:        "Question 2",
+			Options:       []string{"x", "y"},
+			CorrectAnswer: "x",
+			Explanation:   "Valid question",
+		},
+		{
+			ID:            "q3",
+			TopicID:       topicID, // Explicit match
+			Prompt:        "Question 3",
+			Options:       []string{"p", "q"},
+			CorrectAnswer: "p",
+			Explanation:   "Another valid question",
+		},
+	}
+
+	// This should succeed
+	err = ReplaceQuestionsForTopic(topicID, validQuestions)
+	if err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic with matching TopicIDs failed: %v", err)
+	}
+
+	// Verify questions were inserted with correct TopicID
+	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 2)
 }
