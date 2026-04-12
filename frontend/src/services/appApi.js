@@ -23,8 +23,20 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
+export function generateQuiz(topicID) {
+  return appBridge().GenerateQuiz(topicID)
+}
+
+export function scoreAnswer(questionID, userAnswer) {
+  return appBridge().ScoreAnswer(questionID, userAnswer)
+}
+
 export function getNotebooks(topicID = '') {
   return appBridge().GetNotebooks(topicID)
+}
+
+export function getNotebookTopicTree() {
+  return appBridge().GetNotebookTopicTree()
 }
 
 export function uploadNotebook(fileBytes, fileName) {

@@ -78,16 +78,17 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 			vector, err := vi.embedder.Embed(chunk.Text)
 			if err != nil {
 				log.Printf("Warning: embedding failed for chunk %s: %v", chunk.ID, err)
+				failed++
 				continue
 			}
 
 			// Store in vec0
 			if err := db.UpsertChunkVector(chunk.ID, vector); err != nil {
 				log.Printf("Warning: failed to store vector for chunk %s: %v", chunk.ID, err)
+				failed++
 				continue
 			}
 
-			// Update embedding metadata
 			hash := computeTextHash(chunk.Text)
 			if err := db.UpdateChunkEmbedding(chunk.ID, hash); err != nil {
 				log.Printf("Warning: failed to update chunk embedding metadata for chunk %s: %v", chunk.ID, err)

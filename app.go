@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -12,11 +13,13 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/llm"
+	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
 	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
@@ -297,6 +300,248 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"active_topics":    plan.ActiveTopics,
 		"tasks":            plan.Tasks,
 	}
+}
+
+type quizLLMQuestion struct {
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	Explanation   string   `json:"explanation"`
+	Hint          string   `json:"hint"`
+	SourceHeading string   `json:"source_heading"`
+	SourceSnippet string   `json:"source_snippet"`
+}
+
+type quizLLMResponse struct {
+	Questions []quizLLMQuestion `json:"questions"`
+}
+
+// GenerateQuiz creates topic-scoped multiple-choice questions and stores them.
+func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return map[string]interface{}{"error": "topic ID is required"}
+	}
+
+	if a.llmProvider == nil {
+		return map[string]interface{}{"error": "LLM provider not initialized"}
+	}
+
+	content, err := db.GetTopicContent(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch topic content: " + err.Error()}
+	}
+
+	sections, ok := content["sections"].([]map[string]interface{})
+	if !ok || len(sections) == 0 {
+		return map[string]interface{}{"error": "topic has no sections for quiz generation"}
+	}
+
+	prompt := buildQuizPrompt(topicID, sections)
+	raw, err := a.llmProvider.GenerateAnswer(prompt)
+	if err != nil {
+		return map[string]interface{}{"error": "quiz generation failed: " + err.Error()}
+	}
+
+	parsed, err := parseQuizLLMResponse(raw)
+	if err != nil {
+		return map[string]interface{}{"error": "quiz generation parsing failed: " + err.Error()}
+	}
+
+	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
+	for _, q := range parsed.Questions {
+		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" {
+			continue
+		}
+
+		// Validate CorrectAnswer matches one of the Options (case-insensitive, whitespace-normalized)
+		correctAnswerCanonical := strings.TrimSpace(strings.ToLower(q.CorrectAnswer))
+		var matchedOption string
+		for _, opt := range q.Options {
+			optCanonical := strings.TrimSpace(strings.ToLower(opt))
+			if optCanonical == correctAnswerCanonical {
+				matchedOption = strings.TrimSpace(opt)
+				break
+			}
+		}
+		if matchedOption == "" {
+			// Skip question if CorrectAnswer doesn't match any option
+			continue
+		}
+
+		questions = append(questions, models.QuizQuestion{
+			ID:            uuid.NewString(),
+			TopicID:       topicID,
+			Prompt:        strings.TrimSpace(q.Prompt),
+			Options:       q.Options,
+			CorrectAnswer: matchedOption,
+			Explanation:   strings.TrimSpace(q.Explanation),
+			Hint:          strings.TrimSpace(q.Hint),
+			SourceHeading: strings.TrimSpace(q.SourceHeading),
+			SourceSnippet: strings.TrimSpace(q.SourceSnippet),
+		})
+	}
+
+	if len(questions) == 0 {
+		return map[string]interface{}{"error": "quiz generation produced no valid questions"}
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
+		return map[string]interface{}{"error": "failed to save generated quiz: " + err.Error()}
+	}
+
+	return map[string]interface{}{
+		"topic_id":  topicID,
+		"questions": questions,
+	}
+}
+
+// ScoreAnswer validates an answer and stores score metadata.
+func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} {
+	questionID = strings.TrimSpace(questionID)
+	userAnswer = strings.TrimSpace(userAnswer)
+	if questionID == "" || userAnswer == "" {
+		return map[string]interface{}{"error": "question ID and user answer are required"}
+	}
+
+	question, err := db.GetQuestionByID(questionID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch question: " + err.Error()}
+	}
+	if question == nil {
+		return map[string]interface{}{"error": "question not found"}
+	}
+
+	expected := normalizeQuizAnswer(question.CorrectAnswer, question.Options)
+	actual := normalizeQuizAnswer(userAnswer, question.Options)
+	correct := expected != "" && expected == actual
+
+	hint := question.Hint
+	if hint == "" {
+		hint = "Review the cited section and compare each option against the source."
+	}
+	score := models.QuizScore{
+		QuestionID:    question.ID,
+		Correct:       correct,
+		Score:         0,
+		Expected:      question.CorrectAnswer,
+		Feedback:      question.Explanation,
+		Hint:          hint,
+		UserAnswer:    userAnswer,
+		SourceHeading: question.SourceHeading,
+	}
+	if correct {
+		score.Score = 100
+		if score.Hint == "Review the cited section and compare each option against the source." {
+			score.Hint = "Great job. Move to the next question."
+		}
+	} else if strings.TrimSpace(question.Explanation) == "" {
+		score.Feedback = "That answer is not correct."
+	}
+
+	if err := db.SaveUserAnswer(score); err != nil {
+		return map[string]interface{}{"error": "failed to save score: " + err.Error()}
+	}
+
+	return map[string]interface{}{
+		"question_id":    score.QuestionID,
+		"correct":        score.Correct,
+		"score":          score.Score,
+		"expected":       score.Expected,
+		"feedback":       score.Feedback,
+		"hint":           score.Hint,
+		"user_answer":    score.UserAnswer,
+		"source_heading": score.SourceHeading,
+	}
+}
+
+func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
+	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
+	b.WriteString(topicID)
+	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
+	b.WriteString("Rules: correct_answer must match one option exactly; keep options concise; explanations grounded in source text.\n")
+	b.WriteString("Source sections:\n")
+
+	// Limit to top 5 sections with truncation to avoid exceeding token limits
+	const (
+		maxSections          = 5
+		maxContentPerSection = 500
+		maxTotalContent      = 2500
+	)
+
+	totalContentLength := 0
+	sectionCount := 0
+
+	for _, section := range sections {
+		if sectionCount >= maxSections || totalContentLength >= maxTotalContent {
+			break
+		}
+
+		heading, _ := section["heading"].(string)
+		content, _ := section["content"].(string)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		// Truncate section to max content size (rune-safe to preserve UTF-8)
+		if len(content) > maxContentPerSection {
+			runes := []rune(content)
+			if len(runes) > maxContentPerSection {
+				content = string(runes[:maxContentPerSection]) + "..."
+			}
+		}
+
+		b.WriteString("[Heading] ")
+		b.WriteString(heading)
+		b.WriteString("\n")
+		b.WriteString(content)
+		b.WriteString("\n---\n")
+
+		totalContentLength += len(content)
+		sectionCount++
+	}
+
+	return b.String()
+}
+
+func parseQuizLLMResponse(raw string) (*quizLLMResponse, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty LLM response")
+	}
+
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start >= 0 && end > start {
+		raw = raw[start : end+1]
+	}
+
+	var out quizLLMResponse
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	if len(out.Questions) == 0 {
+		return nil, fmt.Errorf("no questions in LLM response")
+	}
+	return &out, nil
+}
+
+func normalizeQuizAnswer(answer string, options []string) string {
+	ans := strings.TrimSpace(strings.ToLower(answer))
+	if ans == "" {
+		return ""
+	}
+
+	if len(ans) == 1 {
+		idx := int(ans[0] - 'a')
+		if idx >= 0 && idx < len(options) {
+			return strings.ToLower(strings.TrimSpace(options[idx]))
+		}
+	}
+
+	return ans
 }
 
 func resolveAppDir() (string, error) {
