@@ -81,6 +81,7 @@ type QuizQuestion struct {
 	Options       []string `json:"options"`
 	CorrectAnswer string   `json:"correct_answer"`
 	Explanation   string   `json:"explanation"`
+	Hint          string   `json:"hint,omitempty"`
 	SourceHeading string   `json:"source_heading,omitempty"`
 	SourceSnippet string   `json:"source_snippet,omitempty"`
 }

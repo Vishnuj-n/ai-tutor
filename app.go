@@ -360,6 +360,7 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			Options:       q.Options,
 			CorrectAnswer: strings.TrimSpace(q.CorrectAnswer),
 			Explanation:   strings.TrimSpace(q.Explanation),
+			Hint:          strings.TrimSpace(q.Hint),
 			SourceHeading: strings.TrimSpace(q.SourceHeading),
 			SourceSnippet: strings.TrimSpace(q.SourceSnippet),
 		})
@@ -399,19 +400,25 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 	actual := normalizeQuizAnswer(userAnswer, question.Options)
 	correct := expected != "" && expected == actual
 
+	hint := question.Hint
+	if hint == "" {
+		hint = "Review the cited section and compare each option against the source."
+	}
 	score := models.QuizScore{
 		QuestionID:    question.ID,
 		Correct:       correct,
 		Score:         0,
 		Expected:      question.CorrectAnswer,
 		Feedback:      question.Explanation,
-		Hint:          "Review the cited section and compare each option against the source.",
+		Hint:          hint,
 		UserAnswer:    userAnswer,
 		SourceHeading: question.SourceHeading,
 	}
 	if correct {
 		score.Score = 100
-		score.Hint = "Great job. Move to the next question."
+		if score.Hint == "Review the cited section and compare each option against the source." {
+			score.Hint = "Great job. Move to the next question."
+		}
 	} else if strings.TrimSpace(question.Explanation) == "" {
 		score.Feedback = "That answer is not correct."
 	}
@@ -462,9 +469,12 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 			continue
 		}
 
-		// Truncate section to max content size
+		// Truncate section to max content size (rune-safe to preserve UTF-8)
 		if len(content) > maxContentPerSection {
-			content = content[:maxContentPerSection] + "..."
+			runes := []rune(content)
+			if len(runes) > maxContentPerSection {
+				content = string(runes[:maxContentPerSection]) + "..."
+			}
 		}
 
 		b.WriteString("[Heading] ")
