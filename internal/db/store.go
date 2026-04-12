@@ -79,6 +79,10 @@ func Init(dbPath, vec0DllPath string) error {
 		return err
 	}
 
+	if err := ensureQuestionsSchema(); err != nil {
+		return err
+	}
+
 	// Seed initial data
 	if err := seedData(); err != nil {
 		log.Printf("Warning: could not seed data: %v", err)
@@ -274,6 +278,76 @@ func ensureNotebookSchema() error {
 	}
 
 	return rows.Err()
+}
+
+func ensureQuestionsSchema() error {
+	// Check for missing columns in questions table
+	rows, err := conn.Query("PRAGMA table_info(questions)")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	columnsFound := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+			return scanErr
+		}
+		columnsFound[name] = true
+	}
+
+	requiredColumns := map[string]string{
+		"hint":           "TEXT",
+		"source_heading": "TEXT",
+		"source_snippet": "TEXT",
+	}
+
+	for col, colType := range requiredColumns {
+		if !columnsFound[col] {
+			if _, alterErr := conn.Exec(fmt.Sprintf("ALTER TABLE questions ADD COLUMN %s %s", col, colType)); alterErr != nil {
+				return alterErr
+			}
+		}
+	}
+
+	// Check for missing columns in user_answers table
+	rows2, err := conn.Query("PRAGMA table_info(user_answers)")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows2.Close()
+	}()
+
+	columnsFound2 := map[string]bool{}
+	for rows2.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if scanErr := rows2.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+			return scanErr
+		}
+		columnsFound2[name] = true
+	}
+
+	if !columnsFound2["hint"] {
+		if _, alterErr := conn.Exec("ALTER TABLE user_answers ADD COLUMN hint TEXT"); alterErr != nil {
+			return alterErr
+		}
+	}
+
+	return rows2.Err()
 }
 
 func seedData() error {
