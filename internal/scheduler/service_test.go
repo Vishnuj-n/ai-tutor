@@ -9,14 +9,14 @@ import (
 )
 
 func TestBuildTodayPlanEmptyFallback(t *testing.T) {
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 0, nil },
-		queryActiveTopics:   func(int) ([]string, error) { return nil, nil },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, nil },
-		countLearnedTopics:  func() (int, error) { return 0, nil },
-	}
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return nil, nil }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
+		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
@@ -33,19 +33,19 @@ func TestBuildTodayPlanEmptyFallback(t *testing.T) {
 }
 
 func TestBuildTodayPlanPrioritizesDueReviews(t *testing.T) {
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 10, nil },
-		queryActiveTopics:   func(int) ([]string, error) { return []string{"OS", "Networks"}, nil },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) {
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 10, nil }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS", "Networks"}, nil }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) {
 			return []models.TopicSummary{
 				{ID: "topic-a", Title: "Topic A"},
 				{ID: "topic-b", Title: "Topic B"},
 			}, nil
-		},
-		countLearnedTopics: func() (int, error) { return 1, nil },
-	}
+		}),
+		WithCountLearnedTopics(func() (int, error) { return 1, nil }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
@@ -74,19 +74,19 @@ func TestBuildTodayPlanPrioritizesDueReviews(t *testing.T) {
 }
 
 func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 100, nil },
-		queryActiveTopics:   func(int) ([]string, error) { return []string{"OS"}, nil },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) {
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 100, nil }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS"}, nil }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) {
 			return []models.TopicSummary{
 				{ID: "topic-a", Title: "Topic A"},
 				{ID: "topic-b", Title: "Topic B"},
 			}, nil
-		},
-		countLearnedTopics: func() (int, error) { return 0, nil },
-	}
+		}),
+		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
@@ -105,14 +105,14 @@ func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
 }
 
 func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 0, nil },
-		queryActiveTopics:   func(int) ([]string, error) { return []string{"OS"}, nil },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, nil },
-		countLearnedTopics:  func() (int, error) { return 2, nil },
-	}
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS"}, nil }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
+		WithCountLearnedTopics(func() (int, error) { return 2, nil }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
@@ -132,14 +132,14 @@ func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
 
 func TestBuildTodayPlanQueryDueReviewCardsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("database connection failed")
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 0, expectedErr },
-		queryActiveTopics:   func(int) ([]string, error) { return nil, nil },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, nil },
-		countLearnedTopics:  func() (int, error) { return 0, nil },
-	}
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 0, expectedErr }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return nil, nil }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
+		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != expectedErr {
 		t.Fatalf("expected error %v, got %v", expectedErr, err)
 	}
@@ -150,14 +150,14 @@ func TestBuildTodayPlanQueryDueReviewCardsReturnsError(t *testing.T) {
 
 func TestBuildTodayPlanQueryActiveTopicsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("topics query failed")
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 5, nil },
-		queryActiveTopics:   func(int) ([]string, error) { return nil, expectedErr },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, nil },
-		countLearnedTopics:  func() (int, error) { return 0, nil },
-	}
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 5, nil }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return nil, expectedErr }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
+		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != expectedErr {
 		t.Fatalf("expected error %v, got %v", expectedErr, err)
 	}
@@ -168,14 +168,14 @@ func TestBuildTodayPlanQueryActiveTopicsReturnsError(t *testing.T) {
 
 func TestBuildTodayPlanQueryLearningTopicsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("learning topics query failed")
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 0, nil },
-		queryActiveTopics:   func(int) ([]string, error) { return []string{}, nil },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, expectedErr },
-		countLearnedTopics:  func() (int, error) { return 0, nil },
-	}
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return []string{}, nil }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, expectedErr }),
+		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != expectedErr {
 		t.Fatalf("expected error %v, got %v", expectedErr, err)
 	}
@@ -186,14 +186,14 @@ func TestBuildTodayPlanQueryLearningTopicsReturnsError(t *testing.T) {
 
 func TestBuildTodayPlanCountLearnedTopicsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("learned topics count failed")
-	service := &Service{
-		queryDueReviewCards: func(string) (int, error) { return 0, nil },
-		queryActiveTopics:   func(int) ([]string, error) { return []string{}, nil },
-		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return []models.TopicSummary{}, nil },
-		countLearnedTopics:  func() (int, error) { return 0, expectedErr },
-	}
+	svc := New(
+		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryActiveTopics(func(int) ([]string, error) { return []string{}, nil }),
+		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return []models.TopicSummary{}, nil }),
+		WithCountLearnedTopics(func() (int, error) { return 0, expectedErr }),
+	)
 
-	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != expectedErr {
 		t.Fatalf("expected error %v, got %v", expectedErr, err)
 	}

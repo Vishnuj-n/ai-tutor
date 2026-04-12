@@ -27,7 +27,7 @@ type App struct {
 	embedStore        *rag.EmbeddingStore
 	embedder          *embeddings.OnnxEmbedder
 	llmProvider       *llm.Provider
-	scheduler         *scheduler.Service
+	scheduler         scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
 	aiReady           bool

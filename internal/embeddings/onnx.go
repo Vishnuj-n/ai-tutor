@@ -235,37 +235,50 @@ func buildTokenArrays(sourceIDs []int, sourceMask []int, sourceTypeIDs []int, ma
 		return nil, nil, nil, fmt.Errorf("tokenizer returned no token ids")
 	}
 
-	ids := make([]int64, len(sourceIDs))
-	for i, v := range sourceIDs {
-		ids[i] = int64(v)
-	}
-
-	mask := make([]int64, len(ids))
-	if len(sourceMask) == len(ids) {
-		for i, v := range sourceMask {
-			if v > 0 {
-				mask[i] = 1
-			}
-		}
-	} else {
-		for i := range mask {
-			mask[i] = 1
-		}
-	}
-
-	typeIDs := make([]int64, len(ids))
-	if len(sourceTypeIDs) == len(ids) {
-		for i, v := range sourceTypeIDs {
-			typeIDs[i] = int64(v)
-		}
-	}
-
-	targetLen := len(ids)
+	// Compute target length upfront to avoid over-allocating for long inputs
+	targetLen := len(sourceIDs)
 	if maxSeqLen > 0 && targetLen > maxSeqLen {
 		targetLen = maxSeqLen
 	}
 
-	return ids[:targetLen], mask[:targetLen], typeIDs[:targetLen], nil
+	ids := make([]int64, targetLen)
+	for i := 0; i < targetLen; i++ {
+		ids[i] = int64(sourceIDs[i])
+	}
+
+	mask := make([]int64, targetLen)
+	if len(sourceMask) >= targetLen {
+		for i := 0; i < targetLen; i++ {
+			if sourceMask[i] > 0 {
+				mask[i] = 1
+			}
+		}
+	} else if len(sourceMask) > 0 {
+		// Partial mask available
+		for i := 0; i < len(sourceMask) && i < targetLen; i++ {
+			if sourceMask[i] > 0 {
+				mask[i] = 1
+			}
+		}
+		// Fill remaining with 1 (attention enabled)
+		for i := len(sourceMask); i < targetLen; i++ {
+			mask[i] = 1
+		}
+	} else {
+		// No mask provided, enable attention for all
+		for i := 0; i < targetLen; i++ {
+			mask[i] = 1
+		}
+	}
+
+	typeIDs := make([]int64, targetLen)
+	if len(sourceTypeIDs) >= targetLen {
+		for i := 0; i < targetLen; i++ {
+			typeIDs[i] = int64(sourceTypeIDs[i])
+		}
+	}
+
+	return ids, mask, typeIDs, nil
 }
 
 func (e *OnnxEmbedder) buildInputValues(shape ort.Shape, ids, attentionMask, tokenTypeIDs []int64) ([]ort.Value, error) {
