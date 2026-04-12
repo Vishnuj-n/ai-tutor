@@ -439,11 +439,17 @@ func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 
-	// Verify no questions were inserted
+	// Verify no questions were inserted for the target topic
 	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 0)
 
-	// Verify rollback atomicity: the topics table should not contain the mismatched topic either
+	// Verify rollback atomicity: the target topic still exists (not deleted)
 	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, topicID, 1)
+
+	// Verify no cross-topic side effects: the mismatched topic should not have questions created
+	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, "different-topic", 0)
+
+	// Verify the mismatched topic was not auto-created during the failed insert attempt
+	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, "different-topic", 0)
 
 	// Test with valid matching TopicID (either explicit or "" to auto-assign)
 	validQuestions := []models.QuizQuestion{
