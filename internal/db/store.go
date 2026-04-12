@@ -767,10 +767,12 @@ func EnsureTopic(topicID, title string) error {
 
 // IngestNotebookContent performs a transactional relational commit for notebook sections/chunks.
 func IngestNotebookContent(notebookID string, topicID string, parents []NotebookParentInput, chunks []NotebookChunkInput) error {
-	if strings.TrimSpace(notebookID) == "" {
+	notebookID = strings.TrimSpace(notebookID)
+	topicID = strings.TrimSpace(topicID)
+	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
 	}
-	if strings.TrimSpace(topicID) == "" {
+	if topicID == "" {
 		return fmt.Errorf("topic id is required")
 	}
 
@@ -786,18 +788,22 @@ func IngestNotebookContent(notebookID string, topicID string, parents []Notebook
 
 // IngestNotebookContentByTopic ingests notebook content into multiple topic buckets in one transaction.
 func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicIngestionGroup) error {
-	if strings.TrimSpace(notebookID) == "" {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
 	}
 	if len(groups) == 0 {
 		return fmt.Errorf("at least one ingestion group is required")
 	}
+	normalizedGroups := make([]NotebookTopicIngestionGroup, 0, len(groups))
 	for _, group := range groups {
-		if strings.TrimSpace(group.TopicID) == "" {
+		group.TopicID = strings.TrimSpace(group.TopicID)
+		if group.TopicID == "" {
 			return fmt.Errorf("topic id is required for every ingestion group")
 		}
+		normalizedGroups = append(normalizedGroups, group)
 	}
-	return ingestNotebookContentByTopicRepo(notebookID, groups)
+	return ingestNotebookContentByTopicRepo(notebookID, normalizedGroups)
 }
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
@@ -875,7 +881,8 @@ func UpdateNotebookChunkCount(notebookID string, count int) error {
 
 // DeleteNotebook removes a notebook and its chunk links
 func DeleteNotebook(notebookID string) error {
-	if strings.TrimSpace(notebookID) == "" {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
 	}
 	return deleteNotebookRepo(notebookID)
@@ -907,9 +914,10 @@ func createVectorTable() error {
 }
 
 // UpsertChunkVector stores or updates a chunk embedding vector.
-// Returns true if inserted, false if updated.
+// It returns an error if validation fails or the vector cannot be persisted.
 func UpsertChunkVector(chunkID string, vector []float32) error {
-	if strings.TrimSpace(chunkID) == "" {
+	chunkID = strings.TrimSpace(chunkID)
+	if chunkID == "" {
 		return fmt.Errorf("chunk id is required")
 	}
 	if len(vector) == 0 {
@@ -933,7 +941,8 @@ func UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error {
 
 	repoItems := make([]chunkVectorBatchItemRepo, 0, len(items))
 	for _, item := range items {
-		if strings.TrimSpace(item.ChunkID) == "" {
+		item.ChunkID = strings.TrimSpace(item.ChunkID)
+		if item.ChunkID == "" {
 			return fmt.Errorf("chunk id is required for each batch item")
 		}
 		if len(item.Vector) == 0 {
@@ -948,7 +957,8 @@ func UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error {
 // SearchVectorsForTopic finds the top-k most similar vectors for a topic-scoped query.
 // Returns list of chunk IDs ordered by similarity (highest first).
 func SearchVectorsForTopic(topicID string, queryVector []float32, k int) ([]string, error) {
-	if strings.TrimSpace(topicID) == "" {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
 	}
 	if len(queryVector) == 0 {
@@ -1082,8 +1092,11 @@ func ReplaceQuestionsForTopic(topicID string, questions []models.QuizQuestion) e
 
 	normalized := make([]models.QuizQuestion, 0, len(questions))
 	for _, q := range questions {
-		if strings.TrimSpace(q.TopicID) == "" {
+		q.TopicID = strings.TrimSpace(q.TopicID)
+		if q.TopicID == "" {
 			q.TopicID = topicID
+		} else if q.TopicID != topicID {
+			return fmt.Errorf("question topic id must match topic id")
 		}
 		normalized = append(normalized, q)
 	}
@@ -1093,7 +1106,8 @@ func ReplaceQuestionsForTopic(topicID string, questions []models.QuizQuestion) e
 
 // GetQuestionsForTopic returns generated quiz questions for a topic.
 func GetQuestionsForTopic(topicID string) ([]models.QuizQuestion, error) {
-	if strings.TrimSpace(topicID) == "" {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
 	}
 	return getQuestionsForTopicRepo(topicID)
@@ -1101,7 +1115,8 @@ func GetQuestionsForTopic(topicID string) ([]models.QuizQuestion, error) {
 
 // GetQuestionByID returns a single quiz question by ID.
 func GetQuestionByID(questionID string) (*models.QuizQuestion, error) {
-	if strings.TrimSpace(questionID) == "" {
+	questionID = strings.TrimSpace(questionID)
+	if questionID == "" {
 		return nil, fmt.Errorf("question id is required")
 	}
 	return getQuestionByIDRepo(questionID)
@@ -1109,10 +1124,12 @@ func GetQuestionByID(questionID string) (*models.QuizQuestion, error) {
 
 // SaveUserAnswer stores a scored quiz response.
 func SaveUserAnswer(score models.QuizScore) error {
-	if strings.TrimSpace(score.QuestionID) == "" {
+	score.QuestionID = strings.TrimSpace(score.QuestionID)
+	if score.QuestionID == "" {
 		return fmt.Errorf("question id is required")
 	}
-	if strings.TrimSpace(score.UserAnswer) == "" {
+	score.UserAnswer = strings.TrimSpace(score.UserAnswer)
+	if score.UserAnswer == "" {
 		return fmt.Errorf("user answer is required")
 	}
 	return saveUserAnswerRepo(score)
