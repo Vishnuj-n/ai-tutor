@@ -20,7 +20,10 @@ type UploadConfig struct {
 
 // Service handles notebook file uploads and storage
 type Service struct {
-	config UploadConfig
+	config     UploadConfig
+	readFile   func(string) ([]byte, error)
+	openPDF    func(string) (*os.File, *pdfreader.Reader, error)
+	extractPDF func(string, *ExtractedDocument) error
 }
 
 const (
@@ -28,20 +31,55 @@ const (
 	ChunkWordOverlap = 40
 )
 
-var readFileFunc = os.ReadFile
-var openPDFFunc = pdfreader.Open
-var extractPDFFunc = extractPDFDocument
+// Option customizes Service dependencies for testing and advanced setups.
+type Option func(*Service)
+
+// WithReadFileFunc overrides the file reader dependency.
+func WithReadFileFunc(fn func(string) ([]byte, error)) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.readFile = fn
+		}
+	}
+}
+
+// WithOpenPDFFunc overrides the PDF opener dependency.
+func WithOpenPDFFunc(fn func(string) (*os.File, *pdfreader.Reader, error)) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.openPDF = fn
+		}
+	}
+}
+
+// WithExtractPDFFunc overrides PDF extraction logic.
+func WithExtractPDFFunc(fn func(string, *ExtractedDocument) error) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.extractPDF = fn
+		}
+	}
+}
 
 // NewService creates a new notebook service
-func NewService(uploadDir string) *Service {
+func NewService(uploadDir string, opts ...Option) *Service {
 	// Ensure directory exists
 	_ = os.MkdirAll(uploadDir, 0o755) // ignore error, non-fatal
-	return &Service{
+	s := &Service{
 		config: UploadConfig{
 			UploadDir:   uploadDir,
 			MaxFileSize: 50 * 1024 * 1024, // 50MB default
 		},
+		readFile: os.ReadFile,
+		openPDF:  pdfreader.Open,
 	}
+	s.extractPDF = s.extractPDFDocument
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 // UploadResult contains info about uploaded file
@@ -173,7 +211,7 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 
 	switch fileType {
 	case "txt":
-		raw, err := readFileFunc(filePath)
+		raw, err := s.readFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read txt file: %w", err)
 		}
@@ -190,7 +228,7 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		}}
 
 	case "md":
-		raw, err := readFileFunc(filePath)
+		raw, err := s.readFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read markdown file: %w", err)
 		}
@@ -205,7 +243,7 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		}
 
 	case "pdf":
-		if err := extractPDFFunc(filePath, doc); err != nil {
+		if err := s.extractPDF(filePath, doc); err != nil {
 			return nil, err
 		}
 
@@ -304,14 +342,14 @@ func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetada
 
 	switch fileType {
 	case "txt", "md":
-		raw, err := readFileFunc(filePath)
+		raw, err := s.readFile(filePath)
 		if err != nil {
 			return nil, err
 		}
 		wordCount := len(strings.Fields(normalizeWhitespace(string(raw))))
 		return &FileMetadata{Title: title, PageCount: 1, WordCount: wordCount}, nil
 	case "pdf":
-		file, reader, err := openPDFFunc(filePath)
+		file, reader, err := s.openPDF(filePath)
 		if err != nil {
 			return nil, err
 		}
@@ -332,8 +370,8 @@ func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetada
 
 }
 
-func extractPDFDocument(filePath string, doc *ExtractedDocument) error {
-	file, reader, err := openPDFFunc(filePath)
+func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) error {
+	file, reader, err := s.openPDF(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read pdf: %w", err)
 	}

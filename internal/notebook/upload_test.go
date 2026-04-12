@@ -144,15 +144,9 @@ func TestExtractDocumentMarkdownNormalization(t *testing.T) {
 }
 
 func TestExtractDocumentPDFBranchViaSeam(t *testing.T) {
-	service := NewService(t.TempDir())
 	pdfPath := writeTempFile(t, t.TempDir(), "notes.pdf", []byte("%PDF-1.4 placeholder"))
 
-	originalExtractPDFFunc := extractPDFFunc
-	t.Cleanup(func() {
-		extractPDFFunc = originalExtractPDFFunc
-	})
-
-	extractPDFFunc = func(filePath string, doc *ExtractedDocument) error {
+	service := NewService(t.TempDir(), WithExtractPDFFunc(func(filePath string, doc *ExtractedDocument) error {
 		if filePath != pdfPath {
 			return fmt.Errorf("unexpected file path: %s", filePath)
 		}
@@ -163,7 +157,7 @@ func TestExtractDocumentPDFBranchViaSeam(t *testing.T) {
 			{Heading: "Page 2", Text: "gamma delta epsilon", PageNum: 2},
 		}
 		return nil
-	}
+	}))
 
 	doc, err := service.ExtractDocument(pdfPath, "pdf")
 	if err != nil {
