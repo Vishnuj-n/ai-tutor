@@ -59,3 +59,41 @@ type NotebookChunk struct {
 	ChunkID    string
 	PageNum    int // for PDFs
 }
+
+// NotebookTopicTreeTopic is one topic option nested under a notebook.
+type NotebookTopicTreeTopic struct {
+	TopicID string `json:"topic_id"`
+	Title   string `json:"title"`
+}
+
+// NotebookTopicTreeNode is the notebook-scoped topic tree returned to the UI.
+type NotebookTopicTreeNode struct {
+	NotebookID string                   `json:"notebook_id"`
+	Title      string                   `json:"title"`
+	Topics     []NotebookTopicTreeTopic `json:"topics"`
+}
+
+// QuizQuestion is a generated question persisted per topic.
+type QuizQuestion struct {
+	ID            string   `json:"id"`
+	TopicID       string   `json:"topic_id"`
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	Explanation   string   `json:"explanation"`
+	Hint          string   `json:"hint,omitempty"`
+	SourceHeading string   `json:"source_heading,omitempty"`
+	SourceSnippet string   `json:"source_snippet,omitempty"`
+}
+
+// QuizScore is returned after scoring a user's answer.
+type QuizScore struct {
+	QuestionID    string `json:"question_id"`
+	Correct       bool   `json:"correct"`
+	Score         int    `json:"score"`
+	Expected      string `json:"expected"`
+	Feedback      string `json:"feedback"`
+	Hint          string `json:"hint"`
+	UserAnswer    string `json:"user_answer"`
+	SourceHeading string `json:"source_heading,omitempty"`
+}
