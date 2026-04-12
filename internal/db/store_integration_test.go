@@ -418,6 +418,21 @@ func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
+	// Seed a valid question in the target topic to make rollback assertion meaningful
+	seededQuestion := []models.QuizQuestion{
+		{
+			ID:            "seed-q1",
+			TopicID:       topicID,
+			Prompt:        "Seeded Question",
+			Options:       []string{"yes", "no"},
+			CorrectAnswer: "yes",
+			Explanation:   "This question tests rollback preservation",
+		},
+	}
+	if err := ReplaceQuestionsForTopic(topicID, seededQuestion); err != nil {
+		t.Fatalf("failed to seed question: %v", err)
+	}
+
 	// Create questions with mismatched TopicID
 	questions := []models.QuizQuestion{
 		{
@@ -439,8 +454,8 @@ func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 
-	// Verify no questions were inserted for the target topic
-	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 0)
+	// Verify the seeded question still exists (rollback preserved it)
+	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 1)
 
 	// Verify rollback atomicity: the target topic still exists (not deleted)
 	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, topicID, 1)
