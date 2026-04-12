@@ -28,7 +28,8 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 	for _, q := range questions {
 		optionsJSON, marshalErr := json.Marshal(q.Options)
 		if marshalErr != nil {
-			return fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+			return err
 		}
 
 		if _, err = tx.Exec(`

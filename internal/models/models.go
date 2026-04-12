@@ -60,6 +60,19 @@ type NotebookChunk struct {
 	PageNum    int // for PDFs
 }
 
+// NotebookTopicTreeTopic is one topic option nested under a notebook.
+type NotebookTopicTreeTopic struct {
+	TopicID string `json:"topic_id"`
+	Title   string `json:"title"`
+}
+
+// NotebookTopicTreeNode is the notebook-scoped topic tree returned to the UI.
+type NotebookTopicTreeNode struct {
+	NotebookID string                   `json:"notebook_id"`
+	Title      string                   `json:"title"`
+	Topics     []NotebookTopicTreeTopic `json:"topics"`
+}
+
 // QuizQuestion is a generated question persisted per topic.
 type QuizQuestion struct {
 	ID            string   `json:"id"`

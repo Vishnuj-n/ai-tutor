@@ -434,24 +434,49 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 
 func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	var b strings.Builder
-	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\\n")
+	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
 	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
 	b.WriteString(topicID)
-	b.WriteString("\\nJSON format: {\\\"questions\\\":[{\\\"prompt\\\":string,\\\"options\\\":[string,string,string,string],\\\"correct_answer\\\":string,\\\"explanation\\\":string,\\\"hint\\\":string,\\\"source_heading\\\":string,\\\"source_snippet\\\":string}]}\\n")
-	b.WriteString("Rules: correct_answer must match one option exactly; keep options concise; explanations grounded in source text.\\n")
-	b.WriteString("Source sections:\\n")
+	b.WriteString("\nJSON format: {\\\"questions\\\":[{\\\"prompt\\\":string,\\\"options\\\":[string,string,string,string],\\\"correct_answer\\\":string,\\\"explanation\\\":string,\\\"hint\\\":string,\\\"source_heading\\\":string,\\\"source_snippet\\\":string}]}\n")
+	b.WriteString("Rules: correct_answer must match one option exactly; keep options concise; explanations grounded in source text.\n")
+	b.WriteString("Source sections:\n")
+
+	// Limit to top 5 sections with truncation to avoid exceeding token limits
+	const (
+		maxSections          = 5
+		maxContentPerSection = 500
+		maxTotalContent      = 2500
+	)
+
+	totalContentLength := 0
+	sectionCount := 0
+
 	for _, section := range sections {
+		if sectionCount >= maxSections || totalContentLength >= maxTotalContent {
+			break
+		}
+
 		heading, _ := section["heading"].(string)
 		content, _ := section["content"].(string)
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
+
+		// Truncate section to max content size
+		if len(content) > maxContentPerSection {
+			content = content[:maxContentPerSection] + "..."
+		}
+
 		b.WriteString("[Heading] ")
 		b.WriteString(heading)
-		b.WriteString("\\n")
+		b.WriteString("\n")
 		b.WriteString(content)
-		b.WriteString("\\n---\\n")
+		b.WriteString("\n---\n")
+
+		totalContentLength += len(content)
+		sectionCount++
 	}
+
 	return b.String()
 }
 

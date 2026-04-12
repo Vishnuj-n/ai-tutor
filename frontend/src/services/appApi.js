@@ -35,6 +35,10 @@ export function getNotebooks(topicID = '') {
   return appBridge().GetNotebooks(topicID)
 }
 
+export function getNotebookTopicTree() {
+  return appBridge().GetNotebookTopicTree()
+}
+
 export function uploadNotebook(fileBytes, fileName) {
   return appBridge().UploadNotebook(fileBytes, fileName)
 }
