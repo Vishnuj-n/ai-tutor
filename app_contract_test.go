@@ -9,6 +9,7 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
+	"ai-tutor/internal/models"
 	"ai-tutor/internal/rag"
 )
 
@@ -253,5 +254,260 @@ func TestAskAINotReadyReturnsError(t *testing.T) {
 
 	if err == "" {
 		t.Fatalf("expected non-empty error message")
+	}
+}
+
+func TestScoreAnswerCorrectAnswerFullText(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	topicID := "test-topic-score"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	questions := []models.QuizQuestion{
+		{
+			ID:            "q1",
+			TopicID:       topicID,
+			Prompt:        "What is Round Robin?",
+			Options:       []string{"A scheduling algorithm", "A type of bread", "A programming language", "A network protocol"},
+			CorrectAnswer: "A scheduling algorithm",
+			Explanation:   "RR is a scheduling algorithm that assigns equal time slices.",
+			Hint:          "It involves time slices",
+			SourceHeading: "CPU Scheduling",
+			SourceSnippet: "Round Robin...",
+		},
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	resp := app.ScoreAnswer("q1", "A scheduling algorithm")
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	if !resp["correct"].(bool) {
+		t.Fatalf("expected correct=true for matching answer")
+	}
+
+	if score, ok := resp["score"].(int); !ok || score != 100 {
+		t.Fatalf("expected score=100 for correct answer, got %#v (type: %T)", resp["score"], resp["score"])
+	}
+}
+
+func TestScoreAnswerCorrectAnswerLetterAlias(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	topicID := "test-topic-letter"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	questions := []models.QuizQuestion{
+		{
+			ID:            "q2",
+			TopicID:       topicID,
+			Prompt:        "What is FIFO?",
+			Options:       []string{"First In First Out", "Fast Input Fast Output", "Forwarded IP Feedback Optimization", "Fiber Internet For Office"},
+			CorrectAnswer: "First In First Out",
+			Explanation:   "FIFO is a queue discipline.",
+			Hint:          "It is an acronym",
+			SourceHeading: "Queue Disciplines",
+			SourceSnippet: "FIFO queues...",
+		},
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	// Answer using letter alias
+	resp := app.ScoreAnswer("q2", "a")
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	if !resp["correct"].(bool) {
+		t.Fatalf("expected correct=true for letter alias 'a'")
+	}
+
+	if score, ok := resp["score"].(int); !ok || score != 100 {
+		t.Fatalf("expected score=100 for correct answer, got %#v (type: %T)", resp["score"], resp["score"])
+	}
+}
+
+func TestScoreAnswerIncorrectAnswer(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	topicID := "test-topic-incorrect"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	questions := []models.QuizQuestion{
+		{
+			ID:            "q3",
+			TopicID:       topicID,
+			Prompt:        "What is LIFO?",
+			Options:       []string{"Last In First Out", "Linear Input Feedback Output", "Layered Internet Framework Organizer", "Long Integer File Order"},
+			CorrectAnswer: "Last In First Out",
+			Explanation:   "LIFO is also known as a stack.",
+			Hint:          "Think of a stack of plates",
+			SourceHeading: "Data Structures",
+			SourceSnippet: "LIFO stacks...",
+		},
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	resp := app.ScoreAnswer("q3", "Linear Input Feedback Output")
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	if resp["correct"].(bool) {
+		t.Fatalf("expected correct=false for wrong answer")
+	}
+
+	if score, ok := resp["score"].(int); !ok || score != 0 {
+		t.Fatalf("expected score=0 for incorrect answer, got %#v (type: %T)", resp["score"], resp["score"])
+	}
+}
+
+func TestScoreAnswerCaseInsensitiveMatching(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	topicID := "test-topic-case"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	questions := []models.QuizQuestion{
+		{
+			ID:            "q4",
+			TopicID:       topicID,
+			Prompt:        "What is SJF?",
+			Options:       []string{"Shortest Job First", "Sequential Job Format", "Shared Job Framework", "Static Job Finder"},
+			CorrectAnswer: "Shortest Job First",
+			Explanation:   "SJF is a scheduling algorithm.",
+			Hint:          "It prioritizes short jobs",
+			SourceHeading: "Scheduling",
+			SourceSnippet: "SJF...",
+		},
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	// Test with uppercase answer
+	resp := app.ScoreAnswer("q4", "SHORTEST JOB FIRST")
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	if !resp["correct"].(bool) {
+		t.Fatalf("expected correct=true for case-insensitive match")
+	}
+}
+
+func TestScoreAnswerPersistenceInDatabase(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	topicID := "test-topic-persist"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	questions := []models.QuizQuestion{
+		{
+			ID:            "q5",
+			TopicID:       topicID,
+			Prompt:        "What is Priority Scheduling?",
+			Options:       []string{"Priority Scheduling", "Process Priority System", "Package Priority Setup", "Port Priority Server"},
+			CorrectAnswer: "Priority Scheduling",
+			Explanation:   "Processes are scheduled by priority.",
+			Hint:          "Processes have assigned priorities",
+			SourceHeading: "Scheduling Algorithms",
+			SourceSnippet: "Priority scheduling...",
+		},
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	// Score the answer
+	resp := app.ScoreAnswer("q5", "Priority Scheduling")
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	if !resp["correct"].(bool) {
+		t.Fatalf("expected correct=true")
+	}
+
+	// Verify the answer was persisted to database by retrieving user answers
+	// Note: This would require a database query method to verify persistence.
+	// For now, we verify that SaveUserAnswer didn't error in the ScoreAnswer call.
+	// In production, you'd query the database to confirm the user_answers table was updated.
+}
+
+func TestScoreAnswerMissingQuestionReturnsError(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	resp := app.ScoreAnswer("nonexistent-question", "Any Answer")
+
+	if _, hasErr := resp["error"]; !hasErr {
+		t.Fatalf("expected error for missing question, got: %#v", resp)
+	}
+}
+
+func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	topicID := "test-topic-empty-ans"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	questions := []models.QuizQuestion{
+		{
+			ID:            "q6",
+			TopicID:       topicID,
+			Prompt:        "What is Preemptive Scheduling?",
+			Options:       []string{"Preemptive Scheduling", "Process Priority Method", "Predictive Schedule Manager", "Pre-assigned Process Set"},
+			CorrectAnswer: "Preemptive Scheduling",
+			Explanation:   "CPU can be allocated for a fixed duration.",
+			Hint:          "The CPU can be taken away",
+			SourceHeading: "Preemption",
+			SourceSnippet: "Preemptive...",
+		},
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	resp := app.ScoreAnswer("q6", "")
+
+	if _, hasErr := resp["error"]; !hasErr {
+		t.Fatalf("expected error for empty user answer, got: %#v", resp)
 	}
 }

@@ -39,12 +39,18 @@
         <h2>{{ currentQuestion.prompt }}</h2>
       </header>
 
-      <div class="options" v-if="!feedbackVisible">
+      <fieldset v-if="!feedbackVisible" class="options">
+        <legend>Answer choices for question {{ currentIndex + 1 }}</legend>
         <label v-for="(opt, idx) in currentQuestion.options" :key="opt + idx" class="option">
-          <input type="radio" :value="opt" v-model="selectedAnswer" />
+          <input
+            v-model="selectedAnswer"
+            type="radio"
+            :name="`quiz-question-${currentQuestion.id}`"
+            :value="opt"
+          />
           <span>{{ String.fromCharCode(65 + idx) }}. {{ opt }}</span>
         </label>
-      </div>
+      </fieldset>
 
       <div v-if="feedbackVisible && scoreResult" class="feedback" :class="scoreResult.correct ? 'good' : 'bad'">
         <h3>{{ scoreResult.correct ? 'Correct' : 'Not quite' }} · Score {{ scoreResult.score }}</h3>
@@ -86,7 +92,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { generateQuiz, getNotebookTopicTree, scoreAnswer } from '../services/appApi'
 
@@ -111,6 +117,20 @@ const selectedNotebook = computed(() =>
 const availableTopics = computed(() => selectedNotebook.value?.topics || [])
 const canGenerateQuiz = computed(() => selectedTopicID.value !== '')
 
+// Helper to clear quiz state
+function resetQuizState() {
+  questions.value = []
+  currentIndex.value = 0
+  selectedAnswer.value = ''
+  scoreResult.value = null
+  feedbackVisible.value = false
+}
+
+// Clear quiz state when topic selection changes
+watch(selectedTopicID, () => {
+  resetQuizState()
+})
+
 onMounted(async () => {
   try {
     const data = await getNotebookTopicTree()
@@ -125,22 +145,17 @@ async function onGenerateQuiz() {
   if (!selectedTopicID.value) {
     return
   }
+  // Clear any stale quiz state before starting new generation
+  resetQuizState()
   isGenerating.value = true
   errorMessage.value = ''
-  scoreResult.value = null
-  feedbackVisible.value = false
   try {
     const result = await generateQuiz(selectedTopicID.value)
     if (result?.error) {
       errorMessage.value = result.error
-      questions.value = []
       return
     }
     questions.value = Array.isArray(result?.questions) ? result.questions : []
-    currentIndex.value = 0
-    selectedAnswer.value = ''
-    scoreResult.value = null
-    feedbackVisible.value = false
     if (questions.value.length === 0) {
       errorMessage.value = 'No quiz questions were generated for this topic.'
     }
