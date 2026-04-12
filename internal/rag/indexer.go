@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"log"
+	"time"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
@@ -63,6 +64,12 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	// Index each chunk
 	reindexed := 0
 	skipped := 0
+	failed := 0
+	embeddingElapsed := time.Duration(0)
+	dbElapsed := time.Duration(0)
+	startedAt := time.Now()
+
+	pending := make([]db.ChunkVectorBatchItem, 0, len(chunks))
 
 	for _, chunk := range chunks {
 		shouldReindex := vi.config.ForceReindex
@@ -74,31 +81,59 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 		if shouldReindex {
 			// Generate new embedding
+			embedStart := time.Now()
 			vector, err := vi.embedder.Embed(chunk.Text)
+			embeddingElapsed += time.Since(embedStart)
 			if err != nil {
 				log.Printf("Warning: embedding failed for chunk %s: %v", chunk.ID, err)
+				failed++
 				continue
 			}
 
-			// Store in vec0
-			if err := db.UpsertChunkVector(chunk.ID, vector); err != nil {
-				log.Printf("Warning: failed to store vector for chunk %s: %v", chunk.ID, err)
-				continue
-			}
-
-			// Update embedding metadata
 			hash := computeTextHash(chunk.Text)
-			if err := db.UpdateChunkEmbedding(chunk.ID, hash); err != nil {
-				log.Printf("Warning: failed to update chunk embedding metadata: %v", err)
-			}
-
-			reindexed++
+			pending = append(pending, db.ChunkVectorBatchItem{
+				ChunkID:      chunk.ID,
+				Vector:       vector,
+				EmbeddingRef: hash,
+			})
 		} else {
 			skipped++
 		}
 	}
 
-	log.Printf("Indexing complete for topic %s: reindexed=%d, skipped=%d", topicID, reindexed, skipped)
+	if len(pending) > 0 {
+		dbStart := time.Now()
+		if err := db.UpsertChunkVectorsBatch(pending); err != nil {
+			log.Printf("Warning: batch vector persistence failed for topic %s: %v; falling back to per-chunk writes", topicID, err)
+			for _, item := range pending {
+				if err := db.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
+					log.Printf("Warning: failed to store vector for chunk %s: %v", item.ChunkID, err)
+					failed++
+					continue
+				}
+				if err := db.UpdateChunkEmbedding(item.ChunkID, item.EmbeddingRef); err != nil {
+					log.Printf("Warning: failed to update chunk embedding metadata for %s: %v", item.ChunkID, err)
+					failed++
+					continue
+				}
+				reindexed++
+			}
+		} else {
+			reindexed = len(pending)
+		}
+		dbElapsed += time.Since(dbStart)
+	}
+
+	log.Printf(
+		"Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d, embed_ms=%d, db_ms=%d, total_ms=%d",
+		topicID,
+		reindexed,
+		skipped,
+		failed,
+		embeddingElapsed.Milliseconds(),
+		dbElapsed.Milliseconds(),
+		time.Since(startedAt).Milliseconds(),
+	)
 	return nil
 }
 

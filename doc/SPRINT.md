@@ -16,49 +16,36 @@ PR size: ~6900 lines across backend/frontend/database because the work spans SQL
 
 Generate quiz questions from reading material and score answers.
 
-## Core Work
+🥷 SPRINT.md — AI Tutor (Compressed Completed Summary)
 
-1. **Generate questions from content**
-   - Receive topic ID from frontend
-   - LLM reads section and creates multiple-choice questions linked to specific passages
-   - Store in SQLite with source references
+## Summary
 
-2. **Score answers**
-   - Backend scores user response against key
-   - Return numeric score, explanation, and hint for wrong answers
-   - Use LLM for open-ended questions where a rubric doesn't fit
+This document condenses completed work through Sprint 4. Key outcomes are listed concisely; implementation details are preserved in the repository's solutions and docs.
 
-3. **Quiz page UI**
-   - Display one question per screen
-   - Show feedback immediately
-   - User advances manually (no auto-progress)
+## Completed (high level)
 
-## Backend API
+- Sprints 1–3: UI shell, navigation, Reader with RAG (Ask AI), and Socratic tutor — all implemented and integrated with Wails.
+- Notebook ingestion: extraction, deterministic chunking, transactional ingestion, status and progress events, and topic-chapter extraction.
+- Embeddings & retrieval: ONNX embedder + vec0 integration, runtime diagnostics, and background indexing with SQLite pool constraints to ensure extension stability.
+- Performance: batch vector persistence (single-transaction writes) and timing instrumentation to reduce indexing overhead.
+- Quiz feature (Sprint 4): LLM-based MCQ generation (strict JSON), persistence (`questions`, `user_answers`), scoring API, and a Notebook→Topic-aware Quiz UI.
+- Build & QA: Vite Windows build fix, linting and formatting, Windows-friendly test cleanup, and repository tests passing.
 
-- `GenerateQuiz(topicID string) []Question` – returns generated questions with answer keys
-- `ScoreAnswer(questionID, userAnswer string) Score` – returns score and feedback
-- SQLite: `questions`, `user_answers` tables
+## Sprint 4 — Quiz Generation (Condensed)
 
-## Dependencies
+- Goal: Produce topic-scoped multiple-choice quizzes, score answers, and persist attempts for review.
+- APIs: `GenerateQuiz(topicID)` and `ScoreAnswer(questionID, userAnswer)` implemented and wired to the frontend.
+- UI: Quiz page shows one question at a time, immediate feedback, manual progression.
+- Status: Code, frontend build, and tests for the feature are complete and passing.
 
-- Reuse existing content from Reader (no change)
-- Reuse existing LLM provider (extend it)
-- No FSRS yet; just store attempts
+## Next Steps
 
-## Definition of Done
-
-- Quiz page displays questions without crashing
-- Answers score correctly  
-- Wrong answers include a hint
-- App handles network failure gracefully
+- Run end-to-end validation in `wails dev` to verify runtime behavior and LLM responses.
+- Continue with Sprint 5: FSRS scheduler and Flashcards, using quiz results as card seeds.
 
 ---
 
-# Sprint 5 — FSRS Scheduler + Flashcards + Progress
-
-## Goal
-
-Schedule flashcard reviews using FSRS and show learning progress.
+For more details see `doc/solutions/SOLUTIONS_2026-04-11.md` and the linked code in `internal/`.
 
 ## Core Work
 
