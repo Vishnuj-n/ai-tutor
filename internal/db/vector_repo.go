@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+type chunkVectorBatchItemRepo struct {
+	ChunkID      string
+	Vector       []float32
+	EmbeddingRef string
+}
+
 func upsertChunkVectorRepo(chunkID string, vector []float32) error {
 	if len(vector) != int(embeddingDimension) {
 		return fmt.Errorf("vector dimension mismatch: got %d, expected %d", len(vector), embeddingDimension)
@@ -41,6 +47,74 @@ func upsertChunkVectorRepo(chunkID string, vector []float32) error {
 	_, err = conn.Exec(`
 		INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)
 	`, rowID, vectorJSON)
+	return err
+}
+
+func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	for _, item := range items {
+		if len(item.Vector) != int(embeddingDimension) {
+			return fmt.Errorf("vector dimension mismatch for chunk %s: got %d, expected %d", item.ChunkID, len(item.Vector), embeddingDimension)
+		}
+
+		vectorJSON, encodeErr := vectorToJSONRepo(item.Vector)
+		if encodeErr != nil {
+			return fmt.Errorf("failed to encode vector for chunk %s: %w", item.ChunkID, encodeErr)
+		}
+
+		var rowID int64
+		if scanErr := tx.QueryRow(`
+			SELECT rowid FROM chunks WHERE id = ?
+		`, item.ChunkID).Scan(&rowID); scanErr != nil {
+			return fmt.Errorf("failed to resolve chunk rowid for %s: %w", item.ChunkID, scanErr)
+		}
+
+		var exists int
+		countErr := tx.QueryRow(`
+			SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?
+		`, rowID).Scan(&exists)
+		if countErr != nil && countErr != sql.ErrNoRows {
+			return countErr
+		}
+
+		if exists > 0 {
+			if _, execErr := tx.Exec(`
+				UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?
+			`, vectorJSON, rowID); execErr != nil {
+				return execErr
+			}
+		} else {
+			if _, execErr := tx.Exec(`
+				INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)
+			`, rowID, vectorJSON); execErr != nil {
+				return execErr
+			}
+		}
+
+		if item.EmbeddingRef != "" {
+			if _, execErr := tx.Exec(`
+				UPDATE chunks SET embedding_ref = ? WHERE id = ?
+			`, item.EmbeddingRef, item.ChunkID); execErr != nil {
+				return execErr
+			}
+		}
+	}
+
+	err = tx.Commit()
 	return err
 }
 

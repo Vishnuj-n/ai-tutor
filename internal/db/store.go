@@ -187,6 +187,31 @@ func createTables() error {
 		FOREIGN KEY (topic_id) REFERENCES topics(id)
 	);
 
+	CREATE TABLE IF NOT EXISTS questions (
+		id TEXT PRIMARY KEY,
+		topic_id TEXT NOT NULL,
+		prompt TEXT NOT NULL,
+		options_json TEXT NOT NULL,
+		correct_answer TEXT NOT NULL,
+		explanation TEXT,
+		source_heading TEXT,
+		source_snippet TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (topic_id) REFERENCES topics(id)
+	);
+
+	CREATE TABLE IF NOT EXISTS user_answers (
+		id TEXT PRIMARY KEY,
+		question_id TEXT NOT NULL,
+		user_answer TEXT NOT NULL,
+		is_correct INTEGER NOT NULL,
+		score INTEGER NOT NULL,
+		feedback TEXT,
+		hint TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (question_id) REFERENCES questions(id)
+	);
+
 	CREATE TABLE IF NOT EXISTS notebooks (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
@@ -781,6 +806,31 @@ func UpsertChunkVector(chunkID string, vector []float32) error {
 	return upsertChunkVectorRepo(chunkID, vector)
 }
 
+// ChunkVectorBatchItem contains one vector persistence request.
+type ChunkVectorBatchItem struct {
+	ChunkID      string
+	Vector       []float32
+	EmbeddingRef string
+}
+
+// UpsertChunkVectorsBatch stores vectors and embedding refs in a single transaction.
+func UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	repoItems := make([]chunkVectorBatchItemRepo, 0, len(items))
+	for _, item := range items {
+		repoItems = append(repoItems, chunkVectorBatchItemRepo{
+			ChunkID:      item.ChunkID,
+			Vector:       item.Vector,
+			EmbeddingRef: item.EmbeddingRef,
+		})
+	}
+
+	return upsertChunkVectorsBatchRepo(repoItems)
+}
+
 // SearchVectorsForTopic finds the top-k most similar vectors for a topic-scoped query.
 // Returns list of chunk IDs ordered by similarity (highest first).
 func SearchVectorsForTopic(topicID string, queryVector []float32, k int) ([]string, error) {
@@ -898,4 +948,24 @@ func GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {
 	}
 
 	return refs, nil
+}
+
+// ReplaceQuestionsForTopic replaces generated quiz questions for a topic in one transaction.
+func ReplaceQuestionsForTopic(topicID string, questions []models.QuizQuestion) error {
+	return replaceQuestionsForTopicRepo(topicID, questions)
+}
+
+// GetQuestionsForTopic returns generated quiz questions for a topic.
+func GetQuestionsForTopic(topicID string) ([]models.QuizQuestion, error) {
+	return getQuestionsForTopicRepo(topicID)
+}
+
+// GetQuestionByID returns a single quiz question by ID.
+func GetQuestionByID(questionID string) (*models.QuizQuestion, error) {
+	return getQuestionByIDRepo(questionID)
+}
+
+// SaveUserAnswer stores a scored quiz response.
+func SaveUserAnswer(score models.QuizScore) error {
+	return saveUserAnswerRepo(score)
 }

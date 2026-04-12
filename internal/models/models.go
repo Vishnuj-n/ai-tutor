@@ -59,3 +59,27 @@ type NotebookChunk struct {
 	ChunkID    string
 	PageNum    int // for PDFs
 }
+
+// QuizQuestion is a generated question persisted per topic.
+type QuizQuestion struct {
+	ID            string   `json:"id"`
+	TopicID       string   `json:"topic_id"`
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	Explanation   string   `json:"explanation"`
+	SourceHeading string   `json:"source_heading,omitempty"`
+	SourceSnippet string   `json:"source_snippet,omitempty"`
+}
+
+// QuizScore is returned after scoring a user's answer.
+type QuizScore struct {
+	QuestionID    string `json:"question_id"`
+	Correct       bool   `json:"correct"`
+	Score         int    `json:"score"`
+	Expected      string `json:"expected"`
+	Feedback      string `json:"feedback"`
+	Hint          string `json:"hint"`
+	UserAnswer    string `json:"user_answer"`
+	SourceHeading string `json:"source_heading,omitempty"`
+}
