@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ai-tutor/internal/db"
@@ -69,6 +70,54 @@ func initTestPipeline(t *testing.T) *rag.Pipeline {
 
 	provider := llm.NewProvider(llm.LoadConfigFromEnv())
 	return rag.NewPipeline(embedStore, provider)
+}
+
+func initTestProvider(t *testing.T) *llm.Provider {
+	t.Helper()
+
+	mockLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		content := "Round Robin gives each process a fixed time slice."
+		if len(body.Messages) > 0 {
+			prompt := body.Messages[0].Content
+			switch {
+			case strings.Contains(prompt, "flashcard generator"):
+				content = `{"cards":[{"prompt":"What does Round Robin assign to each process?","answer":"A fixed time slice."},{"prompt":"What happens when a process uses up its quantum?","answer":"It moves to the back of the ready queue."},{"prompt":"What system type is Round Robin good for?","answer":"Time-sharing systems."},{"prompt":"What tradeoff increases with smaller quantums?","answer":"Context switching overhead."},{"prompt":"What fairness property does Round Robin provide?","answer":"Each process gets a turn."},{"prompt":"What is another term for the time quantum?","answer":"Time slice."},{"prompt":"Why is Round Robin considered preemptive?","answer":"The CPU can be taken away after the quantum expires."},{"prompt":"What queue does Round Robin cycle through?","answer":"The ready queue."}]}`
+			case strings.Contains(prompt, "quiz generator"):
+				content = `{"questions":[{"prompt":"What is Round Robin scheduling?","options":["A scheduling algorithm","A disk format","A file system","A network layer"],"correct_answer":"A scheduling algorithm","explanation":"Round Robin is a CPU scheduling algorithm.","hint":"Think CPU time slices.","source_heading":"Round Robin Scheduling","source_snippet":"Round Robin assigns time slices."}]}`
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{"content": content},
+				},
+			},
+		})
+	}))
+	t.Cleanup(mockLLM.Close)
+
+	t.Setenv("LLM_BASE_URL", mockLLM.URL)
+	t.Setenv("LLM_API_KEY", "test-key")
+	t.Setenv("LLM_MODEL", "test-model")
+
+	return llm.NewProvider(llm.LoadConfigFromEnv())
 }
 
 func TestAskAIResponseShape(t *testing.T) {
@@ -509,5 +558,130 @@ func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
 
 	if _, hasErr := resp["error"]; !hasErr {
 		t.Fatalf("expected error for empty user answer, got: %#v", resp)
+	}
+}
+
+func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	resp := app.GenerateFlashcards("os-scheduling")
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	cards, ok := resp["cards"].([]models.Flashcard)
+	if !ok {
+		t.Fatalf("expected typed flashcards slice, got %#v", resp["cards"])
+	}
+	if len(cards) != 8 {
+		t.Fatalf("expected 8 flashcards, got %d", len(cards))
+	}
+
+	count, err := db.CountFlashcardsForTopic("os-scheduling")
+	if err != nil {
+		t.Fatalf("CountFlashcardsForTopic failed: %v", err)
+	}
+	if count != 8 {
+		t.Fatalf("expected 8 stored flashcards, got %d", count)
+	}
+}
+
+func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	first := app.GenerateFlashcards("os-scheduling")
+	if _, hasErr := first["error"]; hasErr {
+		t.Fatalf("first generation failed: %v", first["error"])
+	}
+
+	second := app.GenerateFlashcards("os-scheduling")
+	if _, hasErr := second["error"]; hasErr {
+		t.Fatalf("second generation failed: %v", second["error"])
+	}
+	if existing, ok := second["existing"].(bool); !ok || !existing {
+		t.Fatalf("expected existing=true on second generation, got %#v", second["existing"])
+	}
+
+	count, err := db.CountFlashcardsForTopic("os-scheduling")
+	if err != nil {
+		t.Fatalf("CountFlashcardsForTopic failed: %v", err)
+	}
+	if count != 8 {
+		t.Fatalf("expected no duplicate flashcards, got %d", count)
+	}
+}
+
+func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	resp := app.GenerateFlashcards("os-scheduling")
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("generation failed: %v", resp["error"])
+	}
+	cards := resp["cards"].([]models.Flashcard)
+
+	reviewResp := app.RecordFlashcardReview(cards[0].ID, "easy")
+	if _, hasErr := reviewResp["error"]; hasErr {
+		t.Fatalf("review failed: %v", reviewResp["error"])
+	}
+
+	dueResp := app.GetFlashcards("os-scheduling", true)
+	if _, hasErr := dueResp["error"]; hasErr {
+		t.Fatalf("GetFlashcards failed: %v", dueResp["error"])
+	}
+	dueCards, ok := dueResp["cards"].([]models.Flashcard)
+	if !ok {
+		t.Fatalf("expected typed flashcards slice, got %#v", dueResp["cards"])
+	}
+	if len(dueCards) != 7 {
+		t.Fatalf("expected 7 due cards after scheduling one into the future, got %d", len(dueCards))
+	}
+}
+
+func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	resp := app.GenerateFlashcards("os-scheduling")
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("generation failed: %v", resp["error"])
+	}
+	cards := resp["cards"].([]models.Flashcard)
+
+	reviewResp := app.RecordFlashcardReview(cards[0].ID, "good")
+	if _, hasErr := reviewResp["error"]; hasErr {
+		t.Fatalf("review failed: %v", reviewResp["error"])
+	}
+
+	state, ok := reviewResp["state"].(*models.FlashcardState)
+	if !ok {
+		t.Fatalf("expected flashcard state pointer, got %#v", reviewResp["state"])
+	}
+	if state.LastRating != "good" {
+		t.Fatalf("expected last rating good, got %#v", state.LastRating)
+	}
+	if state.LastIntervalHours < 24 {
+		t.Fatalf("expected next interval at least 24 hours, got %d", state.LastIntervalHours)
+	}
+
+	dueCount, err := db.QueryDueReviewCards("9999-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("QueryDueReviewCards failed: %v", err)
+	}
+	if dueCount != 8 {
+		t.Fatalf("expected all cards to be due by far-future cutoff, got %d", dueCount)
+	}
+}
+
+func TestRecordFlashcardReviewRejectsInvalidRating(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	resp := app.RecordFlashcardReview("missing-card", "skip")
+	if _, hasErr := resp["error"]; !hasErr {
+		t.Fatalf("expected error for invalid rating, got %#v", resp)
 	}
 }

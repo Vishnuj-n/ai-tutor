@@ -643,6 +643,88 @@ func CountLearnedTopics() (int, error) {
 	return count, err
 }
 
+// CreateFlashcards stores a new set of flashcards for one topic.
+func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if len(cards) == 0 {
+		return fmt.Errorf("at least one flashcard is required")
+	}
+	if len(states) == 0 {
+		return fmt.Errorf("flashcard states are required")
+	}
+
+	normalizedCards := make([]models.Flashcard, 0, len(cards))
+	for _, card := range cards {
+		card.TopicID = strings.TrimSpace(card.TopicID)
+		if card.TopicID == "" {
+			card.TopicID = topicID
+		} else if card.TopicID != topicID {
+			return fmt.Errorf("flashcard topic id must match topic id")
+		}
+		card.Prompt = strings.TrimSpace(card.Prompt)
+		card.Answer = strings.TrimSpace(card.Answer)
+		if card.ID == "" {
+			return fmt.Errorf("flashcard id is required")
+		}
+		if card.Prompt == "" || card.Answer == "" {
+			return fmt.Errorf("flashcard prompt and answer are required")
+		}
+		if _, ok := states[card.ID]; !ok {
+			return fmt.Errorf("flashcard state is required for %s", card.ID)
+		}
+		normalizedCards = append(normalizedCards, card)
+	}
+
+	return createFlashcardsRepo(normalizedCards, states)
+}
+
+// CountFlashcardsForTopic returns how many flashcards exist for a topic.
+func CountFlashcardsForTopic(topicID string) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
+	return countFlashcardsForTopicRepo(topicID)
+}
+
+// GetFlashcardsForTopic returns topic-scoped flashcards, optionally only those due now.
+func GetFlashcardsForTopic(topicID string, dueOnly bool, now string) ([]models.Flashcard, error) {
+	topicID = strings.TrimSpace(topicID)
+	now = strings.TrimSpace(now)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if dueOnly && now == "" {
+		return nil, fmt.Errorf("current time is required when filtering due flashcards")
+	}
+	return getFlashcardsForTopicRepo(topicID, dueOnly, now)
+}
+
+// GetFlashcardByID returns one flashcard and its scheduler state.
+func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return nil, nil, fmt.Errorf("flashcard id is required")
+	}
+	return getFlashcardByIDRepo(cardID)
+}
+
+// UpdateFlashcardReview updates scheduling state after a review grade.
+func UpdateFlashcardReview(cardID string, dueAt string, state models.FlashcardState) error {
+	cardID = strings.TrimSpace(cardID)
+	dueAt = strings.TrimSpace(dueAt)
+	if cardID == "" {
+		return fmt.Errorf("flashcard id is required")
+	}
+	if dueAt == "" {
+		return fmt.Errorf("due time is required")
+	}
+	return updateFlashcardReviewRepo(cardID, dueAt, state)
+}
+
 // CreateNotebook saves a notebook record to the database
 func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int) error {
 	var topicValue interface{}

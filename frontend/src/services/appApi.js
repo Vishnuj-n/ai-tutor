@@ -31,6 +31,18 @@ export function scoreAnswer(questionID, userAnswer) {
   return appBridge().ScoreAnswer(questionID, userAnswer)
 }
 
+export function generateFlashcards(topicID) {
+  return appBridge().GenerateFlashcards(topicID)
+}
+
+export function getFlashcards(topicID, dueOnly = true) {
+  return appBridge().GetFlashcards(topicID, dueOnly)
+}
+
+export function recordFlashcardReview(cardID, rating) {
+  return appBridge().RecordFlashcardReview(cardID, rating)
+}
+
 export function getNotebooks(topicID = '') {
   return appBridge().GetNotebooks(topicID)
 }
