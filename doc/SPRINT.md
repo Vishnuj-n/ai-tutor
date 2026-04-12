@@ -20,11 +20,7 @@ Generate quiz questions from reading material and score answers.
 
 ---
 
-# Sprint 5 — FSRS Scheduler + Flashcards + Progress
-
-## Goal
-
-Schedule flashcard reviews using FSRS and show learning progress.
+For more details see `doc/solutions/SOLUTIONS_2026-04-11.md` and the linked code in `internal/`.
 
 ## Core Work
 
