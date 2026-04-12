@@ -17,6 +17,8 @@ import (
 var conn *sql.DB
 var embeddingDimension int32 = 0 // Will be set during DB initialization with vec0
 
+const maxRetrievalK = 100 // Maximum k allowed for vector search retrieval
+
 // Close releases the active SQLite connection.
 func Close() error {
 	if conn == nil {
@@ -964,8 +966,8 @@ func SearchVectorsForTopic(topicID string, queryVector []float32, k int) ([]stri
 	if len(queryVector) == 0 {
 		return nil, fmt.Errorf("query vector is required")
 	}
-	if k <= 0 {
-		return nil, fmt.Errorf("k must be greater than zero")
+	if k <= 0 || k > maxRetrievalK {
+		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
 	}
 	return searchVectorsForTopicRepo(topicID, queryVector, k)
 }
@@ -1128,8 +1130,9 @@ func SaveUserAnswer(score models.QuizScore) error {
 	if score.QuestionID == "" {
 		return fmt.Errorf("question id is required")
 	}
-	score.UserAnswer = strings.TrimSpace(score.UserAnswer)
-	if score.UserAnswer == "" {
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(score.UserAnswer)
+	if trimmedAnswer == "" {
 		return fmt.Errorf("user answer is required")
 	}
 	return saveUserAnswerRepo(score)
