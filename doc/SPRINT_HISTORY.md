@@ -97,6 +97,6 @@ npm --prefix frontend run build
 ## Notes & References
 - Canonical solutions log: `doc/solutions/SOLUTIONS_2026-04-11.md`
 - Sprint summary and next steps: `doc/SPRINT.md`
-- Current working branch for these changes: `fix/issues`
+- Current working branch for these changes: `feature/quiz`
 
 If you want, I can split each sprint into per-file release notes under `doc/sprints/` or add a small generator script that derives entries from commit/PR metadata.
