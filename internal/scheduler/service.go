@@ -14,32 +14,100 @@ const (
 	MaxReviewMinutes         = 60
 )
 
-// Service builds one daily plan that can include all study modes.
-type Service struct{}
+type queryDueReviewCardsFn func(now string) (int, error)
+type queryActiveTopicsFn func(limit int) ([]string, error)
+type queryLearningTopicsFn func(limit int) ([]models.TopicSummary, error)
+type countLearnedTopicsFn func() (int, error)
 
-// New creates a new scheduler service
-func New() *Service {
-	return &Service{}
+// service builds one daily plan that can include all study modes.
+// Use New() or exported functional options to construct safely.
+type service struct {
+	queryDueReviewCards queryDueReviewCardsFn
+	queryActiveTopics   queryActiveTopicsFn
+	queryLearningTopics queryLearningTopicsFn
+	countLearnedTopics  countLearnedTopicsFn
+}
+
+// Option customizes service dependencies for testing and advanced setups.
+type Option func(*service)
+
+// WithQueryDueReviewCards overrides the review query dependency.
+func WithQueryDueReviewCards(fn queryDueReviewCardsFn) Option {
+	return func(s *service) {
+		if fn != nil {
+			s.queryDueReviewCards = fn
+		}
+	}
+}
+
+// WithQueryActiveTopics overrides the active topics query dependency.
+func WithQueryActiveTopics(fn queryActiveTopicsFn) Option {
+	return func(s *service) {
+		if fn != nil {
+			s.queryActiveTopics = fn
+		}
+	}
+}
+
+// WithQueryLearningTopics overrides the learning topics query dependency.
+func WithQueryLearningTopics(fn queryLearningTopicsFn) Option {
+	return func(s *service) {
+		if fn != nil {
+			s.queryLearningTopics = fn
+		}
+	}
+}
+
+// WithCountLearnedTopics overrides the learned topics count dependency.
+func WithCountLearnedTopics(fn countLearnedTopicsFn) Option {
+	return func(s *service) {
+		if fn != nil {
+			s.countLearnedTopics = fn
+		}
+	}
+}
+
+// Service is the public interface for daily plan scheduling.
+type Service interface {
+	BuildTodayPlan(now time.Time) (*models.TodayPlan, error)
+}
+
+// New creates a new scheduler service with real database queries.
+// Use functional options to override dependencies for testing.
+func New(opts ...Option) Service {
+	s := &service{
+		queryDueReviewCards: db.QueryDueReviewCards,
+		queryActiveTopics:   db.QueryActiveTopics,
+		queryLearningTopics: db.QueryLearningTopics,
+		countLearnedTopics:  db.CountLearnedTopics,
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 // BuildTodayPlan builds the complete daily schedule
-func (s *Service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
-	dueCards, err := db.QueryDueReviewCards(now.Format(time.RFC3339))
+func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
+
+	dueCards, err := s.queryDueReviewCards(now.Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
 
-	activeTopics, err := db.QueryActiveTopics(3)
+	activeTopics, err := s.queryActiveTopics(3)
 	if err != nil {
 		return nil, err
 	}
 
-	learningTopics, err := db.QueryLearningTopics(2)
+	learningTopics, err := s.queryLearningTopics(2)
 	if err != nil {
 		return nil, err
 	}
 
-	learnedTopicsCount, err := db.CountLearnedTopics()
+	learnedTopicsCount, err := s.countLearnedTopics()
 	if err != nil {
 		return nil, err
 	}

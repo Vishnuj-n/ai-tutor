@@ -227,43 +227,56 @@ func (e *OnnxEmbedder) tokenize(text string) ([]int64, []int64, []int64, error) 
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("tokenizer encode failed: %w", err)
 	}
-	if len(enc.Ids) == 0 {
+	return buildTokenArrays(enc.Ids, enc.AttentionMask, enc.TypeIds, e.maxSeqLen)
+}
+
+func buildTokenArrays(sourceIDs []int, sourceMask []int, sourceTypeIDs []int, maxSeqLen int) ([]int64, []int64, []int64, error) {
+	if len(sourceIDs) == 0 {
 		return nil, nil, nil, fmt.Errorf("tokenizer returned no token ids")
 	}
 
-	ids := make([]int64, len(enc.Ids))
-	for i, v := range enc.Ids {
-		ids[i] = int64(v)
+	// Compute target length upfront to avoid over-allocating for long inputs
+	targetLen := len(sourceIDs)
+	if maxSeqLen > 0 && targetLen > maxSeqLen {
+		targetLen = maxSeqLen
 	}
 
-	mask := make([]int64, len(ids))
-	if len(enc.AttentionMask) == len(ids) {
-		for i, v := range enc.AttentionMask {
-			if v > 0 {
+	ids := make([]int64, targetLen)
+	for i := 0; i < targetLen; i++ {
+		ids[i] = int64(sourceIDs[i])
+	}
+
+	mask := make([]int64, targetLen)
+	if len(sourceMask) >= targetLen {
+		for i := 0; i < targetLen; i++ {
+			if sourceMask[i] > 0 {
 				mask[i] = 1
 			}
 		}
+	} else if len(sourceMask) > 0 {
+		// Partial mask available
+		for i := 0; i < len(sourceMask) && i < targetLen; i++ {
+			if sourceMask[i] > 0 {
+				mask[i] = 1
+			}
+		}
+		// Fill remaining with 1 (attention enabled)
+		for i := len(sourceMask); i < targetLen; i++ {
+			mask[i] = 1
+		}
 	} else {
-		for i := range mask {
+		// No mask provided, enable attention for all
+		for i := 0; i < targetLen; i++ {
 			mask[i] = 1
 		}
 	}
 
-	typeIDs := make([]int64, len(ids))
-	if len(enc.TypeIds) == len(ids) {
-		for i, v := range enc.TypeIds {
-			typeIDs[i] = int64(v)
+	typeIDs := make([]int64, targetLen)
+	if len(sourceTypeIDs) >= targetLen {
+		for i := 0; i < targetLen; i++ {
+			typeIDs[i] = int64(sourceTypeIDs[i])
 		}
 	}
-
-	targetLen := len(ids)
-	if targetLen > e.maxSeqLen {
-		targetLen = e.maxSeqLen
-	}
-
-	ids = ids[:targetLen]
-	mask = mask[:targetLen]
-	typeIDs = typeIDs[:targetLen]
 
 	return ids, mask, typeIDs, nil
 }
