@@ -12,6 +12,18 @@ PR size: ~6900 lines across backend/frontend/database because the work spans SQL
 
 # Sprint 4 — Quiz Generation
 
+**Status: Completed — 2026-04-12.**
+
+### Completed
+- Generated multiple-choice questions from content and persisted them in SQLite
+- Answer scoring (backend) with feedback and hints
+- Quiz UI with one-question-per-screen, accessibility fixes (fieldset/legend, grouped radios)
+- State cleanup on topic change and frontend linting
+- Foreign-key integrity fixes for quiz regeneration and backend tests passing
+
+### Remaining
+- Minor frontend TODOs in `frontend/src/pages/Notebook.vue` (UX improvements, download/preview). No blocking Sprint 4 issues.
+
 ## Goal
 
 Generate quiz questions from reading material and score answers.

@@ -63,6 +63,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	// Index each chunk
 	reindexed := 0
 	skipped := 0
+	failed := 0
 
 	for _, chunk := range chunks {
 		shouldReindex := vi.config.ForceReindex
@@ -89,7 +90,9 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 			// Update embedding metadata
 			hash := computeTextHash(chunk.Text)
 			if err := db.UpdateChunkEmbedding(chunk.ID, hash); err != nil {
-				log.Printf("Warning: failed to update chunk embedding metadata: %v", err)
+				log.Printf("Warning: failed to update chunk embedding metadata for chunk %s: %v", chunk.ID, err)
+				failed++
+				continue
 			}
 
 			reindexed++
@@ -98,7 +101,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		}
 	}
 
-	log.Printf("Indexing complete for topic %s: reindexed=%d, skipped=%d", topicID, reindexed, skipped)
+	log.Printf("Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d", topicID, reindexed, skipped, failed)
 	return nil
 }
 
