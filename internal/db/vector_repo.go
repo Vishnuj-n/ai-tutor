@@ -50,7 +50,7 @@ func upsertChunkVectorRepo(chunkID string, vector []float32) error {
 	return err
 }
 
-func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) error {
+func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 	if len(items) == 0 {
 		return nil
 	}

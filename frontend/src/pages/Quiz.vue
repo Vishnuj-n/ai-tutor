@@ -5,16 +5,28 @@
 
     <article class="panel controls">
       <label class="field">
+        <span>Notebook</span>
+        <select v-model="selectedNotebookID" @change="onNotebookChange">
+          <option disabled value="">Select a notebook</option>
+          <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
+            {{ notebook.title }}
+          </option>
+        </select>
+      </label>
+
+      <label class="field">
         <span>Topic</span>
-        <select v-model="selectedTopicID">
-          <option disabled value="">Select a topic</option>
-          <option v-for="topic in topics" :key="topic.id" :value="topic.id">
+        <select v-model="selectedTopicID" :disabled="availableTopics.length === 0">
+          <option disabled value="">
+            {{ availableTopics.length === 0 ? 'No topics available yet' : 'Select a topic' }}
+          </option>
+          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
             {{ topic.title }}
           </option>
         </select>
       </label>
 
-      <button class="primary" :disabled="isGenerating || !selectedTopicID" @click="onGenerateQuiz">
+      <button class="primary" :disabled="isGenerating || !canGenerateQuiz" @click="onGenerateQuiz">
         {{ isGenerating ? 'Generating...' : 'Generate Quiz' }}
       </button>
     </article>
@@ -64,16 +76,24 @@
 
     <article v-else-if="questions.length === 0" class="panel">
       <h2>Ready to generate</h2>
-      <p>Select a topic and generate a quiz to begin.</p>
+      <p v-if="notebookTree.length === 0">Upload a notebook to start generating quizzes.</p>
+      <p v-else-if="selectedNotebook && availableTopics.length === 0">
+        This notebook has no topics yet. Wait for extraction to finish or choose another notebook.
+      </p>
+      <p v-else>Select a notebook and topic to generate a quiz.</p>
     </article>
   </section>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { generateQuiz, getAvailableTopics, scoreAnswer } from '../services/appApi'
+import { useRoute } from 'vue-router'
+import { generateQuiz, getNotebookTopicTree, scoreAnswer } from '../services/appApi'
 
-const topics = ref([])
+const route = useRoute()
+
+const notebookTree = ref([])
+const selectedNotebookID = ref('')
 const selectedTopicID = ref('')
 const questions = ref([])
 const currentIndex = ref(0)
@@ -85,16 +105,19 @@ const isGenerating = ref(false)
 const isScoring = ref(false)
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
+const selectedNotebook = computed(() =>
+  notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
+)
+const availableTopics = computed(() => selectedNotebook.value?.topics || [])
+const canGenerateQuiz = computed(() => selectedTopicID.value !== '')
 
 onMounted(async () => {
   try {
-    const data = await getAvailableTopics()
-    topics.value = Array.isArray(data) ? data : []
-    if (topics.value.length > 0) {
-      selectedTopicID.value = topics.value[0].id
-    }
+    const data = await getNotebookTopicTree()
+    notebookTree.value = Array.isArray(data) ? data : []
+    applyInitialSelection(getPreferredTopicID())
   } catch (err) {
-    errorMessage.value = err?.message || 'Failed to load topics'
+    errorMessage.value = err?.message || 'Failed to load notebook topics'
   }
 })
 
@@ -147,6 +170,48 @@ async function onSubmitAnswer() {
   } finally {
     isScoring.value = false
   }
+}
+
+function applyInitialSelection(preferredTopicID) {
+  if (notebookTree.value.length === 0) {
+    selectedNotebookID.value = ''
+    selectedTopicID.value = ''
+    return
+  }
+
+  if (preferredTopicID) {
+    for (const notebook of notebookTree.value) {
+      const topic = Array.isArray(notebook.topics)
+        ? notebook.topics.find((item) => item.topic_id === preferredTopicID)
+        : null
+      if (topic) {
+        selectedNotebookID.value = notebook.notebook_id
+        selectedTopicID.value = topic.topic_id
+        return
+      }
+    }
+  }
+
+  const firstNotebookWithTopics = notebookTree.value.find(
+    (notebook) => Array.isArray(notebook.topics) && notebook.topics.length > 0
+  )
+  const fallbackNotebook = firstNotebookWithTopics || notebookTree.value[0]
+  selectedNotebookID.value = fallbackNotebook?.notebook_id || ''
+  selectedTopicID.value = fallbackNotebook?.topics?.[0]?.topic_id || ''
+}
+
+function onNotebookChange() {
+  const nextTopicID = availableTopics.value[0]?.topic_id || ''
+  if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
+    selectedTopicID.value = nextTopicID
+  }
+}
+
+function getPreferredTopicID() {
+  if (typeof route.query.topic === 'string') {
+    return route.query.topic
+  }
+  return ''
 }
 
 function onNext() {

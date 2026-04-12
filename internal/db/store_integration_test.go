@@ -199,6 +199,90 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	}
 }
 
+func TestGetNotebookTopicTreeDeduplicatesTopicRowsPerNotebook(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-tree-dedupe"
+	topicID := "topic-tree-dedupe"
+	if err := CreateNotebook(notebookID, "Dedupe Notebook", "/tmp/dedupe.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := EnsureTopic(topicID, "Shared Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	parentID := "parent-tree-dedupe"
+	if err := CreateParentSection(parentID, topicID, "Shared Heading", 1, "shared parent"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+
+	chunkA := "chunk-tree-dedupe-a"
+	chunkB := "chunk-tree-dedupe-b"
+	if err := CreateChunk(chunkA, topicID, parentID, "chunk a", 2); err != nil {
+		t.Fatalf("CreateChunk chunkA failed: %v", err)
+	}
+	if err := CreateChunk(chunkB, topicID, parentID, "chunk b", 2); err != nil {
+		t.Fatalf("CreateChunk chunkB failed: %v", err)
+	}
+
+	if err := LinkChunksToNotebook(notebookID, []string{chunkA, chunkB}); err != nil {
+		t.Fatalf("LinkChunksToNotebook failed: %v", err)
+	}
+
+	tree, err := GetNotebookTopicTree()
+	if err != nil {
+		t.Fatalf("GetNotebookTopicTree failed: %v", err)
+	}
+	if len(tree) != 1 {
+		t.Fatalf("expected 1 notebook, got %#v", tree)
+	}
+	if len(tree[0].Topics) != 1 {
+		t.Fatalf("expected deduped single topic entry, got %#v", tree[0].Topics)
+	}
+	if tree[0].Topics[0].TopicID != topicID {
+		t.Fatalf("unexpected topic id: %#v", tree[0].Topics)
+	}
+}
+
+func TestGetNotebookTopicTreeIncludesTopiclessAndIgnoresBrokenLinks(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-tree-empty"
+	if err := CreateNotebook(notebookID, "Empty Notebook", "/tmp/empty.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	if _, err := conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("failed to disable foreign keys: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := conn.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+			t.Fatalf("failed to re-enable foreign keys: %v", err)
+		}
+	})
+
+	if _, err := conn.Exec(`
+		INSERT INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
+		VALUES (?, ?, ?, ?)
+	`, "broken-link", notebookID, "missing-chunk", 1); err != nil {
+		t.Fatalf("failed to insert broken notebook chunk link: %v", err)
+	}
+
+	tree, err := GetNotebookTopicTree()
+	if err != nil {
+		t.Fatalf("GetNotebookTopicTree failed: %v", err)
+	}
+	if len(tree) != 1 {
+		t.Fatalf("expected 1 notebook, got %#v", tree)
+	}
+	if tree[0].NotebookID != notebookID {
+		t.Fatalf("unexpected notebook entry: %#v", tree[0])
+	}
+	if len(tree[0].Topics) != 0 {
+		t.Fatalf("expected empty topics for topicless/broken notebook, got %#v", tree[0].Topics)
+	}
+}
+
 func distanceFunctionAvailable(t *testing.T) bool {
 	t.Helper()
 

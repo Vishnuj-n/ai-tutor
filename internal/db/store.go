@@ -821,11 +821,7 @@ func UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error {
 
 	repoItems := make([]chunkVectorBatchItemRepo, 0, len(items))
 	for _, item := range items {
-		repoItems = append(repoItems, chunkVectorBatchItemRepo{
-			ChunkID:      item.ChunkID,
-			Vector:       item.Vector,
-			EmbeddingRef: item.EmbeddingRef,
-		})
+		repoItems = append(repoItems, chunkVectorBatchItemRepo(item))
 	}
 
 	return upsertChunkVectorsBatchRepo(repoItems)
