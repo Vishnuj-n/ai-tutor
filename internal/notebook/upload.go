@@ -28,6 +28,10 @@ const (
 	ChunkWordOverlap = 40
 )
 
+var readFileFunc = os.ReadFile
+var openPDFFunc = pdfreader.Open
+var extractPDFFunc = extractPDFDocument
+
 // NewService creates a new notebook service
 func NewService(uploadDir string) *Service {
 	// Ensure directory exists
@@ -169,7 +173,7 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 
 	switch fileType {
 	case "txt":
-		raw, err := os.ReadFile(filePath)
+		raw, err := readFileFunc(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read txt file: %w", err)
 		}
@@ -186,7 +190,7 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		}}
 
 	case "md":
-		raw, err := os.ReadFile(filePath)
+		raw, err := readFileFunc(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read markdown file: %w", err)
 		}
@@ -201,65 +205,8 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		}
 
 	case "pdf":
-		file, reader, err := pdfreader.Open(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read pdf: %w", err)
-		}
-		defer func() {
-			_ = file.Close()
-		}()
-
-		totalPages := reader.NumPage()
-		doc.PageCount = totalPages
-
-		for pageIndex := 1; pageIndex <= totalPages; pageIndex++ {
-			page := reader.Page(pageIndex)
-			if page.V.IsNull() {
-				continue
-			}
-			text, pageErr := page.GetPlainText(nil)
-			if pageErr != nil {
-				return nil, fmt.Errorf("failed to read pdf page %d: %w", pageIndex, pageErr)
-			}
-
-			normalized := normalizeWhitespace(text)
-			if normalized == "" {
-				continue
-			}
-
-			doc.WordCount += len(strings.Fields(normalized))
-			doc.Sections = append(doc.Sections, ExtractedSection{
-				Heading: fmt.Sprintf("Page %d", pageIndex),
-				Text:    normalized,
-				PageNum: pageIndex,
-			})
-		}
-
-		if len(doc.Sections) == 0 {
-			plainReader, plainErr := reader.GetPlainText()
-			if plainErr != nil {
-				return nil, fmt.Errorf("pdf did not contain extractable text: %w", plainErr)
-			}
-
-			var buf bytes.Buffer
-			if _, copyErr := io.Copy(&buf, plainReader); copyErr != nil {
-				return nil, fmt.Errorf("failed to read plain pdf text: %w", copyErr)
-			}
-
-			normalized := normalizeWhitespace(buf.String())
-			if normalized == "" {
-				return nil, fmt.Errorf("pdf did not contain extractable text")
-			}
-
-			doc.WordCount = len(strings.Fields(normalized))
-			doc.Sections = []ExtractedSection{{
-				Heading: "Document",
-				Text:    normalized,
-				PageNum: 1,
-			}}
-			if doc.PageCount == 0 {
-				doc.PageCount = 1
-			}
+		if err := extractPDFFunc(filePath, doc); err != nil {
+			return nil, err
 		}
 
 	default:
@@ -357,14 +304,14 @@ func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetada
 
 	switch fileType {
 	case "txt", "md":
-		raw, err := os.ReadFile(filePath)
+		raw, err := readFileFunc(filePath)
 		if err != nil {
 			return nil, err
 		}
 		wordCount := len(strings.Fields(normalizeWhitespace(string(raw))))
 		return &FileMetadata{Title: title, PageCount: 1, WordCount: wordCount}, nil
 	case "pdf":
-		file, reader, err := pdfreader.Open(filePath)
+		file, reader, err := openPDFFunc(filePath)
 		if err != nil {
 			return nil, err
 		}
@@ -383,6 +330,73 @@ func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetada
 		return nil, fmt.Errorf("unsupported file type: %s", fileType)
 	}
 
+}
+
+func extractPDFDocument(filePath string, doc *ExtractedDocument) error {
+	file, reader, err := openPDFFunc(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read pdf: %w", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	totalPages := reader.NumPage()
+	doc.PageCount = totalPages
+
+	for pageIndex := 1; pageIndex <= totalPages; pageIndex++ {
+		page := reader.Page(pageIndex)
+		if page.V.IsNull() {
+			continue
+		}
+		text, pageErr := page.GetPlainText(nil)
+		if pageErr != nil {
+			return fmt.Errorf("failed to read pdf page %d: %w", pageIndex, pageErr)
+		}
+
+		normalized := normalizeWhitespace(text)
+		if normalized == "" {
+			continue
+		}
+
+		doc.WordCount += len(strings.Fields(normalized))
+		doc.Sections = append(doc.Sections, ExtractedSection{
+			Heading: fmt.Sprintf("Page %d", pageIndex),
+			Text:    normalized,
+			PageNum: pageIndex,
+		})
+	}
+
+	if len(doc.Sections) > 0 {
+		return nil
+	}
+
+	plainReader, plainErr := reader.GetPlainText()
+	if plainErr != nil {
+		return fmt.Errorf("pdf did not contain extractable text: %w", plainErr)
+	}
+
+	var buf bytes.Buffer
+	if _, copyErr := io.Copy(&buf, plainReader); copyErr != nil {
+		return fmt.Errorf("failed to read plain pdf text: %w", copyErr)
+	}
+
+	normalized := normalizeWhitespace(buf.String())
+	if normalized == "" {
+		return fmt.Errorf("pdf did not contain extractable text")
+	}
+
+	doc.WordCount = len(strings.Fields(normalized))
+	doc.Sections = []ExtractedSection{{
+		Heading: "Document",
+		Text:    normalized,
+		PageNum: 1,
+	}}
+	if doc.PageCount == 0 {
+		doc.PageCount = 1
+	}
+
+	return nil
 }
 
 func splitMarkdownSections(content string) []ExtractedSection {

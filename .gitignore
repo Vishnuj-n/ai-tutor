@@ -6,7 +6,8 @@ asset/onnxruntime.dll
 asset/vec0.dll
 .env
 context.md
-
+.gocache/
+.gomodcache/
 # Wails generated bindings
 wailsjs/
 test_notes/
