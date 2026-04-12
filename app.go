@@ -437,7 +437,7 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
 	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
 	b.WriteString(topicID)
-	b.WriteString("\nJSON format: {\\\"questions\\\":[{\\\"prompt\\\":string,\\\"options\\\":[string,string,string,string],\\\"correct_answer\\\":string,\\\"explanation\\\":string,\\\"hint\\\":string,\\\"source_heading\\\":string,\\\"source_snippet\\\":string}]}\n")
+	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
 	b.WriteString("Rules: correct_answer must match one option exactly; keep options concise; explanations grounded in source text.\n")
 	b.WriteString("Source sections:\n")
 
