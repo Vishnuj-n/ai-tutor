@@ -391,6 +391,23 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	// Verify that the topic without whitespace was used (not with whitespace)
 	assertCountEquals(t, `SELECT COUNT(*) FROM parents WHERE id = ?`, "p-ws-1", 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunks WHERE id = ?`, "c-ws-1", 1)
+
+	// Verify the persisted topic_id is the trimmed value, not the original with whitespace
+	var parentTopicID string
+	if err := conn.QueryRow(`SELECT topic_id FROM parents WHERE id = ?`, "p-ws-1").Scan(&parentTopicID); err != nil {
+		t.Fatalf("failed to query parent topic_id: %v", err)
+	}
+	if parentTopicID != "valid-topic-ws" {
+		t.Fatalf("expected parent topic_id to be trimmed 'valid-topic-ws', got %q", parentTopicID)
+	}
+
+	var chunkTopicID string
+	if err := conn.QueryRow(`SELECT topic_id FROM chunks WHERE id = ?`, "c-ws-1").Scan(&chunkTopicID); err != nil {
+		t.Fatalf("failed to query chunk topic_id: %v", err)
+	}
+	if chunkTopicID != "valid-topic-ws" {
+		t.Fatalf("expected chunk topic_id to be trimmed 'valid-topic-ws', got %q", chunkTopicID)
+	}
 }
 
 func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
@@ -424,6 +441,9 @@ func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
 
 	// Verify no questions were inserted
 	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 0)
+
+	// Verify rollback atomicity: the topics table should not contain the mismatched topic either
+	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, topicID, 1)
 
 	// Test with valid matching TopicID (either explicit or "" to auto-assign)
 	validQuestions := []models.QuizQuestion{
