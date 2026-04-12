@@ -113,6 +113,8 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 				}
 				if err := db.UpdateChunkEmbedding(item.ChunkID, item.EmbeddingRef); err != nil {
 					log.Printf("Warning: failed to update chunk embedding metadata for %s: %v", item.ChunkID, err)
+					failed++
+					continue
 				}
 				reindexed++
 			}

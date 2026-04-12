@@ -21,6 +21,15 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 		}
 	}()
 
+	// Delete dependent user answers first to maintain foreign key integrity
+	if _, err = tx.Exec(`
+		DELETE FROM user_answers
+		WHERE question_id IN (SELECT id FROM questions WHERE topic_id = ?)
+	`, topicID); err != nil {
+		return err
+	}
+
+	// Now safe to delete the questions
 	if _, err = tx.Exec(`DELETE FROM questions WHERE topic_id = ?`, topicID); err != nil {
 		return err
 	}

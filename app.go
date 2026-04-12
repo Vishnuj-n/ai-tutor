@@ -353,12 +353,28 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" {
 			continue
 		}
+
+		// Validate CorrectAnswer matches one of the Options (case-insensitive, whitespace-normalized)
+		correctAnswerCanonical := strings.TrimSpace(strings.ToLower(q.CorrectAnswer))
+		var matchedOption string
+		for _, opt := range q.Options {
+			optCanonical := strings.TrimSpace(strings.ToLower(opt))
+			if optCanonical == correctAnswerCanonical {
+				matchedOption = strings.TrimSpace(opt)
+				break
+			}
+		}
+		if matchedOption == "" {
+			// Skip question if CorrectAnswer doesn't match any option
+			continue
+		}
+
 		questions = append(questions, models.QuizQuestion{
 			ID:            uuid.NewString(),
 			TopicID:       topicID,
 			Prompt:        strings.TrimSpace(q.Prompt),
 			Options:       q.Options,
-			CorrectAnswer: strings.TrimSpace(q.CorrectAnswer),
+			CorrectAnswer: matchedOption,
 			Explanation:   strings.TrimSpace(q.Explanation),
 			Hint:          strings.TrimSpace(q.Hint),
 			SourceHeading: strings.TrimSpace(q.SourceHeading),
