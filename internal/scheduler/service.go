@@ -37,24 +37,8 @@ type Service struct {
 	countLearnedTopics  countLearnedTopicsFn
 }
 
-func (s *Service) ensureQueryFns() {
-	if s.queryDueReviewCards == nil {
-		s.queryDueReviewCards = db.QueryDueReviewCards
-	}
-	if s.queryActiveTopics == nil {
-		s.queryActiveTopics = db.QueryActiveTopics
-	}
-	if s.queryLearningTopics == nil {
-		s.queryLearningTopics = db.QueryLearningTopics
-	}
-	if s.countLearnedTopics == nil {
-		s.countLearnedTopics = db.CountLearnedTopics
-	}
-}
-
 // BuildTodayPlan builds the complete daily schedule
 func (s *Service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
-	s.ensureQueryFns()
 
 	dueCards, err := s.queryDueReviewCards(now.Format(time.RFC3339))
 	if err != nil {

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -127,6 +128,78 @@ func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
 	}
 
 	assertPlanMinutesWithinBudget(t, plan)
+}
+
+func TestBuildTodayPlanQueryDueReviewCardsReturnsError(t *testing.T) {
+	expectedErr := fmt.Errorf("database connection failed")
+	service := &Service{
+		queryDueReviewCards: func(string) (int, error) { return 0, expectedErr },
+		queryActiveTopics:   func(int) ([]string, error) { return nil, nil },
+		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, nil },
+		countLearnedTopics:  func() (int, error) { return 0, nil },
+	}
+
+	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	if err != expectedErr {
+		t.Fatalf("expected error %v, got %v", expectedErr, err)
+	}
+	if plan != nil {
+		t.Fatalf("expected nil plan on error, got %#v", plan)
+	}
+}
+
+func TestBuildTodayPlanQueryActiveTopicsReturnsError(t *testing.T) {
+	expectedErr := fmt.Errorf("topics query failed")
+	service := &Service{
+		queryDueReviewCards: func(string) (int, error) { return 5, nil },
+		queryActiveTopics:   func(int) ([]string, error) { return nil, expectedErr },
+		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, nil },
+		countLearnedTopics:  func() (int, error) { return 0, nil },
+	}
+
+	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	if err != expectedErr {
+		t.Fatalf("expected error %v, got %v", expectedErr, err)
+	}
+	if plan != nil {
+		t.Fatalf("expected nil plan on error, got %#v", plan)
+	}
+}
+
+func TestBuildTodayPlanQueryLearningTopicsReturnsError(t *testing.T) {
+	expectedErr := fmt.Errorf("learning topics query failed")
+	service := &Service{
+		queryDueReviewCards: func(string) (int, error) { return 0, nil },
+		queryActiveTopics:   func(int) ([]string, error) { return []string{}, nil },
+		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return nil, expectedErr },
+		countLearnedTopics:  func() (int, error) { return 0, nil },
+	}
+
+	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	if err != expectedErr {
+		t.Fatalf("expected error %v, got %v", expectedErr, err)
+	}
+	if plan != nil {
+		t.Fatalf("expected nil plan on error, got %#v", plan)
+	}
+}
+
+func TestBuildTodayPlanCountLearnedTopicsReturnsError(t *testing.T) {
+	expectedErr := fmt.Errorf("learned topics count failed")
+	service := &Service{
+		queryDueReviewCards: func(string) (int, error) { return 0, nil },
+		queryActiveTopics:   func(int) ([]string, error) { return []string{}, nil },
+		queryLearningTopics: func(int) ([]models.TopicSummary, error) { return []models.TopicSummary{}, nil },
+		countLearnedTopics:  func() (int, error) { return 0, expectedErr },
+	}
+
+	plan, err := service.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	if err != expectedErr {
+		t.Fatalf("expected error %v, got %v", expectedErr, err)
+	}
+	if plan != nil {
+		t.Fatalf("expected nil plan on error, got %#v", plan)
+	}
 }
 
 func assertPlanMinutesWithinBudget(t *testing.T, plan *models.TodayPlan) {

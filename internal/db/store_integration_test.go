@@ -204,7 +204,11 @@ func distanceFunctionAvailable(t *testing.T) bool {
 
 	var distance float64
 	err := conn.QueryRow(`SELECT distance(?, ?)`, "[1,0,0]", "[1,0,0]").Scan(&distance)
-	return err == nil
+	if err != nil {
+		return false
+	}
+	// Identical vectors should yield ~0 distance
+	return distance < 1e-9 && distance > -1e-9
 }
 
 func assertCountEquals(t *testing.T, query string, arg interface{}, want int) {

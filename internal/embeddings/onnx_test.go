@@ -145,7 +145,7 @@ func tokenizerAssetPath(t *testing.T) string {
 	if !ok {
 		t.Fatalf("failed to resolve caller path")
 	}
-	path := filepath.Join(filepath.Dir(file), "..", "..", "asset", "tokenizer.json")
+	path := filepath.Join(filepath.Dir(file), "testdata", "tokenizer.json")
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		t.Fatalf("failed to resolve tokenizer path: %v", err)
