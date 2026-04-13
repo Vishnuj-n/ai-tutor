@@ -14,7 +14,7 @@ const (
 	MaxReviewMinutes         = 60
 )
 
-type queryDueReviewCardsFn func(now string) (int, error)
+type queryDueReviewCardsFn func(now int64) (int, error)
 type queryActiveTopicsFn func(limit int) ([]string, error)
 type queryLearningTopicsFn func(limit int) ([]models.TopicSummary, error)
 type countLearnedTopicsFn func() (int, error)
@@ -92,7 +92,7 @@ func New(opts ...Option) Service {
 // BuildTodayPlan builds the complete daily schedule
 func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 
-	dueCards, err := s.queryDueReviewCards(now.Format(time.RFC3339))
+	dueCards, err := s.queryDueReviewCards(now.Unix())
 	if err != nil {
 		return nil, err
 	}

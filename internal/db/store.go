@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"ai-tutor/internal/models"
 
@@ -83,6 +82,10 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	if err := ensureQuestionsSchema(); err != nil {
+		return err
+	}
+
+	if err := ensureFSRSSchema(); err != nil {
 		return err
 	}
 
@@ -181,19 +184,6 @@ func createTables() error {
 		FOREIGN KEY (topic_id) REFERENCES topics(id)
 	);
 
-	CREATE TABLE IF NOT EXISTS fsrs_cards (
-		id TEXT PRIMARY KEY,
-		topic_id TEXT NOT NULL,
-		prompt TEXT NOT NULL,
-		answer TEXT NOT NULL,
-		state_json TEXT,
-		due_at TEXT,
-		suspended INTEGER DEFAULT 0,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (topic_id) REFERENCES topics(id)
-	);
-
 	CREATE TABLE IF NOT EXISTS questions (
 		id TEXT PRIMARY KEY,
 		topic_id TEXT NOT NULL,
@@ -249,11 +239,7 @@ func createTables() error {
 		return err
 	}
 
-	_, err = conn.Exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_fsrs_cards_topic_prompt
-		ON fsrs_cards(topic_id, prompt)
-	`)
-	return err
+	return nil
 }
 
 func ensureNotebookSchema() error {
@@ -362,6 +348,85 @@ func ensureQuestionsSchema() error {
 	}
 
 	return rows2.Err()
+}
+
+func ensureFSRSSchema() error {
+	var tableName string
+	err := conn.QueryRow(`
+		SELECT name
+		FROM sqlite_master
+		WHERE type = 'table' AND name = 'fsrs_review_log'
+	`).Scan(&tableName)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Clean-slate migration for old heuristic schema.
+	if err == sql.ErrNoRows {
+		tx, beginErr := conn.Begin()
+		if beginErr != nil {
+			return beginErr
+		}
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		}()
+
+		stmts := []string{
+			`DROP TABLE IF EXISTS fsrs_cards`,
+			`DROP TABLE IF EXISTS fsrs_review_log`,
+			`CREATE TABLE fsrs_cards (
+				id TEXT PRIMARY KEY,
+				topic_id TEXT NOT NULL,
+				prompt TEXT NOT NULL,
+				answer TEXT NOT NULL,
+				state_json TEXT,
+				due_at INTEGER,
+				suspended BOOLEAN DEFAULT 0,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (topic_id) REFERENCES topics(id)
+			)`,
+			`CREATE TABLE fsrs_review_log (
+				id TEXT PRIMARY KEY,
+				topic_id TEXT NOT NULL,
+				activity_type TEXT NOT NULL,
+				reference_id TEXT NOT NULL,
+				reviewed_at INTEGER NOT NULL,
+				rating INTEGER NOT NULL,
+				scheduled_days INTEGER NOT NULL,
+				state_before_json TEXT NOT NULL,
+				state_after_json TEXT NOT NULL,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (topic_id) REFERENCES topics(id)
+			)`,
+		}
+
+		for _, stmt := range stmts {
+			if _, err = tx.Exec(stmt); err != nil {
+				return err
+			}
+		}
+
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+	}
+
+	indexes := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt)`,
+		`CREATE INDEX IF NOT EXISTS idx_fsrs_review_log_activity_ref_reviewed_at ON fsrs_review_log(activity_type, reference_id, reviewed_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_fsrs_review_log_topic_reviewed_at ON fsrs_review_log(topic_id, reviewed_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at)`,
+	}
+	for _, stmt := range indexes {
+		if _, err := conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func seedData() error {
@@ -575,7 +640,7 @@ func GetParentSection(parentID string) (map[string]string, error) {
 }
 
 // QueryDueReviewCards counts cards due by the given time
-func QueryDueReviewCards(now string) (int, error) {
+func QueryDueReviewCards(now int64) (int, error) {
 	var count int
 	err := conn.QueryRow(`
 		SELECT COUNT(*)
@@ -683,13 +748,12 @@ func CountFlashcardsForTopic(topicID string) (int, error) {
 }
 
 // GetFlashcardsForTopic returns topic-scoped flashcards, optionally only those due now.
-func GetFlashcardsForTopic(topicID string, dueOnly bool, now string) ([]models.Flashcard, error) {
+func GetFlashcardsForTopic(topicID string, dueOnly bool, now int64) ([]models.Flashcard, error) {
 	topicID = strings.TrimSpace(topicID)
-	now = strings.TrimSpace(now)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
 	}
-	if dueOnly && now == "" {
+	if dueOnly && now <= 0 {
 		return nil, fmt.Errorf("current time is required when filtering due flashcards")
 	}
 	return getFlashcardsForTopicRepo(topicID, dueOnly, now)
@@ -705,42 +769,15 @@ func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState,
 }
 
 // UpdateFlashcardReview updates scheduling state after a review grade.
-func UpdateFlashcardReview(cardID string, dueAt string, state models.FlashcardState) error {
+func UpdateFlashcardReview(cardID string, dueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	cardID = strings.TrimSpace(cardID)
-	dueAt = strings.TrimSpace(dueAt)
 	if cardID == "" {
 		return fmt.Errorf("flashcard id is required")
 	}
-	if dueAt == "" {
+	if dueAt <= 0 {
 		return fmt.Errorf("due time is required")
 	}
-	return updateFlashcardReviewRepo(cardID, dueAt, state)
-}
-
-// ApplyFlashcardReview atomically reads current state, applies rating, and persists new state.
-// Returns updated card, updated state, and next interval in hours.
-func ApplyFlashcardReview(cardID string, rating string, reviewedAt time.Time) (*models.Flashcard, *models.FlashcardState, int, error) {
-	cardID = strings.TrimSpace(cardID)
-	rating = strings.ToLower(strings.TrimSpace(rating))
-	if cardID == "" {
-		return nil, nil, 0, fmt.Errorf("flashcard id is required")
-	}
-	allowedRatings := map[string]struct{}{
-		"again": {},
-		"hard":  {},
-		"good":  {},
-		"easy":  {},
-	}
-	if _, ok := allowedRatings[rating]; !ok {
-		return nil, nil, 0, fmt.Errorf("rating must be one of again, hard, good, easy")
-	}
-	if reviewedAt.IsZero() {
-		reviewedAt = time.Now().UTC()
-	} else {
-		reviewedAt = reviewedAt.UTC()
-	}
-
-	return applyFlashcardReviewRepo(cardID, rating, reviewedAt)
+	return updateFlashcardReviewRepo(cardID, dueAt, state, reviewLog)
 }
 
 // GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.

@@ -39,7 +39,12 @@
 
       <article class="card side-card">
         <p class="eyebrow">Due Reviews</p>
-        <p class="big-number">{{ plan.dueReviewCards }} <span>cards</span></p>
+        <template v-if="schedulerReady">
+          <p class="big-number">{{ plan.dueReviewCards }} <span>cards</span></p>
+        </template>
+        <template v-else>
+          <p class="big-number">Review System <span>Coming Soon</span></p>
+        </template>
         <div class="chip-group">
           <p class="eyebrow">Active Topics</p>
           <div class="chips">
@@ -96,6 +101,7 @@ const plan = ref({
 
 const currentTask = computed(() => tasks.value[0] || null)
 const focusItems = computed(() => tasks.value.slice(1))
+const schedulerReady = computed(() => loading.value || error.value || tasks.value.length > 0 || plan.value.activeTopics.length > 0)
 
 onMounted(async () => {
   await loadPlan()
