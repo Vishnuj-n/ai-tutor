@@ -13,7 +13,7 @@ wailsjs/
 test_notes/
 build/
 .exe
-
+.agents/skills/caveman-compress/
 # User data (local SQLite + uploads)
 *.db
 uploads/
