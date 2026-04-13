@@ -6,30 +6,17 @@
     <article class="panel controls">
       <label class="field">
         <span>Notebook</span>
-        @media (max-width: 960px) {
-          h1 {
-            font-size: 38px;
-          }
-
-          .card-header {
-            flex-direction: column;
-            align-items: flex-start;
-          }
-
-          .card-face {
-            min-height: 180px;
-          }
-        }
+        <select v-model="selectedNotebookID" :disabled="busy || notebookTree.length === 0" @change="onNotebookChange">
           <option disabled value="">Select a notebook</option>
           <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
             {{ notebook.title }}
           </option>
         </select>
-            </label>
+      </label>
 
-            <label class="field">
+      <label class="field">
         <span>Topic</span>
-        <select v-model="selectedTopicID" :disabled="busy || availableTopics.length === 0" @change="onTopicChange">
+        <select v-model="selectedTopicID" :disabled="busy || availableTopics.length === 0">
           <option disabled value="">
             {{ availableTopics.length === 0 ? 'No topics available yet' : 'Select a topic' }}
           </option>
