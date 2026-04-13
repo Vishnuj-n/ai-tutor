@@ -55,7 +55,7 @@ func TestUpdateFlashcardReviewTransactionalSave(t *testing.T) {
 		StateAfterJSON:  string(afterJSON),
 	}
 
-	if err := UpdateFlashcardReview(cardID, 200+3*86400, nextState, logRow); err != nil {
+	if err := UpdateFlashcardReview(cardID, 200+3*86400, 100, nextState, logRow); err != nil {
 		t.Fatalf("UpdateFlashcardReview failed: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestUpdateFlashcardReviewRollsBackCardOnLogInsertFailure(t *testing.T) {
 	}
 
 	nextState := models.FlashcardState{Stability: 1, Difficulty: 5, ScheduledDays: 2, Reps: 1, StateCode: 2}
-	err := UpdateFlashcardReview(cardID, 999, nextState, models.FSRSReviewLog{
+	err := UpdateFlashcardReview(cardID, 999, 10, nextState, models.FSRSReviewLog{
 		ID:              "duplicate-log",
 		TopicID:         topicID,
 		ActivityType:    "flashcard",
