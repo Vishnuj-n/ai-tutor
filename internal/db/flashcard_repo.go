@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
+	"time"
 
 	"ai-tutor/internal/models"
 )
@@ -138,6 +140,125 @@ func updateFlashcardReviewRepo(cardID string, dueAt string, state models.Flashca
 		return fmt.Errorf("flashcard %s not found", cardID)
 	}
 	return nil
+}
+
+func applyFlashcardReviewRepo(cardID string, rating string, reviewedAt time.Time) (*models.Flashcard, *models.FlashcardState, int, error) {
+	tx, err := conn.Begin()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var card models.Flashcard
+	var stateJSON sql.NullString
+	var suspended int
+	err = tx.QueryRow(`
+		SELECT id, topic_id, prompt, answer, COALESCE(due_at, ''), suspended, state_json
+		FROM fsrs_cards
+		WHERE id = ?
+	`, cardID).Scan(&card.ID, &card.TopicID, &card.Prompt, &card.Answer, &card.DueAt, &suspended, &stateJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, 0, nil
+		}
+		return nil, nil, 0, err
+	}
+	card.Suspended = suspended == 1
+
+	state := models.FlashcardState{}
+	if stateJSON.Valid && stateJSON.String != "" {
+		if unmarshalErr := json.Unmarshal([]byte(stateJSON.String), &state); unmarshalErr != nil {
+			return nil, nil, 0, fmt.Errorf("failed to decode flashcard state for %s: %w", card.ID, unmarshalErr)
+		}
+	}
+
+	nextDelay, intervalHours, stage := nextFlashcardScheduleRepo(state, rating)
+	dueAt := reviewedAt.Add(nextDelay).Format(time.RFC3339)
+
+	state.Stage = stage
+	state.LastIntervalHours = intervalHours
+	state.LastRating = rating
+	state.LastReviewedAt = reviewedAt.Format(time.RFC3339)
+	if rating == "again" {
+		state.LapseCount++
+	} else {
+		state.SuccessCount++
+	}
+
+	updatedStateJSON, marshalErr := json.Marshal(state)
+	if marshalErr != nil {
+		return nil, nil, 0, fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, marshalErr)
+	}
+
+	result, err := tx.Exec(`
+		UPDATE fsrs_cards
+		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, string(updatedStateJSON), dueAt, cardID)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if rows != 1 {
+		return nil, nil, 0, fmt.Errorf("flashcard %s not found", cardID)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, nil, 0, err
+	}
+
+	card.DueAt = dueAt
+	return &card, &state, intervalHours, nil
+}
+
+func nextFlashcardScheduleRepo(state models.FlashcardState, rating string) (time.Duration, int, string) {
+	baseInterval := state.LastIntervalHours
+	if baseInterval <= 0 {
+		switch rating {
+		case "again":
+			return 10 * time.Minute, 0, "learning"
+		case "hard":
+			return 8 * time.Hour, 8, "learning"
+		case "good":
+			return 24 * time.Hour, 24, "review"
+		case "easy":
+			return 72 * time.Hour, 72, "review"
+		default:
+			return 24 * time.Hour, 24, "review"
+		}
+	}
+
+	switch rating {
+	case "again":
+		return 10 * time.Minute, 0, "learning"
+	case "hard":
+		nextHours := maxIntRepo(24, int(math.Ceil(float64(baseInterval)*1.5)))
+		return time.Duration(nextHours) * time.Hour, nextHours, "review"
+	case "good":
+		nextHours := maxIntRepo(48, baseInterval*2)
+		return time.Duration(nextHours) * time.Hour, nextHours, "review"
+	case "easy":
+		nextHours := maxIntRepo(96, baseInterval*4)
+		return time.Duration(nextHours) * time.Hour, nextHours, "review"
+	default:
+		nextHours := maxIntRepo(48, baseInterval*2)
+		return time.Duration(nextHours) * time.Hour, nextHours, "review"
+	}
+}
+
+func maxIntRepo(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func countFlashcardsForTopicRepo(topicID string) (int, error) {

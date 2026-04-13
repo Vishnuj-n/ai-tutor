@@ -539,33 +539,14 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 		return map[string]interface{}{"error": "rating must be one of again, hard, good, easy"}
 	}
 
-	card, state, err := db.GetFlashcardByID(cardID)
+	card, state, intervalHours, err := db.ApplyFlashcardReview(cardID, rating, time.Now().UTC())
 	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch flashcard: " + err.Error()}
+		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
 	}
 	if card == nil || state == nil {
 		return map[string]interface{}{"error": "flashcard not found"}
 	}
 
-	nextDelay, intervalHours, stage := nextFlashcardSchedule(*state, rating)
-	reviewedAt := time.Now().UTC()
-	dueAt := reviewedAt.Add(nextDelay).Format(time.RFC3339)
-
-	state.Stage = stage
-	state.LastIntervalHours = intervalHours
-	state.LastRating = rating
-	state.LastReviewedAt = reviewedAt.Format(time.RFC3339)
-	if rating == "again" {
-		state.LapseCount++
-	} else {
-		state.SuccessCount++
-	}
-
-	if err := db.UpdateFlashcardReview(card.ID, dueAt, *state); err != nil {
-		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
-	}
-
-	card.DueAt = dueAt
 	return map[string]interface{}{
 		"card":              card,
 		"state":             state,
@@ -701,7 +682,12 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 	totalContentLength := 0
 	sectionCount := 0
 	for _, section := range sections {
-		if sectionCount >= maxSections || totalContentLength >= maxTotalContent {
+		if sectionCount >= maxSections {
+			break
+		}
+
+		remainingBudget := maxTotalContent - totalContentLength
+		if remainingBudget <= 0 {
 			break
 		}
 
@@ -711,11 +697,22 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 			continue
 		}
 
-		if len(content) > maxContentPerSection {
-			runes := []rune(content)
-			if len(runes) > maxContentPerSection {
-				content = string(runes[:maxContentPerSection]) + "..."
-			}
+		runes := []rune(content)
+		allowedRunes := minInt(maxContentPerSection, remainingBudget)
+		if allowedRunes <= 0 {
+			break
+		}
+
+		appendedRunes := len(runes)
+		wasTrimmed := false
+		if appendedRunes > allowedRunes {
+			appendedRunes = allowedRunes
+			wasTrimmed = true
+		}
+
+		content = string(runes[:appendedRunes])
+		if wasTrimmed {
+			content += "..."
 		}
 
 		b.WriteString("[Heading] ")
@@ -724,7 +721,7 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 		b.WriteString(content)
 		b.WriteString("\n---\n")
 
-		totalContentLength += len(content)
+		totalContentLength += appendedRunes
 		sectionCount++
 	}
 
@@ -838,6 +835,13 @@ func nextFlashcardSchedule(state models.FlashcardState, rating string) (time.Dur
 
 func maxInt(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
