@@ -658,6 +658,7 @@ func CreateFlashcards(topicID string, cards []models.Flashcard, states map[strin
 
 	normalizedCards := make([]models.Flashcard, 0, len(cards))
 	for _, card := range cards {
+		card.ID = strings.TrimSpace(card.ID)
 		card.TopicID = strings.TrimSpace(card.TopicID)
 		if card.TopicID == "" {
 			card.TopicID = topicID
@@ -723,6 +724,51 @@ func UpdateFlashcardReview(cardID string, dueAt string, state models.FlashcardSt
 		return fmt.Errorf("due time is required")
 	}
 	return updateFlashcardReviewRepo(cardID, dueAt, state)
+}
+
+// GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.
+// If non-suspended flashcards already exist for the topic, they are returned and didCreate=false.
+// If the topic has no non-suspended flashcards, the provided cards and states are inserted transactionally,
+// and the inserted cards are returned with didCreate=true.
+// This prevents race conditions where multiple concurrent requests both see zero cards.
+func GetOrCreateFlashcardsForTopic(topicID string, cardsIfNotExist []models.Flashcard, statesIfNotExist map[string]models.FlashcardState) ([]models.Flashcard, bool, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, false, fmt.Errorf("topic id is required")
+	}
+
+	if len(cardsIfNotExist) == 0 {
+		return nil, false, fmt.Errorf("at least one flashcard is required to create")
+	}
+	if len(statesIfNotExist) == 0 {
+		return nil, false, fmt.Errorf("flashcard states are required to create")
+	}
+
+	// Validate the cards and states match
+	normalizedCards := make([]models.Flashcard, 0, len(cardsIfNotExist))
+	for _, card := range cardsIfNotExist {
+		card.ID = strings.TrimSpace(card.ID)
+		card.TopicID = strings.TrimSpace(card.TopicID)
+		if card.TopicID == "" {
+			card.TopicID = topicID
+		} else if card.TopicID != topicID {
+			return nil, false, fmt.Errorf("flashcard topic id must match topic id")
+		}
+		card.Prompt = strings.TrimSpace(card.Prompt)
+		card.Answer = strings.TrimSpace(card.Answer)
+		if card.ID == "" {
+			return nil, false, fmt.Errorf("flashcard id is required")
+		}
+		if card.Prompt == "" || card.Answer == "" {
+			return nil, false, fmt.Errorf("flashcard prompt and answer are required")
+		}
+		if _, ok := statesIfNotExist[card.ID]; !ok {
+			return nil, false, fmt.Errorf("flashcard state is required for %s", card.ID)
+		}
+		normalizedCards = append(normalizedCards, card)
+	}
+
+	return getOrCreateFlashcardsForTopicRepo(topicID, normalizedCards, statesIfNotExist)
 }
 
 // CreateNotebook saves a notebook record to the database

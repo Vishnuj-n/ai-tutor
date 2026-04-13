@@ -326,6 +326,7 @@ type flashcardLLMResponse struct {
 }
 
 // GenerateQuiz creates topic-scoped multiple-choice questions and stores them.
+// Enforces exactly 5 questions per generation to keep quizzes consistent.
 func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -356,6 +357,8 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": "quiz generation parsing failed: " + err.Error()}
 	}
+
+	const expectedQuestionCount = 5
 
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
 	for _, q := range parsed.Questions {
@@ -391,8 +394,11 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		})
 	}
 
-	if len(questions) == 0 {
-		return map[string]interface{}{"error": "quiz generation produced no valid questions"}
+	// Enforce exactly the expected number of questions
+	if len(questions) != expectedQuestionCount {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("quiz generation produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
+		}
 	}
 
 	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
@@ -406,6 +412,7 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 }
 
 // GenerateFlashcards creates flashcards for a topic or returns the existing set.
+// Enforces exactly 8 flashcards per generation to keep decks consistent and predictable.
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -414,22 +421,6 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 
 	if a.llmProvider == nil {
 		return map[string]interface{}{"error": "LLM provider not initialized"}
-	}
-
-	existingCount, err := db.CountFlashcardsForTopic(topicID)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to count flashcards: " + err.Error()}
-	}
-	if existingCount > 0 {
-		cards, getErr := db.GetFlashcardsForTopic(topicID, false, "")
-		if getErr != nil {
-			return map[string]interface{}{"error": "failed to load existing flashcards: " + getErr.Error()}
-		}
-		return map[string]interface{}{
-			"topic_id": topicID,
-			"cards":    cards,
-			"existing": true,
-		}
 	}
 
 	content, err := db.GetTopicContent(topicID)
@@ -442,6 +433,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "topic has no sections for flashcard generation"}
 	}
 
+	// Generate flashcard candidates from LLM
 	raw, err := a.llmProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections))
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard generation failed: " + err.Error()}
@@ -452,6 +444,9 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "flashcard generation parsing failed: " + err.Error()}
 	}
 
+	const expectedFlashcardCount = 8
+
+	// Filter valid cards
 	now := time.Now().UTC().Format(time.RFC3339)
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
 	states := make(map[string]models.FlashcardState, len(parsed.Cards))
@@ -481,18 +476,25 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		}
 	}
 
-	if len(cards) == 0 {
-		return map[string]interface{}{"error": "flashcard generation produced no valid cards"}
+	// Enforce exactly 8 cards
+	if len(cards) != expectedFlashcardCount {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("flashcard generation produced %d valid cards; expected exactly %d", len(cards), expectedFlashcardCount),
+		}
 	}
 
-	if err := db.CreateFlashcards(topicID, cards, states); err != nil {
-		return map[string]interface{}{"error": "failed to save flashcards: " + err.Error()}
+	// Use atomic get-or-create to prevent race condition:
+	// If cards already exist for this topic, return them
+	// Otherwise, insert the generated cards transactionally
+	cards, wasExisting, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to persist flashcards: " + err.Error()}
 	}
 
 	return map[string]interface{}{
 		"topic_id": topicID,
 		"cards":    cards,
-		"existing": false,
+		"existing": wasExisting,
 	}
 }
 
@@ -792,30 +794,40 @@ func normalizeQuizAnswer(answer string, options []string) string {
 func nextFlashcardSchedule(state models.FlashcardState, rating string) (time.Duration, int, string) {
 	baseInterval := state.LastIntervalHours
 	if baseInterval <= 0 {
+		// New card (or learning card after "again")
 		switch rating {
 		case "again":
-			return 10 * time.Minute, 1, "learning"
+			// Restart learning after mistake
+			return 10 * time.Minute, 0, "learning"
 		case "hard":
+			// First attempt but hard; give more time to study
 			return 8 * time.Hour, 8, "learning"
 		case "good":
+			// First success; move to review after 1 day
 			return 24 * time.Hour, 24, "review"
 		case "easy":
+			// First and easy; longer spacing
 			return 72 * time.Hour, 72, "review"
 		default:
 			return 24 * time.Hour, 24, "review"
 		}
 	}
 
+	// Card has been reviewed before; use base interval and rating to determine next
 	switch rating {
 	case "again":
-		return 10 * time.Minute, 1, "learning"
+		// Mistake during review: restart learning and reset to 10 min
+		return 10 * time.Minute, 0, "learning"
 	case "hard":
+		// Hard review: extend slightly but stay in/return to learning
 		nextHours := maxInt(24, int(math.Ceil(float64(baseInterval)*1.5)))
 		return time.Duration(nextHours) * time.Hour, nextHours, "review"
 	case "good":
+		// Normal spacing; double the interval
 		nextHours := maxInt(48, baseInterval*2)
 		return time.Duration(nextHours) * time.Hour, nextHours, "review"
 	case "easy":
+		// Good spacing; quadruple the interval
 		nextHours := maxInt(96, baseInterval*4)
 		return time.Duration(nextHours) * time.Hour, nextHours, "review"
 	default:
