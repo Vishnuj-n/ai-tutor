@@ -104,16 +104,30 @@ type Flashcard struct {
 	TopicID   string `json:"topic_id"`
 	Prompt    string `json:"prompt"`
 	Answer    string `json:"answer"`
-	DueAt     string `json:"due_at,omitempty"`
+	DueAt     int64  `json:"due_at,omitempty"`
 	Suspended bool   `json:"suspended"`
 }
 
 // FlashcardState stores the local review scheduler state in fsrs_cards.state_json.
 type FlashcardState struct {
-	Stage             string `json:"stage"`
-	SuccessCount      int    `json:"success_count"`
-	LapseCount        int    `json:"lapse_count"`
-	LastIntervalHours int    `json:"last_interval_hours"`
-	LastRating        string `json:"last_rating"`
-	LastReviewedAt    string `json:"last_reviewed_at"`
+	Stability     float64 `json:"stability"`
+	Difficulty    float64 `json:"difficulty"`
+	ElapsedDays   int     `json:"elapsed_days"`
+	ScheduledDays int     `json:"scheduled_days"`
+	Reps          int     `json:"reps"`
+	Lapses        int     `json:"lapses"`
+	StateCode     int     `json:"state_code"`
+}
+
+// FSRSReviewLog stores generic review events for flashcards and future activity types.
+type FSRSReviewLog struct {
+	ID              string `json:"id"`
+	TopicID         string `json:"topic_id"`
+	ActivityType    string `json:"activity_type"`
+	ReferenceID     string `json:"reference_id"`
+	ReviewedAt      int64  `json:"reviewed_at"`
+	Rating          int    `json:"rating"`
+	ScheduledDays   int    `json:"scheduled_days"`
+	StateBeforeJSON string `json:"state_before_json"`
+	StateAfterJSON  string `json:"state_after_json"`
 }

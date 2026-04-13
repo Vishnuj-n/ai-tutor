@@ -660,14 +660,25 @@ func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected flashcard state pointer, got %#v", reviewResp["state"])
 	}
-	if state.LastRating != "good" {
-		t.Fatalf("expected last rating good, got %#v", state.LastRating)
+	if state.Reps != 1 {
+		t.Fatalf("expected reps=1, got %#v", state.Reps)
 	}
-	if state.LastIntervalHours < 24 {
-		t.Fatalf("expected next interval at least 24 hours, got %d", state.LastIntervalHours)
+	if state.ScheduledDays <= 0 {
+		t.Fatalf("expected scheduled_days to be positive, got %d", state.ScheduledDays)
 	}
 
-	dueCount, err := db.QueryDueReviewCards("9999-01-01T00:00:00Z")
+	card, ok := reviewResp["card"].(*models.Flashcard)
+	if !ok {
+		t.Fatalf("expected flashcard pointer, got %#v", reviewResp["card"])
+	}
+	if card.DueAt <= 0 {
+		t.Fatalf("expected due_at epoch, got %d", card.DueAt)
+	}
+	if _, ok := reviewResp["review_log_id"].(string); !ok {
+		t.Fatalf("expected review_log_id string, got %#v", reviewResp["review_log_id"])
+	}
+
+	dueCount, err := db.QueryDueReviewCards(32503680000)
 	if err != nil {
 		t.Fatalf("QueryDueReviewCards failed: %v", err)
 	}
@@ -683,5 +694,36 @@ func TestRecordFlashcardReviewRejectsInvalidRating(t *testing.T) {
 	resp := app.RecordFlashcardReview("missing-card", "skip")
 	if _, hasErr := resp["error"]; !hasErr {
 		t.Fatalf("expected error for invalid rating, got %#v", resp)
+	}
+}
+
+func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	resp := app.GenerateFlashcards("os-scheduling")
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("generation failed: %v", resp["error"])
+	}
+	cards := resp["cards"].([]models.Flashcard)
+
+	reviewResp := app.RecordFlashcardReview(cards[0].ID, "easy")
+	if _, hasErr := reviewResp["error"]; hasErr {
+		t.Fatalf("review failed: %v", reviewResp["error"])
+	}
+
+	card := reviewResp["card"].(*models.Flashcard)
+	state := reviewResp["state"].(*models.FlashcardState)
+	if card.DueAt <= 0 {
+		t.Fatalf("expected due_at int64 epoch, got %d", card.DueAt)
+	}
+	if state.Stability <= 0 {
+		t.Fatalf("expected stability > 0, got %f", state.Stability)
+	}
+	if state.Difficulty <= 0 {
+		t.Fatalf("expected difficulty > 0, got %f", state.Difficulty)
+	}
+	if state.ScheduledDays <= 0 {
+		t.Fatalf("expected scheduled_days > 0 for easy, got %d", state.ScheduledDays)
 	}
 }

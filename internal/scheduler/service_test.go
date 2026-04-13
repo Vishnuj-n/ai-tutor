@@ -10,7 +10,7 @@ import (
 
 func TestBuildTodayPlanEmptyFallback(t *testing.T) {
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return nil, nil }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
 		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
@@ -37,7 +37,7 @@ func TestBuildTodayPlanEmptyFallback(t *testing.T) {
 
 func TestBuildTodayPlanPrioritizesDueReviews(t *testing.T) {
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 10, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS", "Networks"}, nil }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) {
 			return []models.TopicSummary{
@@ -81,7 +81,7 @@ func TestBuildTodayPlanPrioritizesDueReviews(t *testing.T) {
 
 func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 100, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 100, nil }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS"}, nil }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) {
 			return []models.TopicSummary{
@@ -115,7 +115,7 @@ func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
 
 func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS"}, nil }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
 		WithCountLearnedTopics(func() (int, error) { return 2, nil }),
@@ -145,7 +145,7 @@ func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
 func TestBuildTodayPlanQueryDueReviewCardsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("database connection failed")
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 0, expectedErr }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 0, expectedErr }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return nil, nil }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
 		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
@@ -163,7 +163,7 @@ func TestBuildTodayPlanQueryDueReviewCardsReturnsError(t *testing.T) {
 func TestBuildTodayPlanQueryActiveTopicsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("topics query failed")
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 5, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 5, nil }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return nil, expectedErr }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
 		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
@@ -181,7 +181,7 @@ func TestBuildTodayPlanQueryActiveTopicsReturnsError(t *testing.T) {
 func TestBuildTodayPlanQueryLearningTopicsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("learning topics query failed")
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return []string{}, nil }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, expectedErr }),
 		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
@@ -199,7 +199,7 @@ func TestBuildTodayPlanQueryLearningTopicsReturnsError(t *testing.T) {
 func TestBuildTodayPlanCountLearnedTopicsReturnsError(t *testing.T) {
 	expectedErr := fmt.Errorf("learned topics count failed")
 	svc := New(
-		WithQueryDueReviewCards(func(string) (int, error) { return 0, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryActiveTopics(func(int) ([]string, error) { return []string{}, nil }),
 		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return []models.TopicSummary{}, nil }),
 		WithCountLearnedTopics(func() (int, error) { return 0, expectedErr }),
