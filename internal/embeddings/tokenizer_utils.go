@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	promptTokenizerMu sync.RWMutex
-	promptTokenizer   *tokenizer.Tokenizer
+	promptTokenizerMu    sync.RWMutex
+	promptTokenizer      *tokenizer.Tokenizer
+	tokenizerUnavailable bool
 )
 
 // InitPromptTokenizer initializes shared tokenizer used for prompt budgeting.
@@ -26,6 +27,7 @@ func InitPromptTokenizer(tokenizerPath string) error {
 
 	promptTokenizerMu.Lock()
 	promptTokenizer = tok
+	tokenizerUnavailable = false
 	promptTokenizerMu.Unlock()
 
 	return nil
@@ -80,25 +82,42 @@ func TruncateToTokens(text string, limit int) (string, error) {
 func getPromptTokenizer() *tokenizer.Tokenizer {
 	promptTokenizerMu.RLock()
 	tok := promptTokenizer
+	unavailable := tokenizerUnavailable
 	promptTokenizerMu.RUnlock()
 	if tok != nil {
 		return tok
+	}
+	if unavailable {
+		return nil
+	}
+
+	promptTokenizerMu.Lock()
+	defer promptTokenizerMu.Unlock()
+
+	if promptTokenizer != nil {
+		return promptTokenizer
+	}
+	if tokenizerUnavailable {
+		return nil
 	}
 
 	for _, candidate := range tokenizerPathCandidates() {
 		if _, err := os.Stat(candidate); err != nil {
 			continue
 		}
-		if err := InitPromptTokenizer(candidate); err != nil {
+
+		tok, err := pretrained.FromFile(candidate)
+		if err != nil {
 			log.Printf("failed to initialize prompt tokenizer from %s: %v", candidate, err)
 			continue
 		}
 
-		promptTokenizerMu.RLock()
-		loaded := promptTokenizer
-		promptTokenizerMu.RUnlock()
-		return loaded
+		promptTokenizer = tok
+		tokenizerUnavailable = false
+		return promptTokenizer
 	}
+
+	tokenizerUnavailable = true
 
 	return nil
 }
