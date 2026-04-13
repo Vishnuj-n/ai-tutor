@@ -1,9 +1,12 @@
 package rag
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
@@ -83,12 +86,20 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 		topicTitle = "Topic"
 	}
 
-	prompt, promptParentIDs := buildPrompt(
+	prompt, promptParentIDs, err := buildPrompt(
 		topicTitle,
 		userQuestion,
 		*ctx,
 	)
-	log.Printf("RAG prompt tokens=%d\n%s", countPromptTokens(prompt), prompt)
+	if err != nil {
+		return nil, fmt.Errorf("could not assemble prompt: %w", err)
+	}
+
+	tokens, err := countPromptTokens(prompt)
+	if err != nil {
+		return nil, fmt.Errorf("could not count prompt tokens: %w", err)
+	}
+	log.Printf("RAG prompt assembled: tokens=%d id=%s", tokens, shortPromptID(prompt))
 
 	// Step 7: Call LLM
 	answer, err := p.llm.GenerateAnswer(prompt)
@@ -129,7 +140,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	return result, nil
 }
 
-func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string, []string) {
+func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string, []string, error) {
 	sectionText := ""
 	usedParentIDs := make([]string, 0, len(ctx.ParentIDs))
 	for _, parentID := range ctx.ParentIDs {
@@ -140,33 +151,50 @@ func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string,
 
 		candidate := section + "\n\n"
 		candidatePrompt := formatPrompt(topicTitle, sectionText+candidate, userQuestion)
-		if countPromptTokens(candidatePrompt) <= maxPromptTokens {
+		candidateTokens, err := countPromptTokens(candidatePrompt)
+		if err != nil {
+			return "", nil, err
+		}
+		if candidateTokens <= maxPromptTokens {
 			sectionText += candidate
 			usedParentIDs = append(usedParentIDs, parentID)
 			continue
 		}
 
-		trimmed := trimToTokenBudget(topicTitle, userQuestion, sectionText, candidate, maxPromptTokens)
+		trimmed, err := trimToTokenBudget(topicTitle, userQuestion, sectionText, candidate, maxPromptTokens)
+		if err != nil {
+			return "", nil, err
+		}
 		if trimmed == "" {
 			break
 		}
 
-		originalTokens := countPromptTokens(candidate)
-		trimmedTokens := countPromptTokens(trimmed)
+		originalTokens, err := countPromptTokens(candidate)
+		if err != nil {
+			return "", nil, err
+		}
+		trimmedTokens, err := countPromptTokens(trimmed)
+		if err != nil {
+			return "", nil, err
+		}
 
 		if trimmedTokens == originalTokens || (originalTokens > 0 && float64(trimmedTokens)/float64(originalTokens) >= minUsedSectionRatio) {
 			sectionText += trimmed
 			usedParentIDs = append(usedParentIDs, parentID)
 		}
 
-		if countPromptTokens(formatPrompt(topicTitle, sectionText, userQuestion)) >= maxPromptTokens {
+		currentTokens, err := countPromptTokens(formatPrompt(topicTitle, sectionText, userQuestion))
+		if err != nil {
+			return "", nil, err
+		}
+		if currentTokens >= maxPromptTokens {
 			break
 		}
 	}
 
 	prompt := formatPrompt(topicTitle, sectionText, userQuestion)
 
-	return prompt, usedParentIDs
+	return prompt, usedParentIDs, nil
 }
 
 func formatPrompt(topicTitle, sectionText, userQuestion string) string {
@@ -188,39 +216,65 @@ Student's question: %s
 Answer:`, topicTitle, sectionText, userQuestion)
 }
 
-func trimToTokenBudget(topicTitle, userQuestion, existingSections, candidate string, tokenLimit int) string {
+func trimToTokenBudget(topicTitle, userQuestion, existingSections, candidate string, tokenLimit int) (string, error) {
 	if tokenLimit <= 0 || candidate == "" {
-		return ""
+		return "", nil
 	}
 
 	basePrompt := formatPrompt(topicTitle, existingSections, userQuestion)
-	baseTokens := countPromptTokens(basePrompt)
+	baseTokens, err := countPromptTokens(basePrompt)
+	if err != nil {
+		return "", err
+	}
 	remaining := tokenLimit - baseTokens
 	if remaining <= 0 {
-		return ""
+		return "", nil
 	}
 
-	trimmed := embeddings.TruncateToTokens(candidate, remaining)
+	trimmed, err := embeddings.TruncateToTokens(candidate, remaining)
+	if err != nil {
+		return "", err
+	}
 	if trimmed == "" {
-		return ""
+		return "", nil
 	}
 
-	for countPromptTokens(formatPrompt(topicTitle, existingSections+trimmed, userQuestion)) > tokenLimit {
-		trimmed = dropLastSentence(trimmed)
-		if trimmed == "" {
-			return ""
+	for {
+		trialTokens, err := countPromptTokens(formatPrompt(topicTitle, existingSections+trimmed, userQuestion))
+		if err != nil {
+			return "", err
 		}
+		if trialTokens <= tokenLimit {
+			break
+		}
+
+		next := trimBySentenceOrWhitespace(trimmed)
+		if next == "" {
+			return "", nil
+		}
+		trimmed = next
 	}
 
 	if !endsWithSentenceBoundary(trimmed) {
-		trimmed = dropLastSentence(trimmed)
+		next := dropLastSentence(trimmed)
+		if next == "" {
+			next = trimByWhitespace(trimmed)
+		}
+		if next != "" {
+			trimmed = next
+		}
 	}
 
-	return trimmed
+	return strings.TrimSpace(trimmed), nil
 }
 
-func countPromptTokens(prompt string) int {
+func countPromptTokens(prompt string) (int, error) {
 	return embeddings.CountTokens(prompt)
+}
+
+func shortPromptID(prompt string) string {
+	sum := sha256.Sum256([]byte(prompt))
+	return hex.EncodeToString(sum[:8])
 }
 
 func dropLastSentence(text string) string {
@@ -239,6 +293,53 @@ func dropLastSentence(text string) string {
 		case '.', '!', '?':
 			return strings.TrimSpace(text[:i+1])
 		}
+	}
+
+	return ""
+}
+
+func trimByWhitespace(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	lastSpace := -1
+	for i, r := range text {
+		if unicode.IsSpace(r) {
+			lastSpace = i
+		}
+	}
+	if lastSpace <= 0 {
+		return ""
+	}
+
+	trimmed := strings.TrimSpace(text[:lastSpace])
+	if trimmed == text {
+		return ""
+	}
+
+	return trimmed
+}
+
+func trimBySentenceOrWhitespace(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	if endsWithSentenceBoundary(text) {
+		if sentenceTrim := dropLastSentence(text); sentenceTrim != "" && sentenceTrim != text {
+			return sentenceTrim
+		}
+	}
+
+	if wsTrim := trimByWhitespace(text); wsTrim != "" && wsTrim != text {
+		return wsTrim
+	}
+
+	if sentenceTrim := dropLastSentence(text); sentenceTrim != "" && sentenceTrim != text {
+		return sentenceTrim
 	}
 
 	return ""

@@ -1,6 +1,7 @@
 package embeddings
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -31,51 +32,49 @@ func InitPromptTokenizer(tokenizerPath string) error {
 }
 
 // CountTokens counts tokens using configured tokenizer.
-func CountTokens(text string) int {
+func CountTokens(text string) (int, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return 0
+		return 0, nil
 	}
 
 	tok := getPromptTokenizer()
 	if tok == nil {
-		return len([]byte(text))
+		return 0, fmt.Errorf("prompt tokenizer not initialized")
 	}
 
 	enc, err := tok.EncodeSingle(text, true)
 	if err != nil {
-		log.Printf("tokenizer encode failed in CountTokens: %v", err)
-		return len([]byte(text))
+		return 0, fmt.Errorf("tokenizer encode failed in CountTokens: %w", err)
 	}
 
-	return len(enc.Ids)
+	return len(enc.Ids), nil
 }
 
 // TruncateToTokens trims text to token limit, preferring clean sentence boundaries.
-func TruncateToTokens(text string, limit int) string {
+func TruncateToTokens(text string, limit int) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" || limit <= 0 {
-		return ""
+		return "", nil
 	}
 
 	tok := getPromptTokenizer()
 	if tok == nil {
-		return truncateFallback(text, limit)
+		return "", fmt.Errorf("prompt tokenizer not initialized")
 	}
 
 	enc, err := tok.EncodeSingle(text, true)
 	if err != nil {
-		log.Printf("tokenizer encode failed in TruncateToTokens: %v", err)
-		return truncateFallback(text, limit)
+		return "", fmt.Errorf("tokenizer encode failed in TruncateToTokens: %w", err)
 	}
 
 	if len(enc.Ids) <= limit {
-		return text
+		return text, nil
 	}
 
 	decoded := tok.Decode(enc.Ids[:limit], true)
 
-	return trimToSentenceBoundary(decoded)
+	return trimToSentenceBoundary(decoded), nil
 }
 
 func getPromptTokenizer() *tokenizer.Tokenizer {
@@ -143,17 +142,4 @@ func trimToSentenceBoundary(text string) string {
 	}
 
 	return text
-}
-
-func truncateFallback(text string, limit int) string {
-	if limit <= 0 {
-		return ""
-	}
-
-	runes := []rune(text)
-	if len(runes) <= limit {
-		return strings.TrimSpace(text)
-	}
-
-	return trimToSentenceBoundary(string(runes[:limit]))
 }
