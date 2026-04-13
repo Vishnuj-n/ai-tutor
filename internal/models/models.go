@@ -97,3 +97,23 @@ type QuizScore struct {
 	UserAnswer    string `json:"user_answer"`
 	SourceHeading string `json:"source_heading,omitempty"`
 }
+
+// Flashcard is a persisted review card scoped to one topic.
+type Flashcard struct {
+	ID        string `json:"id"`
+	TopicID   string `json:"topic_id"`
+	Prompt    string `json:"prompt"`
+	Answer    string `json:"answer"`
+	DueAt     string `json:"due_at,omitempty"`
+	Suspended bool   `json:"suspended"`
+}
+
+// FlashcardState stores the local review scheduler state in fsrs_cards.state_json.
+type FlashcardState struct {
+	Stage             string `json:"stage"`
+	SuccessCount      int    `json:"success_count"`
+	LapseCount        int    `json:"lapse_count"`
+	LastIntervalHours int    `json:"last_interval_hours"`
+	LastRating        string `json:"last_rating"`
+	LastReviewedAt    string `json:"last_reviewed_at"`
+}

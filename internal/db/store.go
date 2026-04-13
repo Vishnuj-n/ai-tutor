@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"ai-tutor/internal/models"
 
@@ -244,6 +245,14 @@ func createTables() error {
 	`
 
 	_, err := conn.Exec(schema)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_fsrs_cards_topic_prompt
+		ON fsrs_cards(topic_id, prompt)
+	`)
 	return err
 }
 
@@ -641,6 +650,150 @@ func CountLearnedTopics() (int, error) {
 		WHERE status = 'learned'
 	`).Scan(&count)
 	return count, err
+}
+
+// CreateFlashcards stores a new set of flashcards for one topic.
+func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if len(cards) == 0 {
+		return fmt.Errorf("at least one flashcard is required")
+	}
+	if len(states) == 0 {
+		return fmt.Errorf("flashcard states are required")
+	}
+
+	normalizedCards, err := normalizeValidateFlashcards(topicID, cards, states)
+	if err != nil {
+		return err
+	}
+
+	return createFlashcardsRepo(normalizedCards, states)
+}
+
+// CountFlashcardsForTopic returns how many flashcards exist for a topic.
+func CountFlashcardsForTopic(topicID string) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
+	return countFlashcardsForTopicRepo(topicID)
+}
+
+// GetFlashcardsForTopic returns topic-scoped flashcards, optionally only those due now.
+func GetFlashcardsForTopic(topicID string, dueOnly bool, now string) ([]models.Flashcard, error) {
+	topicID = strings.TrimSpace(topicID)
+	now = strings.TrimSpace(now)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if dueOnly && now == "" {
+		return nil, fmt.Errorf("current time is required when filtering due flashcards")
+	}
+	return getFlashcardsForTopicRepo(topicID, dueOnly, now)
+}
+
+// GetFlashcardByID returns one flashcard and its scheduler state.
+func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return nil, nil, fmt.Errorf("flashcard id is required")
+	}
+	return getFlashcardByIDRepo(cardID)
+}
+
+// UpdateFlashcardReview updates scheduling state after a review grade.
+func UpdateFlashcardReview(cardID string, dueAt string, state models.FlashcardState) error {
+	cardID = strings.TrimSpace(cardID)
+	dueAt = strings.TrimSpace(dueAt)
+	if cardID == "" {
+		return fmt.Errorf("flashcard id is required")
+	}
+	if dueAt == "" {
+		return fmt.Errorf("due time is required")
+	}
+	return updateFlashcardReviewRepo(cardID, dueAt, state)
+}
+
+// ApplyFlashcardReview atomically reads current state, applies rating, and persists new state.
+// Returns updated card, updated state, and next interval in hours.
+func ApplyFlashcardReview(cardID string, rating string, reviewedAt time.Time) (*models.Flashcard, *models.FlashcardState, int, error) {
+	cardID = strings.TrimSpace(cardID)
+	rating = strings.ToLower(strings.TrimSpace(rating))
+	if cardID == "" {
+		return nil, nil, 0, fmt.Errorf("flashcard id is required")
+	}
+	allowedRatings := map[string]struct{}{
+		"again": {},
+		"hard":  {},
+		"good":  {},
+		"easy":  {},
+	}
+	if _, ok := allowedRatings[rating]; !ok {
+		return nil, nil, 0, fmt.Errorf("rating must be one of again, hard, good, easy")
+	}
+	if reviewedAt.IsZero() {
+		reviewedAt = time.Now().UTC()
+	} else {
+		reviewedAt = reviewedAt.UTC()
+	}
+
+	return applyFlashcardReviewRepo(cardID, rating, reviewedAt)
+}
+
+// GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.
+// If non-suspended flashcards already exist for the topic, they are returned and existing=true.
+// If the topic has no non-suspended flashcards, the provided cards and states are inserted transactionally,
+// and the inserted cards are returned with existing=false.
+// This prevents race conditions where multiple concurrent requests both see zero cards.
+func GetOrCreateFlashcardsForTopic(topicID string, cardsIfNotExist []models.Flashcard, statesIfNotExist map[string]models.FlashcardState) ([]models.Flashcard, bool, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, false, fmt.Errorf("topic id is required")
+	}
+
+	if len(cardsIfNotExist) == 0 {
+		return nil, false, fmt.Errorf("at least one flashcard is required to create")
+	}
+	if len(statesIfNotExist) == 0 {
+		return nil, false, fmt.Errorf("flashcard states are required to create")
+	}
+
+	normalizedCards, err := normalizeValidateFlashcards(topicID, cardsIfNotExist, statesIfNotExist)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return getOrCreateFlashcardsForTopicRepo(topicID, normalizedCards, statesIfNotExist)
+}
+
+func normalizeValidateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) ([]models.Flashcard, error) {
+	normalizedCards := make([]models.Flashcard, 0, len(cards))
+	for _, card := range cards {
+		card.ID = strings.TrimSpace(card.ID)
+		card.TopicID = strings.TrimSpace(card.TopicID)
+		if card.TopicID == "" {
+			card.TopicID = topicID
+		} else if card.TopicID != topicID {
+			return nil, fmt.Errorf("flashcard topic id must match topic id")
+		}
+		card.Prompt = strings.TrimSpace(card.Prompt)
+		card.Answer = strings.TrimSpace(card.Answer)
+		if card.ID == "" {
+			return nil, fmt.Errorf("flashcard id is required")
+		}
+		if card.Prompt == "" || card.Answer == "" {
+			return nil, fmt.Errorf("flashcard prompt and answer are required")
+		}
+		if _, ok := states[card.ID]; !ok {
+			return nil, fmt.Errorf("flashcard state is required for %s", card.ID)
+		}
+		normalizedCards = append(normalizedCards, card)
+	}
+
+	return normalizedCards, nil
 }
 
 // CreateNotebook saves a notebook record to the database
