@@ -245,6 +245,14 @@ func createTables() error {
 	`
 
 	_, err := conn.Exec(schema)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_fsrs_cards_topic_prompt
+		ON fsrs_cards(topic_id, prompt)
+	`)
 	return err
 }
 
@@ -657,27 +665,9 @@ func CreateFlashcards(topicID string, cards []models.Flashcard, states map[strin
 		return fmt.Errorf("flashcard states are required")
 	}
 
-	normalizedCards := make([]models.Flashcard, 0, len(cards))
-	for _, card := range cards {
-		card.ID = strings.TrimSpace(card.ID)
-		card.TopicID = strings.TrimSpace(card.TopicID)
-		if card.TopicID == "" {
-			card.TopicID = topicID
-		} else if card.TopicID != topicID {
-			return fmt.Errorf("flashcard topic id must match topic id")
-		}
-		card.Prompt = strings.TrimSpace(card.Prompt)
-		card.Answer = strings.TrimSpace(card.Answer)
-		if card.ID == "" {
-			return fmt.Errorf("flashcard id is required")
-		}
-		if card.Prompt == "" || card.Answer == "" {
-			return fmt.Errorf("flashcard prompt and answer are required")
-		}
-		if _, ok := states[card.ID]; !ok {
-			return fmt.Errorf("flashcard state is required for %s", card.ID)
-		}
-		normalizedCards = append(normalizedCards, card)
+	normalizedCards, err := normalizeValidateFlashcards(topicID, cards, states)
+	if err != nil {
+		return err
 	}
 
 	return createFlashcardsRepo(normalizedCards, states)
@@ -735,8 +725,14 @@ func ApplyFlashcardReview(cardID string, rating string, reviewedAt time.Time) (*
 	if cardID == "" {
 		return nil, nil, 0, fmt.Errorf("flashcard id is required")
 	}
-	if rating == "" {
-		return nil, nil, 0, fmt.Errorf("rating is required")
+	allowedRatings := map[string]struct{}{
+		"again": {},
+		"hard":  {},
+		"good":  {},
+		"easy":  {},
+	}
+	if _, ok := allowedRatings[rating]; !ok {
+		return nil, nil, 0, fmt.Errorf("rating must be one of again, hard, good, easy")
 	}
 	if reviewedAt.IsZero() {
 		reviewedAt = time.Now().UTC()
@@ -765,31 +761,39 @@ func GetOrCreateFlashcardsForTopic(topicID string, cardsIfNotExist []models.Flas
 		return nil, false, fmt.Errorf("flashcard states are required to create")
 	}
 
-	// Validate the cards and states match
-	normalizedCards := make([]models.Flashcard, 0, len(cardsIfNotExist))
-	for _, card := range cardsIfNotExist {
+	normalizedCards, err := normalizeValidateFlashcards(topicID, cardsIfNotExist, statesIfNotExist)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return getOrCreateFlashcardsForTopicRepo(topicID, normalizedCards, statesIfNotExist)
+}
+
+func normalizeValidateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) ([]models.Flashcard, error) {
+	normalizedCards := make([]models.Flashcard, 0, len(cards))
+	for _, card := range cards {
 		card.ID = strings.TrimSpace(card.ID)
 		card.TopicID = strings.TrimSpace(card.TopicID)
 		if card.TopicID == "" {
 			card.TopicID = topicID
 		} else if card.TopicID != topicID {
-			return nil, false, fmt.Errorf("flashcard topic id must match topic id")
+			return nil, fmt.Errorf("flashcard topic id must match topic id")
 		}
 		card.Prompt = strings.TrimSpace(card.Prompt)
 		card.Answer = strings.TrimSpace(card.Answer)
 		if card.ID == "" {
-			return nil, false, fmt.Errorf("flashcard id is required")
+			return nil, fmt.Errorf("flashcard id is required")
 		}
 		if card.Prompt == "" || card.Answer == "" {
-			return nil, false, fmt.Errorf("flashcard prompt and answer are required")
+			return nil, fmt.Errorf("flashcard prompt and answer are required")
 		}
-		if _, ok := statesIfNotExist[card.ID]; !ok {
-			return nil, false, fmt.Errorf("flashcard state is required for %s", card.ID)
+		if _, ok := states[card.ID]; !ok {
+			return nil, fmt.Errorf("flashcard state is required for %s", card.ID)
 		}
 		normalizedCards = append(normalizedCards, card)
 	}
 
-	return getOrCreateFlashcardsForTopicRepo(topicID, normalizedCards, statesIfNotExist)
+	return normalizedCards, nil
 }
 
 // CreateNotebook saves a notebook record to the database

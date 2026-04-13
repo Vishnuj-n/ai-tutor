@@ -337,6 +337,29 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "LLM provider not initialized"}
 	}
 
+	existingCards, err := db.GetFlashcardsForTopic(topicID, false, "")
+	if err != nil {
+		return map[string]interface{}{"error": "failed to load existing flashcards: " + err.Error()}
+	}
+	if len(existingCards) > 0 {
+		existingStates := make(map[string]models.FlashcardState, len(existingCards))
+		for _, card := range existingCards {
+			_, state, getErr := db.GetFlashcardByID(card.ID)
+			if getErr != nil {
+				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
+			}
+			if state != nil {
+				existingStates[card.ID] = *state
+			}
+		}
+		return map[string]interface{}{
+			"topic_id": topicID,
+			"cards":    existingCards,
+			"states":   existingStates,
+			"existing": true,
+		}
+	}
+
 	content, err := db.GetTopicContent(topicID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to fetch topic content: " + err.Error()}
@@ -494,6 +517,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	return map[string]interface{}{
 		"topic_id": topicID,
 		"cards":    cards,
+		"states":   states,
 		"existing": wasExisting,
 	}
 }
@@ -698,6 +722,7 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 		}
 
 		runes := []rune(content)
+		ellipsisRunes := len([]rune("..."))
 		allowedRunes := minInt(maxContentPerSection, remainingBudget)
 		if allowedRunes <= 0 {
 			break
@@ -706,7 +731,13 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 		appendedRunes := len(runes)
 		wasTrimmed := false
 		if appendedRunes > allowedRunes {
-			appendedRunes = allowedRunes
+			if allowedRunes <= ellipsisRunes {
+				break
+			}
+			appendedRunes = allowedRunes - ellipsisRunes
+			if appendedRunes <= 0 {
+				break
+			}
 			wasTrimmed = true
 		}
 
@@ -722,6 +753,9 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 		b.WriteString("\n---\n")
 
 		totalContentLength += appendedRunes
+		if wasTrimmed {
+			totalContentLength += ellipsisRunes
+		}
 		sectionCount++
 	}
 
@@ -786,58 +820,6 @@ func normalizeQuizAnswer(answer string, options []string) string {
 	}
 
 	return ans
-}
-
-func nextFlashcardSchedule(state models.FlashcardState, rating string) (time.Duration, int, string) {
-	baseInterval := state.LastIntervalHours
-	if baseInterval <= 0 {
-		// New card (or learning card after "again")
-		switch rating {
-		case "again":
-			// Restart learning after mistake
-			return 10 * time.Minute, 0, "learning"
-		case "hard":
-			// First attempt but hard; give more time to study
-			return 8 * time.Hour, 8, "learning"
-		case "good":
-			// First success; move to review after 1 day
-			return 24 * time.Hour, 24, "review"
-		case "easy":
-			// First and easy; longer spacing
-			return 72 * time.Hour, 72, "review"
-		default:
-			return 24 * time.Hour, 24, "review"
-		}
-	}
-
-	// Card has been reviewed before; use base interval and rating to determine next
-	switch rating {
-	case "again":
-		// Mistake during review: restart learning and reset to 10 min
-		return 10 * time.Minute, 0, "learning"
-	case "hard":
-		// Hard review: extend slightly but stay in/return to learning
-		nextHours := maxInt(24, int(math.Ceil(float64(baseInterval)*1.5)))
-		return time.Duration(nextHours) * time.Hour, nextHours, "review"
-	case "good":
-		// Normal spacing; double the interval
-		nextHours := maxInt(48, baseInterval*2)
-		return time.Duration(nextHours) * time.Hour, nextHours, "review"
-	case "easy":
-		// Good spacing; quadruple the interval
-		nextHours := maxInt(96, baseInterval*4)
-		return time.Duration(nextHours) * time.Hour, nextHours, "review"
-	default:
-		nextHours := maxInt(48, baseInterval*2)
-		return time.Duration(nextHours) * time.Hour, nextHours, "review"
-	}
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func minInt(a, b int) int {
