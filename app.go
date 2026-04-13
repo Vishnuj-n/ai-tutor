@@ -316,7 +316,17 @@ type quizLLMResponse struct {
 	Questions []quizLLMQuestion `json:"questions"`
 }
 
+type flashcardLLMCard struct {
+	Prompt string `json:"prompt"`
+	Answer string `json:"answer"`
+}
+
+type flashcardLLMResponse struct {
+	Cards []flashcardLLMCard `json:"cards"`
+}
+
 // GenerateQuiz creates topic-scoped multiple-choice questions and stores them.
+// Enforces exactly 5 questions per generation to keep quizzes consistent.
 func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -325,6 +335,29 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 
 	if a.llmProvider == nil {
 		return map[string]interface{}{"error": "LLM provider not initialized"}
+	}
+
+	existingCards, err := db.GetFlashcardsForTopic(topicID, false, "")
+	if err != nil {
+		return map[string]interface{}{"error": "failed to load existing flashcards: " + err.Error()}
+	}
+	if len(existingCards) > 0 {
+		existingStates := make(map[string]models.FlashcardState, len(existingCards))
+		for _, card := range existingCards {
+			_, state, getErr := db.GetFlashcardByID(card.ID)
+			if getErr != nil {
+				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
+			}
+			if state != nil {
+				existingStates[card.ID] = *state
+			}
+		}
+		return map[string]interface{}{
+			"topic_id": topicID,
+			"cards":    existingCards,
+			"states":   existingStates,
+			"existing": true,
+		}
 	}
 
 	content, err := db.GetTopicContent(topicID)
@@ -347,6 +380,8 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": "quiz generation parsing failed: " + err.Error()}
 	}
+
+	const expectedQuestionCount = 5
 
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
 	for _, q := range parsed.Questions {
@@ -382,8 +417,11 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		})
 	}
 
-	if len(questions) == 0 {
-		return map[string]interface{}{"error": "quiz generation produced no valid questions"}
+	// Enforce exactly the expected number of questions
+	if len(questions) != expectedQuestionCount {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("quiz generation produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
+		}
 	}
 
 	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
@@ -393,6 +431,150 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	return map[string]interface{}{
 		"topic_id":  topicID,
 		"questions": questions,
+	}
+}
+
+// GenerateFlashcards creates flashcards for a topic or returns the existing set.
+// Enforces exactly 8 flashcards per generation to keep decks consistent and predictable.
+func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return map[string]interface{}{"error": "topic ID is required"}
+	}
+
+	if a.llmProvider == nil {
+		return map[string]interface{}{"error": "LLM provider not initialized"}
+	}
+
+	content, err := db.GetTopicContent(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch topic content: " + err.Error()}
+	}
+
+	sections, ok := content["sections"].([]map[string]interface{})
+	if !ok || len(sections) == 0 {
+		return map[string]interface{}{"error": "topic has no sections for flashcard generation"}
+	}
+
+	// Generate flashcard candidates from LLM
+	raw, err := a.llmProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections))
+	if err != nil {
+		return map[string]interface{}{"error": "flashcard generation failed: " + err.Error()}
+	}
+
+	parsed, err := parseFlashcardLLMResponse(raw)
+	if err != nil {
+		return map[string]interface{}{"error": "flashcard generation parsing failed: " + err.Error()}
+	}
+
+	const expectedFlashcardCount = 8
+
+	// Filter valid cards
+	now := time.Now().UTC().Format(time.RFC3339)
+	cards := make([]models.Flashcard, 0, len(parsed.Cards))
+	states := make(map[string]models.FlashcardState, len(parsed.Cards))
+	for _, candidate := range parsed.Cards {
+		prompt := strings.TrimSpace(candidate.Prompt)
+		answer := strings.TrimSpace(candidate.Answer)
+		if prompt == "" || answer == "" {
+			continue
+		}
+
+		id := uuid.NewString()
+		cards = append(cards, models.Flashcard{
+			ID:        id,
+			TopicID:   topicID,
+			Prompt:    prompt,
+			Answer:    answer,
+			DueAt:     now,
+			Suspended: false,
+		})
+		states[id] = models.FlashcardState{
+			Stage:             "new",
+			SuccessCount:      0,
+			LapseCount:        0,
+			LastIntervalHours: 0,
+			LastRating:        "",
+			LastReviewedAt:    "",
+		}
+	}
+
+	// Enforce exactly 8 cards
+	if len(cards) != expectedFlashcardCount {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("flashcard generation produced %d valid cards; expected exactly %d", len(cards), expectedFlashcardCount),
+		}
+	}
+
+	// Use atomic get-or-create to prevent race condition:
+	// If cards already exist for this topic, return them
+	// Otherwise, insert the generated cards transactionally
+	cards, wasExisting, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to persist flashcards: " + err.Error()}
+	}
+
+	return map[string]interface{}{
+		"topic_id": topicID,
+		"cards":    cards,
+		"states":   states,
+		"existing": wasExisting,
+	}
+}
+
+// GetFlashcards returns topic-scoped flashcards, optionally filtered to due cards only.
+func (a *App) GetFlashcards(topicID string, dueOnly bool) map[string]interface{} {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return map[string]interface{}{"error": "topic ID is required"}
+	}
+
+	now := ""
+	if dueOnly {
+		now = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	cards, err := db.GetFlashcardsForTopic(topicID, dueOnly, now)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch flashcards: " + err.Error()}
+	}
+
+	return map[string]interface{}{
+		"topic_id": topicID,
+		"cards":    cards,
+	}
+}
+
+// RecordFlashcardReview applies a review rating and schedules the next due date.
+func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]interface{} {
+	cardID = strings.TrimSpace(cardID)
+	rating = strings.ToLower(strings.TrimSpace(rating))
+	if cardID == "" {
+		return map[string]interface{}{"error": "flashcard ID is required"}
+	}
+
+	allowedRatings := map[string]struct{}{
+		"again": {},
+		"hard":  {},
+		"good":  {},
+		"easy":  {},
+	}
+	if _, ok := allowedRatings[rating]; !ok {
+		return map[string]interface{}{"error": "rating must be one of again, hard, good, easy"}
+	}
+
+	card, state, intervalHours, err := db.ApplyFlashcardReview(cardID, rating, time.Now().UTC())
+	if err != nil {
+		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
+	}
+	if card == nil || state == nil {
+		return map[string]interface{}{"error": "flashcard not found"}
+	}
+
+	return map[string]interface{}{
+		"card":              card,
+		"state":             state,
+		"next_interval_hrs": intervalHours,
 	}
 }
 
@@ -506,6 +688,80 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	return b.String()
 }
 
+func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString("You are an AI tutor flashcard generator. Return STRICT JSON only. No markdown.\n")
+	b.WriteString("Generate exactly 8 concise flashcards for topic: ")
+	b.WriteString(topicID)
+	b.WriteString("\nJSON format: {\"cards\":[{\"prompt\":string,\"answer\":string}]}\n")
+	b.WriteString("Rules: one fact per card; prompts should test recall; answers must be short and grounded in the source text.\n")
+	b.WriteString("Source sections:\n")
+
+	const (
+		maxSections          = 5
+		maxContentPerSection = 500
+		maxTotalContent      = 2500
+	)
+
+	totalContentLength := 0
+	sectionCount := 0
+	for _, section := range sections {
+		if sectionCount >= maxSections {
+			break
+		}
+
+		remainingBudget := maxTotalContent - totalContentLength
+		if remainingBudget <= 0 {
+			break
+		}
+
+		heading, _ := section["heading"].(string)
+		content, _ := section["content"].(string)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		runes := []rune(content)
+		ellipsisRunes := len([]rune("..."))
+		allowedRunes := minInt(maxContentPerSection, remainingBudget)
+		if allowedRunes <= 0 {
+			break
+		}
+
+		appendedRunes := len(runes)
+		wasTrimmed := false
+		if appendedRunes > allowedRunes {
+			if allowedRunes <= ellipsisRunes {
+				break
+			}
+			appendedRunes = allowedRunes - ellipsisRunes
+			if appendedRunes <= 0 {
+				break
+			}
+			wasTrimmed = true
+		}
+
+		content = string(runes[:appendedRunes])
+		if wasTrimmed {
+			content += "..."
+		}
+
+		b.WriteString("[Heading] ")
+		b.WriteString(heading)
+		b.WriteString("\n")
+		b.WriteString(content)
+		b.WriteString("\n---\n")
+
+		totalContentLength += appendedRunes
+		if wasTrimmed {
+			totalContentLength += ellipsisRunes
+		}
+		sectionCount++
+	}
+
+	return b.String()
+}
+
 func parseQuizLLMResponse(raw string) (*quizLLMResponse, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -528,6 +784,28 @@ func parseQuizLLMResponse(raw string) (*quizLLMResponse, error) {
 	return &out, nil
 }
 
+func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty LLM response")
+	}
+
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start >= 0 && end > start {
+		raw = raw[start : end+1]
+	}
+
+	var out flashcardLLMResponse
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	if len(out.Cards) == 0 {
+		return nil, fmt.Errorf("no cards in LLM response")
+	}
+	return &out, nil
+}
+
 func normalizeQuizAnswer(answer string, options []string) string {
 	ans := strings.TrimSpace(strings.ToLower(answer))
 	if ans == "" {
@@ -542,6 +820,13 @@ func normalizeQuizAnswer(answer string, options []string) string {
 	}
 
 	return ans
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func resolveAppDir() (string, error) {
