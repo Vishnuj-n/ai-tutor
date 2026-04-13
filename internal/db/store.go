@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"ai-tutor/internal/models"
 
@@ -726,10 +727,30 @@ func UpdateFlashcardReview(cardID string, dueAt string, state models.FlashcardSt
 	return updateFlashcardReviewRepo(cardID, dueAt, state)
 }
 
+// ApplyFlashcardReview atomically reads current state, applies rating, and persists new state.
+// Returns updated card, updated state, and next interval in hours.
+func ApplyFlashcardReview(cardID string, rating string, reviewedAt time.Time) (*models.Flashcard, *models.FlashcardState, int, error) {
+	cardID = strings.TrimSpace(cardID)
+	rating = strings.ToLower(strings.TrimSpace(rating))
+	if cardID == "" {
+		return nil, nil, 0, fmt.Errorf("flashcard id is required")
+	}
+	if rating == "" {
+		return nil, nil, 0, fmt.Errorf("rating is required")
+	}
+	if reviewedAt.IsZero() {
+		reviewedAt = time.Now().UTC()
+	} else {
+		reviewedAt = reviewedAt.UTC()
+	}
+
+	return applyFlashcardReviewRepo(cardID, rating, reviewedAt)
+}
+
 // GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.
-// If non-suspended flashcards already exist for the topic, they are returned and didCreate=false.
+// If non-suspended flashcards already exist for the topic, they are returned and existing=true.
 // If the topic has no non-suspended flashcards, the provided cards and states are inserted transactionally,
-// and the inserted cards are returned with didCreate=true.
+// and the inserted cards are returned with existing=false.
 // This prevents race conditions where multiple concurrent requests both see zero cards.
 func GetOrCreateFlashcardsForTopic(topicID string, cardsIfNotExist []models.Flashcard, statesIfNotExist map[string]models.FlashcardState) ([]models.Flashcard, bool, error) {
 	topicID = strings.TrimSpace(topicID)
