@@ -166,7 +166,14 @@ func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string,
 			return "", nil, err
 		}
 		if trimmed == "" {
-			break
+			currentTokens, err := countPromptTokens(formatPrompt(topicTitle, sectionText, userQuestion))
+			if err != nil {
+				return "", nil, err
+			}
+			if maxPromptTokens-currentTokens <= 0 {
+				break
+			}
+			continue
 		}
 
 		originalTokens, err := countPromptTokens(candidate)
@@ -179,7 +186,7 @@ func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string,
 		}
 
 		if trimmedTokens == originalTokens || (originalTokens > 0 && float64(trimmedTokens)/float64(originalTokens) >= minUsedSectionRatio) {
-			sectionText += trimmed
+			sectionText += strings.TrimRight(trimmed, "\n") + "\n\n"
 			usedParentIDs = append(usedParentIDs, parentID)
 		}
 
