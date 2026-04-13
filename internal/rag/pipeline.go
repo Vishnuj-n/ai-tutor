@@ -99,7 +99,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	if err != nil {
 		return nil, fmt.Errorf("could not count prompt tokens: %w", err)
 	}
-	log.Printf("RAG prompt assembled: tokens=%d id=%s", tokens, shortPromptID(prompt))
+	log.Printf("RAG prompt prepared topic_id=%s tokens=%d parent_sections=%d id=%s", topicID, tokens, len(promptParentIDs), shortPromptID(prompt))
 
 	// Step 7: Call LLM
 	answer, err := p.llm.GenerateAnswer(prompt)

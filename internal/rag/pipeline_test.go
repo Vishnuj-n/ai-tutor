@@ -111,3 +111,56 @@ func TestBuildPromptContainsInsufficientContextGuardrail(t *testing.T) {
 		t.Fatalf("prompt missing guardrail phrase, prompt=%s", prompt)
 	}
 }
+
+func TestTrimToTokenBudgetNoSentencePunctuationStillKeepsContent(t *testing.T) {
+	initPromptTokenizerForTests(t)
+
+	topic := "Operating Systems"
+	question := "Explain scheduling"
+	existing := ""
+	candidate := "Heading One\n- bullet alpha\n- bullet beta\n- bullet gamma"
+
+	baseTokens, err := countPromptTokens(formatPrompt(topic, existing, question))
+	if err != nil {
+		t.Fatalf("count base prompt tokens failed: %v", err)
+	}
+
+	tokenLimit := baseTokens + 12
+	trimmed, err := trimToTokenBudget(topic, question, existing, candidate, tokenLimit)
+	if err != nil {
+		t.Fatalf("trimToTokenBudget failed: %v", err)
+	}
+	if strings.TrimSpace(trimmed) == "" {
+		t.Fatalf("expected non-empty trimmed content for punctuation-free candidate")
+	}
+
+	finalTokens, err := countPromptTokens(formatPrompt(topic, existing+trimmed, question))
+	if err != nil {
+		t.Fatalf("count final prompt tokens failed: %v", err)
+	}
+	if finalTokens > tokenLimit {
+		t.Fatalf("trimmed prompt exceeded token limit: got=%d limit=%d", finalTokens, tokenLimit)
+	}
+}
+
+func TestTrimToTokenBudgetSmallRemainingBudgetReturnsEmpty(t *testing.T) {
+	initPromptTokenizerForTests(t)
+
+	topic := "Operating Systems"
+	question := "Explain scheduling"
+	existing := ""
+	candidate := "Some candidate context that should not fit"
+
+	baseTokens, err := countPromptTokens(formatPrompt(topic, existing, question))
+	if err != nil {
+		t.Fatalf("count base prompt tokens failed: %v", err)
+	}
+
+	trimmed, err := trimToTokenBudget(topic, question, existing, candidate, baseTokens)
+	if err != nil {
+		t.Fatalf("trimToTokenBudget failed: %v", err)
+	}
+	if trimmed != "" {
+		t.Fatalf("expected empty trim when no remaining budget, got=%q", trimmed)
+	}
+}
