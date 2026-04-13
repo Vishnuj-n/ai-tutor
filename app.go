@@ -347,26 +347,15 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "LLM provider not initialized"}
 	}
 
-	existingCards, err := db.GetFlashcardsForTopic(topicID, false, 0)
+	existingQuestions, err := db.GetQuestionsForTopic(topicID)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to load existing flashcards: " + err.Error()}
+		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
 	}
-	if len(existingCards) > 0 {
-		existingStates := make(map[string]models.FlashcardState, len(existingCards))
-		for _, card := range existingCards {
-			_, state, getErr := db.GetFlashcardByID(card.ID)
-			if getErr != nil {
-				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
-			}
-			if state != nil {
-				existingStates[card.ID] = *state
-			}
-		}
+	if len(existingQuestions) > 0 {
 		return map[string]interface{}{
-			"topic_id": topicID,
-			"cards":    existingCards,
-			"states":   existingStates,
-			"existing": true,
+			"topic_id":  topicID,
+			"questions": existingQuestions,
+			"existing":  true,
 		}
 	}
 
@@ -586,9 +575,16 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 		return map[string]interface{}{"error": "failed to encode flashcard state: " + err.Error()}
 	}
 
-	nextState := scheduler.NextFSRSState(*state, ratingCode)
 	now := time.Now().Unix()
-	dueAt := now + int64(nextState.ScheduledDays*24*60*60)
+	elapsedSeconds := now - card.DueAt
+	elapsedDays := 0
+	if elapsedSeconds > 0 {
+		elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+	}
+	state.ElapsedDays = elapsedDays
+
+	nextState := scheduler.NextFSRSState(*state, ratingCode)
+	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {
 		dueAt = now
 	}

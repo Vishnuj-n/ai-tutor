@@ -13,8 +13,9 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 	if err != nil {
 		return err
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -34,7 +35,11 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 		}
 	}
 
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func getFlashcardsForTopicRepo(topicID string, dueOnly bool, now int64) ([]models.Flashcard, error) {
@@ -124,8 +129,9 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, state models.Flashcar
 	if err != nil {
 		return err
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -144,7 +150,21 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, state models.Flashcar
 		return err
 	}
 	if rows != 1 {
-		return fmt.Errorf("flashcard %s not found", cardID)
+		err = fmt.Errorf("flashcard %s not found", cardID)
+		return err
+	}
+
+	var validatedTopicID string
+	if err = tx.QueryRow(`
+		SELECT t.id
+		FROM fsrs_cards c
+		JOIN topics t ON t.id = c.topic_id
+		WHERE c.id = ?
+	`, cardID).Scan(&validatedTopicID); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("topic not found for flashcard %s", cardID)
+		}
+		return err
 	}
 
 	if _, err = tx.Exec(`
@@ -152,13 +172,17 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, state models.Flashcar
 			id, topic_id, activity_type, reference_id, reviewed_at, rating,
 			scheduled_days, state_before_json, state_after_json
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, reviewLog.ID, reviewLog.TopicID, reviewLog.ActivityType, reviewLog.ReferenceID,
+	`, reviewLog.ID, validatedTopicID, reviewLog.ActivityType, cardID,
 		reviewLog.ReviewedAt, reviewLog.Rating, reviewLog.ScheduledDays,
-		reviewLog.StateBeforeJSON, reviewLog.StateAfterJSON); err != nil {
+		reviewLog.StateBeforeJSON, string(stateJSON)); err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func countFlashcardsForTopicRepo(topicID string) (int, error) {

@@ -131,7 +131,7 @@ func TestUpdateFlashcardReviewRollsBackCardOnLogInsertFailure(t *testing.T) {
 	}
 }
 
-func TestEnsureFSRSSchemaRebuildsCleanSlateWhenLogMissing(t *testing.T) {
+func TestEnsureFSRSSchemaPreservesCardsWhenLogMissing(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy-fsrs.sqlite")
 
 	rawConn, err := sql.Open("sqlite3", dbPath)
@@ -174,8 +174,8 @@ func TestEnsureFSRSSchemaRebuildsCleanSlateWhenLogMissing(t *testing.T) {
 	if err := conn.QueryRow(`SELECT COUNT(*) FROM fsrs_cards`).Scan(&cardsCount); err != nil {
 		t.Fatalf("count fsrs_cards failed: %v", err)
 	}
-	if cardsCount != 0 {
-		t.Fatalf("expected clean-slate rebuild to empty fsrs_cards, got %d rows", cardsCount)
+	if cardsCount != 1 {
+		t.Fatalf("expected non-destructive migration to preserve fsrs_cards rows, got %d rows", cardsCount)
 	}
 
 	var logTableCount int

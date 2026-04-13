@@ -24,7 +24,10 @@ const (
 func NextFSRSState(current models.FlashcardState, rating int) models.FlashcardState {
 	state := normalizeFSRSState(current)
 
-	elapsedDays := state.ScheduledDays
+	elapsedDays := state.ElapsedDays
+	if elapsedDays == 0 {
+		elapsedDays = state.ScheduledDays
+	}
 	if state.Reps == 0 {
 		elapsedDays = 0
 	}

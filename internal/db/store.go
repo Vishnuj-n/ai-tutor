@@ -373,44 +373,129 @@ func ensureFSRSSchema() error {
 			}
 		}()
 
-		stmts := []string{
-			`DROP TABLE IF EXISTS fsrs_cards`,
-			`DROP TABLE IF EXISTS fsrs_review_log`,
-			`CREATE TABLE fsrs_cards (
-				id TEXT PRIMARY KEY,
-				topic_id TEXT NOT NULL,
-				prompt TEXT NOT NULL,
-				answer TEXT NOT NULL,
-				state_json TEXT,
-				due_at INTEGER,
-				suspended BOOLEAN DEFAULT 0,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (topic_id) REFERENCES topics(id)
-			)`,
-			`CREATE TABLE fsrs_review_log (
-				id TEXT PRIMARY KEY,
-				topic_id TEXT NOT NULL,
-				activity_type TEXT NOT NULL,
-				reference_id TEXT NOT NULL,
-				reviewed_at INTEGER NOT NULL,
-				rating INTEGER NOT NULL,
-				scheduled_days INTEGER NOT NULL,
-				state_before_json TEXT NOT NULL,
-				state_after_json TEXT NOT NULL,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (topic_id) REFERENCES topics(id)
-			)`,
+		var fsrsCardsTableName string
+		cardsTableErr := tx.QueryRow(`
+			SELECT name
+			FROM sqlite_master
+			WHERE type = 'table' AND name = 'fsrs_cards'
+		`).Scan(&fsrsCardsTableName)
+		if cardsTableErr != nil && cardsTableErr != sql.ErrNoRows {
+			return cardsTableErr
 		}
 
-		for _, stmt := range stmts {
-			if _, err = tx.Exec(stmt); err != nil {
+		hasExistingFSRSData := false
+		if cardsTableErr == nil {
+			var fsrsCardsCount int
+			if err = tx.QueryRow(`SELECT COUNT(*) FROM fsrs_cards`).Scan(&fsrsCardsCount); err != nil {
 				return err
 			}
+			hasExistingFSRSData = fsrsCardsCount > 0
 		}
 
-		if err = tx.Commit(); err != nil {
-			return err
+		if hasExistingFSRSData {
+			rows, qErr := tx.Query("PRAGMA table_info(fsrs_cards)")
+			if qErr != nil {
+				return qErr
+			}
+
+			existingColumns := make(map[string]bool)
+			for rows.Next() {
+				var cid int
+				var name string
+				var ctype string
+				var notnull int
+				var dflt sql.NullString
+				var pk int
+				if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+					_ = rows.Close()
+					return scanErr
+				}
+				existingColumns[name] = true
+			}
+			if rowsErr := rows.Err(); rowsErr != nil {
+				_ = rows.Close()
+				return rowsErr
+			}
+			if closeErr := rows.Close(); closeErr != nil {
+				return closeErr
+			}
+
+			requiredCardColumns := map[string]string{
+				"state_json": "TEXT",
+				"due_at":     "INTEGER",
+				"suspended":  "BOOLEAN DEFAULT 0",
+			}
+			for col, colType := range requiredCardColumns {
+				if existingColumns[col] {
+					continue
+				}
+				if _, err = tx.Exec(fmt.Sprintf("ALTER TABLE fsrs_cards ADD COLUMN %s %s", col, colType)); err != nil {
+					return err
+				}
+			}
+
+			if _, err = tx.Exec(`
+				CREATE TABLE IF NOT EXISTS fsrs_review_log (
+					id TEXT PRIMARY KEY,
+					topic_id TEXT NOT NULL,
+					activity_type TEXT NOT NULL,
+					reference_id TEXT NOT NULL,
+					reviewed_at INTEGER NOT NULL,
+					rating INTEGER NOT NULL,
+					scheduled_days INTEGER NOT NULL,
+					state_before_json TEXT NOT NULL,
+					state_after_json TEXT NOT NULL,
+					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (topic_id) REFERENCES topics(id)
+				)
+			`); err != nil {
+				return err
+			}
+
+			if err = tx.Commit(); err != nil {
+				return err
+			}
+		} else {
+
+			stmts := []string{
+				`DROP TABLE IF EXISTS fsrs_cards`,
+				`DROP TABLE IF EXISTS fsrs_review_log`,
+				`CREATE TABLE fsrs_cards (
+					id TEXT PRIMARY KEY,
+					topic_id TEXT NOT NULL,
+					prompt TEXT NOT NULL,
+					answer TEXT NOT NULL,
+					state_json TEXT,
+					due_at INTEGER,
+					suspended BOOLEAN DEFAULT 0,
+					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+					updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (topic_id) REFERENCES topics(id)
+				)`,
+				`CREATE TABLE fsrs_review_log (
+					id TEXT PRIMARY KEY,
+					topic_id TEXT NOT NULL,
+					activity_type TEXT NOT NULL,
+					reference_id TEXT NOT NULL,
+					reviewed_at INTEGER NOT NULL,
+					rating INTEGER NOT NULL,
+					scheduled_days INTEGER NOT NULL,
+					state_before_json TEXT NOT NULL,
+					state_after_json TEXT NOT NULL,
+					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (topic_id) REFERENCES topics(id)
+				)`,
+			}
+
+			for _, stmt := range stmts {
+				if _, err = tx.Exec(stmt); err != nil {
+					return err
+				}
+			}
+
+			if err = tx.Commit(); err != nil {
+				return err
+			}
 		}
 	}
 
