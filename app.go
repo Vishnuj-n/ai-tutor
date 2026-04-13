@@ -103,25 +103,31 @@ func (a *App) startup(ctx context.Context) {
 		a.aiReady = false
 	} else {
 		if err := embeddings.InitPromptTokenizer(assetValidator.TokenizerPath()); err != nil {
-			fmt.Printf("Warning: could not initialize prompt tokenizer: %v\n", err)
-		}
-
-		a.aiReady = true
-		a.aiInitError = ""
-		a.embedder = embedder
-
-		if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
-			fmt.Printf("Warning: could not initialize vector table; Ask AI will use lexical fallback: %v\n", err)
+			a.aiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
+			fmt.Printf("Warning: %s\n", a.aiInitError)
+			a.aiReady = false
+			if closeErr := embedder.Close(); closeErr != nil {
+				fmt.Printf("Warning: could not close embedder after tokenizer init failure: %v\n", closeErr)
+			}
+			embedder = nil
 		} else {
-			indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
-				RecomputeOnHashMismatch: true,
-				ForceReindex:            false,
-			})
-			go func() {
-				if err := indexer.IndexAllTopics(); err != nil {
-					fmt.Printf("Warning: vector indexing failed: %v\n", err)
-				}
-			}()
+			a.aiReady = true
+			a.aiInitError = ""
+			a.embedder = embedder
+
+			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
+				fmt.Printf("Warning: could not initialize vector table; Ask AI will use lexical fallback: %v\n", err)
+			} else {
+				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
+					RecomputeOnHashMismatch: true,
+					ForceReindex:            false,
+				})
+				go func() {
+					if err := indexer.IndexAllTopics(); err != nil {
+						fmt.Printf("Warning: vector indexing failed: %v\n", err)
+					}
+				}()
+			}
 		}
 	}
 

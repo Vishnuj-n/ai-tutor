@@ -80,7 +80,10 @@ func TestBuildPromptUsesParentOrder(t *testing.T) {
 		ParentIDs: []string{"b", "a"},
 	}
 
-	prompt, _ := buildPrompt("Operating Systems", "Explain scheduling", *ctx)
+	prompt, _, err := buildPrompt("Operating Systems", "Explain scheduling", *ctx)
+	if err != nil {
+		t.Fatalf("buildPrompt failed: %v", err)
+	}
 	bIdx := strings.Index(prompt, "**B**")
 	aIdx := strings.Index(prompt, "**A**")
 	if bIdx == -1 || aIdx == -1 || bIdx > aIdx {
@@ -99,7 +102,10 @@ func TestBuildPromptContainsInsufficientContextGuardrail(t *testing.T) {
 		ParentIDs: []string{"a"},
 	}
 
-	prompt, _ := buildPrompt("Operating Systems", "Unknown question", *ctx)
+	prompt, _, err := buildPrompt("Operating Systems", "Unknown question", *ctx)
+	if err != nil {
+		t.Fatalf("buildPrompt failed: %v", err)
+	}
 	needle := "I don't have enough information in the provided material to answer that confidently."
 	if !strings.Contains(prompt, needle) {
 		t.Fatalf("prompt missing guardrail phrase, prompt=%s", prompt)
