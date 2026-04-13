@@ -208,10 +208,17 @@ async function onRateCard(rating) {
   if (!currentCard.value) {
     return
   }
+  const cardId = typeof currentCard.value.id === 'string' || typeof currentCard.value.id === 'number'
+    ? String(currentCard.value.id).trim()
+    : ''
+  if (!cardId) {
+    errorMessage.value = 'Cannot record flashcard review: current card has no valid ID.'
+    return
+  }
   isReviewing.value = true
   errorMessage.value = ''
   try {
-    const result = await recordFlashcardReview(currentCard.value.id, rating)
+    const result = await recordFlashcardReview(cardId, rating)
     if (result?.error) {
       errorMessage.value = result.error
       return
