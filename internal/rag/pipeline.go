@@ -2,9 +2,11 @@ package rag
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/llm"
 )
 
@@ -86,6 +88,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 		userQuestion,
 		*ctx,
 	)
+	log.Printf("RAG prompt tokens=%d\n%s", countPromptTokens(prompt), prompt)
 
 	// Step 7: Call LLM
 	answer, err := p.llm.GenerateAnswer(prompt)
@@ -148,10 +151,10 @@ func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string,
 			break
 		}
 
-		originalRunes := len([]rune(candidate))
-		trimmedRunes := len([]rune(trimmed))
+		originalTokens := countPromptTokens(candidate)
+		trimmedTokens := countPromptTokens(trimmed)
 
-		if trimmedRunes == originalRunes || float64(trimmedRunes)/float64(originalRunes) >= minUsedSectionRatio {
+		if trimmedTokens == originalTokens || (originalTokens > 0 && float64(trimmedTokens)/float64(originalTokens) >= minUsedSectionRatio) {
 			sectionText += trimmed
 			usedParentIDs = append(usedParentIDs, parentID)
 		}
@@ -190,34 +193,63 @@ func trimToTokenBudget(topicTitle, userQuestion, existingSections, candidate str
 		return ""
 	}
 
-	runes := []rune(candidate)
-	low := 0
-	high := len(runes)
-	best := 0
-
-	for low <= high {
-		mid := (low + high) / 2
-		trialSections := existingSections + string(runes[:mid])
-		trialPrompt := formatPrompt(topicTitle, trialSections, userQuestion)
-
-		if countPromptTokens(trialPrompt) <= tokenLimit {
-			best = mid
-			low = mid + 1
-			continue
-		}
-
-		high = mid - 1
-	}
-
-	if best <= 0 {
+	basePrompt := formatPrompt(topicTitle, existingSections, userQuestion)
+	baseTokens := countPromptTokens(basePrompt)
+	remaining := tokenLimit - baseTokens
+	if remaining <= 0 {
 		return ""
 	}
 
-	return string(runes[:best])
+	trimmed := embeddings.TruncateToTokens(candidate, remaining)
+	if trimmed == "" {
+		return ""
+	}
+
+	for countPromptTokens(formatPrompt(topicTitle, existingSections+trimmed, userQuestion)) > tokenLimit {
+		trimmed = dropLastSentence(trimmed)
+		if trimmed == "" {
+			return ""
+		}
+	}
+
+	if !endsWithSentenceBoundary(trimmed) {
+		trimmed = dropLastSentence(trimmed)
+	}
+
+	return trimmed
 }
 
 func countPromptTokens(prompt string) int {
-	// Conservative upper bound: byte count is always >= model token count.
-	// Using an upper bound keeps prompt assembly safely within the configured limit.
-	return len([]byte(prompt))
+	return embeddings.CountTokens(prompt)
+}
+
+func dropLastSentence(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	searchStart := len(text) - 1
+	if endsWithSentenceBoundary(text) {
+		searchStart = len(text) - 2
+	}
+
+	for i := searchStart; i >= 0; i-- {
+		switch text[i] {
+		case '.', '!', '?':
+			return strings.TrimSpace(text[:i+1])
+		}
+	}
+
+	return ""
+}
+
+func endsWithSentenceBoundary(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	last := text[len(text)-1]
+	return last == '.' || last == '!' || last == '?'
 }

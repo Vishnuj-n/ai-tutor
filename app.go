@@ -102,6 +102,10 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
 		a.aiReady = false
 	} else {
+		if err := embeddings.InitPromptTokenizer(assetValidator.TokenizerPath()); err != nil {
+			fmt.Printf("Warning: could not initialize prompt tokenizer: %v\n", err)
+		}
+
 		a.aiReady = true
 		a.aiInitError = ""
 		a.embedder = embedder
