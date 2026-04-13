@@ -101,7 +101,7 @@ const plan = ref({
 
 const currentTask = computed(() => tasks.value[0] || null)
 const focusItems = computed(() => tasks.value.slice(1))
-const schedulerReady = computed(() => loading.value || error.value || tasks.value.length > 0 || plan.value.activeTopics.length > 0)
+const schedulerReady = computed(() => !loading.value && !error.value && (tasks.value.length > 0 || plan.value.activeTopics.length > 0))
 
 onMounted(async () => {
   await loadPlan()
