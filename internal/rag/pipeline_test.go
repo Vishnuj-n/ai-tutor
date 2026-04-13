@@ -1,13 +1,39 @@
 package rag
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 )
+
+func initPromptTokenizerForTests(t *testing.T) {
+	t.Helper()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("failed to resolve caller path")
+	}
+
+	path := filepath.Join(filepath.Dir(file), "..", "embeddings", "testdata", "tokenizer.json")
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("failed to resolve tokenizer path: %v", err)
+	}
+
+	if _, err := os.Stat(absPath); err != nil {
+		t.Fatalf("tokenizer test asset missing: %v", err)
+	}
+
+	if err := embeddings.InitPromptTokenizer(absPath); err != nil {
+		t.Fatalf("failed to initialize prompt tokenizer: %v", err)
+	}
+}
 
 func initRagTestDB(t *testing.T) {
 	t.Helper()
@@ -43,6 +69,8 @@ func TestBuildContextParentOrderIsDeterministic(t *testing.T) {
 }
 
 func TestBuildPromptUsesParentOrder(t *testing.T) {
+	initPromptTokenizerForTests(t)
+
 	ctx := &RetrievalContext{
 		TopicID: "os-scheduling",
 		Sections: map[string]string{
@@ -61,6 +89,8 @@ func TestBuildPromptUsesParentOrder(t *testing.T) {
 }
 
 func TestBuildPromptContainsInsufficientContextGuardrail(t *testing.T) {
+	initPromptTokenizerForTests(t)
+
 	ctx := &RetrievalContext{
 		TopicID: "os-scheduling",
 		Sections: map[string]string{
