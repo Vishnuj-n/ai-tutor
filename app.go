@@ -351,7 +351,7 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
 	}
-	if len(existingQuestions) > 0 {
+	if len(existingQuestions) == 5 {
 		return map[string]interface{}{
 			"topic_id":  topicID,
 			"questions": existingQuestions,
@@ -606,7 +606,7 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 		StateAfterJSON:  string(stateAfterJSONBytes),
 	}
 
-	if err := db.UpdateFlashcardReview(cardID, dueAt, nextState, reviewLog); err != nil {
+	if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
 		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
 	}
 

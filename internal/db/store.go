@@ -435,6 +435,23 @@ func ensureFSRSSchema() error {
 			}
 
 			if _, err = tx.Exec(`
+				UPDATE fsrs_cards
+				SET due_at = CAST(due_at AS INTEGER)
+				WHERE typeof(due_at) = 'text'
+				  AND due_at GLOB '[0-9]*'
+			`); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(`
+				UPDATE fsrs_cards
+				SET due_at = NULL
+				WHERE typeof(due_at) = 'text'
+				  AND due_at NOT GLOB '[0-9]*'
+			`); err != nil {
+				return err
+			}
+
+			if _, err = tx.Exec(`
 				CREATE TABLE IF NOT EXISTS fsrs_review_log (
 					id TEXT PRIMARY KEY,
 					topic_id TEXT NOT NULL,
@@ -854,7 +871,7 @@ func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState,
 }
 
 // UpdateFlashcardReview updates scheduling state after a review grade.
-func UpdateFlashcardReview(cardID string, dueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	cardID = strings.TrimSpace(cardID)
 	if cardID == "" {
 		return fmt.Errorf("flashcard id is required")
@@ -862,7 +879,7 @@ func UpdateFlashcardReview(cardID string, dueAt int64, state models.FlashcardSta
 	if dueAt <= 0 {
 		return fmt.Errorf("due time is required")
 	}
-	return updateFlashcardReviewRepo(cardID, dueAt, state, reviewLog)
+	return updateFlashcardReviewRepo(cardID, dueAt, expectedDueAt, state, reviewLog)
 }
 
 // GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.

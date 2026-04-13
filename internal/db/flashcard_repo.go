@@ -27,11 +27,20 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 			return err
 		}
 
-		if _, err = tx.Exec(`
+		result, execErr := tx.Exec(`
 			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, prompt, answer, state_json, due_at, suspended)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, card.ID, card.TopicID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended)); err != nil {
-			return err
+		`, card.ID, card.TopicID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
+		if execErr != nil {
+			return execErr
+		}
+
+		rowsAffected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return rowsErr
+		}
+		if rowsAffected != 1 {
+			return fmt.Errorf("flashcard %s was not inserted", card.ID)
 		}
 	}
 
@@ -119,7 +128,7 @@ func getFlashcardByIDRepo(cardID string) (*models.Flashcard, *models.FlashcardSt
 	return &card, &state, nil
 }
 
-func updateFlashcardReviewRepo(cardID string, dueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
@@ -139,8 +148,8 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, state models.Flashcar
 	result, err := tx.Exec(`
 		UPDATE fsrs_cards
 		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, string(stateJSON), dueAt, cardID)
+		WHERE id = ? AND due_at = ? AND state_json = ?
+	`, string(stateJSON), dueAt, cardID, expectedDueAt, reviewLog.StateBeforeJSON)
 	if err != nil {
 		return err
 	}
@@ -150,7 +159,7 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, state models.Flashcar
 		return err
 	}
 	if rows != 1 {
-		err = fmt.Errorf("flashcard %s not found", cardID)
+		err = fmt.Errorf("flashcard %s was modified concurrently", cardID)
 		return err
 	}
 
@@ -252,11 +261,20 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 			return nil, false, err
 		}
 
-		if _, err = tx.Exec(`
+		result, execErr := tx.Exec(`
 			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, prompt, answer, state_json, due_at, suspended)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, card.ID, card.TopicID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended)); err != nil {
-			return nil, false, err
+		`, card.ID, card.TopicID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
+		if execErr != nil {
+			return nil, false, execErr
+		}
+
+		rowsAffected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return nil, false, rowsErr
+		}
+		if rowsAffected != 1 {
+			return nil, false, fmt.Errorf("flashcard %s was not inserted", card.ID)
 		}
 	}
 
