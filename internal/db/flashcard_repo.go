@@ -121,18 +121,115 @@ func updateFlashcardReviewRepo(cardID string, dueAt string, state models.Flashca
 		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
 	}
 
-	_, err = conn.Exec(`
+	result, err := conn.Exec(`
 		UPDATE fsrs_cards
 		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, string(stateJSON), dueAt, cardID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("flashcard %s not found", cardID)
+	}
+	return nil
 }
 
 func countFlashcardsForTopicRepo(topicID string) (int, error) {
 	var count int
-	err := conn.QueryRow(`SELECT COUNT(*) FROM fsrs_cards WHERE topic_id = ?`, topicID).Scan(&count)
+	err := conn.QueryRow(`SELECT COUNT(*) FROM fsrs_cards WHERE topic_id = ? AND suspended = 0`, topicID).Scan(&count)
 	return count, err
+}
+
+// getOrCreateFlashcardsForTopicRepo atomically checks if non-suspended flashcards exist.
+// If they do, it returns them. If not, it inserts the provided cards and returns them.
+// This prevents race conditions where two concurrent requests both see zero cards.
+func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.Flashcard, statesIfNotExist map[string]models.FlashcardState) ([]models.Flashcard, bool, error) {
+	tx, err := conn.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Check if non-suspended flashcards already exist (within transaction)
+	var count int
+	err = tx.QueryRow(`SELECT COUNT(*) FROM fsrs_cards WHERE topic_id = ? AND suspended = 0`, topicID).Scan(&count)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if count > 0 {
+		// Cards exist; retrieve and return them
+		query := `
+			SELECT id, topic_id, prompt, answer, COALESCE(due_at, ''), suspended
+			FROM fsrs_cards
+			WHERE topic_id = ? AND suspended = 0
+			ORDER BY
+				CASE WHEN due_at IS NULL OR due_at = '' THEN 1 ELSE 0 END,
+				due_at ASC,
+				created_at ASC,
+				id ASC
+		`
+		rows, err := tx.Query(query, topicID)
+		if err != nil {
+			return nil, false, err
+		}
+		defer func() {
+			_ = rows.Close()
+		}()
+
+		cards := make([]models.Flashcard, 0)
+		for rows.Next() {
+			var card models.Flashcard
+			var suspended int
+			if err := rows.Scan(&card.ID, &card.TopicID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
+				return nil, false, err
+			}
+			card.Suspended = suspended == 1
+			cards = append(cards, card)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, false, err
+		}
+
+		if err = tx.Commit(); err != nil {
+			return nil, false, err
+		}
+
+		return cards, true, nil
+	}
+
+	// No cards exist; insert the provided ones
+	for _, card := range cardsIfNotExist {
+		stateJSON, marshalErr := json.Marshal(statesIfNotExist[card.ID])
+		if marshalErr != nil {
+			err = fmt.Errorf("failed to encode flashcard state for %s: %w", card.ID, marshalErr)
+			return nil, false, err
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO fsrs_cards (id, topic_id, prompt, answer, state_json, due_at, suspended)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, card.ID, card.TopicID, card.Prompt, card.Answer, string(stateJSON), nullableString(card.DueAt), boolToInt(card.Suspended)); err != nil {
+			return nil, false, err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, false, err
+	}
+
+	return cardsIfNotExist, false, nil
 }
 
 func nullableString(value string) interface{} {
