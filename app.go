@@ -347,26 +347,15 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "LLM provider not initialized"}
 	}
 
-	existingCards, err := db.GetFlashcardsForTopic(topicID, false, "")
+	existingQuestions, err := db.GetQuestionsForTopic(topicID)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to load existing flashcards: " + err.Error()}
+		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
 	}
-	if len(existingCards) > 0 {
-		existingStates := make(map[string]models.FlashcardState, len(existingCards))
-		for _, card := range existingCards {
-			_, state, getErr := db.GetFlashcardByID(card.ID)
-			if getErr != nil {
-				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
-			}
-			if state != nil {
-				existingStates[card.ID] = *state
-			}
-		}
+	if len(existingQuestions) == 5 {
 		return map[string]interface{}{
-			"topic_id": topicID,
-			"cards":    existingCards,
-			"states":   existingStates,
-			"existing": true,
+			"topic_id":  topicID,
+			"questions": existingQuestions,
+			"existing":  true,
 		}
 	}
 
@@ -480,7 +469,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	const expectedFlashcardCount = 8
 
 	// Filter valid cards
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().Unix()
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
 	states := make(map[string]models.FlashcardState, len(parsed.Cards))
 	for _, candidate := range parsed.Cards {
@@ -499,14 +488,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 			DueAt:     now,
 			Suspended: false,
 		})
-		states[id] = models.FlashcardState{
-			Stage:             "new",
-			SuccessCount:      0,
-			LapseCount:        0,
-			LastIntervalHours: 0,
-			LastRating:        "",
-			LastReviewedAt:    "",
-		}
+		states[id] = models.FlashcardState{}
 	}
 
 	// Enforce exactly 8 cards
@@ -522,6 +504,18 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	cards, wasExisting, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to persist flashcards: " + err.Error()}
+	}
+	if wasExisting {
+		states = make(map[string]models.FlashcardState, len(cards))
+		for _, card := range cards {
+			_, state, getErr := db.GetFlashcardByID(card.ID)
+			if getErr != nil {
+				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
+			}
+			if state != nil {
+				states[card.ID] = *state
+			}
+		}
 	}
 
 	return map[string]interface{}{
@@ -539,9 +533,9 @@ func (a *App) GetFlashcards(topicID string, dueOnly bool) map[string]interface{}
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
 
-	now := ""
+	var now int64
 	if dueOnly {
-		now = time.Now().UTC().Format(time.RFC3339)
+		now = time.Now().Unix()
 	}
 
 	cards, err := db.GetFlashcardsForTopic(topicID, dueOnly, now)
@@ -563,28 +557,64 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 		return map[string]interface{}{"error": "flashcard ID is required"}
 	}
 
-	allowedRatings := map[string]struct{}{
-		"again": {},
-		"hard":  {},
-		"good":  {},
-		"easy":  {},
-	}
-	if _, ok := allowedRatings[rating]; !ok {
+	ratingCode, ok := mapReviewRating(rating)
+	if !ok {
 		return map[string]interface{}{"error": "rating must be one of again, hard, good, easy"}
 	}
 
-	card, state, intervalHours, err := db.ApplyFlashcardReview(cardID, rating, time.Now().UTC())
+	card, state, err := db.GetFlashcardByID(cardID)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
+		return map[string]interface{}{"error": "failed to fetch flashcard: " + err.Error()}
 	}
 	if card == nil || state == nil {
 		return map[string]interface{}{"error": "flashcard not found"}
 	}
 
+	stateBeforeJSONBytes, err := json.Marshal(state)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to encode flashcard state: " + err.Error()}
+	}
+
+	now := time.Now().Unix()
+	elapsedSeconds := now - card.DueAt
+	elapsedDays := 0
+	if elapsedSeconds > 0 {
+		elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+	}
+	state.ElapsedDays = elapsedDays
+
+	nextState := scheduler.NextFSRSState(*state, ratingCode)
+	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
+	if nextState.ScheduledDays == 0 {
+		dueAt = now
+	}
+
+	stateAfterJSONBytes, err := json.Marshal(nextState)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to encode updated flashcard state: " + err.Error()}
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              uuid.NewString(),
+		TopicID:         card.TopicID,
+		ActivityType:    "flashcard",
+		ReferenceID:     card.ID,
+		ReviewedAt:      now,
+		Rating:          ratingCode,
+		ScheduledDays:   nextState.ScheduledDays,
+		StateBeforeJSON: string(stateBeforeJSONBytes),
+		StateAfterJSON:  string(stateAfterJSONBytes),
+	}
+
+	if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
+		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
+	}
+
+	card.DueAt = dueAt
 	return map[string]interface{}{
-		"card":              card,
-		"state":             state,
-		"next_interval_hrs": intervalHours,
+		"card":          card,
+		"state":         &nextState,
+		"review_log_id": reviewLog.ID,
 	}
 }
 
@@ -837,6 +867,21 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func mapReviewRating(rating string) (int, bool) {
+	switch rating {
+	case "again":
+		return scheduler.Again, true
+	case "hard":
+		return scheduler.Hard, true
+	case "good":
+		return scheduler.Good, true
+	case "easy":
+		return scheduler.Easy, true
+	default:
+		return 0, false
+	}
 }
 
 func resolveAppDir() (string, error) {
