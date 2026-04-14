@@ -69,14 +69,14 @@
     <div class="grid-bottom">
       <article class="card chart-card">
         <h3>Weekly Insights</h3>
-        <div v-if="planMeta.insightsAvailable" class="bars">
+        <div v-if="!loading && planMeta.insightsAvailable" class="bars">
           <div class="bar" style="height: 48%"></div>
           <div class="bar" style="height: 78%"></div>
           <div class="bar" style="height: 64%"></div>
           <div class="bar active" style="height: 88%"></div>
           <div class="bar" style="height: 52%"></div>
         </div>
-        <div v-else class="insight-placeholder">
+        <div v-else-if="!loading && !planMeta.insightsAvailable" class="insight-placeholder">
           <p class="task-meta">Weekly analytics are not connected yet.</p>
           <p class="muted">Showing task plan only to avoid misleading trends.</p>
         </div>
