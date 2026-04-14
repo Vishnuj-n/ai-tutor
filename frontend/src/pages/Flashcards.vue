@@ -215,6 +215,7 @@ async function onRateCard(rating) {
   if (!currentCard.value) {
     return
   }
+  clearMessages()
   const cardId = typeof currentCard.value.id === 'string' || typeof currentCard.value.id === 'number'
     ? String(currentCard.value.id).trim()
     : ''
@@ -223,7 +224,6 @@ async function onRateCard(rating) {
     return
   }
   isReviewing.value = true
-  clearMessages()
   try {
     const result = await recordFlashcardReview(cardId, rating)
     if (result?.error) {
@@ -297,7 +297,7 @@ function buildReviewFeedback(rating, scheduledDays) {
 
 function formatNextReview(days) {
   const n = Number(days)
-  if (Number.isNaN(n)) {
+  if (!Number.isFinite(n)) {
     return 'scheduled soon'
   }
   const daysInt = Math.round(n)
