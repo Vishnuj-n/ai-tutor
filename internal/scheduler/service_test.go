@@ -100,14 +100,14 @@ func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
 		t.Fatalf("BuildTodayPlan returned nil plan")
 	}
 
-	if plan.ReviewMinutes != MaxReviewMinutes {
-		t.Fatalf("expected review minutes to be capped at %d, got %d", MaxReviewMinutes, plan.ReviewMinutes)
+	if plan.ReviewMinutes != DefaultDailyStudyMinutes {
+		t.Fatalf("expected catch-up mode review minutes=%d, got %d", DefaultDailyStudyMinutes, plan.ReviewMinutes)
 	}
-	if plan.LearningMinutes != DefaultDailyStudyMinutes-MaxReviewMinutes {
-		t.Fatalf("unexpected learning minutes: %d", plan.LearningMinutes)
+	if plan.LearningMinutes != 0 {
+		t.Fatalf("expected catch-up mode learning minutes=0, got %d", plan.LearningMinutes)
 	}
-	if plan.ReviewMinutes > DefaultDailyStudyMinutes-MinLearningMinutes {
-		t.Fatalf("review minutes violated min-learning guardrail: review=%d", plan.ReviewMinutes)
+	if len(plan.Tasks) != 1 || plan.Tasks[0].ActionType != "review" {
+		t.Fatalf("expected review-only task list in catch-up mode, got %#v", plan.Tasks)
 	}
 
 	assertPlanMinutesWithinBudget(t, *plan)

@@ -102,23 +102,28 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		return nil, err
 	}
 
-	learningTopics, err := s.queryLearningTopics(2)
-	if err != nil {
-		return nil, err
-	}
-
-	learnedTopicsCount, err := s.countLearnedTopics()
-	if err != nil {
-		return nil, err
-	}
+	// Determine catch-up mode first; learning queries are only needed if NOT in catch-up
+	catchUpMode := dueCards*2 > MaxReviewMinutes
 
 	reviewMinutes := dueCards * 2
-	if reviewMinutes > MaxReviewMinutes {
-		reviewMinutes = MaxReviewMinutes
+	if catchUpMode {
+		reviewMinutes = DefaultDailyStudyMinutes
 	}
 
-	if reviewMinutes > DefaultDailyStudyMinutes-MinLearningMinutes {
-		reviewMinutes = DefaultDailyStudyMinutes - MinLearningMinutes
+	// Skip learning queries during catch-up to avoid transient DB failures aborting the entire plan
+	var learningTopics []models.TopicSummary
+	var learnedTopicsCount int
+	if !catchUpMode {
+		var err error
+		learningTopics, err = s.queryLearningTopics(2)
+		if err != nil {
+			return nil, err
+		}
+
+		learnedTopicsCount, err = s.countLearnedTopics()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if dueCards == 0 {
@@ -144,7 +149,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		usedMinutes += reviewMinutes
 	}
 
-	if len(learningTopics) > 0 {
+	if !catchUpMode && len(learningTopics) > 0 {
 		perTopic := learningMinutes / len(learningTopics)
 		if perTopic < 15 {
 			perTopic = 15
@@ -165,7 +170,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		}
 	}
 
-	if learnedTopicsCount > 0 {
+	if !catchUpMode && learnedTopicsCount > 0 {
 		remaining := DefaultDailyStudyMinutes - usedMinutes
 		if remaining >= 15 {
 			tasks = append(tasks, models.ScheduledTask{
@@ -204,6 +209,8 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		})
 	}
 
+	isEstimate := len(tasks) == 1 && tasks[0].ActionType == "explore"
+
 	return &models.TodayPlan{
 		Date:            now.Format("2006-01-02"),
 		TotalMinutes:    DefaultDailyStudyMinutes,
@@ -212,5 +219,6 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		DueReviewCards:  dueCards,
 		ActiveTopics:    activeTopics,
 		Tasks:           tasks,
+		IsEstimate:      isEstimate,
 	}, nil
 }

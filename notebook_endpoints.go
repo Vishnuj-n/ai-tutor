@@ -1,15 +1,16 @@
 package main
 
 import (
-	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
+	"ai-tutor/internal/utils"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -445,7 +446,7 @@ func pickTopicForSection(section notebook.ExtractedSection, topicTitles []string
 		return 0
 	}
 	text := strings.ToLower(section.Heading + " " + firstN(section.Text, 800))
-	textTokens := tokenizeSimple(text)
+	textTokens := embeddings.TokenizeSimple(text)
 	if len(textTokens) == 0 {
 		return 0
 	}
@@ -453,7 +454,7 @@ func pickTopicForSection(section notebook.ExtractedSection, topicTitles []string
 	bestIdx := 0
 	bestScore := -1
 	for i, title := range topicTitles {
-		tokens := tokenizeSimple(strings.ToLower(title))
+		tokens := embeddings.TokenizeSimple(strings.ToLower(title))
 		score := 0
 		for token := range tokens {
 			if _, ok := textTokens[token]; ok {
@@ -468,27 +469,14 @@ func pickTopicForSection(section notebook.ExtractedSection, topicTitles []string
 	return bestIdx
 }
 
-var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
-
-func tokenizeSimple(text string) map[string]struct{} {
-	clean := nonWord.ReplaceAllString(text, " ")
-	parts := strings.Fields(clean)
-	set := make(map[string]struct{}, len(parts))
-	for _, part := range parts {
-		if len(part) < 3 {
-			continue
-		}
-		set[part] = struct{}{}
-	}
-	return set
-}
-
 func firstN(text string, n int) string {
 	if n <= 0 || len(text) <= n {
 		return text
 	}
 	return text[:n]
 }
+
+var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
 
 func slugify(s string) string {
 	lower := strings.ToLower(strings.TrimSpace(s))
@@ -571,8 +559,7 @@ func calculatePercent(processed, total int) int {
 }
 
 func computeChunkHash(text string) string {
-	hash := md5.Sum([]byte(text))
-	return fmt.Sprintf("%x", hash)
+	return utils.MD5Hex(text)
 }
 
 // DeleteNotebook removes a notebook and its associated file

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -91,6 +92,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 	fmt.Printf("Database initialized at %s\n", dbPath)
 
+	// Initialize scheduler after database is ready so it can query due cards and active topics.
+	a.scheduler = scheduler.New()
+
 	// Initialize ONNX embedder for local vector generation.
 	var embedder *embeddings.OnnxEmbedder
 	onnxRuntimePath := assetValidator.OnnxRuntimePath()
@@ -163,7 +167,6 @@ func (a *App) startup(ctx context.Context) {
 
 	// Create RAG pipeline
 	a.ragPipeline = rag.NewPipeline(embedStore, llmProvider)
-	a.scheduler = scheduler.New()
 
 	// Initialize notebook service
 	notebookDir, err := resolveNotebookDir()
@@ -387,21 +390,29 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		}
 	}
 
-	plan, err := a.scheduler.BuildTodayPlan(time.Now())
+	now := time.Now()
+	plan, err := a.scheduler.BuildTodayPlan(now)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}
 	}
 
+	insightsAvailable := false
+
 	return map[string]interface{}{
-		"date":             plan.Date,
-		"total_minutes":    plan.TotalMinutes,
-		"review_minutes":   plan.ReviewMinutes,
-		"learning_minutes": plan.LearningMinutes,
-		"due_review_cards": plan.DueReviewCards,
-		"active_topics":    plan.ActiveTopics,
-		"tasks":            plan.Tasks,
+		"date":               plan.Date,
+		"total_minutes":      plan.TotalMinutes,
+		"review_minutes":     plan.ReviewMinutes,
+		"learning_minutes":   plan.LearningMinutes,
+		"due_review_cards":   plan.DueReviewCards,
+		"active_topics":      plan.ActiveTopics,
+		"tasks":              plan.Tasks,
+		"generated_at_unix":  now.Unix(),
+		"data_fresh":         true,
+		"is_estimate":        plan.IsEstimate,
+		"insights_available": insightsAvailable,
+		"plan_source":        "scheduler-v1",
 	}
 }
 
@@ -813,13 +824,7 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 			continue
 		}
 
-		// Truncate section to max content size (rune-safe to preserve UTF-8)
-		if len(content) > maxContentPerSection {
-			runes := []rune(content)
-			if len(runes) > maxContentPerSection {
-				content = string(runes[:maxContentPerSection]) + "..."
-			}
-		}
+		content = semanticSnippet(content, maxContentPerSection)
 
 		b.WriteString("[Heading] ")
 		b.WriteString(heading)
@@ -881,30 +886,12 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 			continue
 		}
 
-		runes := []rune(content)
-		ellipsisRunes := len([]rune("..."))
 		allowedRunes := minInt(maxContentPerSection, remainingBudget)
 		if allowedRunes <= 0 {
 			break
 		}
 
-		appendedRunes := len(runes)
-		wasTrimmed := false
-		if appendedRunes > allowedRunes {
-			if allowedRunes <= ellipsisRunes {
-				break
-			}
-			appendedRunes = allowedRunes - ellipsisRunes
-			if appendedRunes <= 0 {
-				break
-			}
-			wasTrimmed = true
-		}
-
-		content = string(runes[:appendedRunes])
-		if wasTrimmed {
-			content += "..."
-		}
+		content = semanticSnippet(content, allowedRunes)
 
 		b.WriteString("[Heading] ")
 		b.WriteString(heading)
@@ -912,10 +899,7 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 		b.WriteString(content)
 		b.WriteString("\n---\n")
 
-		totalContentLength += appendedRunes
-		if wasTrimmed {
-			totalContentLength += ellipsisRunes
-		}
+		totalContentLength += len([]rune(content))
 		sectionCount++
 	}
 
@@ -982,6 +966,53 @@ func normalizeQuizAnswer(answer string, options []string) string {
 	return ans
 }
 
+func semanticSnippet(content string, limit int) string {
+	trimmed := strings.TrimSpace(content)
+	if limit <= 0 || trimmed == "" {
+		return ""
+	}
+
+	runes := []rune(trimmed)
+	if len(runes) <= limit {
+		return trimmed
+	}
+
+	// Work with rune slice to respect limit and avoid mid-rune truncation
+	cutRunes := runes[:limit]
+	cut := string(cutRunes)
+	// Prefer sentence/line boundaries to avoid abrupt truncation mid-thought.
+	best := strings.LastIndex(cut, ". ")
+	if idx := strings.LastIndex(cut, "\n"); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(cut, "? "); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(cut, "! "); idx > best {
+		best = idx
+	}
+
+	if best > limit/2 {
+		candidate := strings.TrimSpace(cut[:best+1])
+		if candidate != "" {
+			// Convert back to runes and check length to avoid mid-rune truncation
+			candidateRunes := []rune(candidate)
+			if len(candidateRunes) > limit-3 {
+				candidateRunes = candidateRunes[:limit-3]
+			}
+			return string(candidateRunes) + "..."
+		}
+	}
+
+	cut = strings.TrimSpace(cut)
+	// Convert to runes and cap to limit-3 to ensure "..." fits
+	cutRunes = []rune(cut)
+	if len(cutRunes) > limit-3 {
+		cutRunes = cutRunes[:limit-3]
+	}
+	return string(cutRunes) + "..."
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -1041,9 +1072,15 @@ func resolveNotebookDir() (string, error) {
 }
 
 func notebookAssetURL(filePath string) string {
-	path := strings.TrimSpace(filepath.ToSlash(filePath))
-	if path == "" || path == "." || path == ".." {
+	// Normalize backslashes to forward slashes for host-neutral path handling
+	normPath := strings.TrimSpace(strings.ReplaceAll(filePath, "\\", "/"))
+	if normPath == "" || normPath == "." || normPath == ".." {
 		return ""
 	}
-	return "/notebooks/" + url.PathEscape(path)
+	// Use path.Base for cross-platform compatibility
+	name := strings.TrimSpace(path.Base(normPath))
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	return "/notebooks/" + url.PathEscape(name)
 }
