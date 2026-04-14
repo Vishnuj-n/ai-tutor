@@ -20,6 +20,9 @@ func initTestDB(t *testing.T) {
 	if err := db.Init(tempDB, ""); err != nil {
 		t.Fatalf("failed to init test db: %v", err)
 	}
+	if err := db.SeedDemoDataForTests(); err != nil {
+		t.Fatalf("failed to seed test data: %v", err)
+	}
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Fatalf("failed to close test db: %v", err)
@@ -303,6 +306,22 @@ func TestAskAINotReadyReturnsError(t *testing.T) {
 
 	if err == "" {
 		t.Fatalf("expected non-empty error message")
+	}
+}
+
+func TestNotebookAssetURLUsesBasename(t *testing.T) {
+	assetURL := notebookAssetURL("C:/Users/vishn/AppData/Roaming/ai-tutor/uploads/sample.pdf")
+	if assetURL != "/notebooks/sample.pdf" {
+		t.Fatalf("expected notebook URL to use basename, got %q", assetURL)
+	}
+}
+
+func TestNotebookAssetURLRejectsTraversalNames(t *testing.T) {
+	if got := notebookAssetURL(".."); got != "" {
+		t.Fatalf("expected empty URL for traversal segment, got %q", got)
+	}
+	if got := notebookAssetURL("."); got != "" {
+		t.Fatalf("expected empty URL for current directory segment, got %q", got)
 	}
 }
 

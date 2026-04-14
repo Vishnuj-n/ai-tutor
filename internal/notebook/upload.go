@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ai-tutor/internal/embeddings"
+
 	"github.com/google/uuid"
 	pdfreader "github.com/ledongthuc/pdf"
 )
@@ -106,29 +108,6 @@ type ExtractedDocument struct {
 	Sections  []ExtractedSection
 }
 
-// ParentRecord is a parent section row prepared for DB insertion.
-type ParentRecord struct {
-	ID         string
-	Heading    string
-	Content    string
-	OrderIndex int
-}
-
-// ChunkRecord is a chunk row prepared for DB insertion and notebook linking.
-type ChunkRecord struct {
-	ID         string
-	ParentID   string
-	Text       string
-	TokenCount int
-	PageNum    int
-}
-
-// IngestionData is deterministic relational data derived from notebook content.
-type IngestionData struct {
-	Parents []ParentRecord
-	Chunks  []ChunkRecord
-}
-
 // SaveUploadedFile saves an uploaded file and returns metadata
 // fileData is the raw file bytes, fileName is the user-provided name
 func (s *Service) SaveUploadedFile(fileData []byte, fileName string) (*UploadResult, error) {
@@ -215,7 +194,7 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		if err != nil {
 			return nil, fmt.Errorf("failed to read txt file: %w", err)
 		}
-		content := normalizeWhitespace(string(raw))
+		content := embeddings.NormalizeWhitespace(string(raw))
 		if content == "" {
 			return nil, fmt.Errorf("document has no readable content")
 		}
@@ -258,58 +237,6 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 	return doc, nil
 }
 
-// BuildIngestionData creates deterministic parent/chunk records for DB transaction inserts.
-func (s *Service) BuildIngestionData(notebookID string, doc *ExtractedDocument) (*IngestionData, error) {
-	if doc == nil {
-		return nil, fmt.Errorf("document is nil")
-	}
-	if len(doc.Sections) == 0 {
-		return nil, fmt.Errorf("document has no sections to ingest")
-	}
-
-	data := &IngestionData{
-		Parents: make([]ParentRecord, 0, len(doc.Sections)),
-		Chunks:  make([]ChunkRecord, 0),
-	}
-
-	for sectionIndex, section := range doc.Sections {
-		if section.Text == "" {
-			continue
-		}
-
-		parentID := fmt.Sprintf("nbp_%s_%d", notebookID, sectionIndex+1)
-		heading := strings.TrimSpace(section.Heading)
-		if heading == "" {
-			heading = fmt.Sprintf("Section %d", sectionIndex+1)
-		}
-
-		data.Parents = append(data.Parents, ParentRecord{
-			ID:         parentID,
-			Heading:    heading,
-			Content:    section.Text,
-			OrderIndex: sectionIndex + 1,
-		})
-
-		chunks := SplitIntoWordChunks(section.Text, ChunkWordWindow, ChunkWordOverlap)
-		for chunkIndex, chunkText := range chunks {
-			chunkID := fmt.Sprintf("nbc_%s_%d_%d", notebookID, sectionIndex+1, chunkIndex+1)
-			data.Chunks = append(data.Chunks, ChunkRecord{
-				ID:         chunkID,
-				ParentID:   parentID,
-				Text:       chunkText,
-				TokenCount: len(strings.Fields(chunkText)),
-				PageNum:    section.PageNum,
-			})
-		}
-	}
-
-	if len(data.Chunks) == 0 {
-		return nil, fmt.Errorf("document produced no chunks after normalization")
-	}
-
-	return data, nil
-}
-
 // sanitizeFileName removes potentially dangerous characters
 func sanitizeFileName(name string) string {
 	// Remove extension for processing
@@ -346,7 +273,7 @@ func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetada
 		if err != nil {
 			return nil, err
 		}
-		wordCount := len(strings.Fields(normalizeWhitespace(string(raw))))
+		wordCount := len(strings.Fields(embeddings.NormalizeWhitespace(string(raw))))
 		return &FileMetadata{Title: title, PageCount: 1, WordCount: wordCount}, nil
 	case "pdf":
 		file, reader, err := s.openPDF(filePath)
@@ -392,7 +319,7 @@ func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) er
 			return fmt.Errorf("failed to read pdf page %d: %w", pageIndex, pageErr)
 		}
 
-		normalized := normalizeWhitespace(text)
+		normalized := embeddings.NormalizeWhitespace(text)
 		if normalized == "" {
 			continue
 		}
@@ -419,7 +346,7 @@ func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) er
 		return fmt.Errorf("failed to read plain pdf text: %w", copyErr)
 	}
 
-	normalized := normalizeWhitespace(buf.String())
+	normalized := embeddings.NormalizeWhitespace(buf.String())
 	if normalized == "" {
 		return fmt.Errorf("pdf did not contain extractable text")
 	}
@@ -444,7 +371,7 @@ func splitMarkdownSections(content string) []ExtractedSection {
 	var body []string
 
 	flush := func() {
-		joined := normalizeWhitespace(strings.Join(body, "\n"))
+		joined := embeddings.NormalizeWhitespace(strings.Join(body, "\n"))
 		if joined != "" {
 			sections = append(sections, ExtractedSection{
 				Heading: currentHeading,
@@ -471,7 +398,7 @@ func splitMarkdownSections(content string) []ExtractedSection {
 	flush()
 
 	if len(sections) == 0 {
-		normalized := normalizeWhitespace(content)
+		normalized := embeddings.NormalizeWhitespace(content)
 		if normalized != "" {
 			sections = append(sections, ExtractedSection{
 				Heading: "Document",
@@ -510,7 +437,7 @@ func SplitIntoWordChunks(text string, chunkSize, overlap int) []string {
 		}
 
 		chunk := strings.Join(words[start:end], " ")
-		chunk = normalizeWhitespace(chunk)
+		chunk = embeddings.NormalizeWhitespace(chunk)
 		if chunk != "" {
 			chunks = append(chunks, chunk)
 		}
@@ -521,8 +448,4 @@ func SplitIntoWordChunks(text string, chunkSize, overlap int) []string {
 	}
 
 	return chunks
-}
-
-func normalizeWhitespace(input string) string {
-	return strings.TrimSpace(strings.Join(strings.Fields(input), " "))
 }

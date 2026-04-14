@@ -20,6 +20,7 @@ type TodayPlan struct {
 	DueReviewCards  int             `json:"due_review_cards"`
 	ActiveTopics    []string        `json:"active_topics"`
 	Tasks           []ScheduledTask `json:"tasks"`
+	IsEstimate      bool            `json:"is_estimate"`
 }
 
 // TopicSummary keeps scheduler queries simple and explicit.

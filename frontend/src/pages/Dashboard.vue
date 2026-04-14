@@ -5,13 +5,21 @@
       <div class="profile">Academic Profile</div>
     </header>
 
-    <div class="hero">
-      <h1>Good Morning.</h1>
-      <p>
-        Your plan today is <strong>{{ plan.totalMinutes }}</strong> minutes with a balanced learning
-        loop.
-      </p>
-    </div>
+    <article v-if="!loading && !error" class="status-strip">
+      <div>
+        <p class="eyebrow">Today</p>
+        <h1>{{ plan.totalMinutes }} minute study plan</h1>
+      </div>
+      <div class="status-badges">
+        <span class="badge" :class="planMeta.dataFresh ? 'ok' : 'warn'">
+          {{ planMeta.dataFresh ? 'Live data' : 'Stale data' }}
+        </span>
+        <span class="badge" :class="planMeta.isEstimate ? 'warn' : 'ok'">
+          {{ planMeta.isEstimate ? 'Estimated plan' : 'Scheduled plan' }}
+        </span>
+        <span class="stamp">Updated {{ generatedLabel }}</span>
+      </div>
+    </article>
 
     <div class="grid-top">
       <article class="card feature-card">
@@ -26,7 +34,7 @@
         </template>
         <template v-else-if="currentTask">
           <h2>{{ currentTask.title }}</h2>
-          <p class="muted">{{ currentTask.meta || defaultTaskMeta(currentTask) }}</p>
+          <p class="task-meta">{{ currentTask.meta || defaultTaskMeta(currentTask) }}</p>
           <button type="button" class="primary-btn" @click="startTask(currentTask)">
             Start Session
           </button>
@@ -61,14 +69,17 @@
     <div class="grid-bottom">
       <article class="card chart-card">
         <h3>Weekly Insights</h3>
-        <div class="bars">
+        <div v-if="!loading && planMeta.insightsAvailable" class="bars">
           <div class="bar" style="height: 48%"></div>
           <div class="bar" style="height: 78%"></div>
           <div class="bar" style="height: 64%"></div>
           <div class="bar active" style="height: 88%"></div>
           <div class="bar" style="height: 52%"></div>
         </div>
-        <p class="muted">Peak productivity reached at 10:00 AM on Tuesday.</p>
+        <div v-else-if="!loading && !planMeta.insightsAvailable" class="insight-placeholder">
+          <p class="task-meta">Weekly analytics are not connected yet.</p>
+          <p class="muted">Showing task plan only to avoid misleading trends.</p>
+        </div>
       </article>
 
       <article class="card list-card">
@@ -77,7 +88,7 @@
           <div class="dot"></div>
           <div>
             <p class="focus-title">{{ item.title }}</p>
-            <p class="focus-meta">{{ item.meta || defaultTaskMeta(item) }}</p>
+            <p class="task-meta">{{ item.meta || defaultTaskMeta(item) }}</p>
           </div>
         </div>
         <p v-if="!loading && focusItems.length === 0" class="muted">No additional tasks queued.</p>
@@ -101,9 +112,26 @@ const plan = ref({
   dueReviewCards: 0,
   activeTopics: [],
 })
+const planMeta = ref({
+  generatedAtUnix: 0,
+  dataFresh: false,
+  isEstimate: true,
+  insightsAvailable: false,
+})
+
+const generatedLabel = computed(() => {
+  if (!planMeta.value.generatedAtUnix) {
+    return 'just now'
+  }
+  const asDate = new Date(planMeta.value.generatedAtUnix * 1000)
+  if (Number.isNaN(asDate.getTime())) {
+    return 'just now'
+  }
+  return asDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+})
 
 const currentTask = computed(() => tasks.value[0] || null)
-const focusItems = computed(() => tasks.value.slice(1))
+  const focusItems = computed(() => tasks.value.slice(1))
 const reviewTask = computed(() =>
   tasks.value.find((task) => task.action_type === 'review') || null
 )
@@ -133,6 +161,13 @@ async function loadPlan() {
       totalMinutes: response.total_minutes || 90,
       dueReviewCards: response.due_review_cards || 0,
       activeTopics: response.active_topics || [],
+    }
+
+    planMeta.value = {
+      generatedAtUnix: Number(response.generated_at_unix) || 0,
+      dataFresh: Boolean(response.data_fresh),
+      isEstimate: Boolean(response.is_estimate),
+      insightsAvailable: Boolean(response.insights_available),
     }
 
     tasks.value = response.tasks || []
@@ -179,6 +214,11 @@ function startReviewSession() {
   gap: 16px;
 }
 
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -202,23 +242,52 @@ function startReviewSession() {
   color: var(--on-surface);
 }
 
-.hero h1 {
+.status-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 12px;
+  padding: 8px 2px 2px;
+}
+
+.status-strip h1 {
   margin: 0;
   font-family: 'Manrope', sans-serif;
-  font-size: 48px;
-  letter-spacing: -0.02em;
+  font-size: 44px;
+  letter-spacing: -0.03em;
   line-height: 1;
   color: var(--on-surface);
 }
 
-.hero p {
-  margin: 8px 0 0;
-  font-size: 18px;
-  color: var(--muted-text);
+.status-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.hero strong {
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 5px 10px;
+}
+
+.badge.ok {
+  background: rgba(64, 95, 171, 0.15);
   color: var(--primary);
+}
+
+.badge.warn {
+  background: rgba(190, 120, 58, 0.16);
+  color: #8f4f17;
+}
+
+.stamp {
+  color: var(--muted-text);
+  font-size: 12px;
 }
 
 .grid-top {
@@ -263,6 +332,13 @@ function startReviewSession() {
   font-size: 15px;
 }
 
+.task-meta {
+  margin: 2px 0 0;
+  color: var(--muted-text);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
 .primary-btn {
   margin-top: 16px;
   border: 0;
@@ -272,6 +348,12 @@ function startReviewSession() {
   font-size: 15px;
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
+  transition: transform 0.14s ease, filter 0.14s ease;
+}
+
+.primary-btn:active,
+.review-btn:active {
+  transform: scale(0.95);
 }
 
 .review-btn {
@@ -387,21 +469,17 @@ function startReviewSession() {
   font-weight: 700;
 }
 
-.focus-meta {
-  margin: 2px 0 0;
-  color: var(--muted-text);
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.08em;
+.insight-placeholder {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-container-low);
 }
 
 @media (max-width: 1200px) {
-  .hero h1 {
+  .status-strip h1 {
     font-size: 42px;
-  }
-
-  .hero p {
-    font-size: 17px;
   }
 
   .feature-card h2 {
@@ -420,16 +498,25 @@ function startReviewSession() {
     font-size: 56px;
   }
 
-  .hero h1 {
-    font-size: 38px;
+  .status-strip {
+    align-items: start;
+    flex-direction: column;
   }
 
-  .hero p {
-    font-size: 18px;
+  .status-strip h1 {
+    font-size: 38px;
   }
 
   .feature-card h2 {
     font-size: 32px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-item,
+  .primary-btn,
+  .review-btn {
+    transition: none;
   }
 }
 </style>
