@@ -47,9 +47,6 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// Initialize scheduler first so Dashboard endpoints remain available
-	// even if downstream startup steps fail.
-	a.scheduler = scheduler.New()
 
 	// Load local .env if present. Missing file is fine.
 	_ = godotenv.Load()
@@ -93,6 +90,9 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	fmt.Printf("Database initialized at %s\n", dbPath)
+
+	// Initialize scheduler after database is ready so it can query due cards and active topics.
+	a.scheduler = scheduler.New()
 
 	// Initialize ONNX embedder for local vector generation.
 	var embedder *embeddings.OnnxEmbedder
@@ -397,7 +397,8 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		}
 	}
 
-	isEstimate := len(plan.Tasks) == 0
+	// Check if the plan contains only the injected fallback "explore" task.
+	isEstimate := len(plan.Tasks) == 0 || (len(plan.Tasks) == 1 && plan.Tasks[0].ActionType == "explore")
 	insightsAvailable := false
 
 	return map[string]interface{}{
@@ -993,11 +994,20 @@ func semanticSnippet(content string, limit int) string {
 	if best > limit/2 {
 		candidate := strings.TrimSpace(cut[:best+1])
 		if candidate != "" {
+			// Reserve 3 characters for "..." to stay within limit
+			if len(candidate) > limit-3 {
+				candidate = candidate[:limit-3]
+			}
 			return candidate + "..."
 		}
 	}
 
-	return strings.TrimSpace(cut) + "..."
+	cut = strings.TrimSpace(cut)
+	// Ensure the final snippet doesn't exceed limit when adding ellipsis
+	if len(cut) > limit-3 {
+		cut = cut[:limit-3]
+	}
+	return cut + "..."
 }
 
 func minInt(a, b int) int {

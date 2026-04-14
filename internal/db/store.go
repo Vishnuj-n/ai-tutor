@@ -427,21 +427,37 @@ func ensureFSRSSchema() error {
 // SeedDemoData inserts the built-in demo topic content.
 // Call this only from tests or an explicit demo bootstrap path.
 func SeedDemoData() error {
-	// Check if topics already exist
-	var count int
-	err := conn.QueryRow("SELECT COUNT(*) FROM topics").Scan(&count)
+	// Guard against uninitialized database
+	if conn == nil {
+		return fmt.Errorf("database not initialized; call db.Init() first")
+	}
+
+	// Check if demo topic already exists by slug (specific idempotency key)
+	var exists bool
+	err := conn.QueryRow("SELECT EXISTS(SELECT 1 FROM topics WHERE id = ?)", "os-scheduling").Scan(&exists)
 	if err != nil {
 		return err
 	}
-	if count > 0 {
+	if exists {
 		return nil // Already seeded
 	}
+
+	// Begin transaction for atomic seed operation
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
 
 	// Insert topics
 	topic1 := "os-scheduling"
 	title1 := "Operating Systems: Scheduling"
 
-	_, err = conn.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO topics (id, title, status)
 		VALUES (?, ?, ?)
 	`, topic1, title1, "reading")
@@ -453,7 +469,7 @@ func SeedDemoData() error {
 	parent1 := "parent-1"
 	parent2 := "parent-2"
 
-	_, err = conn.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO parents (id, topic_id, heading, order_index, content_text)
 		VALUES (?, ?, ?, ?, ?)
 	`, parent1, topic1, "Round Robin Scheduling", 1, `
@@ -471,7 +487,7 @@ Key characteristics:
 		return err
 	}
 
-	_, err = conn.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO parents (id, topic_id, heading, order_index, content_text)
 		VALUES (?, ?, ?, ?, ?)
 	`, parent2, topic1, "Advantages and Disadvantages", 2, `
@@ -530,7 +546,7 @@ Disadvantages of Round Robin:
 	}
 
 	for _, chunk := range chunks {
-		_, err = conn.Exec(`
+		_, err = tx.Exec(`
 			INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, chunk.id, topic1, chunk.pID, chunk.text, len(chunk.text)/4, 0.0, 0.0)
@@ -538,6 +554,12 @@ Disadvantages of Round Robin:
 			return err
 		}
 	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	tx = nil // Mark tx as committed
 
 	return nil
 }

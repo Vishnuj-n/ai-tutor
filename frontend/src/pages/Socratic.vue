@@ -236,16 +236,17 @@ async function submitQuestion() {
   }
 }
 
+const SOCRATIC_INSTRUCTIONS = [
+  'Socratic tutoring mode:',
+  '- Ask one short guiding question first.',
+  '- Do not reveal the full final answer immediately.',
+  '- Then give a compact hint grounded only in the provided material.',
+  '- If the student asks for the final answer explicitly, provide it after the guiding question and hint.',
+  '',
+]
+
 function buildSocraticQuestion(question) {
-  return [
-    'Socratic tutoring mode:',
-    '- Ask one short guiding question first.',
-    '- Do not reveal the full final answer immediately.',
-    '- Then give a compact hint grounded only in the provided material.',
-    '- If the student asks for the final answer explicitly, provide it after the guiding question and hint.',
-    '',
-    `Student question: ${question}`,
-  ].join('\n')
+  return [...SOCRATIC_INSTRUCTIONS, `Student question: ${question}`].join('\n')
 }
 
 function handleComposerKeydown(event) {

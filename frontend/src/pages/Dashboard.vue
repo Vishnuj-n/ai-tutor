@@ -131,7 +131,7 @@ const generatedLabel = computed(() => {
 })
 
 const currentTask = computed(() => tasks.value[0] || null)
-const focusItems = computed(() => tasks.value)
+  const focusItems = computed(() => tasks.value.slice(1))
 const reviewTask = computed(() =>
   tasks.value.find((task) => task.action_type === 'review') || null
 )
