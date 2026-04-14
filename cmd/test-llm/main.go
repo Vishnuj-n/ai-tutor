@@ -7,20 +7,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
+	"ai-tutor/internal/llm"
+
 	"github.com/joho/godotenv"
 )
-
-// LLMConfig holds LLM provider configuration (copy for isolation).
-type LLMConfig struct {
-	BaseURL   string
-	APIKey    string
-	Model     string
-	TimeoutMs int
-}
 
 // OpenAIRequest follows the OpenAI API format.
 type OpenAIRequest struct {
@@ -52,7 +45,7 @@ func main() {
 	_ = godotenv.Load(".env")
 
 	// Load config like the app does
-	config := LoadLLMConfigFromEnv()
+	config := llm.LoadConfigFromEnv()
 
 	fmt.Printf("Loaded LLM Configuration:\n")
 	fmt.Printf("  Base URL: %s\n", config.BaseURL)
@@ -135,70 +128,6 @@ func main() {
 	fmt.Printf("✅ Connection successful!\n")
 	fmt.Printf("   API Response: %s\n\n", answer)
 	fmt.Println("=== Test Passed ===")
-}
-
-// LoadLLMConfigFromEnv loads provider config from environment variables.
-func LoadLLMConfigFromEnv() *LLMConfig {
-	config := &LLMConfig{
-		BaseURL: firstEnv(
-			"LLM_BASE_URL",
-			"OPENAI_ENDPOINT",
-			"OPENAI_BASE_URL",
-			"BASE_URL",
-		),
-		APIKey: firstEnv(
-			"LLM_API_KEY",
-			"OPENAI_API_KEY",
-			"API_KEY",
-		),
-		Model: firstEnv(
-			"LLM_MODEL",
-			"BASE_MODEL",
-			"OPENAI_MODEL",
-			"MODEL",
-		),
-		TimeoutMs: firstEnvInt(30000,
-			"LLM_TIMEOUT_MS",
-			"OPENAI_TIMEOUT_MS",
-			"TIMEOUT_MS",
-		),
-	}
-
-	if config.BaseURL == "" {
-		config.BaseURL = "http://localhost:8000"
-	}
-	if config.Model == "" {
-		config.Model = "openai/gpt-oss-120b"
-	}
-	if config.APIKey == "" {
-		config.APIKey = "sk-test"
-	}
-
-	return config
-}
-
-func firstEnv(keys ...string) string {
-	for _, key := range keys {
-		value := strings.TrimSpace(os.Getenv(key))
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func firstEnvInt(defaultValue int, keys ...string) int {
-	for _, key := range keys {
-		raw := strings.TrimSpace(os.Getenv(key))
-		if raw == "" {
-			continue
-		}
-		value, err := strconv.Atoi(raw)
-		if err == nil {
-			return value
-		}
-	}
-	return defaultValue
 }
 
 func maskSecret(s string) string {

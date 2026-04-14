@@ -1,13 +1,13 @@
 package rag
 
 import (
-	"crypto/md5"
 	"fmt"
 	"log"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 // IndexerConfig holds indexing configuration
@@ -138,6 +138,5 @@ func doesHashMatch(chunk models.Chunk, chunkHashRefs map[string]string) bool {
 
 // computeTextHash computes MD5 hash of text for change detection.
 func computeTextHash(text string) string {
-	hash := md5.Sum([]byte(text))
-	return fmt.Sprintf("%x", hash)
+	return utils.MD5Hex(text)
 }
