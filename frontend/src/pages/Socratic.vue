@@ -43,7 +43,8 @@
 
         <div v-for="(message, idx) in messages" :key="idx" :class="['bubble-row', message.role]">
           <article class="bubble">
-            <p class="message-text">{{ message.text }}</p>
+            <p v-if="message.role === 'user'" class="message-text">{{ message.text }}</p>
+            <div v-else class="markdown-body" v-html="renderMarkdown(message.text)"></div>
 
             <div v-if="message.role === 'assistant' && message.error" class="message-error">
               {{ message.error }}
@@ -102,6 +103,7 @@ import {
   getAvailableTopics as fetchAvailableTopics,
   getNotebooks as fetchNotebooks,
 } from '../services/appApi'
+import { renderMarkdown } from '../services/markdown'
 
 const availableTopics = ref([])
 const notebooks = ref([])
@@ -415,6 +417,46 @@ h1 {
   white-space: pre-wrap;
 }
 
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.markdown-body :first-child {
+  margin-top: 0;
+}
+
+.markdown-body :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body pre,
+.markdown-body blockquote {
+  margin: 0 0 8px;
+}
+
+.markdown-body code {
+  background: rgba(45, 51, 56, 0.08);
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+.markdown-body pre {
+  background: var(--surface-container-low);
+  border-radius: 8px;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+
 .message-error {
   margin-top: 8px;
   padding: 8px;
@@ -569,3 +611,4 @@ h1 {
   }
 }
 </style>
+

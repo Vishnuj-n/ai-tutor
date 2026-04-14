@@ -84,7 +84,8 @@
           <div class="messages" ref="messagesPane">
             <article v-for="(msg, idx) in chatMessages" :key="idx" class="msg" :class="msg.role">
               <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
-              <p>{{ msg.text }}</p>
+              <p v-if="msg.role === 'user'">{{ msg.text }}</p>
+              <div v-else class="markdown-body" v-html="renderMarkdown(msg.text)"></div>
             </article>
           </div>
 
@@ -112,6 +113,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { askAI, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
+import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
 
@@ -500,6 +502,46 @@ h3 {
   line-height: 1.5;
 }
 
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.markdown-body :first-child {
+  margin-top: 0;
+}
+
+.markdown-body :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body pre,
+.markdown-body blockquote {
+  margin: 0 0 8px;
+}
+
+.markdown-body code {
+  background: var(--surface-container-low);
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+.markdown-body pre {
+  background: var(--surface-container-low);
+  border-radius: 8px;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+
 .field {
   display: grid;
   gap: 5px;
@@ -582,3 +624,4 @@ button:disabled {
   }
 }
 </style>
+
