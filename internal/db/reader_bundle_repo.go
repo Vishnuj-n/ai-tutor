@@ -116,12 +116,12 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 				COALESCE(p.order_index, 0),
 				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
 			FROM parents p
-			LEFT JOIN chunks c ON c.parent_id = p.id
+			LEFT JOIN chunks c ON c.parent_id = p.id AND c.topic_id = ?
 			LEFT JOIN notebook_chunks nc ON nc.chunk_id = c.id AND nc.notebook_id = ?
 			WHERE p.topic_id = ?
 			GROUP BY p.id, p.heading, p.content_text, p.order_index
 			ORDER BY p.order_index ASC, p.id ASC
-		`, bundle.NotebookID, topicID)
+		`, topicID, bundle.NotebookID, topicID)
 	} else {
 		rows, err = conn.Query(`
 			SELECT
@@ -131,12 +131,12 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 				COALESCE(p.order_index, 0),
 				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
 			FROM parents p
-			LEFT JOIN chunks c ON c.parent_id = p.id
+			LEFT JOIN chunks c ON c.parent_id = p.id AND c.topic_id = ?
 			LEFT JOIN notebook_chunks nc ON nc.chunk_id = c.id
 			WHERE p.topic_id = ?
 			GROUP BY p.id, p.heading, p.content_text, p.order_index
 			ORDER BY p.order_index ASC, p.id ASC
-		`, topicID)
+		`, topicID, topicID)
 	}
 	if err != nil {
 		return nil, err
