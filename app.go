@@ -290,8 +290,8 @@ func (a *App) ExplainReaderSection(sectionID string, question string) map[string
 	}
 
 	prompt := fmt.Sprintf(`You are an AI study companion.
-Use only section below.
-If user asks for details missing from section, say section does not contain that detail.
+Use ONLY the section below. Do not add outside knowledge.
+If a question asks about details missing from the section, reply with: "This section does not contain that detail."
 
 Section heading: %s
 Section content:
@@ -299,10 +299,11 @@ Section content:
 
 User request: %s
 
-Return concise explanation with:
-1. plain-language summary
-2. why it matters
-3. one quick recall cue`, section["heading"], section["content"], question)
+Return a response with:
+1. Plain-language summary (2–3 sentences, main idea)
+2. Key takeaway: why this matters or where it applies
+3. Recall cue: one memorable phrase or question to test understanding
+4. Example (if the section includes a concrete example or scenario, highlight it; otherwise, skip this)`, section["heading"], section["content"], question)
 
 	answer, err := a.llmProvider.GenerateAnswer(prompt)
 	if err != nil {
@@ -765,8 +766,21 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
 	b.WriteString(topicID)
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
-	b.WriteString("Rules: correct_answer must match one option exactly; keep options concise; explanations grounded in source text.\n")
-	b.WriteString("Source sections:\n")
+	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
+	b.WriteString("Cover different concepts and question types. AVOID repetition.\n")
+	b.WriteString("Required mix:\n")
+	b.WriteString("  - 1–2 definitional/recall questions\n")
+	b.WriteString("  - 2–3 application/analysis questions (test understanding, not just memory)\n")
+	b.WriteString("  - 1 misconception/tricky question (common student errors)\n")
+	b.WriteString("\n=== DISTRACTORS ===\n")
+	b.WriteString("- Make wrong options plausible and specific (not obviously wrong).\n")
+	b.WriteString("- Common misconceptions as distractors are encouraged.\n")
+	b.WriteString("\n=== RULES ===\n")
+	b.WriteString("- correct_answer must match one option exactly.\n")
+	b.WriteString("- Keep each option short (< 15 words).\n")
+	b.WriteString("- Explanations grounded in source text (quote when helpful).\n")
+	b.WriteString("- Each question must require understanding, not just recall.\n")
+	b.WriteString("\nSource sections:\n")
 
 	// Limit to top 5 sections with truncation to avoid exceeding token limits
 	const (
@@ -812,12 +826,26 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 
 func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) string {
 	var b strings.Builder
-	b.WriteString("You are an AI tutor flashcard generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 8 concise flashcards for topic: ")
+	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
+	b.WriteString("Generate exactly 8 flashcards for topic: ")
 	b.WriteString(topicID)
 	b.WriteString("\nJSON format: {\"cards\":[{\"prompt\":string,\"answer\":string}]}\n")
-	b.WriteString("Rules: one fact per card; prompts should test recall; answers must be short and grounded in the source text.\n")
-	b.WriteString("Source sections:\n")
+	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
+	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")
+	b.WriteString("\n=== PROMPT QUALITY ===\n")
+	b.WriteString("- AVOID yes/no questions.\n")
+	b.WriteString("- PREFER 'why', 'how', 'what is', 'explain' questions.\n")
+	b.WriteString("- Make prompts specific and testable (not vague).\n")
+	b.WriteString("- Example bad: 'What is X?' → Example good: 'What is the purpose of X in context Y?'\n")
+	b.WriteString("\n=== DIFFICULTY DISTRIBUTION (CRITICAL) ===\n")
+	b.WriteString("- 3 cards: Basic (definitions, key terms, simple facts)\n")
+	b.WriteString("- 3 cards: Intermediate (relationships, processes, mechanisms)\n")
+	b.WriteString("- 2 cards: Challenging (applications, synthesis, edge cases)\n")
+	b.WriteString("\n=== ANSWER QUALITY ===\n")
+	b.WriteString("- Answers must be short (1–2 sentences max, grounded in source).\n")
+	b.WriteString("- Include terminology but keep accessible.\n")
+	b.WriteString("- If a formula or number needed, include it.\n")
+	b.WriteString("\nSource sections:\n")
 
 	const (
 		maxSections          = 5
