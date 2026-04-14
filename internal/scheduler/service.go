@@ -102,23 +102,33 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		return nil, err
 	}
 
-	learningTopics, err := s.queryLearningTopics(2)
-	if err != nil {
-		return nil, err
-	}
-
-	learnedTopicsCount, err := s.countLearnedTopics()
-	if err != nil {
-		return nil, err
-	}
-
+	// Determine catch-up mode first; learning queries are only needed if NOT in catch-up
 	catchUpMode := dueCards*2 > MaxReviewMinutes
 
 	reviewMinutes := dueCards * 2
 	if catchUpMode {
 		reviewMinutes = DefaultDailyStudyMinutes
-	} else if reviewMinutes > MaxReviewMinutes {
-		reviewMinutes = MaxReviewMinutes
+	} else {
+		// Only clamp if not in catch-up mode (when reviewMinutes may not exceed MaxReviewMinutes)
+		if reviewMinutes > MaxReviewMinutes {
+			reviewMinutes = MaxReviewMinutes
+		}
+	}
+
+	// Skip learning queries during catch-up to avoid transient DB failures aborting the entire plan
+	var learningTopics []models.TopicSummary
+	var learnedTopicsCount int
+	if !catchUpMode {
+		var err error
+		learningTopics, err = s.queryLearningTopics(2)
+		if err != nil {
+			return nil, err
+		}
+
+		learnedTopicsCount, err = s.countLearnedTopics()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if !catchUpMode && reviewMinutes > DefaultDailyStudyMinutes-MinLearningMinutes {
