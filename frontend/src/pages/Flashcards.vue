@@ -142,8 +142,7 @@ const emptyState = computed(() => {
 
 watch(selectedTopicID, () => {
   resetSession()
-  errorMessage.value = ''
-  successMessage.value = ''
+  clearMessages()
 })
 
 onMounted(async () => {
@@ -163,13 +162,17 @@ function resetSession() {
   hasPreparedCards.value = false
 }
 
+function clearMessages() {
+  errorMessage.value = ''
+  successMessage.value = ''
+}
+
 async function onPrepareCards() {
   if (!selectedTopicID.value) {
     return
   }
   isGenerating.value = true
-  errorMessage.value = ''
-  successMessage.value = ''
+  clearMessages()
   try {
     const result = await generateFlashcards(selectedTopicID.value)
     if (result?.error) {
@@ -190,8 +193,7 @@ async function loadDueCards() {
     return
   }
   isLoadingCards.value = true
-  errorMessage.value = ''
-  successMessage.value = ''
+  clearMessages()
   try {
     const result = await getFlashcards(selectedTopicID.value, true)
     if (result?.error) {
@@ -221,8 +223,7 @@ async function onRateCard(rating) {
     return
   }
   isReviewing.value = true
-  errorMessage.value = ''
-  successMessage.value = ''
+  clearMessages()
   try {
     const result = await recordFlashcardReview(cardId, rating)
     if (result?.error) {
