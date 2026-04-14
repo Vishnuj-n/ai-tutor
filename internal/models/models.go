@@ -73,6 +73,27 @@ type NotebookTopicTreeNode struct {
 	Topics     []NotebookTopicTreeTopic `json:"topics"`
 }
 
+// ReaderSection is one ordered section used by the augmented reader.
+type ReaderSection struct {
+	ID      string `json:"id"`
+	Heading string `json:"heading"`
+	Content string `json:"content"`
+	Order   int    `json:"order"`
+	PageNum int    `json:"page_num"`
+}
+
+// ReaderTopicBundle contains notebook metadata plus section/page mapping for reader UI.
+type ReaderTopicBundle struct {
+	TopicID       string          `json:"topic_id"`
+	TopicTitle    string          `json:"topic_title"`
+	NotebookID    string          `json:"notebook_id,omitempty"`
+	NotebookTitle string          `json:"notebook_title,omitempty"`
+	NotebookURL   string          `json:"notebook_url,omitempty"`
+	FileType      string          `json:"file_type,omitempty"`
+	PageCount     int             `json:"page_count"`
+	Sections      []ReaderSection `json:"sections"`
+}
+
 // QuizQuestion is a generated question persisted per topic.
 type QuizQuestion struct {
 	ID            string   `json:"id"`
