@@ -111,7 +111,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 		rows, err = conn.Query(`
 			SELECT
 				p.id,
-				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || p.order_index),
+				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || CAST(COALESCE(p.order_index, 0) AS TEXT)),
 				p.content_text,
 				COALESCE(p.order_index, 0),
 				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
@@ -126,7 +126,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 		rows, err = conn.Query(`
 			SELECT
 				p.id,
-				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || p.order_index),
+				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || CAST(COALESCE(p.order_index, 0) AS TEXT)),
 				p.content_text,
 				COALESCE(p.order_index, 0),
 				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num

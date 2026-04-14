@@ -207,6 +207,16 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 		bundle.NotebookURL = notebookAssetURL(bundle.NotebookURL)
 	}
 
+	lightSections := make([]map[string]interface{}, 0, len(bundle.Sections))
+	for _, s := range bundle.Sections {
+		lightSections = append(lightSections, map[string]interface{}{
+			"id":       s.ID,
+			"heading":  s.Heading,
+			"page_num": s.PageNum,
+			"order":    s.Order,
+		})
+	}
+
 	return map[string]interface{}{
 		"topic_id":       bundle.TopicID,
 		"topic_title":    bundle.TopicTitle,
@@ -215,7 +225,7 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 		"notebook_url":   bundle.NotebookURL,
 		"file_type":      bundle.FileType,
 		"page_count":     bundle.PageCount,
-		"sections":       bundle.Sections,
+		"sections":       lightSections,
 	}
 }
 
@@ -1031,9 +1041,9 @@ func resolveNotebookDir() (string, error) {
 }
 
 func notebookAssetURL(filePath string) string {
-	base := strings.TrimSpace(filepath.Base(filePath))
-	if base == "" || base == "." || base == string(filepath.Separator) {
+	path := strings.TrimSpace(filepath.ToSlash(filePath))
+	if path == "" || path == "." {
 		return ""
 	}
-	return "/notebooks/" + url.PathEscape(base)
+	return "/notebooks/" + url.PathEscape(path)
 }
