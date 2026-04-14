@@ -89,11 +89,6 @@ func Init(dbPath, vec0DllPath string) error {
 		return err
 	}
 
-	// Seed initial data
-	if err := seedData(); err != nil {
-		log.Printf("Warning: could not seed data: %v", err)
-	}
-
 	return nil
 }
 
@@ -429,7 +424,9 @@ func ensureFSRSSchema() error {
 	return nil
 }
 
-func seedData() error {
+// SeedDemoData inserts the built-in demo topic content.
+// Call this only from tests or an explicit demo bootstrap path.
+func SeedDemoData() error {
 	// Check if topics already exist
 	var count int
 	err := conn.QueryRow("SELECT COUNT(*) FROM topics").Scan(&count)
