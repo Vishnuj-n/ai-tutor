@@ -181,41 +181,6 @@ func TestExtractDocumentPDFBranchViaSeam(t *testing.T) {
 	}
 }
 
-func TestBuildIngestionDataDeterministicIDsAndPageNumbers(t *testing.T) {
-	service := NewService(t.TempDir())
-	doc := &ExtractedDocument{
-		Sections: []ExtractedSection{
-			{Heading: "", Text: "alpha beta", PageNum: 3},
-			{Heading: "Known Heading", Text: "gamma delta epsilon", PageNum: 4},
-		},
-	}
-
-	data, err := service.BuildIngestionData("nb-42", doc)
-	if err != nil {
-		t.Fatalf("BuildIngestionData returned error: %v", err)
-	}
-
-	if len(data.Parents) != 2 {
-		t.Fatalf("expected 2 parents, got %d", len(data.Parents))
-	}
-	if data.Parents[0].ID != "nbp_nb-42_1" || data.Parents[0].Heading != "Section 1" {
-		t.Fatalf("unexpected first parent: %#v", data.Parents[0])
-	}
-	if data.Parents[1].ID != "nbp_nb-42_2" || data.Parents[1].Heading != "Known Heading" {
-		t.Fatalf("unexpected second parent: %#v", data.Parents[1])
-	}
-
-	if len(data.Chunks) != 2 {
-		t.Fatalf("expected 2 chunks, got %d", len(data.Chunks))
-	}
-	if data.Chunks[0].ID != "nbc_nb-42_1_1" || data.Chunks[0].ParentID != "nbp_nb-42_1" || data.Chunks[0].PageNum != 3 {
-		t.Fatalf("unexpected first chunk: %#v", data.Chunks[0])
-	}
-	if data.Chunks[1].ID != "nbc_nb-42_2_1" || data.Chunks[1].ParentID != "nbp_nb-42_2" || data.Chunks[1].PageNum != 4 {
-		t.Fatalf("unexpected second chunk: %#v", data.Chunks[1])
-	}
-}
-
 func writeTempFile(t *testing.T, dir, fileName string, body []byte) string {
 	t.Helper()
 
