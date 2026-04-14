@@ -39,12 +39,15 @@
 
       <article class="card side-card">
         <p class="eyebrow">Due Reviews</p>
-        <template v-if="schedulerReady">
-          <p class="big-number">{{ plan.dueReviewCards }} <span>cards</span></p>
-        </template>
-        <template v-else>
-          <p class="big-number">Review System <span>Coming Soon</span></p>
-        </template>
+        <p class="big-number">{{ plan.dueReviewCards }} <span>cards</span></p>
+        <button
+          type="button"
+          class="review-btn"
+          :disabled="loading || !reviewRoute"
+          @click="startReviewSession"
+        >
+          {{ plan.dueReviewCards > 0 ? 'Review Due Cards' : 'All Caught Up' }}
+        </button>
         <div class="chip-group">
           <p class="eyebrow">Active Topics</p>
           <div class="chips">
@@ -101,7 +104,15 @@ const plan = ref({
 
 const currentTask = computed(() => tasks.value[0] || null)
 const focusItems = computed(() => tasks.value.slice(1))
-const schedulerReady = computed(() => !loading.value && !error.value && (tasks.value.length > 0 || plan.value.activeTopics.length > 0))
+const reviewTask = computed(() =>
+  tasks.value.find((task) => task.action_type === 'review') || null
+)
+const reviewRoute = computed(() => {
+  if (reviewTask.value?.topic_id) {
+    return { path: '/flashcards', query: { topic: reviewTask.value.topic_id } }
+  }
+  return plan.value.dueReviewCards > 0 ? { path: '/flashcards' } : null
+})
 
 onMounted(async () => {
   await loadPlan()
@@ -152,6 +163,13 @@ function startTask(task) {
   }
 
   router.push(path)
+}
+
+function startReviewSession() {
+  if (!reviewRoute.value) {
+    return
+  }
+  router.push(reviewRoute.value)
 }
 </script>
 
@@ -254,6 +272,21 @@ function startTask(task) {
   font-size: 15px;
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
+}
+
+.review-btn {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-primary);
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
+}
+
+.review-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .big-number {
