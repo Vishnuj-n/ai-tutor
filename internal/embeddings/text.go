@@ -14,7 +14,8 @@ func NormalizeWhitespace(input string) string {
 
 // TokenizeSimple splits text into a normalized token set for lightweight matching.
 func TokenizeSimple(text string) map[string]struct{} {
-	clean := nonWord.ReplaceAllString(text, " ")
+	lowered := strings.ToLower(text)
+	clean := nonWord.ReplaceAllString(lowered, " ")
 	parts := strings.Fields(clean)
 	set := make(map[string]struct{}, len(parts))
 	for _, part := range parts {
