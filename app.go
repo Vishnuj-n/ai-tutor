@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +194,31 @@ func (a *App) GetTopicContent(topicID string) map[string]interface{} {
 	return content
 }
 
+// GetReaderTopicBundle returns notebook metadata plus ordered sections for reader navigation.
+func (a *App) GetReaderTopicBundle(topicID string) map[string]interface{} {
+	bundle, err := db.GetReaderTopicBundle(topicID)
+	if err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	if bundle.NotebookURL != "" {
+		bundle.NotebookURL = notebookAssetURL(bundle.NotebookURL)
+	}
+
+	return map[string]interface{}{
+		"topic_id":       bundle.TopicID,
+		"topic_title":    bundle.TopicTitle,
+		"notebook_id":    bundle.NotebookID,
+		"notebook_title": bundle.NotebookTitle,
+		"notebook_url":   bundle.NotebookURL,
+		"file_type":      bundle.FileType,
+		"page_count":     bundle.PageCount,
+		"sections":       bundle.Sections,
+	}
+}
+
 // GetAvailableTopics returns a list of available topics
 func (a *App) GetAvailableTopics() []map[string]string {
 	topics, err := db.GetAllTopics()
@@ -233,6 +259,62 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		"cited_sections":   result.CitedSections,
 		"chunks_retrieved": result.ChunksRetrieved,
 		"sections_used":    result.SectionsUsed,
+	}
+}
+
+// ExplainReaderSection explains one reader section without relying on topic-wide retrieval.
+func (a *App) ExplainReaderSection(sectionID string, question string) map[string]interface{} {
+	sectionID = strings.TrimSpace(sectionID)
+	question = strings.TrimSpace(question)
+	if sectionID == "" {
+		return map[string]interface{}{
+			"error": "section ID is required",
+		}
+	}
+
+	if a.llmProvider == nil {
+		return map[string]interface{}{
+			"error": "LLM provider not initialized",
+		}
+	}
+
+	section, err := db.GetParentSection(sectionID)
+	if err != nil {
+		return map[string]interface{}{
+			"error": "failed to fetch reader section: " + err.Error(),
+		}
+	}
+
+	if question == "" {
+		question = "Explain this section in clear study notes."
+	}
+
+	prompt := fmt.Sprintf(`You are an AI study companion.
+Use only section below.
+If user asks for details missing from section, say section does not contain that detail.
+
+Section heading: %s
+Section content:
+%s
+
+User request: %s
+
+Return concise explanation with:
+1. plain-language summary
+2. why it matters
+3. one quick recall cue`, section["heading"], section["content"], question)
+
+	answer, err := a.llmProvider.GenerateAnswer(prompt)
+	if err != nil {
+		return map[string]interface{}{
+			"error": "section explanation failed: " + err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"answer":         answer,
+		"cited_sections": []string{section["heading"]},
+		"section_id":     section["id"],
 	}
 }
 
@@ -918,4 +1000,12 @@ func resolveNotebookDir() (string, error) {
 	}
 
 	return uploadDir, nil
+}
+
+func notebookAssetURL(filePath string) string {
+	base := strings.TrimSpace(filepath.Base(filePath))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return "/notebooks/" + url.PathEscape(base)
 }
