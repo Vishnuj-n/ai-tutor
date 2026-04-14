@@ -108,11 +108,6 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	reviewMinutes := dueCards * 2
 	if catchUpMode {
 		reviewMinutes = DefaultDailyStudyMinutes
-	} else {
-		// Only clamp if not in catch-up mode (when reviewMinutes may not exceed MaxReviewMinutes)
-		if reviewMinutes > MaxReviewMinutes {
-			reviewMinutes = MaxReviewMinutes
-		}
 	}
 
 	// Skip learning queries during catch-up to avoid transient DB failures aborting the entire plan
@@ -129,10 +124,6 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	if !catchUpMode && reviewMinutes > DefaultDailyStudyMinutes-MinLearningMinutes {
-		reviewMinutes = DefaultDailyStudyMinutes - MinLearningMinutes
 	}
 
 	if dueCards == 0 {
