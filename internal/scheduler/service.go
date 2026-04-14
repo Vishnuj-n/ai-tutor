@@ -208,6 +208,8 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		})
 	}
 
+	isEstimate := len(tasks) == 1 && tasks[0].ActionType == "explore"
+
 	return &models.TodayPlan{
 		Date:            now.Format("2006-01-02"),
 		TotalMinutes:    DefaultDailyStudyMinutes,
@@ -216,5 +218,6 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		DueReviewCards:  dueCards,
 		ActiveTopics:    activeTopics,
 		Tasks:           tasks,
+		IsEstimate:      isEstimate,
 	}, nil
 }

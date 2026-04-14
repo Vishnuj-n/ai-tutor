@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -397,8 +398,6 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		}
 	}
 
-	// Check if the plan contains only the injected fallback "explore" task.
-	isEstimate := len(plan.Tasks) == 0 || (len(plan.Tasks) == 1 && plan.Tasks[0].ActionType == "explore")
 	insightsAvailable := false
 
 	return map[string]interface{}{
@@ -411,7 +410,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"tasks":              plan.Tasks,
 		"generated_at_unix":  now.Unix(),
 		"data_fresh":         true,
-		"is_estimate":        isEstimate,
+		"is_estimate":        plan.IsEstimate,
 		"insights_available": insightsAvailable,
 		"plan_source":        "scheduler-v1",
 	}
@@ -978,7 +977,9 @@ func semanticSnippet(content string, limit int) string {
 		return trimmed
 	}
 
-	cut := string(runes[:limit])
+	// Work with rune slice to respect limit and avoid mid-rune truncation
+	cutRunes := runes[:limit]
+	cut := string(cutRunes)
 	// Prefer sentence/line boundaries to avoid abrupt truncation mid-thought.
 	best := strings.LastIndex(cut, ". ")
 	if idx := strings.LastIndex(cut, "\n"); idx > best {
@@ -994,20 +995,22 @@ func semanticSnippet(content string, limit int) string {
 	if best > limit/2 {
 		candidate := strings.TrimSpace(cut[:best+1])
 		if candidate != "" {
-			// Reserve 3 characters for "..." to stay within limit
-			if len(candidate) > limit-3 {
-				candidate = candidate[:limit-3]
+			// Convert back to runes and check length to avoid mid-rune truncation
+			candidateRunes := []rune(candidate)
+			if len(candidateRunes) > limit-3 {
+				candidateRunes = candidateRunes[:limit-3]
 			}
-			return candidate + "..."
+			return string(candidateRunes) + "..."
 		}
 	}
 
 	cut = strings.TrimSpace(cut)
-	// Ensure the final snippet doesn't exceed limit when adding ellipsis
-	if len(cut) > limit-3 {
-		cut = cut[:limit-3]
+	// Convert to runes and cap to limit-3 to ensure "..." fits
+	cutRunes = []rune(cut)
+	if len(cutRunes) > limit-3 {
+		cutRunes = cutRunes[:limit-3]
 	}
-	return cut + "..."
+	return string(cutRunes) + "..."
 }
 
 func minInt(a, b int) int {
@@ -1069,11 +1072,13 @@ func resolveNotebookDir() (string, error) {
 }
 
 func notebookAssetURL(filePath string) string {
-	path := strings.TrimSpace(filepath.ToSlash(filePath))
-	if path == "" || path == "." || path == ".." {
+	// Normalize backslashes to forward slashes for host-neutral path handling
+	normPath := strings.TrimSpace(strings.ReplaceAll(filePath, "\\", "/"))
+	if normPath == "" || normPath == "." || normPath == ".." {
 		return ""
 	}
-	name := strings.TrimSpace(filepath.Base(path))
+	// Use path.Base for cross-platform compatibility
+	name := strings.TrimSpace(path.Base(normPath))
 	if name == "" || name == "." || name == ".." {
 		return ""
 	}
