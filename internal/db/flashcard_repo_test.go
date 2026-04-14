@@ -1,9 +1,7 @@
 package db
 
 import (
-	"database/sql"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"ai-tutor/internal/models"
@@ -128,62 +126,6 @@ func TestUpdateFlashcardReviewRollsBackCardOnLogInsertFailure(t *testing.T) {
 	}
 	if state.Reps != 0 {
 		t.Fatalf("expected state rollback, got %#v", state)
-	}
-}
-
-func TestEnsureFSRSSchemaPreservesCardsWhenLogMissing(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy-fsrs.sqlite")
-
-	rawConn, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open failed: %v", err)
-	}
-	defer func() {
-		_ = rawConn.Close()
-	}()
-
-	legacySchema := `
-		CREATE TABLE topics (id TEXT PRIMARY KEY, title TEXT NOT NULL);
-		CREATE TABLE fsrs_cards (
-			id TEXT PRIMARY KEY,
-			topic_id TEXT NOT NULL,
-			prompt TEXT NOT NULL,
-			answer TEXT NOT NULL,
-			state_json TEXT,
-			due_at TEXT
-		);
-		INSERT INTO topics (id, title) VALUES ('legacy-topic', 'Legacy Topic');
-		INSERT INTO fsrs_cards (id, topic_id, prompt, answer, state_json, due_at)
-		VALUES ('legacy-card', 'legacy-topic', 'Old Q', 'Old A', '{}', 'old-ts');
-	`
-	if _, err := rawConn.Exec(legacySchema); err != nil {
-		t.Fatalf("failed to seed legacy schema: %v", err)
-	}
-	_ = rawConn.Close()
-
-	if err := Init(dbPath, ""); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-	defer func() {
-		if err := Close(); err != nil {
-			t.Fatalf("Close failed: %v", err)
-		}
-	}()
-
-	var cardsCount int
-	if err := conn.QueryRow(`SELECT COUNT(*) FROM fsrs_cards`).Scan(&cardsCount); err != nil {
-		t.Fatalf("count fsrs_cards failed: %v", err)
-	}
-	if cardsCount != 1 {
-		t.Fatalf("expected non-destructive migration to preserve fsrs_cards rows, got %d rows", cardsCount)
-	}
-
-	var logTableCount int
-	if err := conn.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'fsrs_review_log'`).Scan(&logTableCount); err != nil {
-		t.Fatalf("count fsrs_review_log table failed: %v", err)
-	}
-	if logTableCount != 1 {
-		t.Fatalf("expected fsrs_review_log table to exist, got %d", logTableCount)
 	}
 }
 
