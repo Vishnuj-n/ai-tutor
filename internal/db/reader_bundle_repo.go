@@ -9,8 +9,10 @@ import (
 )
 
 // GetReaderTopicBundle returns notebook metadata plus ordered sections with resolved page numbers.
-func GetReaderTopicBundle(topicID string) (*models.ReaderTopicBundle, error) {
+// If notebookID is provided, section page mapping is scoped to that notebook.
+func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopicBundle, error) {
 	topicID = strings.TrimSpace(topicID)
+	selectedNotebookID := strings.TrimSpace(notebookID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic ID is required")
 	}
@@ -24,50 +26,72 @@ func GetReaderTopicBundle(topicID string) (*models.ReaderTopicBundle, error) {
 		return nil, err
 	}
 
-	var notebookID sql.NullString
+	var notebookIDRow sql.NullString
 	var notebookTitle sql.NullString
 	var filePath sql.NullString
 	var fileType sql.NullString
 	var pageCount sql.NullInt64
 
-	err := conn.QueryRow(`
-		SELECT id, title, file_path, file_type, page_count
-		FROM (
-			SELECT
-				n.id,
-				n.title,
-				n.file_path,
-				n.file_type,
-				COALESCE(n.page_count, 0) AS page_count,
-				n.uploaded_at,
-				0 AS rank
+	var err error
+	if selectedNotebookID != "" {
+		err = conn.QueryRow(`
+			SELECT id, title, file_path, file_type, COALESCE(page_count, 0)
 			FROM notebooks n
-			WHERE n.topic_id = ?
+			WHERE n.id = ?
+			  AND (
+				n.topic_id = ?
+				OR EXISTS (
+					SELECT 1
+					FROM notebook_chunks nc
+					JOIN chunks c ON c.id = nc.chunk_id
+					WHERE nc.notebook_id = n.id AND c.topic_id = ?
+				)
+			  )
+			LIMIT 1
+		`, selectedNotebookID, topicID, topicID).Scan(&notebookIDRow, &notebookTitle, &filePath, &fileType, &pageCount)
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("selected notebook does not contain this topic")
+		}
+	} else {
+		err = conn.QueryRow(`
+			SELECT id, title, file_path, file_type, page_count
+			FROM (
+				SELECT
+					n.id,
+					n.title,
+					n.file_path,
+					n.file_type,
+					COALESCE(n.page_count, 0) AS page_count,
+					n.uploaded_at,
+					0 AS rank
+				FROM notebooks n
+				WHERE n.topic_id = ?
 
-			UNION
+				UNION
 
-			SELECT
-				n.id,
-				n.title,
-				n.file_path,
-				n.file_type,
-				COALESCE(n.page_count, 0) AS page_count,
-				n.uploaded_at,
-				1 AS rank
-			FROM notebooks n
-			JOIN notebook_chunks nc ON nc.notebook_id = n.id
-			JOIN chunks c ON c.id = nc.chunk_id
-			WHERE c.topic_id = ?
-		)
-		ORDER BY rank ASC, uploaded_at DESC, id ASC
-		LIMIT 1
-	`, topicID, topicID).Scan(&notebookID, &notebookTitle, &filePath, &fileType, &pageCount)
+				SELECT
+					n.id,
+					n.title,
+					n.file_path,
+					n.file_type,
+					COALESCE(n.page_count, 0) AS page_count,
+					n.uploaded_at,
+					1 AS rank
+				FROM notebooks n
+				JOIN notebook_chunks nc ON nc.notebook_id = n.id
+				JOIN chunks c ON c.id = nc.chunk_id
+				WHERE c.topic_id = ?
+			)
+			ORDER BY rank ASC, uploaded_at DESC, id ASC
+			LIMIT 1
+		`, topicID, topicID).Scan(&notebookIDRow, &notebookTitle, &filePath, &fileType, &pageCount)
+	}
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
 
-	if notebookID.Valid {
-		bundle.NotebookID = notebookID.String
+	if notebookIDRow.Valid {
+		bundle.NotebookID = notebookIDRow.String
 	}
 	if notebookTitle.Valid {
 		bundle.NotebookTitle = notebookTitle.String
@@ -82,20 +106,38 @@ func GetReaderTopicBundle(topicID string) (*models.ReaderTopicBundle, error) {
 		bundle.PageCount = int(pageCount.Int64)
 	}
 
-	rows, err := conn.Query(`
-		SELECT
-			p.id,
-			COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || p.order_index),
-			p.content_text,
-			COALESCE(p.order_index, 0),
-			COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
-		FROM parents p
-		LEFT JOIN chunks c ON c.parent_id = p.id
-		LEFT JOIN notebook_chunks nc ON nc.chunk_id = c.id
-		WHERE p.topic_id = ?
-		GROUP BY p.id, p.heading, p.content_text, p.order_index
-		ORDER BY p.order_index ASC, p.id ASC
-	`, topicID)
+	var rows *sql.Rows
+	if bundle.NotebookID != "" {
+		rows, err = conn.Query(`
+			SELECT
+				p.id,
+				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || p.order_index),
+				p.content_text,
+				COALESCE(p.order_index, 0),
+				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
+			FROM parents p
+			LEFT JOIN chunks c ON c.parent_id = p.id
+			LEFT JOIN notebook_chunks nc ON nc.chunk_id = c.id AND nc.notebook_id = ?
+			WHERE p.topic_id = ?
+			GROUP BY p.id, p.heading, p.content_text, p.order_index
+			ORDER BY p.order_index ASC, p.id ASC
+		`, bundle.NotebookID, topicID)
+	} else {
+		rows, err = conn.Query(`
+			SELECT
+				p.id,
+				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || p.order_index),
+				p.content_text,
+				COALESCE(p.order_index, 0),
+				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
+			FROM parents p
+			LEFT JOIN chunks c ON c.parent_id = p.id
+			LEFT JOIN notebook_chunks nc ON nc.chunk_id = c.id
+			WHERE p.topic_id = ?
+			GROUP BY p.id, p.heading, p.content_text, p.order_index
+			ORDER BY p.order_index ASC, p.id ASC
+		`, topicID)
+	}
 	if err != nil {
 		return nil, err
 	}

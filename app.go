@@ -195,8 +195,8 @@ func (a *App) GetTopicContent(topicID string) map[string]interface{} {
 }
 
 // GetReaderTopicBundle returns notebook metadata plus ordered sections for reader navigation.
-func (a *App) GetReaderTopicBundle(topicID string) map[string]interface{} {
-	bundle, err := db.GetReaderTopicBundle(topicID)
+func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string]interface{} {
+	bundle, err := db.GetReaderTopicBundle(topicID, notebookID)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),

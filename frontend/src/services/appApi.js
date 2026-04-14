@@ -11,8 +11,8 @@ export function getTopicContent(topicID) {
   return appBridge().GetTopicContent(topicID)
 }
 
-export function getReaderTopicBundle(topicID) {
-  return appBridge().GetReaderTopicBundle(topicID)
+export function getReaderTopicBundle(topicID, notebookID = '') {
+  return appBridge().GetReaderTopicBundle(topicID, notebookID)
 }
 
 export function getAvailableTopics() {
