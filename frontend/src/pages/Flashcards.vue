@@ -36,7 +36,7 @@
     </article>
 
     <article v-if="errorMessage" class="panel error">{{ errorMessage }}</article>
-    <article v-if="successMessage" class="panel success">{{ successMessage }}</article>
+    <article v-if="successMessage" class="panel success" role="status" aria-live="polite" aria-atomic="true">{{ successMessage }}</article>
 
     <article v-if="currentCard" class="panel card-shell">
       <header class="card-header">
@@ -295,16 +295,18 @@ function buildReviewFeedback(rating, scheduledDays) {
 }
 
 function formatNextReview(days) {
-  if (typeof days !== 'number' || Number.isNaN(days)) {
+  const n = Number(days)
+  if (Number.isNaN(n)) {
     return 'scheduled soon'
   }
-  if (days <= 0) {
+  const daysInt = Math.round(n)
+  if (daysInt <= 0) {
     return 'today'
   }
-  if (days === 1) {
+  if (daysInt === 1) {
     return 'in 1 day'
   }
-  return `in ${days} days`
+  return `in ${daysInt} days`
 }
 </script>
 
