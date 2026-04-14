@@ -306,6 +306,22 @@ func TestAskAINotReadyReturnsError(t *testing.T) {
 	}
 }
 
+func TestNotebookAssetURLUsesBasename(t *testing.T) {
+	assetURL := notebookAssetURL("C:/Users/vishn/AppData/Roaming/ai-tutor/uploads/sample.pdf")
+	if assetURL != "/notebooks/sample.pdf" {
+		t.Fatalf("expected notebook URL to use basename, got %q", assetURL)
+	}
+}
+
+func TestNotebookAssetURLRejectsTraversalNames(t *testing.T) {
+	if got := notebookAssetURL(".."); got != "" {
+		t.Fatalf("expected empty URL for traversal segment, got %q", got)
+	}
+	if got := notebookAssetURL("."); got != "" {
+		t.Fatalf("expected empty URL for current directory segment, got %q", got)
+	}
+}
+
 func TestScoreAnswerCorrectAnswerFullText(t *testing.T) {
 	initTestDB(t)
 	app := &App{}

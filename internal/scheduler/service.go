@@ -112,12 +112,16 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		return nil, err
 	}
 
+	catchUpMode := dueCards*2 > MaxReviewMinutes
+
 	reviewMinutes := dueCards * 2
-	if reviewMinutes > MaxReviewMinutes {
+	if catchUpMode {
+		reviewMinutes = DefaultDailyStudyMinutes
+	} else if reviewMinutes > MaxReviewMinutes {
 		reviewMinutes = MaxReviewMinutes
 	}
 
-	if reviewMinutes > DefaultDailyStudyMinutes-MinLearningMinutes {
+	if !catchUpMode && reviewMinutes > DefaultDailyStudyMinutes-MinLearningMinutes {
 		reviewMinutes = DefaultDailyStudyMinutes - MinLearningMinutes
 	}
 
@@ -144,7 +148,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		usedMinutes += reviewMinutes
 	}
 
-	if len(learningTopics) > 0 {
+	if !catchUpMode && len(learningTopics) > 0 {
 		perTopic := learningMinutes / len(learningTopics)
 		if perTopic < 15 {
 			perTopic = 15
@@ -165,7 +169,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		}
 	}
 
-	if learnedTopicsCount > 0 {
+	if !catchUpMode && learnedTopicsCount > 0 {
 		remaining := DefaultDailyStudyMinutes - usedMinutes
 		if remaining >= 15 {
 			tasks = append(tasks, models.ScheduledTask{

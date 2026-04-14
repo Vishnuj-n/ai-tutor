@@ -47,6 +47,9 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Initialize scheduler first so Dashboard endpoints remain available
+	// even if downstream startup steps fail.
+	a.scheduler = scheduler.New()
 
 	// Load local .env if present. Missing file is fine.
 	_ = godotenv.Load()
@@ -163,7 +166,6 @@ func (a *App) startup(ctx context.Context) {
 
 	// Create RAG pipeline
 	a.ragPipeline = rag.NewPipeline(embedStore, llmProvider)
-	a.scheduler = scheduler.New()
 
 	// Initialize notebook service
 	notebookDir, err := resolveNotebookDir()
@@ -813,13 +815,7 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 			continue
 		}
 
-		// Truncate section to max content size (rune-safe to preserve UTF-8)
-		if len(content) > maxContentPerSection {
-			runes := []rune(content)
-			if len(runes) > maxContentPerSection {
-				content = string(runes[:maxContentPerSection]) + "..."
-			}
-		}
+		content = semanticSnippet(content, maxContentPerSection)
 
 		b.WriteString("[Heading] ")
 		b.WriteString(heading)
@@ -881,30 +877,12 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 			continue
 		}
 
-		runes := []rune(content)
-		ellipsisRunes := len([]rune("..."))
 		allowedRunes := minInt(maxContentPerSection, remainingBudget)
 		if allowedRunes <= 0 {
 			break
 		}
 
-		appendedRunes := len(runes)
-		wasTrimmed := false
-		if appendedRunes > allowedRunes {
-			if allowedRunes <= ellipsisRunes {
-				break
-			}
-			appendedRunes = allowedRunes - ellipsisRunes
-			if appendedRunes <= 0 {
-				break
-			}
-			wasTrimmed = true
-		}
-
-		content = string(runes[:appendedRunes])
-		if wasTrimmed {
-			content += "..."
-		}
+		content = semanticSnippet(content, allowedRunes)
 
 		b.WriteString("[Heading] ")
 		b.WriteString(heading)
@@ -912,10 +890,7 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 		b.WriteString(content)
 		b.WriteString("\n---\n")
 
-		totalContentLength += appendedRunes
-		if wasTrimmed {
-			totalContentLength += ellipsisRunes
-		}
+		totalContentLength += len([]rune(content))
 		sectionCount++
 	}
 
@@ -982,6 +957,40 @@ func normalizeQuizAnswer(answer string, options []string) string {
 	return ans
 }
 
+func semanticSnippet(content string, limit int) string {
+	trimmed := strings.TrimSpace(content)
+	if limit <= 0 || trimmed == "" {
+		return ""
+	}
+
+	runes := []rune(trimmed)
+	if len(runes) <= limit {
+		return trimmed
+	}
+
+	cut := string(runes[:limit])
+	// Prefer sentence/line boundaries to avoid abrupt truncation mid-thought.
+	best := strings.LastIndex(cut, ". ")
+	if idx := strings.LastIndex(cut, "\n"); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(cut, "? "); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(cut, "! "); idx > best {
+		best = idx
+	}
+
+	if best > limit/2 {
+		candidate := strings.TrimSpace(cut[:best+1])
+		if candidate != "" {
+			return candidate + "..."
+		}
+	}
+
+	return strings.TrimSpace(cut) + "..."
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -1045,5 +1054,9 @@ func notebookAssetURL(filePath string) string {
 	if path == "" || path == "." || path == ".." {
 		return ""
 	}
-	return "/notebooks/" + url.PathEscape(path)
+	name := strings.TrimSpace(filepath.Base(path))
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	return "/notebooks/" + url.PathEscape(name)
 }
