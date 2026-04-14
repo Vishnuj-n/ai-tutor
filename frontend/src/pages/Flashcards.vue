@@ -36,6 +36,7 @@
     </article>
 
     <article v-if="errorMessage" class="panel error">{{ errorMessage }}</article>
+    <article v-if="successMessage" class="panel success" role="status" aria-live="polite" aria-atomic="true">{{ successMessage }}</article>
 
     <article v-if="currentCard" class="panel card-shell">
       <header class="card-header">
@@ -95,6 +96,7 @@ const isGenerating = ref(false)
 const isLoadingCards = ref(false)
 const isReviewing = ref(false)
 const hasPreparedCards = ref(false)
+const successMessage = ref('')
 
 const currentCard = computed(() => cards.value[currentIndex.value] || null)
 const selectedNotebook = computed(() =>
@@ -140,7 +142,7 @@ const emptyState = computed(() => {
 
 watch(selectedTopicID, () => {
   resetSession()
-  errorMessage.value = ''
+  clearMessages()
 })
 
 onMounted(async () => {
@@ -160,12 +162,17 @@ function resetSession() {
   hasPreparedCards.value = false
 }
 
+function clearMessages() {
+  errorMessage.value = ''
+  successMessage.value = ''
+}
+
 async function onPrepareCards() {
   if (!selectedTopicID.value) {
     return
   }
   isGenerating.value = true
-  errorMessage.value = ''
+  clearMessages()
   try {
     const result = await generateFlashcards(selectedTopicID.value)
     if (result?.error) {
@@ -186,7 +193,7 @@ async function loadDueCards() {
     return
   }
   isLoadingCards.value = true
-  errorMessage.value = ''
+  clearMessages()
   try {
     const result = await getFlashcards(selectedTopicID.value, true)
     if (result?.error) {
@@ -208,6 +215,7 @@ async function onRateCard(rating) {
   if (!currentCard.value) {
     return
   }
+  clearMessages()
   const cardId = typeof currentCard.value.id === 'string' || typeof currentCard.value.id === 'number'
     ? String(currentCard.value.id).trim()
     : ''
@@ -216,7 +224,6 @@ async function onRateCard(rating) {
     return
   }
   isReviewing.value = true
-  errorMessage.value = ''
   try {
     const result = await recordFlashcardReview(cardId, rating)
     if (result?.error) {
@@ -224,6 +231,7 @@ async function onRateCard(rating) {
       return
     }
 
+    successMessage.value = buildReviewFeedback(rating, result?.state?.scheduled_days)
     cards.value.splice(currentIndex.value, 1)
     if (currentIndex.value >= cards.value.length) {
       currentIndex.value = Math.max(0, cards.value.length - 1)
@@ -273,6 +281,33 @@ function onNotebookChange() {
 
 function getPreferredTopicID() {
   return typeof route.query.topic === 'string' ? route.query.topic : ''
+}
+
+function buildReviewFeedback(rating, scheduledDays) {
+  const nextReview = formatNextReview(scheduledDays)
+  const ratingLabel = {
+    again: 'Again',
+    hard: 'Hard',
+    good: 'Good',
+    easy: 'Easy',
+  }[rating] || 'Review'
+
+  return `${ratingLabel} saved. Next review ${nextReview}.`
+}
+
+function formatNextReview(days) {
+  const n = Number(days)
+  if (!Number.isFinite(n)) {
+    return 'scheduled soon'
+  }
+  const daysInt = Math.round(n)
+  if (daysInt <= 0) {
+    return 'today'
+  }
+  if (daysInt === 1) {
+    return 'in 1 day'
+  }
+  return `in ${daysInt} days`
 }
 </script>
 
@@ -464,6 +499,13 @@ button:disabled {
   border: 1px solid #f3b5a7;
   background: #fff3ef;
   color: #8a2d16;
+}
+
+.success {
+  border: 1px solid #b8dcc2;
+  background: #f3fbf5;
+  color: #1f6a3a;
+  margin: 0;
 }
 
 @media (max-width: 960px) {
