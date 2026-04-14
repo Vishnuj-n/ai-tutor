@@ -389,21 +389,30 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		}
 	}
 
-	plan, err := a.scheduler.BuildTodayPlan(time.Now())
+	now := time.Now()
+	plan, err := a.scheduler.BuildTodayPlan(now)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}
 	}
 
+	isEstimate := len(plan.Tasks) == 0
+	insightsAvailable := false
+
 	return map[string]interface{}{
-		"date":             plan.Date,
-		"total_minutes":    plan.TotalMinutes,
-		"review_minutes":   plan.ReviewMinutes,
-		"learning_minutes": plan.LearningMinutes,
-		"due_review_cards": plan.DueReviewCards,
-		"active_topics":    plan.ActiveTopics,
-		"tasks":            plan.Tasks,
+		"date":               plan.Date,
+		"total_minutes":      plan.TotalMinutes,
+		"review_minutes":     plan.ReviewMinutes,
+		"learning_minutes":   plan.LearningMinutes,
+		"due_review_cards":   plan.DueReviewCards,
+		"active_topics":      plan.ActiveTopics,
+		"tasks":              plan.Tasks,
+		"generated_at_unix":  now.Unix(),
+		"data_fresh":         true,
+		"is_estimate":        isEstimate,
+		"insights_available": insightsAvailable,
+		"plan_source":        "scheduler-v1",
 	}
 }
 
