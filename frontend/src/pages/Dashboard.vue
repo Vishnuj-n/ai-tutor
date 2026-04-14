@@ -5,7 +5,7 @@
       <div class="profile">Academic Profile</div>
     </header>
 
-    <article class="status-strip">
+    <article v-if="!loading && !error" class="status-strip">
       <div>
         <p class="eyebrow">Today</p>
         <h1>{{ plan.totalMinutes }} minute study plan</h1>
