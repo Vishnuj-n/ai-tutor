@@ -112,7 +112,7 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { askAI, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
+import { askAI, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
@@ -203,15 +203,24 @@ function onNotebookChange() {
   if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
     selectedTopicID.value = availableTopics.value[0]?.topic_id || ''
   }
+  chatMessages.value = []
   void loadBundle()
 }
 
 function onTopicChange() {
+  chatMessages.value = []
   void loadBundle()
 }
 
 async function loadBundle() {
   if (!selectedTopicID.value) {
+    topicTitle.value = 'Reader'
+    notebookUrl.value = ''
+    fileType.value = ''
+    pageCount.value = 1
+    currentPage.value = 1
+    sections.value = []
+    activeSection.value = null
     globalError.value = 'Select topic to open Reader.'
     return
   }
@@ -222,6 +231,13 @@ async function loadBundle() {
   try {
     const result = await getReaderTopicBundle(selectedTopicID.value, selectedNotebookID.value)
     if (result?.error) {
+      topicTitle.value = 'Reader'
+      notebookUrl.value = ''
+      fileType.value = ''
+      pageCount.value = 1
+      currentPage.value = 1
+      sections.value = []
+      activeSection.value = null
       globalError.value = result.error
       return
     }
@@ -236,6 +252,13 @@ async function loadBundle() {
     const firstPage = Number(activeSection.value?.page_num)
     currentPage.value = Number.isFinite(firstPage) && firstPage > 0 ? firstPage : 1
   } catch (err) {
+    topicTitle.value = 'Reader'
+    notebookUrl.value = ''
+    fileType.value = ''
+    pageCount.value = 1
+    currentPage.value = 1
+    sections.value = []
+    activeSection.value = null
     globalError.value = err?.message || 'Failed to load reader data'
   } finally {
     loadingBundle.value = false
@@ -278,7 +301,11 @@ async function sendChat() {
   chatLoading.value = true
 
   try {
-    const result = await askAI(selectedTopicID.value, question)
+    const sectionId = activeSection.value?.id || ''
+    const result = sectionId
+      ? await explainReaderSection(sectionId, question)
+      : await askAI(selectedTopicID.value, question)
+    
     if (result?.error) {
       chatError.value = result.error
       return
