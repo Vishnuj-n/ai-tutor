@@ -70,6 +70,27 @@ This file is a single canonical history of completed sprints. Use this for onboa
 
 ---
 
+## Sprint 6 — FSRS Review UI + Backend Wiring
+- Completed: 2026-04-14
+- Goal: Connect Dashboard and Flashcards UI to FSRS backend and record review ratings.
+- Outcome: Dashboard surfaces due-count from the daily plan; Flashcards page sends rating choices and shows next scheduled review.
+- Key files changed:
+  - frontend/src/pages/Dashboard.vue
+  - frontend/src/pages/Flashcards.vue
+  - frontend/src/services/appApi.js
+  - app.go (`GetTodayPlan`, `GetFlashcards`, `RecordFlashcardReview`)
+  - internal/scheduler/service.go
+  - internal/db/flashcard_repo.go
+  - internal/db/store.go
+- API / UI changes:
+  - `GetTodayPlan()` added
+  - `GetFlashcards(topicID, true)` wired to due-card loading
+  - `RecordFlashcardReview(cardID, rating)` wired to review actions
+- Tests status: Backend db and scheduler tests pass; frontend review flow wired.
+- TODOs: Validate full Wails end-to-end flow; polish review copy and dashboard messaging.
+
+---
+
 ## How to run / verify locally
 
 1. Start dev app (requires assets and env vars):

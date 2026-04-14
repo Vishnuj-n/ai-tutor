@@ -127,220 +127,36 @@ Because:
 * Easier to implement and debug
 
 ---
+### 📍 Sprint 6: The "Command & Review" Loop (Do this right now)
+**Goal:** Wire Vue frontend to FSRS backend so review flow is usable.
+* **1. Dashboard UI:** Hook `Dashboard.vue` to `due_at` and `suspended`.
+    * Show "X Cards Due Today" from `service.go` Daily Plan.
+* **2. Flashcards UI:**
+    * Send `Again (1)`, `Hard (2)`, `Good (3)`, `Easy (4)` ratings from `Flashcards.vue` to `RecordFlashcardReview`.
+    * Show next review using `scheduled_days` (e.g. "See you in 3 days!").
+* **Outcome:** Flashcards review session is wired end-to-end with FSRS.
 
-# Sprint 1 — UI Skeleton + Navigation
+### 📍 Sprint 7: The "Augmented Reader" (The Split-Screen Hub)
+**Goal:** Build the "Encoding" phase. This is where the student actually learns the PDF before FSRS tests them.
+* **1. PDF.js Integration:** Embed a PDF viewer in the left pane of `Reader.vue`.
+* **2. Linear Navigation:** Use the `parent` chunks from your RAG database to find the `page_num`. When a user clicks a Topic, tell the PDF viewer to jump to that exact page.
+* **3. The AI Companion (Right Pane):** Add the chat interface on the right side. When the student highlights a tricky paragraph in the PDF, let them click "Explain this" to trigger an LLM explanation without leaving the page.
+* **4. The "Mark Learned" Trigger:** At the end of the section, the user clicks "Mark as Learned", which generates the Flashcards and pushes them into your FSRS engine.
+* **Outcome:** A highly impressive, professional Split-Screen learning environment that doesn't hallucinate because the PDF is always visible.
 
-## Goal
+### 📍 Sprint 8: The "AI Examiner" (Written Testing)
+**Goal:** Replace the old Socratic Tutor with a graded, short-answer assessment tool.
+* **1. Prompt Engineering:** Build an LLM prompt that asks a question based on the topic, reads the student's typed answer, and grades it out of 10.
+* **2. FSRS Hook:** Translate that 1-10 score into an FSRS rating (1=Again, 4=Easy).
+* **3. Generic Logging:** Save this interaction using your newly built `fsrs_review_log` with `activity_type = "short_answer"`.
+* **Outcome:** You prove your FSRS engine is extensible beyond just flashcards.
 
-Build a fully navigable UI shell with no backend logic.
-
-## Constraints
-
-* UI only
-* No API calls
-* No state management
-* No backend logic
-
-## Required Work
-
-* Setup Wails + Vue + Vue Router
-* Build `App.vue` layout:
-  * fixed sidebar
-  * flex main content
-  * page background `#f9f9fb`
-* Create `Sidebar.vue` and pages:
-  * Dashboard
-  * Reader
-  * Quiz
-  * Flashcards
-  * Socratic Tutor
-  * Settings
-* Implement route navigation and active highlighting
-* Build Dashboard layout to mirror screenshot:
-  * hero greeting
-  * current session card
-  * due reviews card
-  * weekly insights
-  * curated focus list
-
-## Output
-
-* App runs
-* Sidebar navigation works
-* All pages render
-* Dashboard matches the reference structure
-* UI follows design system: no borders, layered surfaces, whitespace-based separation
-
-## Done
-
-* No broken routes
-* No console errors
-* Clean, minimal UI
-* Simple, readable code
-
----
----
-# Sprint 2 — Reader + Basic RAG (Ask AI)
-
-## Goal
-
-Make **Reader + Ask AI actually work**
+### 📍 Sprint 9: Scalability & Polish (The Backlog)
+**Goal:** Clean up the rough edges for a production-ready feel.
+* **1. SQLite Connection Fix:** Implement WAL mode and connection pooling to stop the UI from locking during heavy 100-page PDF ingestion.
+* **2. Multi-Notebook Support:** Add the UI routing to switch between "Physics 101" and "Computer Architecture" databases.
+* **Outcome:** The app is ready for massive textbooks and multiple subjects.
 
 ---
 
-## Summary
-
-Sprint 2 delivered a working RAG-based "Ask AI" feature integrated into the Reader page. Key components: a small SQLite seed dataset (topic "os-scheduling"), temporary lexical retrieval for MVP validation, a simple RAG pipeline that expands chunks to parent sections, prompt assembly, and an OpenAI‑compatible LLM call. The frontend connects via Wails to `AskAI(topicID, question)` and displays answers with citations.
-
-## Included
-
-- **Data & DB**: SQLite schema and seed data (`db.go`)  
-- **Embeddings & Retrieval (MVP)**: lexical vectors, tokenization, cosine similarity, top‑k search (`embeddings.go`)  
-- **RAG Pipeline**: retrieval → parent expansion → prompt assembly → LLM call → citations (`rag.go`)  
-- **Backend API**: `GetTopicContent`, `GetAvailableTopics`, `AskAI` (`app.go`)  
-- **Reader UI**: topic sections + Ask AI panel (`frontend/src/pages/Reader.vue`)
-
-## Run (dev)
-
-- Install SQLite driver: `go get -u github.com/mattn/go-sqlite3`  
-- Set LLM env vars: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`  
-- Start dev server: `wails dev`
-
-## Limitations (MVP)
-
-- Single hardcoded topic, temporary non-neural retrieval, DB in temp, requires online LLM, no quiz/FSRS yet.
-
-## Next steps
-
-- Settings UI, persistent config, add topics, quiz generation, FSRS, ONNX INT8 embeddings + `sqlite-vec` retrieval.
-
----
-
-# Sprint 3 — Socratic Tutor + Improve UX
-
-## Goal
-
-Turn Ask AI into **guided learning (Socratic style)**
-
----
-
-## Tasks
-
-### 1. Socratic Mode (Simple)
-
-Instead of:
-
-> “Here is answer”
-
-Do:
-
-* Ask follow-up questions
-* Guide thinking
-
-Prompt change only (no complex system)
-
----
-
-### 2. Socratic Page
-
-* Input question OR start session
-* Show:
-
-  * AI question
-  * user answer
-  * next question
-
-Keep stateless per step (no chat history needed initially)
-
----
-
-### 3. Improve Reader UX
-
-* Better layout
-* Split:
-
-  * content
-  * AI panel
-
----
-
-### 4. Error Handling
-
-* If no internet:
-
-  * show “AI unavailable”
-
----
-
-### 5. Code Cleanup
-
-* Separate:
-
-  * RAG logic
-  * DB logic
-* Introduce basic repository pattern
-
----
-
-## Output of Sprint 3
-
-* Reader works
-* Ask AI works
-* Socratic Tutor works (basic)
-* Clean UI foundation
-
----
-
-# What You Will Have After Sprint 3
-
-* Full UI structure ✅
-* Working RAG system ✅
-* First “intelligent” feature ✅
-* Clean architecture base ✅
-
----
-
-# What Comes NEXT (Sprint 4+ Preview)
-
-* Quiz generation
-* FSRS scheduler
-* Flashcards system
-* Progress tracking
-
----
-
-# Rules During These Sprints
-
-* Keep everything simple
-* No over-engineering
-* No LangChain
-* No complex state management
-* One feature at a time
-
----
-
-# Final Recommendation
-
-Start with:
-
-> UI → RAG → Socratic → then FSRS
-
-This ensures:
-
-* visible progress
-* motivation
-* stable foundation
-
----
-
-# Definition of Done (Sprint 3)
-
-* You can:
-
-  * open app
-  * navigate pages
-  * read topic
-  * ask AI
-  * get contextual answer
-
-If this works, your foundation is correct.
+**Your immediate next step:** Create a new branch (e.g., `feat/sprint-6-dashboard-ui`). Do not touch the backend. Focus entirely on `Dashboard.vue` and `Flashcards.vue` to make your FSRS engine come to life.
