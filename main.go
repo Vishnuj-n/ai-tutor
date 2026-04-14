@@ -60,7 +60,8 @@ func notebookHandler(app *App) http.Handler {
 
 		escapedName := strings.TrimPrefix(req.URL.Path, "/notebooks/")
 		fileName, err := url.PathUnescape(escapedName)
-		if err != nil || fileName == "" || filepath.Base(fileName) != fileName {
+		// Explicitly reject path traversal attempts: empty, current dir, parent dir, or multi-component paths
+		if err != nil || fileName == "" || fileName == "." || fileName == ".." || filepath.Base(fileName) != fileName {
 			http.NotFound(rw, req)
 			return
 		}

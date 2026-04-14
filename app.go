@@ -1042,7 +1042,7 @@ func resolveNotebookDir() (string, error) {
 
 func notebookAssetURL(filePath string) string {
 	path := strings.TrimSpace(filepath.ToSlash(filePath))
-	if path == "" || path == "." {
+	if path == "" || path == "." || path == ".." {
 		return ""
 	}
 	return "/notebooks/" + url.PathEscape(path)

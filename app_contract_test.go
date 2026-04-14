@@ -727,3 +727,126 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 		t.Fatalf("expected scheduled_days > 0 for easy, got %d", state.ScheduledDays)
 	}
 }
+
+// Contract tests for GetReaderTopicBundle
+func TestGetReaderTopicBundle_Success(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	notebookID := "test-notebook-reader"
+	if err := db.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	topicID := "test-topic-reader"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	parentID := "parent-reader"
+	if err := db.CreateParentSection(parentID, topicID, "Introduction", 1, "intro text"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+
+	chunkID := "chunk-reader"
+	if err := db.CreateChunk(chunkID, topicID, parentID, "chunk content", 2); err != nil {
+		t.Fatalf("CreateChunk failed: %v", err)
+	}
+
+	if err := db.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
+		t.Fatalf("LinkChunksToNotebook failed: %v", err)
+	}
+
+	resp := app.GetReaderTopicBundle(topicID, notebookID)
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	if _, ok := resp["notebook_id"].(string); !ok {
+		t.Fatalf("expected notebook_id string, got: %#v", resp["notebook_id"])
+	}
+
+	if _, ok := resp["topic_id"].(string); !ok {
+		t.Fatalf("expected topic_id string, got: %#v", resp["topic_id"])
+	}
+}
+
+func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	notebookID := "test-notebook-invalid"
+	if err := db.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	resp := app.GetReaderTopicBundle("nonexistent-topic", notebookID)
+
+	if _, hasErr := resp["error"]; !hasErr {
+		t.Fatalf("expected error for invalid topic, got: %#v", resp)
+	}
+}
+
+// Contract tests for ExplainReaderSection
+func TestExplainReaderSection_Success(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	topicID := "test-topic-explain"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	parentID := "parent-explain"
+	if err := db.CreateParentSection(parentID, topicID, "Section Title", 1, "section content"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+
+	resp := app.ExplainReaderSection(parentID, "What is this section about?")
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	if _, ok := resp["answer"].(string); !ok {
+		t.Fatalf("expected answer string, got: %#v", resp["answer"])
+	}
+}
+
+func TestExplainReaderSection_InvalidSection(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	resp := app.ExplainReaderSection("nonexistent-section", "Any question?")
+
+	if _, hasErr := resp["error"]; !hasErr {
+		t.Fatalf("expected error for invalid section, got: %#v", resp)
+	}
+}
+
+func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
+	initTestDB(t)
+	app := &App{llmProvider: initTestProvider(t)}
+
+	topicID := "test-topic-explain-empty"
+	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	parentID := "parent-explain-empty"
+	if err := db.CreateParentSection(parentID, topicID, "Section", 1, "content"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+
+	// Should succeed with empty question (uses default explanation)
+	resp := app.ExplainReaderSection(parentID, "")
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success with empty question, got error: %v", resp["error"])
+	}
+
+	if _, ok := resp["answer"].(string); !ok {
+		t.Fatalf("expected answer string for empty question, got: %#v", resp["answer"])
+	}
+}
