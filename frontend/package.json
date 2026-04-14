@@ -11,6 +11,8 @@
     "format": "prettier --write \"src/**/*.{vue,js,jsx,cjs,mjs,json,css}\""
   },
   "dependencies": {
+    "dompurify": "^3.4.0",
+    "markdown-it": "^14.1.1",
     "vue": "^3.2.37",
     "vue-router": "^4.5.1"
   },

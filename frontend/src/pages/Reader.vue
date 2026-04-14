@@ -1,126 +1,325 @@
 <template>
   <section class="page">
-    <div>
+    <header class="head">
       <p class="eyebrow">Reader</p>
       <h1>{{ topicTitle }}</h1>
-      <p class="muted">{{ sectionCount }} section(s) available</p>
-    </div>
+      <p class="meta">
+        <span>{{ sections.length }} sections</span>
+        <span v-if="selectedNotebookTitle">Notebook: {{ selectedNotebookTitle }}</span>
+      </p>
+    </header>
 
-    <div class="split">
-      <article class="panel content-panel">
-        <h2>Content</h2>
-        <div v-if="loading" class="loading">Loading content...</div>
-        <div v-else-if="error" class="error">{{ error }}</div>
-        <div v-else>
-          <div v-for="section in sections" :key="section.id" class="section">
-            <h3>{{ section.heading }}</h3>
-            <p>{{ section.content }}</p>
+    <article class="panel controls">
+      <label class="field">
+        <span>Notebook</span>
+        <select v-model="selectedNotebookID" :disabled="loadingTree || notebookTree.length === 0 || loadingBundle" @change="onNotebookChange">
+          <option disabled value="">Select notebook</option>
+          <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
+            {{ notebook.title }}
+          </option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Topic</span>
+        <select v-model="selectedTopicID" :disabled="loadingTree || availableTopics.length === 0 || loadingBundle" @change="onTopicChange">
+          <option disabled value="">
+            {{ availableTopics.length === 0 ? 'No topics available' : 'Select topic' }}
+          </option>
+          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
+            {{ topic.title }}
+          </option>
+        </select>
+      </label>
+    </article>
+
+    <article v-if="globalError" class="panel error">{{ globalError }}</article>
+
+    <div class="layout" :class="{ collapsed: chatCollapsed }">
+      <article class="panel stage">
+        <div class="stage-head">
+          <h2>Document Stage</h2>
+          <div class="pager">
+            <button class="secondary" :disabled="!canGoPrev" @click="goPrev">Prev</button>
+            <span>Page {{ currentPage }} / {{ pageCount }}</span>
+            <button class="secondary" :disabled="!canGoNext" @click="goNext">Next</button>
+          </div>
+        </div>
+
+        <div v-if="loadingBundle" class="empty">Loading document...</div>
+        <div v-else-if="!pdfVisible" class="empty">PDF not available for selected notebook/topic.</div>
+        <div v-else class="pdf-wrap">
+          <iframe class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
+        </div>
+
+        <div class="sections" v-if="sections.length > 0">
+          <h3>Sections</h3>
+          <div class="section-list">
+            <button
+              v-for="section in sections"
+              :key="section.id"
+              class="section-item"
+              :class="{ active: activeSection?.id === section.id }"
+              @click="selectSection(section)"
+            >
+              <span class="section-title">{{ section.heading }}</span>
+              <span class="section-page">{{ section.page_num > 0 ? `Page ${section.page_num}` : 'No page map' }}</span>
+            </button>
           </div>
         </div>
       </article>
 
-      <article class="panel">
-        <h2>Ask AI</h2>
-        <textarea
-          v-model="question"
-          placeholder="Ask for concept clarification in this topic..."
-          :disabled="aiLoading || !topicID"
-        ></textarea>
-        <button
-          type="button"
-          class="primary-btn"
-          :disabled="aiLoading || !question.trim() || !topicID"
-          @click="askAI"
-        >
-          {{ aiLoading ? 'Asking...' : 'Ask' }}
-        </button>
+      <aside class="panel chat" :class="{ closed: chatCollapsed }">
+        <div class="chat-head">
+          <h2>AI Chat</h2>
+          <button class="ghost" @click="toggleChat">{{ chatCollapsed ? 'Expand' : 'Collapse' }}</button>
+        </div>
 
-        <div v-if="aiResponse" class="response">
-          <h3>Response</h3>
-          <p class="answer">{{ aiResponse.answer }}</p>
-          <div
-            v-if="aiResponse.cited_sections && aiResponse.cited_sections.length > 0"
-            class="citations"
-          >
-            <p class="citation-label">Based on:</p>
-            <ul>
-              <li v-for="(section, idx) in aiResponse.cited_sections" :key="idx">
-                {{ section }}
-              </li>
-            </ul>
+        <template v-if="!chatCollapsed">
+          <p class="chat-context">
+            Using topic <strong>{{ selectedTopicTitle || 'None' }}</strong>
+            <span v-if="selectedNotebookTitle">from {{ selectedNotebookTitle }}</span>
+          </p>
+
+          <div class="messages" ref="messagesPane">
+            <article v-for="(msg, idx) in chatMessages" :key="idx" class="msg" :class="msg.role">
+              <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
+              <p v-if="msg.role === 'user'">{{ msg.text }}</p>
+              <div v-else class="markdown-body" v-html="renderMarkdown(msg.text)"></div>
+            </article>
           </div>
-        </div>
 
-        <div v-if="aiError" class="error-box">
-          {{ aiError }}
-        </div>
-      </article>
+          <article v-if="chatError" class="error">{{ chatError }}</article>
+
+          <label class="field">
+            <span>Ask AI</span>
+            <textarea
+              v-model="chatInput"
+              :disabled="chatLoading || !selectedTopicID"
+              placeholder="Ask based on selected notebook/topic..."
+            ></textarea>
+          </label>
+
+          <button class="primary" :disabled="chatLoading || !chatInput.trim() || !selectedTopicID" @click="sendChat">
+            {{ chatLoading ? 'Thinking...' : 'Send' }}
+          </button>
+        </template>
+      </aside>
     </div>
   </section>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { askAI as askAIRequest, getTopicContent } from '../services/appApi'
+import { askAI, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
+import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
 
-const topicID = ref(route.query.topic || 'os-scheduling')
-const topicTitle = ref('Loading...')
-const sections = ref([])
-const sectionCount = ref(0)
-const question = ref('')
-const aiResponse = ref(null)
-const aiError = ref('')
-const loading = ref(true)
-const aiLoading = ref(false)
-const error = ref('')
+const notebookTree = ref([])
+const selectedNotebookID = ref('')
+const selectedTopicID = ref(typeof route.query.topic === 'string' ? route.query.topic : '')
 
-onMounted(async () => {
-  await loadTopicContent()
+const topicTitle = ref('Reader')
+const notebookUrl = ref('')
+const fileType = ref('')
+const pageCount = ref(1)
+const currentPage = ref(1)
+const sections = ref([])
+const activeSection = ref(null)
+
+const chatCollapsed = ref(false)
+const chatMessages = ref([])
+const chatInput = ref('')
+const chatLoading = ref(false)
+const chatError = ref('')
+const messagesPane = ref(null)
+
+const loadingTree = ref(true)
+const loadingBundle = ref(false)
+const globalError = ref('')
+
+const selectedNotebook = computed(() => notebookTree.value.find((n) => n.notebook_id === selectedNotebookID.value) || null)
+const availableTopics = computed(() => selectedNotebook.value?.topics || [])
+const selectedNotebookTitle = computed(() => selectedNotebook.value?.title || '')
+const selectedTopicTitle = computed(() => {
+  const match = availableTopics.value.find((t) => t.topic_id === selectedTopicID.value)
+  return match?.title || ''
 })
 
-async function loadTopicContent() {
+const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
+const pdfSource = computed(() => `${notebookUrl.value}#page=${currentPage.value}&zoom=page-fit`)
+const canGoPrev = computed(() => pdfVisible.value && currentPage.value > 1)
+const canGoNext = computed(() => pdfVisible.value && currentPage.value < Math.max(1, pageCount.value))
+
+onMounted(async () => {
+  await loadNotebookTree()
+  await loadBundle()
+})
+
+async function loadNotebookTree() {
+  loadingTree.value = true
+  globalError.value = ''
   try {
-    loading.value = true
-    const content = await getTopicContent(topicID.value)
-
-    if (content.error) {
-      error.value = content.error
-      return
-    }
-
-    topicTitle.value = content.title
-    sections.value = content.sections || []
-    sectionCount.value = content.sections?.length || 0
+    const data = await getNotebookTopicTree()
+    notebookTree.value = Array.isArray(data) ? data : []
+    applyInitialSelection()
   } catch (err) {
-    error.value = `Failed to load content: ${err.message}`
+    globalError.value = err?.message || 'Failed to load notebook/topic options'
   } finally {
-    loading.value = false
+    loadingTree.value = false
   }
 }
 
-async function askAI() {
-  if (!question.value.trim()) return
+function applyInitialSelection() {
+  if (notebookTree.value.length === 0) {
+    selectedNotebookID.value = ''
+    selectedTopicID.value = ''
+    return
+  }
+
+  const preferred = selectedTopicID.value
+  if (preferred) {
+    for (const notebook of notebookTree.value) {
+      const hit = Array.isArray(notebook.topics)
+        ? notebook.topics.find((topic) => topic.topic_id === preferred)
+        : null
+      if (hit) {
+        selectedNotebookID.value = notebook.notebook_id
+        selectedTopicID.value = hit.topic_id
+        return
+      }
+    }
+  }
+
+  const firstWithTopics = notebookTree.value.find((n) => Array.isArray(n.topics) && n.topics.length > 0)
+  const fallback = firstWithTopics || notebookTree.value[0]
+  selectedNotebookID.value = fallback?.notebook_id || ''
+  selectedTopicID.value = fallback?.topics?.[0]?.topic_id || ''
+}
+
+function onNotebookChange() {
+  if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
+    selectedTopicID.value = availableTopics.value[0]?.topic_id || ''
+  }
+  chatMessages.value = []
+  void loadBundle()
+}
+
+function onTopicChange() {
+  chatMessages.value = []
+  void loadBundle()
+}
+
+async function loadBundle() {
+  if (!selectedTopicID.value) {
+    topicTitle.value = 'Reader'
+    notebookUrl.value = ''
+    fileType.value = ''
+    pageCount.value = 1
+    currentPage.value = 1
+    sections.value = []
+    activeSection.value = null
+    globalError.value = 'Select topic to open Reader.'
+    return
+  }
+
+  loadingBundle.value = true
+  globalError.value = ''
 
   try {
-    aiLoading.value = true
-    aiError.value = ''
-    aiResponse.value = null
-
-    const result = await askAIRequest(topicID.value, question.value)
-
-    if (result.error) {
-      aiError.value = result.error
+    const result = await getReaderTopicBundle(selectedTopicID.value, selectedNotebookID.value)
+    if (result?.error) {
+      topicTitle.value = 'Reader'
+      notebookUrl.value = ''
+      fileType.value = ''
+      pageCount.value = 1
+      currentPage.value = 1
+      sections.value = []
+      activeSection.value = null
+      globalError.value = result.error
       return
     }
 
-    aiResponse.value = result
+    topicTitle.value = result?.topic_title || selectedTopicTitle.value || 'Reader'
+    notebookUrl.value = result?.notebook_url || ''
+    fileType.value = (result?.file_type || '').toLowerCase()
+    pageCount.value = Math.max(1, Number(result?.page_count) || 1)
+    sections.value = Array.isArray(result?.sections) ? result.sections : []
+    activeSection.value = sections.value[0] || null
+
+    const firstPage = Number(activeSection.value?.page_num)
+    currentPage.value = Number.isFinite(firstPage) && firstPage > 0 ? firstPage : 1
   } catch (err) {
-    aiError.value = `Error: ${err.message}`
+    topicTitle.value = 'Reader'
+    notebookUrl.value = ''
+    fileType.value = ''
+    pageCount.value = 1
+    currentPage.value = 1
+    sections.value = []
+    activeSection.value = null
+    globalError.value = err?.message || 'Failed to load reader data'
   } finally {
-    aiLoading.value = false
+    loadingBundle.value = false
+  }
+}
+
+function selectSection(section) {
+  activeSection.value = section
+  const page = Number(section?.page_num)
+  if (Number.isFinite(page) && page > 0) {
+    currentPage.value = Math.min(Math.max(1, page), pageCount.value)
+  }
+}
+
+function goPrev() {
+  if (canGoPrev.value) {
+    currentPage.value -= 1
+  }
+}
+
+function goNext() {
+  if (canGoNext.value) {
+    currentPage.value += 1
+  }
+}
+
+function toggleChat() {
+  chatCollapsed.value = !chatCollapsed.value
+}
+
+async function sendChat() {
+  if (!chatInput.value.trim() || !selectedTopicID.value) {
+    return
+  }
+
+  const question = chatInput.value.trim()
+  chatInput.value = ''
+  chatError.value = ''
+  chatMessages.value.push({ role: 'user', text: question })
+  chatLoading.value = true
+
+  try {
+    const sectionId = activeSection.value?.id || ''
+    const result = sectionId
+      ? await explainReaderSection(sectionId, question)
+      : await askAI(selectedTopicID.value, question)
+    
+    if (result?.error) {
+      chatError.value = result.error
+      return
+    }
+
+    chatMessages.value.push({ role: 'assistant', text: result?.answer || 'No answer returned.' })
+    await nextTick()
+    if (messagesPane.value) {
+      messagesPane.value.scrollTop = messagesPane.value.scrollHeight
+    }
+  } catch (err) {
+    chatError.value = err?.message || 'Failed to send message'
+  } finally {
+    chatLoading.value = false
   }
 }
 </script>
@@ -128,197 +327,328 @@ async function askAI() {
 <style scoped>
 .page {
   display: grid;
-  gap: 24px;
+  gap: 14px;
+}
+
+.head {
+  display: grid;
+  gap: 6px;
 }
 
 .eyebrow {
   margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
+  font-size: 11px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted-text);
   font-weight: 700;
 }
 
 h1 {
-  margin: 8px 0 0;
-  font-size: 46px;
+  margin: 0;
+  font-size: 42px;
   font-family: 'Manrope', sans-serif;
   letter-spacing: -0.02em;
 }
 
 h2 {
-  margin: 0 0 16px;
-  font-size: 30px;
+  margin: 0;
+  font-size: 28px;
   font-family: 'Manrope', sans-serif;
 }
 
 h3 {
-  margin: 16px 0 8px;
+  margin: 0;
   font-size: 18px;
   font-family: 'Manrope', sans-serif;
-  font-weight: 600;
 }
 
-h3:first-child {
-  margin-top: 0;
-}
-
-.muted {
-  margin: 12px 0 0;
+.meta {
+  margin: 0;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
   color: var(--muted-text);
-}
-
-.split {
-  display: grid;
-  grid-template-columns: 1.6fr 1fr;
-  gap: 16px;
 }
 
 .panel {
   background: var(--surface-container-lowest);
-  border-radius: 16px;
-  padding: 24px;
-}
-
-.content-panel {
-  max-height: 600px;
-  overflow-y: auto;
-}
-
-.section {
-  margin-bottom: 20px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--surface-container-low);
-}
-
-.section:last-child {
-  border-bottom: none;
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-
-.section p {
-  margin: 8px 0 0;
-  line-height: 1.6;
-  font-size: 14px;
-}
-
-textarea {
-  width: 100%;
-  min-height: 100px;
-  border: 0;
-  outline: 0;
-  border-radius: 12px;
-  background: var(--surface-container-low);
+  border: 1px solid var(--surface-container-low);
+  border-radius: 14px;
   padding: 12px;
-  font-family: inherit;
-  color: var(--on-surface);
-  resize: vertical;
-  font-size: 14px;
 }
 
-textarea:disabled {
-  opacity: 0.6;
+.controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 360px));
+  gap: 10px;
 }
 
-.primary-btn {
-  margin-top: 14px;
+.layout {
+  display: grid;
+  grid-template-columns: 1.8fr 1fr;
+  gap: 12px;
+}
+
+.layout.collapsed {
+  grid-template-columns: 1fr 78px;
+}
+
+.stage {
+  display: grid;
+  gap: 10px;
+}
+
+.stage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+.pdf-wrap {
+  border: 1px solid var(--surface-container-low);
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 480px;
+  background: #f5f6f8;
+}
+
+.pdf-frame {
+  width: 100%;
+  min-height: 640px;
   border: 0;
-  border-radius: 12px;
-  padding: 12px 20px;
-  color: var(--on-primary);
+  display: block;
+  background: #fff;
+}
+
+.sections {
+  display: grid;
+  gap: 8px;
+}
+
+.section-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.section-item {
+  border: 1px solid var(--surface-container-low);
+  background: var(--surface-container-lowest);
+  border-radius: 10px;
+  padding: 9px;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+}
+
+.section-item.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface-container-lowest));
+}
+
+.section-title {
+  font-size: 13px;
   font-weight: 700;
-  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
-  cursor: pointer;
-  transition: opacity 0.2s;
+  color: var(--on-surface);
 }
 
-.primary-btn:hover:not(:disabled) {
-  opacity: 0.9;
+.section-page {
+  font-size: 12px;
+  color: var(--muted-text);
 }
 
-.primary-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.chat {
+  display: grid;
+  gap: 10px;
+  align-content: start;
 }
 
-.response {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid var(--surface-container-low);
+.chat.closed {
+  padding: 10px 8px;
 }
 
-.response h3 {
+.chat-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-context {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+.messages {
+  max-height: 320px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 3px;
+}
+
+.msg {
+  border-radius: 10px;
+  padding: 9px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.msg.user {
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface-container-lowest));
+}
+
+.msg.assistant {
+  background: var(--surface-container-low);
+}
+
+.msg .role {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-text);
+  font-weight: 700;
+}
+
+.msg p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.markdown-body :first-child {
   margin-top: 0;
 }
 
-.answer {
-  margin: 8px 0 0;
-  line-height: 1.6;
-  font-size: 14px;
-  color: var(--on-surface);
+.markdown-body :last-child {
+  margin-bottom: 0;
 }
 
-.citations {
-  margin-top: 12px;
-  padding: 12px;
-  background: var(--surface-container-low);
-  border-radius: 8px;
-}
-
-.citation-label {
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body pre,
+.markdown-body blockquote {
   margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted-text);
 }
 
-.citations ul {
-  margin: 0;
-  padding-left: 20px;
-  list-style: disc;
-}
-
-.citations li {
-  margin: 4px 0;
-  font-size: 13px;
-  color: var(--on-surface);
-}
-
-.error,
-.error-box {
-  padding: 12px;
+.markdown-body code {
   background: var(--surface-container-low);
-  color: #c53030;
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+.markdown-body pre {
+  background: var(--surface-container-low);
   border-radius: 8px;
-  font-size: 14px;
+  padding: 8px;
+  overflow-x: auto;
 }
 
-.error-box {
-  margin-top: 20px;
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
 }
 
-.loading {
-  padding: 20px;
-  text-align: center;
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field span {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--muted-text);
+}
+
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--surface-container-low);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  border-radius: 10px;
+  font: inherit;
+  padding: 10px;
+  outline: 0;
+}
+
+textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.primary {
+  color: var(--on-primary);
+  background: linear-gradient(160deg, var(--primary), var(--primary-dim));
+}
+
+.secondary,
+.ghost {
+  color: var(--on-surface);
+  background: var(--surface-container-low);
+}
+
+.error {
+  color: #b42318;
+  background: color-mix(in srgb, #b42318 12%, var(--surface-container-lowest));
+  border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-low));
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 13px;
+}
+
+.empty {
+  color: var(--muted-text);
+  background: var(--surface-container-low);
+  border-radius: 10px;
+  padding: 12px;
   font-size: 14px;
 }
 
-@media (max-width: 960px) {
-  .split {
+@media (max-width: 1180px) {
+  .controls {
     grid-template-columns: 1fr;
   }
 
-  h1 {
-    font-size: 34px;
-  }
-
-  .content-panel {
-    max-height: none;
+  .layout,
+  .layout.collapsed {
+    grid-template-columns: 1fr;
   }
 }
 </style>
+

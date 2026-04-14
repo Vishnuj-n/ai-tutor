@@ -11,12 +11,20 @@ export function getTopicContent(topicID) {
   return appBridge().GetTopicContent(topicID)
 }
 
+export function getReaderTopicBundle(topicID, notebookID = '') {
+  return appBridge().GetReaderTopicBundle(topicID, notebookID)
+}
+
 export function getAvailableTopics() {
   return appBridge().GetAvailableTopics()
 }
 
 export function askAI(topicID, question) {
   return appBridge().AskAI(topicID, question)
+}
+
+export function explainReaderSection(sectionID, question = '') {
+  return appBridge().ExplainReaderSection(sectionID, question)
 }
 
 export function getTodayPlan() {

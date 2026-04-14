@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +194,41 @@ func (a *App) GetTopicContent(topicID string) map[string]interface{} {
 	return content
 }
 
+// GetReaderTopicBundle returns notebook metadata plus ordered sections for reader navigation.
+func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string]interface{} {
+	bundle, err := db.GetReaderTopicBundle(topicID, notebookID)
+	if err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	if bundle.NotebookURL != "" {
+		bundle.NotebookURL = notebookAssetURL(bundle.NotebookURL)
+	}
+
+	lightSections := make([]map[string]interface{}, 0, len(bundle.Sections))
+	for _, s := range bundle.Sections {
+		lightSections = append(lightSections, map[string]interface{}{
+			"id":       s.ID,
+			"heading":  s.Heading,
+			"page_num": s.PageNum,
+			"order":    s.Order,
+		})
+	}
+
+	return map[string]interface{}{
+		"topic_id":       bundle.TopicID,
+		"topic_title":    bundle.TopicTitle,
+		"notebook_id":    bundle.NotebookID,
+		"notebook_title": bundle.NotebookTitle,
+		"notebook_url":   bundle.NotebookURL,
+		"file_type":      bundle.FileType,
+		"page_count":     bundle.PageCount,
+		"sections":       lightSections,
+	}
+}
+
 // GetAvailableTopics returns a list of available topics
 func (a *App) GetAvailableTopics() []map[string]string {
 	topics, err := db.GetAllTopics()
@@ -233,6 +269,63 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		"cited_sections":   result.CitedSections,
 		"chunks_retrieved": result.ChunksRetrieved,
 		"sections_used":    result.SectionsUsed,
+	}
+}
+
+// ExplainReaderSection explains one reader section without relying on topic-wide retrieval.
+func (a *App) ExplainReaderSection(sectionID string, question string) map[string]interface{} {
+	sectionID = strings.TrimSpace(sectionID)
+	question = strings.TrimSpace(question)
+	if sectionID == "" {
+		return map[string]interface{}{
+			"error": "section ID is required",
+		}
+	}
+
+	if a.llmProvider == nil {
+		return map[string]interface{}{
+			"error": "LLM provider not initialized",
+		}
+	}
+
+	section, err := db.GetParentSection(sectionID)
+	if err != nil {
+		return map[string]interface{}{
+			"error": "failed to fetch reader section: " + err.Error(),
+		}
+	}
+
+	if question == "" {
+		question = "Explain this section in clear study notes."
+	}
+
+	prompt := fmt.Sprintf(`You are an AI study companion.
+Use ONLY the section below. Do not add outside knowledge.
+If a question asks about details missing from the section, reply with: "This section does not contain that detail."
+
+Section heading: %s
+Section content:
+%s
+
+User request: %s
+
+Return a response with:
+1. Plain-language summary (2–3 sentences, main idea)
+2. Key takeaway: why this matters or where it applies
+3. Recall cue: one memorable phrase or question to test understanding
+4. Example (if the section includes a concrete example or scenario, highlight it; otherwise, skip this)`, section["heading"], section["content"], question)
+
+	answer, err := a.llmProvider.GenerateAnswer(prompt)
+	if err != nil {
+		return map[string]interface{}{
+			"error": "section explanation failed: " + err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"answer":         answer,
+		"cited_sections": []string{section["heading"]},
+		"section_id":     section["id"],
 	}
 }
 
@@ -683,8 +776,21 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
 	b.WriteString(topicID)
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
-	b.WriteString("Rules: correct_answer must match one option exactly; keep options concise; explanations grounded in source text.\n")
-	b.WriteString("Source sections:\n")
+	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
+	b.WriteString("Cover different concepts and question types. AVOID repetition.\n")
+	b.WriteString("Required mix:\n")
+	b.WriteString("  - 1–2 definitional/recall questions\n")
+	b.WriteString("  - 2–3 application/analysis questions (test understanding, not just memory)\n")
+	b.WriteString("  - 1 misconception/tricky question (common student errors)\n")
+	b.WriteString("\n=== DISTRACTORS ===\n")
+	b.WriteString("- Make wrong options plausible and specific (not obviously wrong).\n")
+	b.WriteString("- Common misconceptions as distractors are encouraged.\n")
+	b.WriteString("\n=== RULES ===\n")
+	b.WriteString("- correct_answer must match one option exactly.\n")
+	b.WriteString("- Keep each option short (< 15 words).\n")
+	b.WriteString("- Explanations grounded in source text (quote when helpful).\n")
+	b.WriteString("- Each question must require understanding, not just recall.\n")
+	b.WriteString("\nSource sections:\n")
 
 	// Limit to top 5 sections with truncation to avoid exceeding token limits
 	const (
@@ -730,12 +836,26 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 
 func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) string {
 	var b strings.Builder
-	b.WriteString("You are an AI tutor flashcard generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 8 concise flashcards for topic: ")
+	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
+	b.WriteString("Generate exactly 8 flashcards for topic: ")
 	b.WriteString(topicID)
 	b.WriteString("\nJSON format: {\"cards\":[{\"prompt\":string,\"answer\":string}]}\n")
-	b.WriteString("Rules: one fact per card; prompts should test recall; answers must be short and grounded in the source text.\n")
-	b.WriteString("Source sections:\n")
+	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
+	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")
+	b.WriteString("\n=== PROMPT QUALITY ===\n")
+	b.WriteString("- AVOID yes/no questions.\n")
+	b.WriteString("- PREFER 'why', 'how', 'what is', 'explain' questions.\n")
+	b.WriteString("- Make prompts specific and testable (not vague).\n")
+	b.WriteString("- Example bad: 'What is X?' → Example good: 'What is the purpose of X in context Y?'\n")
+	b.WriteString("\n=== DIFFICULTY DISTRIBUTION (CRITICAL) ===\n")
+	b.WriteString("- 3 cards: Basic (definitions, key terms, simple facts)\n")
+	b.WriteString("- 3 cards: Intermediate (relationships, processes, mechanisms)\n")
+	b.WriteString("- 2 cards: Challenging (applications, synthesis, edge cases)\n")
+	b.WriteString("\n=== ANSWER QUALITY ===\n")
+	b.WriteString("- Answers must be short (1–2 sentences max, grounded in source).\n")
+	b.WriteString("- Include terminology but keep accessible.\n")
+	b.WriteString("- If a formula or number needed, include it.\n")
+	b.WriteString("\nSource sections:\n")
 
 	const (
 		maxSections          = 5
@@ -918,4 +1038,12 @@ func resolveNotebookDir() (string, error) {
 	}
 
 	return uploadDir, nil
+}
+
+func notebookAssetURL(filePath string) string {
+	path := strings.TrimSpace(filepath.ToSlash(filePath))
+	if path == "" || path == "." || path == ".." {
+		return ""
+	}
+	return "/notebooks/" + url.PathEscape(path)
 }
