@@ -20,6 +20,9 @@ func initTestDB(t *testing.T) {
 	if err := db.Init(tempDB, ""); err != nil {
 		t.Fatalf("failed to init test db: %v", err)
 	}
+	if err := db.SeedDemoData(); err != nil {
+		t.Fatalf("failed to seed demo data: %v", err)
+	}
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Fatalf("failed to close test db: %v", err)
