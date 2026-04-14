@@ -770,6 +770,42 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 	if _, ok := resp["topic_id"].(string); !ok {
 		t.Fatalf("expected topic_id string, got: %#v", resp["topic_id"])
 	}
+
+	// Verify sections were returned and contain expected data
+	sectionsRaw, exists := resp["sections"]
+	if !exists {
+		t.Fatalf("expected sections key in response, got: %#v", resp)
+	}
+
+	var sections []interface{}
+	switch v := sectionsRaw.(type) {
+	case []interface{}:
+		sections = v
+	case []map[string]interface{}:
+		for _, m := range v {
+			sections = append(sections, m)
+		}
+	default:
+		t.Fatalf("expected sections to be array-like, got: %#v", sectionsRaw)
+	}
+
+	if len(sections) < 1 {
+		t.Fatalf("expected at least one section, got %d", len(sections))
+	}
+
+	// Verify at least one section matches the seeded parent
+	found := false
+	for _, sec := range sections {
+		if sectionMap, ok := sec.(map[string]interface{}); ok {
+			if heading, ok := sectionMap["heading"].(string); ok && heading == "Introduction" {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected to find section with heading 'Introduction' in sections: %#v", sections)
+	}
 }
 
 func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
