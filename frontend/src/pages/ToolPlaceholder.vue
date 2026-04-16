@@ -1,11 +1,9 @@
 <template>
-  <WrittenAssessment v-if="route.name === 'written-assessment'" />
-
-  <section v-else class="page">
+  <section class="page">
     <p class="eyebrow">Tools</p>
     <h1>{{ pageTitle }}</h1>
     <article class="panel">
-      <p>This tool surface is ready for implementation. Navigation is now wired.</p>
+      <p>Coming soon. This utility is not implemented yet.</p>
     </article>
   </section>
 </template>
@@ -13,7 +11,6 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import WrittenAssessment from './WrittenAssessment.vue'
 
 const route = useRoute()
 
