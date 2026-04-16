@@ -61,7 +61,7 @@ label {
 }
 
 input {
-  border: 0;
+  border: 1px solid var(--outline-variant);
   border-radius: 12px;
   background: var(--surface-container-low);
   color: var(--on-surface);
@@ -70,7 +70,7 @@ input {
 }
 
 input:focus {
-  outline: 2px solid var(--primary);
-  outline-offset: 0;
+  border-color: var(--primary);
+  outline: none;
 }
 </style>

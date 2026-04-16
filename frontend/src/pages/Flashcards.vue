@@ -496,14 +496,14 @@ button:disabled {
 }
 
 .error {
-  border: 1px solid #f3b5a7;
-  background: #fff3ef;
+  border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-lowest));
+  background: color-mix(in srgb, #b42318 10%, var(--surface-container-lowest));
   color: #8a2d16;
 }
 
 .success {
-  border: 1px solid #b8dcc2;
-  background: #f3fbf5;
+  border: 1px solid color-mix(in srgb, #1f6a3a 30%, var(--surface-container-lowest));
+  background: color-mix(in srgb, #1f6a3a 10%, var(--surface-container-lowest));
   color: #1f6a3a;
   margin: 0;
 }

@@ -3,6 +3,7 @@
   --surface-container: #ebeef2;
   --surface-container-low: #f2f4f7;
   --surface-container-highest: #f8fafb;
+  --outline-variant: rgba(45, 51, 56, 0.08);
   --surface-container-lowest: #ffffff;
   --surface-bright: rgba(255, 255, 255, 0.72);
   --primary: #005bc1;
