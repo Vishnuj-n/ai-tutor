@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package db
 
 import (
@@ -339,18 +342,6 @@ func distanceFunctionAvailable(t *testing.T) bool {
 	return distance < 1e-9 && distance > -1e-9
 }
 
-func assertCountEquals(t *testing.T, query string, arg interface{}, want int) {
-	t.Helper()
-
-	var got int
-	if err := conn.QueryRow(query, arg).Scan(&got); err != nil {
-		t.Fatalf("query failed (%s): %v", sanitizeWhitespace(query), err)
-	}
-	if got != want {
-		t.Fatalf("unexpected count for query (%s): got=%d want=%d", sanitizeWhitespace(query), got, want)
-	}
-}
-
 func contains(items []string, target string) bool {
 	for _, item := range items {
 		if item == target {
@@ -358,10 +349,6 @@ func contains(items []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func sanitizeWhitespace(input string) string {
-	return strings.Join(strings.Fields(input), " ")
 }
 
 func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {

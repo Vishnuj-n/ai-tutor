@@ -3,6 +3,7 @@ package db
 import (
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -44,4 +45,20 @@ func vecAssetPath(t *testing.T) string {
 		t.Fatalf("failed to resolve vec0.dll path: %v", err)
 	}
 	return absPath
+}
+
+func assertCountEquals(t *testing.T, query string, arg interface{}, want int) {
+	t.Helper()
+
+	var got int
+	if err := conn.QueryRow(query, arg).Scan(&got); err != nil {
+		t.Fatalf("query failed (%s): %v", sanitizeWhitespace(query), err)
+	}
+	if got != want {
+		t.Fatalf("unexpected count for query (%s): got=%d want=%d", sanitizeWhitespace(query), got, want)
+	}
+}
+
+func sanitizeWhitespace(input string) string {
+	return strings.Join(strings.Fields(input), " ")
 }
