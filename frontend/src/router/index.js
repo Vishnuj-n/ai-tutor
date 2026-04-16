@@ -25,8 +25,7 @@ const routes = [
   { path: '/tools', name: 'tools', component: Tools },
   {
     path: '/tools/written-assessment',
-    name: 'written-assessment',
-    component: ToolPlaceholder,
+    redirect: '/examiner',
     meta: { title: 'Written Assessment' },
   },
   {
