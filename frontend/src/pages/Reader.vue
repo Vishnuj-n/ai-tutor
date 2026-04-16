@@ -242,7 +242,8 @@ async function loadBundle() {
       return
     }
 
-    topicTitle.value = result?.topic_title || selectedTopicTitle.value || 'Reader'
+    const resolvedTopicTitle = result?.topic_title || selectedTopicTitle.value || 'Reader'
+    topicTitle.value = sanitizeTitle(resolvedTopicTitle, 'Reader')
     notebookUrl.value = result?.notebook_url || ''
     fileType.value = (result?.file_type || '').toLowerCase()
     pageCount.value = Math.max(1, Number(result?.page_count) || 1)
@@ -322,6 +323,14 @@ async function sendChat() {
     chatLoading.value = false
   }
 }
+
+function sanitizeTitle(input, fallback) {
+  const text = typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : ''
+  if (!text) {
+    return fallback
+  }
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
 </script>
 
 <style scoped>
@@ -346,9 +355,16 @@ async function sendChat() {
 
 h1 {
   margin: 0;
-  font-size: 42px;
+  font-size: clamp(28px, 3.2vw, 42px);
   font-family: 'Manrope', sans-serif;
   letter-spacing: -0.02em;
+  line-height: 1.08;
+  max-width: min(100%, 26ch);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 h2 {
