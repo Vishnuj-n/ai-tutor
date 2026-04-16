@@ -137,6 +137,39 @@ func TestPickTopicForSectionZeroScoreUsesPriorMatch(t *testing.T) {
 	}
 }
 
+func TestExtractInlineChapterCandidatesFromFlattenedTOC(t *testing.T) {
+	text := "A Note to Readers Chapter 1 The Truth about Relativity Why Everything Is Relative Chapter 2 The Fallacy of Supply and Demand Why Prices Drift Chapter 3 The Cost of Zero Cost"
+	got := extractInlineChapterCandidates(text)
+
+	if len(got) < 3 {
+		t.Fatalf("expected inline chapter extraction from flattened text, got %#v", got)
+	}
+	if got[0] != "Chapter 1 The Truth about Relativity Why Everything Is Relative" {
+		t.Fatalf("unexpected first chapter segment: %#v", got)
+	}
+}
+
+func TestExtractChapterTitlesFallsBackWhenLLMTooLossy(t *testing.T) {
+	app := &App{
+		llmProvider: &chapterTestLLM{
+			answer: `{"chapters":["The Truth about Relativity","The Power of Price"]}`,
+		},
+	}
+
+	doc := &notebook.ExtractedDocument{
+		Sections: []notebook.ExtractedSection{
+			{
+				Text: "Chapter 1 The Truth about Relativity Chapter 2 The Fallacy of Supply and Demand Chapter 3 The Cost of Zero Cost Chapter 4 The Cost of Social Norms Chapter 5 The Influence of Arousal",
+			},
+		},
+	}
+
+	got := app.extractChapterTitles(doc)
+	if len(got) < 4 {
+		t.Fatalf("expected deterministic fallback to preserve richer chapter list, got %#v", got)
+	}
+}
+
 func TestDetectChapterBoundaryTopicUsesChapterNumber(t *testing.T) {
 	section := notebook.ExtractedSection{
 		Heading: "Chapter 5",

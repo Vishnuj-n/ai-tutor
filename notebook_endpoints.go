@@ -39,6 +39,7 @@ var (
 	romanChapterPattern     = regexp.MustCompile(`(?i)^(?:chapter\s+)?[ivxlcdm]{1,7}\.?(?:\s*[:)\-]\s*.*|\s+.*)$`)
 	partChapterPattern      = regexp.MustCompile(`(?i)^part\s+(?:[ivxlcdm]+|\d{1,3})\b(?:\s*[:.\-]\s*.*)?$`)
 	chapterNumberPattern    = regexp.MustCompile(`(?i)\bchapter\s+(\d{1,3})\b`)
+	chapterMarkerPattern    = regexp.MustCompile(`(?i)\bchapter\s+\d{1,3}\b`)
 	leadingBulletPattern    = regexp.MustCompile(`^[\s\-]+`)
 	trailingDotsPagePattern = regexp.MustCompile(`\s*[._·•-]{2,}\s*\d+\s*$`)
 	onlyPunctOrDigits       = regexp.MustCompile(`^[\d\W_]+$`)
@@ -304,6 +305,9 @@ func (a *App) extractChapterTitles(doc *notebook.ExtractedDocument) []string {
 
 		chapters := parseChapterTitles(response)
 		if len(chapters) == 0 {
+			return ensureChapterFallback(deterministicCandidates, doc)
+		}
+		if shouldPreferDeterministicCandidates(chapters, deterministicCandidates) {
 			return ensureChapterFallback(deterministicCandidates, doc)
 		}
 		return ensureChapterFallback(chapters, doc)
@@ -613,6 +617,25 @@ func extractDeterministicChapterCandidates(doc *notebook.ExtractedDocument) []st
 				return result
 			}
 		}
+
+		// PDF page text is normalized and often loses line breaks, so detect inline Chapter markers too.
+		inlineCandidates := extractInlineChapterCandidates(section.Text)
+		for _, candidate := range inlineCandidates {
+			normalized := normalizeHeadingLine(candidate)
+			if normalized == "" || isFrontMatterTitle(normalized) || isNoisyHeading(normalized) {
+				continue
+			}
+
+			key := strings.ToLower(normalized)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, normalized)
+			if len(result) >= maxChapterTitles {
+				return result
+			}
+		}
 	}
 
 	return result
@@ -632,7 +655,8 @@ func buildConstrainedChapterPrompt(candidates []string) string {
 		"2) Remove front matter like preface, acknowledgments, references, index, and contents.",
 		"3) Collapse sub-headings into parent chapter when obvious.",
 		"4) Do not invent new chapters; output must come from the candidate list.",
-		"5) Maximum 10 chapters.",
+		"5) Keep distinct numbered chapters separate, even with similar stem titles (e.g., Part I vs Part II).",
+		"6) Maximum 25 chapters.",
 		"",
 		"Candidates:",
 		strings.Join(lines, "\n"),
@@ -749,6 +773,49 @@ func overlapCount(a, b map[string]struct{}) int {
 		}
 	}
 	return score
+}
+
+func extractInlineChapterCandidates(text string) []string {
+	raw := embeddings.NormalizeWhitespace(text)
+	if raw == "" {
+		return nil
+	}
+
+	matches := chapterMarkerPattern.FindAllStringIndex(raw, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(matches))
+	for i, match := range matches {
+		start := match[0]
+		end := len(raw)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		segment := strings.TrimSpace(raw[start:end])
+		if segment == "" {
+			continue
+		}
+
+		segment = firstN(segment, 180)
+		result = append(result, segment)
+	}
+
+	return result
+}
+
+func shouldPreferDeterministicCandidates(llmChapters, deterministic []string) bool {
+	if len(deterministic) == 0 || len(llmChapters) == 0 {
+		return false
+	}
+
+	// If LLM returns a heavily reduced list, trust deterministic candidates.
+	minExpected := len(deterministic) / 2
+	if minExpected < 3 {
+		minExpected = 3
+	}
+	return len(llmChapters) < minExpected
 }
 
 var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
