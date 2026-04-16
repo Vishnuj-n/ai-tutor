@@ -1,7 +1,7 @@
 <template>
   <section class="page">
-    <p class="eyebrow">Written Assessment</p>
-    <h1>Short-Answer Practice</h1>
+    <p class="eyebrow">FSRS-Linked Assessment</p>
+    <h1>Examiner</h1>
 
     <article class="panel controls">
       <label class="field">

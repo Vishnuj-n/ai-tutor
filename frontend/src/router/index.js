@@ -16,6 +16,11 @@ const routes = [
   { path: '/reader', name: 'reader', component: Reader },
   { path: '/quiz', name: 'quiz', component: Quiz },
   { path: '/flashcards', name: 'flashcards', component: Flashcards },
+  {
+    path: '/examiner',
+    name: 'examiner',
+    component: () => import('../pages/WrittenAssessment.vue'),
+  },
   { path: '/socratic', name: 'socratic', component: Socratic },
   { path: '/tools', name: 'tools', component: Tools },
   {
