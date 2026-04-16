@@ -157,6 +157,43 @@ Because:
 * **2. Multi-Notebook Support:** Add the UI routing to switch between "Physics 101" and "Computer Architecture" databases.
 * **Outcome:** The app is ready for massive textbooks and multiple subjects.
 
----
+## Sprint 10: Task Management and Backlog Protection
+**Goal:** Keep daily workload manageable and make plan tasks actionable.
+* **1. Backlog Limiter:** Add daily review caps in the FSRS backend. If a user has a large due queue, serve only the configured daily limit and prioritize the most overdue items first.
+* **2. Task Completion Controls:** Add explicit complete and not completed actions for daily tasks in the dashboard and review flow.
+* **3. State Mutation Rules:** When tasks are completed, update SQLite topic state transitions that unlock the next study step.
+* **4. Verification:** Add integration tests for capped due queries and task-state transitions.
+* **Outcome:** Users can finish a realistic daily plan without being buried by old backlog.
 
-**Your immediate next step:** Create a new branch (e.g., `feat/sprint-6-dashboard-ui`). Do not touch the backend. Focus entirely on `Dashboard.vue` and `Flashcards.vue` to make your FSRS engine come to life.
+## Sprint 11: Generator Tools in the Reading Flow
+**Goal:** Build study tools that run inside reading instead of a disconnected tools page.
+* **1. Acronym Generator:** Generate mnemonics from selected parent sections or highlighted text.
+* **2. Mind Map Generator:** Generate structured outline output as Markdown and Mermaid from topic hierarchy.
+* **3. Reader Quick Actions:** Add one-click actions in Reader to run acronym and mind map generation in context.
+* **4. Persistence:** Save generated artifacts per topic so users can revisit and refine outputs.
+* **Outcome:** Reading sessions produce reusable study artifacts without route switching.
+
+## Sprint 12: Dynamic Quizzes and Examiner Grading
+**Goal:** Expand assessments beyond fixed-size flashcard review.
+* **1. Variable Quiz Sizing:** Generate quiz length based on topic depth and chunk coverage instead of fixed counts.
+* **2. Examiner Prompt Pipeline:** Deliver short-answer prompts, capture user answers, and return rubric-based 0 to 10 grading.
+* **3. FSRS Translation Layer:** Map quiz and examiner scores into FSRS ratings 1 through 4 with explicit conversion rules.
+* **4. Reliability Guardrails:** Add strict response parsing and fallback logic for invalid LLM payloads.
+* **Outcome:** The app supports adaptive assessment formats that still feed one scheduling engine.
+
+## Sprint 13: Unified Assessment Hub
+**Goal:** Run flashcards, quizzes, and examiner checks through one review experience.
+* **1. Reader-Side Knowledge Check:** Trigger short checks right after section completion before long-term scheduling.
+* **2. Unified Review Surface:** Use one review container that renders flashcard, multiple choice, or short-answer modes by queued item type.
+* **3. Unified Logging:** Persist all assessment events to fsrs_review_log with consistent activity_type and reference linking.
+* **4. Session Summary:** Show completed item mix, ratings, and next due windows at the end of each review session.
+* **Outcome:** Assessment modes feel like one product instead of separate features.
+
+## Sprint 14: Advanced FSRS and Progress Intelligence
+**Goal:** Tune scheduling quality and surface meaningful learning metrics.
+* **1. FSRS Parameter Controls:** Store configurable FSRS weights and allow controlled tuning from validated retention outcomes.
+* **2. Sibling Spacing Logic:** Avoid same-day clustering for closely related cards and assessment items from one topic.
+* **3. Forecast and Retention Metrics:** Add dashboard views for retention trend, upcoming workload forecast, and backlog burn-down.
+* **4. Safety and Rollback:** Ship tuning behind flags with default parameter fallback.
+* **Outcome:** Scheduling becomes more personalized while preserving predictable behavior.
+
