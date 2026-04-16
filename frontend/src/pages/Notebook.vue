@@ -368,7 +368,7 @@ function formatDate(dateString) {
 }
 
 .drop-zone {
-  border: 1px solid rgba(45, 51, 56, 0.2);
+  border: 1px solid var(--outline-variant);
   border-radius: 14px;
   padding: 28px;
   text-align: center;
@@ -500,7 +500,7 @@ function formatDate(dateString) {
 }
 
 .notebook-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(45, 51, 56, 0.06);
 }
 
 .notebook-header-card {

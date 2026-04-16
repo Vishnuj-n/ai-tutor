@@ -659,6 +659,43 @@ func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, stat
 	return updateFlashcardReviewRepo(cardID, dueAt, expectedDueAt, state, reviewLog)
 }
 
+// InsertFSRSReviewLog inserts one generic FSRS review event.
+func InsertFSRSReviewLog(reviewLog models.FSRSReviewLog) error {
+	reviewLog.ID = strings.TrimSpace(reviewLog.ID)
+	reviewLog.TopicID = strings.TrimSpace(reviewLog.TopicID)
+	reviewLog.ActivityType = strings.TrimSpace(reviewLog.ActivityType)
+	reviewLog.ReferenceID = strings.TrimSpace(reviewLog.ReferenceID)
+	reviewLog.StateBeforeJSON = strings.TrimSpace(reviewLog.StateBeforeJSON)
+	reviewLog.StateAfterJSON = strings.TrimSpace(reviewLog.StateAfterJSON)
+
+	if reviewLog.ID == "" {
+		return fmt.Errorf("review log id is required")
+	}
+	if reviewLog.TopicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if reviewLog.ActivityType == "" {
+		return fmt.Errorf("activity type is required")
+	}
+	if reviewLog.ReferenceID == "" {
+		return fmt.Errorf("reference id is required")
+	}
+	if reviewLog.ReviewedAt <= 0 {
+		return fmt.Errorf("reviewed at is required")
+	}
+	if reviewLog.Rating < 1 || reviewLog.Rating > 4 {
+		return fmt.Errorf("rating must be between 1 and 4")
+	}
+	if reviewLog.StateBeforeJSON == "" || reviewLog.StateAfterJSON == "" {
+		return fmt.Errorf("review state json values are required")
+	}
+	if reviewLog.ScheduledDays < 0 {
+		return fmt.Errorf("scheduled days must be non-negative")
+	}
+
+	return insertFSRSReviewLogRepo(reviewLog)
+}
+
 // GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.
 // If non-suspended flashcards already exist for the topic, they are returned and existing=true.
 // If the topic has no non-suspended flashcards, the provided cards and states are inserted transactionally,

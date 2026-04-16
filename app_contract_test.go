@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -745,6 +747,224 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 	if state.ScheduledDays <= 0 {
 		t.Fatalf("expected scheduled_days > 0 for easy, got %d", state.ScheduledDays)
 	}
+}
+
+func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+
+	mockLLM := &mockLLMProvider{
+		answer: `{"prompt":"What is the primary purpose of scheduling in OS?"}`,
+	}
+	app.llmProvider = mockLLM
+
+	mockRAG := &mockRAGPipeline{
+		result: &rag.Response{
+			Answer: `{"prompt":"What is the primary purpose of scheduling in OS?"}`,
+		},
+	}
+	app.ragPipeline = mockRAG
+
+	result := app.GenerateShortAnswerPrompt("os-scheduling")
+
+	if err, ok := result["error"]; ok {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	prompt, ok := result["prompt"].(string)
+	if !ok || prompt == "" {
+		t.Fatalf("expected non-empty prompt string, got: %v", result["prompt"])
+	}
+
+	topicID, ok := result["topicID"].(string)
+	if !ok || topicID != "os-scheduling" {
+		t.Fatalf("expected topicID to be 'os-scheduling', got: %v", topicID)
+	}
+
+	questionID, ok := result["questionID"].(string)
+	if !ok || questionID == "" {
+		t.Fatalf("expected non-empty questionID, got: %v", result["questionID"])
+	}
+
+	if !strings.Contains(questionID, "os-scheduling:") {
+		t.Fatalf("expected questionID to contain topic prefix, got: %v", questionID)
+	}
+}
+
+func TestGenerateShortAnswerPrompt_EmptyTopicID(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+
+	result := app.GenerateShortAnswerPrompt("")
+
+	if err, ok := result["error"].(string); !ok || err == "" {
+		t.Fatalf("expected error for empty topicID, got: %v", result)
+	}
+
+	if !strings.Contains(result["error"].(string), "topic ID is required") {
+		t.Fatalf("expected 'topic ID is required' error, got: %v", result["error"])
+	}
+}
+
+func TestGenerateShortAnswerPrompt_WhitespaceTopicID(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+
+	result := app.GenerateShortAnswerPrompt("   ")
+
+	if err, ok := result["error"].(string); !ok || err == "" {
+		t.Fatalf("expected error for whitespace-only topicID, got: %v", result)
+	}
+}
+
+func TestGenerateShortAnswerPrompt_NoLLMProvider(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+	app.llmProvider = nil
+
+	result := app.GenerateShortAnswerPrompt("os-scheduling")
+
+	if err, ok := result["error"].(string); !ok || err == "" {
+		t.Fatalf("expected error for missing LLM provider, got: %v", result)
+	}
+
+	if !strings.Contains(result["error"].(string), "LLM provider not initialized") {
+		t.Fatalf("expected 'LLM provider not initialized' error, got: %v", result["error"])
+	}
+}
+
+func TestGenerateShortAnswerPrompt_NoRAGPipeline(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+	app.llmProvider = &mockLLMProvider{}
+	app.ragPipeline = nil
+
+	result := app.GenerateShortAnswerPrompt("os-scheduling")
+
+	if err, ok := result["error"].(string); !ok || err == "" {
+		t.Fatalf("expected error for missing RAG pipeline, got: %v", result)
+	}
+
+	if !strings.Contains(result["error"].(string), "RAG pipeline not initialized") {
+		t.Fatalf("expected 'RAG pipeline not initialized' error, got: %v", result["error"])
+	}
+}
+
+func TestGenerateShortAnswerPrompt_RAGProcessQueryError(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+	app.llmProvider = &mockLLMProvider{}
+
+	mockRAG := &mockRAGPipeline{
+		err: fmt.Errorf("query processing failed"),
+	}
+	app.ragPipeline = mockRAG
+
+	result := app.GenerateShortAnswerPrompt("os-scheduling")
+
+	if err, ok := result["error"].(string); !ok || err == "" {
+		t.Fatalf("expected error from RAG pipeline, got: %v", result)
+	}
+
+	if !strings.Contains(result["error"].(string), "short-answer prompt generation failed") {
+		t.Fatalf("expected prompt generation error, got: %v", result["error"])
+	}
+}
+
+func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+	app.llmProvider = &mockLLMProvider{}
+
+	mockRAG := &mockRAGPipeline{
+		result: &rag.Response{
+			Answer: `not json at all`,
+		},
+	}
+	app.ragPipeline = mockRAG
+
+	result := app.GenerateShortAnswerPrompt("os-scheduling")
+
+	if err, ok := result["error"]; ok {
+		t.Fatalf("expected success with fallback prompt, got: %v", err)
+	}
+
+	prompt, ok := result["prompt"].(string)
+	if !ok || prompt != "not json at all" {
+		t.Fatalf("expected fallback prompt from raw response, got: %v", result["prompt"])
+	}
+}
+
+func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+	app.llmProvider = &mockLLMProvider{}
+
+	mockRAG := &mockRAGPipeline{
+		result: &rag.Response{
+			Answer: `{"prompt":"   "}`,
+		},
+	}
+	app.ragPipeline = mockRAG
+
+	result := app.GenerateShortAnswerPrompt("os-scheduling")
+
+	if err, ok := result["error"].(string); !ok || err == "" {
+		t.Fatalf("expected error for empty prompt, got: %v", result)
+	}
+
+	if !strings.Contains(result["error"].(string), "no prompt in LLM response") {
+		t.Fatalf("expected no prompt error, got: %v", result["error"])
+	}
+}
+
+func TestGenerateShortAnswerPrompt_MalformedJSON(t *testing.T) {
+	app := NewApp()
+	app.ctx = context.Background()
+	app.llmProvider = &mockLLMProvider{}
+
+	mockRAG := &mockRAGPipeline{
+		result: &rag.Response{
+			Answer: `{"prompt":}`,
+		},
+	}
+	app.ragPipeline = mockRAG
+
+	result := app.GenerateShortAnswerPrompt("os-scheduling")
+
+	if err, ok := result["error"]; ok {
+		t.Fatalf("expected fallback parsing behavior, got: %v", err)
+	}
+
+	prompt, ok := result["prompt"].(string)
+	if !ok || prompt != `{"prompt":}` {
+		t.Fatalf("expected fallback prompt from malformed JSON, got: %v", result["prompt"])
+	}
+}
+
+// Mocks used by GenerateShortAnswerPrompt contract tests.
+type mockLLMProvider struct {
+	answer string
+	err    error
+}
+
+func (m *mockLLMProvider) GenerateAnswer(prompt string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.answer, nil
+}
+
+type mockRAGPipeline struct {
+	result *rag.Response
+	err    error
+}
+
+func (m *mockRAGPipeline) ProcessQuery(topicID, question string) (*rag.Response, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.result, nil
 }
 
 // Contract tests for GetReaderTopicBundle

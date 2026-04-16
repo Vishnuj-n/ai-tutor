@@ -495,3 +495,338 @@ func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
 	// Verify questions were inserted with correct TopicID
 	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 2)
 }
+
+func TestInsertFSRSReviewLogSuccessfulInsertion(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-fsrs-topic"
+	if err := EnsureTopic(topicID, "FSRS Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              "log-success",
+		TopicID:         topicID,
+		ActivityType:    "flashcard",
+		ReferenceID:     "card-123",
+		ReviewedAt:      1234567890,
+		Rating:          3,
+		ScheduledDays:   7,
+		StateBeforeJSON: `{"reps":0,"stability":1.0}`,
+		StateAfterJSON:  `{"reps":1,"stability":2.5}`,
+	}
+
+	if err := InsertFSRSReviewLog(reviewLog); err != nil {
+		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
+	}
+
+	// Verify log was persisted
+	var id, activity, ref, before, after string
+	var reviewed, rating, scheduled int64
+	if err := conn.QueryRow(`
+		SELECT id, activity_type, reference_id, reviewed_at, rating, scheduled_days,
+		       state_before_json, state_after_json
+		FROM fsrs_review_log
+		WHERE id = ?
+	`, "log-success").Scan(&id, &activity, &ref, &reviewed, &rating, &scheduled, &before, &after); err != nil {
+		t.Fatalf("failed to query inserted log: %v", err)
+	}
+
+	if id != "log-success" || activity != "flashcard" || ref != "card-123" {
+		t.Fatalf("unexpected log data: id=%s activity=%s ref=%s", id, activity, ref)
+	}
+	if reviewed != 1234567890 || rating != 3 || scheduled != 7 {
+		t.Fatalf("unexpected log values: reviewed=%d rating=%d scheduled=%d", reviewed, rating, scheduled)
+	}
+	if before != `{"reps":0,"stability":1.0}` || after != `{"reps":1,"stability":2.5}` {
+		t.Fatalf("unexpected state JSON: before=%s after=%s", before, after)
+	}
+
+	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE topic_id = ?`, topicID, 1)
+}
+
+func TestInsertFSRSReviewLogRejectsMissingTopic(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              "log-bad-topic",
+		TopicID:         "nonexistent-topic",
+		ActivityType:    "flashcard",
+		ReferenceID:     "card-456",
+		ReviewedAt:      1234567890,
+		Rating:          2,
+		ScheduledDays:   3,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}
+
+	err := InsertFSRSReviewLog(reviewLog)
+	if err == nil {
+		t.Fatalf("expected error for missing topic, got success")
+	}
+	if !strings.Contains(err.Error(), "topic not found") {
+		t.Fatalf("expected 'topic not found' error, got: %v", err)
+	}
+
+	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-bad-topic", 0)
+}
+
+func TestInsertFSRSReviewLogRejectsInvalidRating(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-rating-topic"
+	if err := EnsureTopic(topicID, "Rating Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		rating int
+	}{
+		{"rating_zero", 0},
+		{"rating_negative", -1},
+		{"rating_five", 5},
+		{"rating_large", 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reviewLog := models.FSRSReviewLog{
+				ID:              "log-" + tt.name,
+				TopicID:         topicID,
+				ActivityType:    "flashcard",
+				ReferenceID:     "card-" + tt.name,
+				ReviewedAt:      1234567890,
+				Rating:          tt.rating,
+				ScheduledDays:   1,
+				StateBeforeJSON: `{}`,
+				StateAfterJSON:  `{}`,
+			}
+
+			err := InsertFSRSReviewLog(reviewLog)
+			if err == nil {
+				t.Fatalf("expected error for rating %d, got success", tt.rating)
+			}
+			if !strings.Contains(err.Error(), "rating must be between 1 and 4") {
+				t.Fatalf("expected rating validation error, got: %v", err)
+			}
+
+			assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-"+tt.name, 0)
+		})
+	}
+}
+
+func TestInsertFSRSReviewLogRejectsEmptyID(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-empty-id-topic"
+	if err := EnsureTopic(topicID, "Empty ID Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              "",
+		TopicID:         topicID,
+		ActivityType:    "flashcard",
+		ReferenceID:     "card-789",
+		ReviewedAt:      1234567890,
+		Rating:          1,
+		ScheduledDays:   1,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}
+
+	err := InsertFSRSReviewLog(reviewLog)
+	if err == nil {
+		t.Fatalf("expected error for empty ID, got success")
+	}
+	if !strings.Contains(err.Error(), "review log id is required") {
+		t.Fatalf("expected 'review log id is required' error, got: %v", err)
+	}
+}
+
+func TestInsertFSRSReviewLogRejectsEmptyActivityType(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-activity-topic"
+	if err := EnsureTopic(topicID, "Activity Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              "log-activity",
+		TopicID:         topicID,
+		ActivityType:    "",
+		ReferenceID:     "card-999",
+		ReviewedAt:      1234567890,
+		Rating:          1,
+		ScheduledDays:   1,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}
+
+	err := InsertFSRSReviewLog(reviewLog)
+	if err == nil {
+		t.Fatalf("expected error for empty activity type, got success")
+	}
+	if !strings.Contains(err.Error(), "activity type is required") {
+		t.Fatalf("expected 'activity type is required' error, got: %v", err)
+	}
+}
+
+func TestInsertFSRSReviewLogRejectsEmptyReferenceID(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-ref-id-topic"
+	if err := EnsureTopic(topicID, "Ref ID Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              "log-ref",
+		TopicID:         topicID,
+		ActivityType:    "flashcard",
+		ReferenceID:     "",
+		ReviewedAt:      1234567890,
+		Rating:          1,
+		ScheduledDays:   1,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}
+
+	err := InsertFSRSReviewLog(reviewLog)
+	if err == nil {
+		t.Fatalf("expected error for empty reference id, got success")
+	}
+	if !strings.Contains(err.Error(), "reference id is required") {
+		t.Fatalf("expected 'reference id is required' error, got: %v", err)
+	}
+}
+
+func TestInsertFSRSReviewLogRejectsInvalidReviewedAt(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-reviewed-at-topic"
+	if err := EnsureTopic(topicID, "Reviewed At Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		reviewedAt int64
+	}{
+		{"zero", 0},
+		{"negative", -1000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reviewLog := models.FSRSReviewLog{
+				ID:              "log-" + tt.name,
+				TopicID:         topicID,
+				ActivityType:    "flashcard",
+				ReferenceID:     "card-" + tt.name,
+				ReviewedAt:      tt.reviewedAt,
+				Rating:          1,
+				ScheduledDays:   1,
+				StateBeforeJSON: `{}`,
+				StateAfterJSON:  `{}`,
+			}
+
+			err := InsertFSRSReviewLog(reviewLog)
+			if err == nil {
+				t.Fatalf("expected error for reviewed_at=%d, got success", tt.reviewedAt)
+			}
+			if !strings.Contains(err.Error(), "reviewed at is required") {
+				t.Fatalf("expected reviewed at validation error, got: %v", err)
+			}
+
+			assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-"+tt.name, 0)
+		})
+	}
+}
+
+func TestInsertFSRSReviewLogRejectsEmptyStateJSON(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-json-topic"
+	if err := EnsureTopic(topicID, "JSON Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	tests := []struct {
+		name              string
+		stateBeforeJSON   string
+		stateAfterJSON    string
+		shouldFail        bool
+		expectedErrorPart string
+	}{
+		{"both_empty", "", "", true, "review state json values are required"},
+		{"before_empty", "", `{}`, true, "review state json values are required"},
+		{"after_empty", `{}`, "", true, "review state json values are required"},
+		{"both_valid", `{"x":1}`, `{"x":2}`, false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reviewLog := models.FSRSReviewLog{
+				ID:              "log-" + tt.name,
+				TopicID:         topicID,
+				ActivityType:    "flashcard",
+				ReferenceID:     "card-" + tt.name,
+				ReviewedAt:      1234567890,
+				Rating:          1,
+				ScheduledDays:   1,
+				StateBeforeJSON: tt.stateBeforeJSON,
+				StateAfterJSON:  tt.stateAfterJSON,
+			}
+
+			err := InsertFSRSReviewLog(reviewLog)
+			if tt.shouldFail {
+				if err == nil {
+					t.Fatalf("expected error for %s, got success", tt.name)
+				}
+				if !strings.Contains(err.Error(), tt.expectedErrorPart) {
+					t.Fatalf("expected error containing %q, got: %v", tt.expectedErrorPart, err)
+				}
+				assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-"+tt.name, 0)
+			} else {
+				if err != nil {
+					t.Fatalf("expected success for %s, got error: %v", tt.name, err)
+				}
+				assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-"+tt.name, 1)
+			}
+		})
+	}
+}
+
+func TestInsertFSRSReviewLogRejectsNegativeScheduledDays(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "test-scheduled-days-topic"
+	if err := EnsureTopic(topicID, "Scheduled Days Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              "log-neg-scheduled",
+		TopicID:         topicID,
+		ActivityType:    "flashcard",
+		ReferenceID:     "card-scheduled",
+		ReviewedAt:      1234567890,
+		Rating:          1,
+		ScheduledDays:   -5,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}
+
+	err := InsertFSRSReviewLog(reviewLog)
+	if err == nil {
+		t.Fatalf("expected error for negative scheduled_days, got success")
+	}
+	if !strings.Contains(err.Error(), "scheduled days must be non-negative") {
+		t.Fatalf("expected 'scheduled days must be non-negative' error, got: %v", err)
+	}
+
+	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-neg-scheduled", 0)
+}

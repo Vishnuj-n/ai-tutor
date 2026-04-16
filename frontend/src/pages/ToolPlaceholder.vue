@@ -3,7 +3,7 @@
     <p class="eyebrow">Tools</p>
     <h1>{{ pageTitle }}</h1>
     <article class="panel">
-      <p>This tool surface is ready for implementation. Navigation is now wired.</p>
+      <p>Coming soon. This utility is not implemented yet.</p>
     </article>
   </section>
 </template>
