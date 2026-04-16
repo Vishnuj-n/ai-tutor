@@ -17,6 +17,32 @@ import (
 
 const ingestionEventName = "ingestion-progress"
 const ingestionBatchSize = 20
+const maxChapterTitles = 25
+
+var frontMatterDenylist = []string{
+	"foreword",
+	"preface",
+	"acknowledgments",
+	"acknowledgements",
+	"about the author",
+	"copyright",
+	"dedication",
+	"contents",
+	"table of contents",
+	"index",
+	"bibliography",
+	"references",
+}
+
+var (
+	numericChapterPattern   = regexp.MustCompile(`(?i)^(chapter\s+\d{1,3}\b(?:\s*[:.\-]\s*.*|\s+.*)?|\d{1,3}(?:\.\d{1,2}){0,2}\.?(?:\s*[:)\-]\s*.*|\s+.*)?)$`)
+	romanChapterPattern     = regexp.MustCompile(`(?i)^(?:chapter\s+)?[ivxlcdm]{1,7}\.?(?:\s*[:)\-]\s*.*|\s+.*)$`)
+	partChapterPattern      = regexp.MustCompile(`(?i)^part\s+(?:[ivxlcdm]+|\d{1,3})\b(?:\s*[:.\-]\s*.*)?$`)
+	chapterNumberPattern    = regexp.MustCompile(`(?i)\bchapter\s+(\d{1,3})\b`)
+	leadingBulletPattern    = regexp.MustCompile(`^[\s\-]+`)
+	trailingDotsPagePattern = regexp.MustCompile(`\s*[._·•-]{2,}\s*\d+\s*$`)
+	onlyPunctOrDigits       = regexp.MustCompile(`^[\d\W_]+$`)
+)
 
 type ingestionProgressPayload struct {
 	NotebookID   string `json:"notebook_id"`
@@ -264,6 +290,25 @@ func (a *App) extractChapterTitles(doc *notebook.ExtractedDocument) []string {
 		return []string{"General"}
 	}
 
+	deterministicCandidates := extractDeterministicChapterCandidates(doc)
+	if len(deterministicCandidates) > 0 {
+		if a.llmProvider == nil {
+			return ensureChapterFallback(deterministicCandidates, doc)
+		}
+
+		prompt := buildConstrainedChapterPrompt(deterministicCandidates)
+		response, err := a.llmProvider.GenerateAnswer(prompt)
+		if err != nil {
+			return ensureChapterFallback(deterministicCandidates, doc)
+		}
+
+		chapters := parseChapterTitles(response)
+		if len(chapters) == 0 {
+			return ensureChapterFallback(deterministicCandidates, doc)
+		}
+		return ensureChapterFallback(chapters, doc)
+	}
+
 	input := make([]string, 0, len(doc.Sections))
 	for _, section := range doc.Sections {
 		if strings.TrimSpace(section.Text) == "" {
@@ -283,20 +328,20 @@ func (a *App) extractChapterTitles(doc *notebook.ExtractedDocument) []string {
 	}
 
 	if a.llmProvider == nil {
-		return fallbackChapterTitles(doc)
+		return ensureChapterFallback(fallbackChapterTitles(doc), doc)
 	}
 
 	prompt := "Extract 5 to 10 major chapter titles from this study text sample. Return strict JSON as {\"chapters\":[\"Title 1\",\"Title 2\"]}. No extra text.\\n\\n" + joined
 	response, err := a.llmProvider.GenerateAnswer(prompt)
 	if err != nil {
-		return fallbackChapterTitles(doc)
+		return ensureChapterFallback(fallbackChapterTitles(doc), doc)
 	}
 
 	chapters := parseChapterTitles(response)
 	if len(chapters) == 0 {
-		return fallbackChapterTitles(doc)
+		return ensureChapterFallback(fallbackChapterTitles(doc), doc)
 	}
-	return chapters
+	return ensureChapterFallback(chapters, doc)
 }
 
 func parseChapterTitles(raw string) []string {
@@ -314,24 +359,7 @@ func parseChapterTitles(raw string) []string {
 		return nil
 	}
 
-	seen := map[string]struct{}{}
-	result := make([]string, 0, len(payload.Chapters))
-	for _, title := range payload.Chapters {
-		t := strings.TrimSpace(title)
-		if t == "" {
-			continue
-		}
-		key := strings.ToLower(t)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		result = append(result, t)
-		if len(result) == 10 {
-			break
-		}
-	}
-	return result
+	return sanitizeChapterTitles(payload.Chapters)
 }
 
 func fallbackChapterTitles(doc *notebook.ExtractedDocument) []string {
@@ -355,10 +383,7 @@ func fallbackChapterTitles(doc *notebook.ExtractedDocument) []string {
 			break
 		}
 	}
-	if len(result) == 0 {
-		return []string{"General"}
-	}
-	return result
+	return sanitizeChapterTitles(result)
 }
 
 type topicGroupBuilder struct {
@@ -379,15 +404,23 @@ func buildTopicGroups(notebookID string, doc *notebook.ExtractedDocument, topicI
 	}
 
 	allChunks := make([]models.Chunk, 0)
+	lastMatchedTopicIdx := -1
 	for sectionIndex, section := range doc.Sections {
 		sectionText := strings.TrimSpace(section.Text)
 		if sectionText == "" {
 			continue
 		}
 
-		topicIdx := pickTopicForSection(section, topicTitles)
+		topicIdx, isConfidentMatch := pickTopicForSection(section, topicTitles, lastMatchedTopicIdx)
+		if boundaryIdx, ok := detectChapterBoundaryTopic(section, topicTitles, lastMatchedTopicIdx); ok {
+			topicIdx = boundaryIdx
+			isConfidentMatch = true
+		}
 		if topicIdx < 0 || topicIdx >= len(builders) {
 			topicIdx = 0
+		}
+		if isConfidentMatch {
+			lastMatchedTopicIdx = topicIdx
 		}
 
 		builder := builders[topicIdx]
@@ -441,32 +474,89 @@ func buildTopicGroups(notebookID string, doc *notebook.ExtractedDocument, topicI
 	return groups, allChunks
 }
 
-func pickTopicForSection(section notebook.ExtractedSection, topicTitles []string) int {
+func pickTopicForSection(section notebook.ExtractedSection, topicTitles []string, priorMatchedIdx int) (int, bool) {
 	if len(topicTitles) == 0 {
-		return 0
+		return 0, false
 	}
-	text := strings.ToLower(section.Heading + " " + firstN(section.Text, 800))
-	textTokens := embeddings.TokenizeSimple(text)
-	if len(textTokens) == 0 {
-		return 0
+
+	headingText := strings.ToLower(strings.TrimSpace(section.Heading))
+	bodyText := strings.ToLower(firstN(section.Text, 1200))
+	headingTokens := embeddings.TokenizeSimple(headingText)
+	bodyTokens := embeddings.TokenizeSimple(bodyText)
+
+	if len(headingTokens) == 0 && len(bodyTokens) == 0 {
+		if priorMatchedIdx >= 0 && priorMatchedIdx < len(topicTitles) {
+			return priorMatchedIdx, false
+		}
+		return 0, false
 	}
 
 	bestIdx := 0
-	bestScore := -1
+	bestScore := 0
 	for i, title := range topicTitles {
-		tokens := embeddings.TokenizeSimple(strings.ToLower(title))
-		score := 0
-		for token := range tokens {
-			if _, ok := textTokens[token]; ok {
-				score++
-			}
+		titleText := strings.ToLower(strings.TrimSpace(title))
+		tokens := embeddings.TokenizeSimple(titleText)
+		score := overlapCount(tokens, headingTokens)*4 + overlapCount(tokens, bodyTokens)
+		if titleText != "" && strings.Contains(headingText, titleText) {
+			score += 3
+		} else if titleText != "" && strings.Contains(bodyText, titleText) {
+			score += 1
 		}
+
 		if score > bestScore {
 			bestScore = score
 			bestIdx = i
 		}
 	}
-	return bestIdx
+
+	if bestScore <= 0 {
+		if priorMatchedIdx >= 0 && priorMatchedIdx < len(topicTitles) {
+			return priorMatchedIdx, false
+		}
+		return 0, false
+	}
+
+	return bestIdx, true
+}
+
+func detectChapterBoundaryTopic(section notebook.ExtractedSection, topicTitles []string, priorMatchedIdx int) (int, bool) {
+	if len(topicTitles) == 0 {
+		return 0, false
+	}
+
+	headingText := strings.ToLower(strings.TrimSpace(section.Heading))
+	bodyText := strings.ToLower(firstN(section.Text, 500))
+	boundaryText := headingText + " " + bodyText
+
+	// Strong boundary signal: explicit "Chapter N" markers in heading/page lead text.
+	if matches := chapterNumberPattern.FindStringSubmatch(boundaryText); len(matches) == 2 {
+		numText := strings.TrimSpace(matches[1])
+		if numText != "" {
+			n := 0
+			for _, r := range numText {
+				if r < '0' || r > '9' {
+					n = 0
+					break
+				}
+				n = n*10 + int(r-'0')
+			}
+			idx := n - 1
+			if idx >= 0 && idx < len(topicTitles) {
+				return idx, true
+			}
+		}
+	}
+
+	// Sequential progression hint: if content starts mentioning the next topic title, move forward.
+	nextIdx := priorMatchedIdx + 1
+	if nextIdx >= 0 && nextIdx < len(topicTitles) {
+		nextTitle := strings.ToLower(strings.TrimSpace(topicTitles[nextIdx]))
+		if nextTitle != "" && (strings.Contains(headingText, nextTitle) || strings.Contains(boundaryText, nextTitle)) {
+			return nextIdx, true
+		}
+	}
+
+	return 0, false
 }
 
 func firstN(text string, n int) string {
@@ -474,6 +564,191 @@ func firstN(text string, n int) string {
 		return text
 	}
 	return text[:n]
+}
+
+func extractDeterministicChapterCandidates(doc *notebook.ExtractedDocument) []string {
+	if doc == nil || len(doc.Sections) == 0 {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	result := make([]string, 0, maxChapterTitles)
+
+	sectionLimit := 24
+	if len(doc.Sections) < sectionLimit {
+		sectionLimit = len(doc.Sections)
+	}
+
+	for i := 0; i < sectionLimit; i++ {
+		section := doc.Sections[i]
+		candidateLines := make([]string, 0, 40)
+
+		if strings.TrimSpace(section.Heading) != "" {
+			candidateLines = append(candidateLines, section.Heading)
+		}
+
+		lines := strings.Split(firstN(section.Text, 4000), "\n")
+		lineLimit := 40
+		if len(lines) < lineLimit {
+			lineLimit = len(lines)
+		}
+		candidateLines = append(candidateLines, lines[:lineLimit]...)
+
+		for _, raw := range candidateLines {
+			normalized := normalizeHeadingLine(raw)
+			if normalized == "" || isFrontMatterTitle(normalized) || isNoisyHeading(normalized) {
+				continue
+			}
+			if !looksLikeTopLevelChapter(normalized) {
+				continue
+			}
+
+			key := strings.ToLower(normalized)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, normalized)
+			if len(result) >= maxChapterTitles {
+				return result
+			}
+		}
+	}
+
+	return result
+}
+
+func buildConstrainedChapterPrompt(candidates []string) string {
+	lines := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		lines = append(lines, "- "+c)
+	}
+
+	return strings.Join([]string{
+		"You normalize study chapter candidates into top-level chapter titles.",
+		"Return strict JSON object only: {\"chapters\":[\"Title 1\",\"Title 2\"]}.",
+		"Rules:",
+		"1) Keep only main study chapters.",
+		"2) Remove front matter like preface, acknowledgments, references, index, and contents.",
+		"3) Collapse sub-headings into parent chapter when obvious.",
+		"4) Do not invent new chapters; output must come from the candidate list.",
+		"5) Maximum 10 chapters.",
+		"",
+		"Candidates:",
+		strings.Join(lines, "\n"),
+	}, "\n")
+}
+
+func ensureChapterFallback(primary []string, doc *notebook.ExtractedDocument) []string {
+	sanitizedPrimary := sanitizeChapterTitles(primary)
+	if len(sanitizedPrimary) > 0 {
+		return sanitizedPrimary
+	}
+
+	sanitizedFallback := sanitizeChapterTitles(fallbackChapterTitles(doc))
+	if len(sanitizedFallback) > 0 {
+		return sanitizedFallback
+	}
+
+	return []string{"General"}
+}
+
+func sanitizeChapterTitles(chapters []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(chapters))
+
+	for _, raw := range chapters {
+		title := normalizeHeadingLine(raw)
+		if title == "" || isFrontMatterTitle(title) || isNoisyHeading(title) {
+			continue
+		}
+
+		key := strings.ToLower(title)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, title)
+		if len(result) >= maxChapterTitles {
+			break
+		}
+	}
+
+	return result
+}
+
+func normalizeHeadingLine(input string) string {
+	line := strings.TrimSpace(input)
+	if line == "" {
+		return ""
+	}
+
+	line = embeddings.NormalizeWhitespace(line)
+	line = leadingBulletPattern.ReplaceAllString(line, "")
+	line = trailingDotsPagePattern.ReplaceAllString(line, "")
+	line = strings.Trim(line, " \t-_:;,.|/")
+	return embeddings.NormalizeWhitespace(line)
+}
+
+func isFrontMatterTitle(title string) bool {
+	if title == "" {
+		return true
+	}
+
+	lower := strings.ToLower(embeddings.NormalizeWhitespace(title))
+	for _, term := range frontMatterDenylist {
+		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeTopLevelChapter(line string) bool {
+	if line == "" {
+		return false
+	}
+	return numericChapterPattern.MatchString(line) || romanChapterPattern.MatchString(line) || partChapterPattern.MatchString(line)
+}
+
+func isNoisyHeading(title string) bool {
+	if title == "" {
+		return true
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(title))
+	if strings.HasPrefix(normalized, "page ") {
+		return true
+	}
+
+	if onlyPunctOrDigits.MatchString(normalized) {
+		return true
+	}
+
+	wordCount := len(strings.Fields(normalized))
+	if wordCount == 0 {
+		return true
+	}
+
+	if len([]rune(normalized)) <= 2 && wordCount == 1 {
+		return true
+	}
+
+	return false
+}
+
+func overlapCount(a, b map[string]struct{}) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+
+	score := 0
+	for token := range a {
+		if _, ok := b[token]; ok {
+			score++
+		}
+	}
+	return score
 }
 
 var nonWord = regexp.MustCompile(`[^a-z0-9]+`)

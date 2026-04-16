@@ -284,6 +284,49 @@ func TestGetNotebookTopicTreeIncludesTopiclessAndIgnoresBrokenLinks(t *testing.T
 	}
 }
 
+func TestGetNotebookTopicTreeIncludesNotebookChapterTopicsWithoutChunks(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-tree-canonical"
+	if err := CreateNotebook(notebookID, "Canonical Notebook", "/tmp/canonical.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	topicIDs := []string{
+		"nb-" + notebookID + "-ch-01-relativity",
+		"nb-" + notebookID + "-ch-02-demand",
+		"nb-" + notebookID + "-ch-03-zero",
+	}
+	topicTitles := []string{
+		"The Truth about Relativity",
+		"The Fallacy of Supply and Demand",
+		"The Cost of Zero Cost",
+	}
+
+	for i := range topicIDs {
+		if err := EnsureTopic(topicIDs[i], topicTitles[i]); err != nil {
+			t.Fatalf("EnsureTopic %d failed: %v", i, err)
+		}
+	}
+
+	tree, err := GetNotebookTopicTree()
+	if err != nil {
+		t.Fatalf("GetNotebookTopicTree failed: %v", err)
+	}
+	if len(tree) != 1 {
+		t.Fatalf("expected 1 notebook, got %#v", tree)
+	}
+	if tree[0].NotebookID != notebookID {
+		t.Fatalf("unexpected notebook id: %#v", tree[0])
+	}
+	if len(tree[0].Topics) != 3 {
+		t.Fatalf("expected all canonical chapter topics to appear, got %#v", tree[0].Topics)
+	}
+	if tree[0].Topics[0].TopicID != topicIDs[0] || tree[0].Topics[1].TopicID != topicIDs[1] || tree[0].Topics[2].TopicID != topicIDs[2] {
+		t.Fatalf("expected chapter topic order by chapter id, got %#v", tree[0].Topics)
+	}
+}
+
 func distanceFunctionAvailable(t *testing.T) bool {
 	t.Helper()
 
