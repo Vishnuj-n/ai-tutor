@@ -35,14 +35,16 @@ var frontMatterDenylist = []string{
 }
 
 var (
-	numericChapterPattern   = regexp.MustCompile(`(?i)^(chapter\s+\d{1,3}\b(?:\s*[:.\-]\s*.*|\s+.*)?|\d{1,3}(?:\.\d{1,2}){0,2}\.?(?:\s*[:)\-]\s*.*|\s+.*)?)$`)
-	romanChapterPattern     = regexp.MustCompile(`(?i)^(?:chapter\s+)?[ivxlcdm]{1,7}\.?(?:\s*[:)\-]\s*.*|\s+.*)$`)
-	partChapterPattern      = regexp.MustCompile(`(?i)^part\s+(?:[ivxlcdm]+|\d{1,3})\b(?:\s*[:.\-]\s*.*)?$`)
-	chapterNumberPattern    = regexp.MustCompile(`(?i)\bchapter\s+(\d{1,3})\b`)
-	chapterMarkerPattern    = regexp.MustCompile(`(?i)\bchapter\s+\d{1,3}\b`)
-	leadingBulletPattern    = regexp.MustCompile(`^[\s\-]+`)
-	trailingDotsPagePattern = regexp.MustCompile(`\s*[._·•-]{2,}\s*\d+\s*$`)
-	onlyPunctOrDigits       = regexp.MustCompile(`^[\d\W_]+$`)
+	numericChapterPattern    = regexp.MustCompile(`(?i)^(chapter\s+\d{1,3}\b(?:\s*[:.\-]\s*.*|\s+.*)?|\d{1,3}(?:\.\d{1,2}){0,2}\.?(?:\s*[:)\-]\s*.*|\s+.*)?)$`)
+	romanChapterPattern      = regexp.MustCompile(`(?i)^(?:chapter\s+)?[ivxlcdm]{1,7}\.?(?:\s*[:)\-]\s*.*|\s+.*)$`)
+	partChapterPattern       = regexp.MustCompile(`(?i)^part\s+(?:[ivxlcdm]+|\d{1,3})\b(?:\s*[:.\-]\s*.*)?$`)
+	introOrPostscriptPattern = regexp.MustCompile(`(?i)^(introduction|postscript)\b(?:\s*[:.\-]\s*.*|\s+.*)?$`)
+	chapterNumberPattern     = regexp.MustCompile(`(?i)\bchapter\s+(\d{1,3})\b`)
+	chapterMarkerPattern     = regexp.MustCompile(`(?i)\bchapter\s+\d{1,3}\b`)
+	numericTOCMarkerPattern  = regexp.MustCompile(`(?i)\b\d{1,3}\.\s+`)
+	leadingBulletPattern     = regexp.MustCompile(`^[\s\-]+`)
+	trailingDotsPagePattern  = regexp.MustCompile(`\s*[._·•-]{2,}\s*\d+\s*$`)
+	onlyPunctOrDigits        = regexp.MustCompile(`^[\d\W_]+$`)
 )
 
 type ingestionProgressPayload struct {
@@ -636,6 +638,25 @@ func extractDeterministicChapterCandidates(doc *notebook.ExtractedDocument) []st
 				return result
 			}
 		}
+
+		// Some books encode TOC as flattened text: "1. ... 2. ..." with intro/postscript entries.
+		numericTOC := extractInlineNumericTOCCandidates(section.Text)
+		for _, candidate := range numericTOC {
+			normalized := normalizeHeadingLine(candidate)
+			if normalized == "" || isFrontMatterTitle(normalized) || isNoisyHeading(normalized) {
+				continue
+			}
+
+			key := strings.ToLower(normalized)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, normalized)
+			if len(result) >= maxChapterTitles {
+				return result
+			}
+		}
 	}
 
 	return result
@@ -732,7 +753,7 @@ func looksLikeTopLevelChapter(line string) bool {
 	if line == "" {
 		return false
 	}
-	return numericChapterPattern.MatchString(line) || romanChapterPattern.MatchString(line) || partChapterPattern.MatchString(line)
+	return numericChapterPattern.MatchString(line) || romanChapterPattern.MatchString(line) || partChapterPattern.MatchString(line) || introOrPostscriptPattern.MatchString(line)
 }
 
 func isNoisyHeading(title string) bool {
@@ -805,13 +826,81 @@ func extractInlineChapterCandidates(text string) []string {
 	return result
 }
 
+func extractInlineNumericTOCCandidates(text string) []string {
+	raw := embeddings.NormalizeWhitespace(text)
+	if raw == "" {
+		return nil
+	}
+
+	result := make([]string, 0, 16)
+	lower := strings.ToLower(raw)
+
+	numericMatches := numericTOCMarkerPattern.FindAllStringIndex(raw, -1)
+	firstNumeric := len(raw)
+	if len(numericMatches) > 0 {
+		firstNumeric = numericMatches[0][0]
+	}
+
+	introIdx := strings.Index(lower, "introduction")
+	if introIdx >= 0 {
+		introStart := introIdx
+		introEnd := firstNumeric
+		if introEnd <= introStart || introEnd > len(raw) {
+			introEnd = len(raw)
+		}
+		intro := strings.TrimSpace(raw[introStart:introEnd])
+		if intro != "" {
+			result = append(result, intro)
+		}
+	}
+
+	postscriptIdx := strings.Index(lower, "postscript")
+
+	for i, match := range numericMatches {
+		start := match[0]
+		end := len(raw)
+		if i+1 < len(numericMatches) {
+			end = numericMatches[i+1][0]
+		} else if postscriptIdx > start {
+			end = postscriptIdx
+		}
+
+		segment := strings.TrimSpace(raw[start:end])
+		if segment == "" {
+			continue
+		}
+
+		dotIdx := strings.Index(segment, ".")
+		if dotIdx <= 0 {
+			continue
+		}
+		num := strings.TrimSpace(segment[:dotIdx])
+		title := strings.TrimSpace(segment[dotIdx+1:])
+		if num == "" || title == "" {
+			continue
+		}
+
+		result = append(result, fmt.Sprintf("%s. %s", num, firstN(title, 120)))
+	}
+
+	if postscriptIdx >= 0 {
+		postscript := strings.TrimSpace(raw[postscriptIdx:])
+		if postscript != "" {
+			result = append(result, postscript)
+		}
+	}
+
+	return result
+}
+
 func shouldPreferDeterministicCandidates(llmChapters, deterministic []string) bool {
 	if len(deterministic) == 0 || len(llmChapters) == 0 {
 		return false
 	}
 
-	// If LLM returns a heavily reduced list, trust deterministic candidates.
-	minExpected := len(deterministic) / 2
+	// If LLM returns a reduced list, trust deterministic candidates.
+	// Keep at least 80% of deterministic chapter candidates to avoid dropping real chapters.
+	minExpected := (len(deterministic)*8 + 9) / 10
 	if minExpected < 3 {
 		minExpected = 3
 	}
