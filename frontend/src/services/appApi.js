@@ -43,6 +43,14 @@ export function generateFlashcards(topicID) {
   return appBridge().GenerateFlashcards(topicID)
 }
 
+export function generateShortAnswerPrompt(topicID) {
+  return appBridge().GenerateShortAnswerPrompt(topicID)
+}
+
+export function scoreShortAnswer(questionID, prompt, userAnswer) {
+  return appBridge().ScoreShortAnswer(questionID, prompt, userAnswer)
+}
+
 export function getFlashcards(topicID, dueOnly = true) {
   return appBridge().GetFlashcards(topicID, dueOnly)
 }
