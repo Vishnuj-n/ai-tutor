@@ -1,5 +1,7 @@
 <template>
-  <section class="page">
+  <WrittenAssessment v-if="route.name === 'written-assessment'" />
+
+  <section v-else class="page">
     <p class="eyebrow">Tools</p>
     <h1>{{ pageTitle }}</h1>
     <article class="panel">
@@ -11,6 +13,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import WrittenAssessment from './WrittenAssessment.vue'
 
 const route = useRoute()
 
