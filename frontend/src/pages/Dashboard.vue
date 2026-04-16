@@ -33,7 +33,7 @@
           <p class="muted">{{ error }}</p>
         </template>
         <template v-else-if="currentTask">
-          <h2>{{ currentTask.title }}</h2>
+          <h2>{{ compactLabel(currentTask.title) }}</h2>
           <p class="task-meta">{{ currentTask.meta || defaultTaskMeta(currentTask) }}</p>
           <button type="button" class="primary-btn" @click="startTask(currentTask)">
             Start Session
@@ -59,7 +59,7 @@
         <div class="chip-group">
           <p class="eyebrow">Active Topics</p>
           <div class="chips">
-            <span v-for="topic in plan.activeTopics" :key="topic">{{ topic }}</span>
+            <span v-for="topic in plan.activeTopics" :key="topic">{{ compactLabel(topic) }}</span>
             <span v-if="plan.activeTopics.length === 0">No active topics yet</span>
           </div>
         </div>
@@ -131,7 +131,7 @@ const generatedLabel = computed(() => {
 })
 
 const currentTask = computed(() => tasks.value[0] || null)
-  const focusItems = computed(() => tasks.value.slice(1))
+const focusItems = computed(() => tasks.value.slice(1))
 const reviewTask = computed(() =>
   tasks.value.find((task) => task.action_type === 'review') || null
 )
@@ -180,6 +180,14 @@ async function loadPlan() {
 
 function defaultTaskMeta(task) {
   return `${task.estimate_minutes || 15} min session`
+}
+
+function compactLabel(input) {
+  const text = typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : ''
+  if (!text) {
+    return 'Untitled'
+  }
+  return text.length > 72 ? `${text.slice(0, 69)}...` : text
 }
 
 function startTask(task) {
@@ -320,10 +328,15 @@ function startReviewSession() {
 .feature-card h2 {
   margin: 10px 0;
   max-width: 540px;
-  font-size: 32px;
+  font-size: clamp(26px, 2.2vw, 32px);
   line-height: 1.12;
   letter-spacing: -0.02em;
   font-family: 'Manrope', sans-serif;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .muted {
@@ -403,6 +416,11 @@ function startReviewSession() {
   padding: 6px 10px;
   font-size: 11px;
   font-weight: 600;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chart-card h3,
