@@ -34,10 +34,10 @@
 
       <div ref="threadRef" class="chat-thread">
         <div v-if="messages.length === 0" class="empty-state">
-          <h3>Start the conversation</h3>
+          <h3>Start the Socratic conversation</h3>
           <p>
-            Pick a topic (or a notebook linked to a topic), then ask a question to test retrieval and
-            citations.
+            Select a topic or notebook, then ask a grounded question. The tutor will respond with a
+            guiding question and a hint based on the selected material.
           </p>
         </div>
 
@@ -78,7 +78,7 @@
           v-model="inputQuestion"
           class="composer-input"
           aria-label="Question"
-          placeholder="Ask a grounded question about your material..."
+          placeholder="Ask a grounded question about your material, and the tutor will guide you with a Socratic hint."
           :disabled="isLoading"
           @keydown="handleComposerKeydown"
         ></textarea>
@@ -237,11 +237,11 @@ async function submitQuestion() {
 }
 
 const SOCRATIC_INSTRUCTIONS = [
-  'Socratic tutoring mode:',
-  '- Ask one short guiding question first.',
-  '- Do not reveal the full final answer immediately.',
-  '- Then give a compact hint grounded only in the provided material.',
-  '- If the student asks for the final answer explicitly, provide it after the guiding question and hint.',
+  'You are a Socratic tutor.',
+  '- Begin with a short, probing question that helps the student analyze the topic.',
+  '- Follow with a concise hint that is grounded only in the selected material and retrieval scope.',
+  '- Do not provide the final answer unless the student explicitly requests it.',
+  '- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.',
   '',
 ]
 
@@ -312,7 +312,7 @@ h1 {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
   gap: 10px;
-  min-height: 0;
+  min-height: 620px;
   background: var(--surface-container-lowest);
   border-radius: 18px;
   padding: 14px;
@@ -375,11 +375,12 @@ h1 {
 
 .chat-thread {
   overflow-y: auto;
-  padding: 8px;
+  padding: 12px;
   background: var(--surface-container-highest);
   border-radius: 14px;
   display: grid;
   gap: 10px;
+  min-height: 420px;
 }
 
 .empty-state {
