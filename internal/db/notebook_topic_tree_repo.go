@@ -22,7 +22,11 @@ func GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
 		_ = notebookRows.Close()
 	}()
 
-	tree := make([]models.NotebookTopicTreeNode, 0)
+	type notebookMeta struct {
+		id    string
+		title string
+	}
+	notebooks := make([]notebookMeta, 0, 16)
 	for notebookRows.Next() {
 		var notebookID string
 		var notebookTitle string
@@ -30,21 +34,24 @@ func GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
 		if err := notebookRows.Scan(&notebookID, &notebookTitle); err != nil {
 			return nil, err
 		}
+		notebooks = append(notebooks, notebookMeta{id: notebookID, title: notebookTitle})
+	}
+	if err := notebookRows.Err(); err != nil {
+		return nil, err
+	}
 
-		topics, topicsErr := getNotebookTopics(notebookID)
+	tree := make([]models.NotebookTopicTreeNode, 0, len(notebooks))
+	for _, nb := range notebooks {
+		topics, topicsErr := getNotebookTopics(nb.id)
 		if topicsErr != nil {
 			return nil, topicsErr
 		}
 
 		tree = append(tree, models.NotebookTopicTreeNode{
-			NotebookID: notebookID,
-			Title:      notebookTitle,
+			NotebookID: nb.id,
+			Title:      nb.title,
 			Topics:     topics,
 		})
-	}
-
-	if err := notebookRows.Err(); err != nil {
-		return nil, err
 	}
 
 	return tree, nil
