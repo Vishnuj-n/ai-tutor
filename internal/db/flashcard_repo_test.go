@@ -156,3 +156,58 @@ func TestQueryDueReviewCardsIgnoresSuspendedCards(t *testing.T) {
 		t.Fatalf("expected suspended card ignored, got count=%d", count)
 	}
 }
+
+func TestQueryDueReviewCardsIgnoresOrphanedCards(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "topic-orphan-check"
+	orphanTopicID := "topic-orphan-deleted"
+	if err := EnsureTopic(topicID, "Active Topic"); err != nil {
+		t.Fatalf("EnsureTopic active failed: %v", err)
+	}
+	if err := EnsureTopic(orphanTopicID, "Orphan Topic"); err != nil {
+		t.Fatalf("EnsureTopic orphan failed: %v", err)
+	}
+
+	// Create flashcards for both topics, both due
+	err := CreateFlashcards(topicID, []models.Flashcard{
+		{ID: "active-card", TopicID: topicID, Prompt: "Q1", Answer: "A1", DueAt: 100, Suspended: false},
+	}, map[string]models.FlashcardState{
+		"active-card": {},
+	})
+	if err != nil {
+		t.Fatalf("CreateFlashcards active failed: %v", err)
+	}
+
+	err = CreateFlashcards(orphanTopicID, []models.Flashcard{
+		{ID: "orphan-card", TopicID: orphanTopicID, Prompt: "Q2", Answer: "A2", DueAt: 50, Suspended: false},
+	}, map[string]models.FlashcardState{
+		"orphan-card": {},
+	})
+	if err != nil {
+		t.Fatalf("CreateFlashcards orphan failed: %v", err)
+	}
+
+	// Verify both cards are due before deletion
+	countBefore, err := QueryDueReviewCards(200)
+	if err != nil {
+		t.Fatalf("QueryDueReviewCards before failed: %v", err)
+	}
+	if countBefore != 2 {
+		t.Fatalf("expected 2 due cards before deletion, got %d", countBefore)
+	}
+
+	// Delete the orphan topic
+	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, orphanTopicID); err != nil {
+		t.Fatalf("failed to delete orphan topic: %v", err)
+	}
+
+	// Verify orphaned card is no longer counted
+	countAfter, err := QueryDueReviewCards(200)
+	if err != nil {
+		t.Fatalf("QueryDueReviewCards after failed: %v", err)
+	}
+	if countAfter != 1 {
+		t.Fatalf("expected orphaned card excluded, got count=%d", countAfter)
+	}
+}

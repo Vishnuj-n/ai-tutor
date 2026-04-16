@@ -518,15 +518,16 @@ func GetParentSection(parentID string) (map[string]string, error) {
 	}, nil
 }
 
-// QueryDueReviewCards counts cards due by the given time
+// QueryDueReviewCards counts cards due by the given time, scoped to existing topics
 func QueryDueReviewCards(now int64) (int, error) {
 	var count int
 	err := conn.QueryRow(`
 		SELECT COUNT(*)
-		FROM fsrs_cards
-		WHERE suspended = 0
-		  AND due_at IS NOT NULL
-		  AND due_at <= ?
+		FROM fsrs_cards fc
+		JOIN topics t ON t.id = fc.topic_id
+		WHERE fc.suspended = 0
+		  AND fc.due_at IS NOT NULL
+		  AND fc.due_at <= ?
 	`, now).Scan(&count)
 	return count, err
 }
