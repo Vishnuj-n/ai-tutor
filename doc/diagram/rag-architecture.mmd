@@ -1,0 +1,44 @@
+flowchart TD
+  UI[Reader / Socratic Page]
+  UI -->|Ask question| AppCmd[Wails Backend Command]
+  AppCmd -->|"ProcessQuery(topicID, question)"| RAG[RAG Pipeline]
+
+  subgraph RAGPipeline[RAG Pipeline]
+    V[Validate topic exists]
+    C[Fetch topic content & chunks]
+    S[Search top-k relevant chunks]
+    H[Apply heuristic scoring]
+    E[Expand to parent sections]
+    P[Assemble prompt within token budget]
+    L[Call LLM provider]
+    R[Build response + citations]
+  end
+
+  AppCmd --> RAG
+  RAG --> V
+  V --> C
+  C --> S
+  S --> H
+  H --> E
+  E --> P
+  P --> L
+  L --> R
+  R -->|Answer + cited_sections| AppCmd
+  AppCmd -->|return| UI
+
+  subgraph Data[Local Data]
+    DB[SQLite DB]
+    Vec[sqlite-vec vector index]
+    Assets[Tokenizer + ONNX model]
+  end
+
+  C -->|topic metadata| DB
+  C -->|chunk metadata| DB
+  S -->|embedding search| Vec
+  P -->|token counts| Assets
+  L -->|embeddings| Assets
+  L -->|HTTP request| Provider[OpenAI-compatible LLM API]
+
+  style RAGPipeline fill:#eef6ff,stroke:#7c3aed,stroke-width:1px
+  style Data fill:#f0fdf4,stroke:#16a34a,stroke-width:1px
+  style UI fill:#f8fafb,stroke:#60a5fa,stroke-width:1px

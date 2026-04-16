@@ -1,0 +1,69 @@
+flowchart LR
+  subgraph UI[Frontend - Vue / Wails]
+    A[Dashboard]
+    B[Reader]
+    C[Quiz]
+    D[Flashcards]
+    E[Socratic Tutor]
+    F[Settings]
+  end
+
+  subgraph Backend[Go + Wails Backend]
+    G[API Command Handler]
+    H[Notebook Ingestion]
+    I[RAG Pipeline]
+    J[Scheduler / FSRS]
+    K[LLM Provider Adapter]
+    L[Embedding Runtime]
+  end
+
+  subgraph Data[Local Storage]
+    M[SQLite DB]
+    N[sqlite-vec Vector Index]
+    O[Assets: tokenizer.json, model_int8.onnx]
+  end
+
+  A -->|send command| G
+  B -->|send command| G
+  C -->|send command| G
+  D -->|send command| G
+  E -->|send command| G
+  F -->|send command| G
+
+  G -->|read/write| M
+  G -->|query vectors| N
+  G -->|load assets| O
+  G -->|call external API| K
+  G -->|compute embeddings| L
+
+  subgraph Ingest[Notebook Upload / Ingestion]
+    U[Upload PDF/TXT/MD]
+    V[Extract document sections]
+    W[Detect chapters/topics]
+    X[Chunk & parent section creation]
+    Y[Generate embeddings]
+  end
+
+  U --> V --> W --> X --> Y
+  X -->|store metadata| M
+  Y -->|store embeddings| N
+  Y --> L
+  O --> L
+
+  subgraph Learn[Study Flows]
+    Q[Ask AI / Explain]
+    R[Quiz generation]
+    S[Flashcard review]
+  end
+
+  Q --> G
+  R --> G
+  S --> G
+  G --> J
+  J --> M
+
+  style UI fill:#f8fafb,stroke:#cbd5e1,stroke-width:1px
+  style Backend fill:#eff6ff,stroke:#93c5fd,stroke-width:1px
+  style Data fill:#eef2ff,stroke:#bfdbfe,stroke-width:1px
+  style Ingest fill:#f0fdf4,stroke:#86efac,stroke-width:1px
+  style Learn fill:#fff7ed,stroke:#fdba74,stroke-width:1px
