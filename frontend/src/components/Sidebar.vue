@@ -11,6 +11,7 @@
 
       <nav class="menu">
         <RouterLink v-for="item in topItems" :key="item.to" :to="item.to" class="menu-item">
+          <span class="menu-icon" aria-hidden="true">{{ item.icon }}</span>
           {{ item.label }}
         </RouterLink>
       </nav>
@@ -26,12 +27,13 @@
 
 <script setup>
 const topItems = [
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/reader', label: 'Reader' },
-  { to: '/notebooks', label: 'Notebooks' },
-  { to: '/quiz', label: 'Quiz' },
-  { to: '/flashcards', label: 'Flashcards' },
-  { to: '/tools', label: 'Tools' },
+  { to: '/dashboard', label: 'Dashboard', icon: '▦' },
+  { to: '/reader', label: 'Reader', icon: '◫' },
+  { to: '/notebooks', label: 'Notebooks', icon: '▤' },
+  { to: '/quiz', label: 'Quiz', icon: '◪' },
+  { to: '/flashcards', label: 'Flashcards', icon: '◧' },
+  { to: '/examiner', label: 'Examiner', icon: '✎' },
+  { to: '/tools', label: 'Tools', icon: '◩' },
 ]
 </script>
 
@@ -90,7 +92,9 @@ const topItems = [
 }
 
 .menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   border-radius: 12px;
   text-decoration: none;
   color: var(--on-surface);
@@ -103,12 +107,25 @@ const topItems = [
     color 0.2s ease;
 }
 
+.menu-icon {
+  width: 18px;
+  min-width: 18px;
+  text-align: center;
+  color: color-mix(in srgb, var(--muted-text) 65%, var(--on-surface));
+  font-size: 12px;
+  line-height: 1;
+}
+
 .menu-item:hover {
   background: var(--surface-container-low);
 }
 
 .menu-item.router-link-active {
   background: var(--surface-container-lowest);
+  color: var(--primary);
+}
+
+.menu-item.router-link-active .menu-icon {
   color: var(--primary);
 }
 

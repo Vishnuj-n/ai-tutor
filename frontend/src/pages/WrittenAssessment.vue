@@ -1,7 +1,7 @@
 <template>
   <section class="page">
-    <p class="eyebrow">Quiz</p>
-    <h1>Topic Quiz</h1>
+    <p class="eyebrow">FSRS-Linked Assessment</p>
+    <h1>Examiner</h1>
 
     <article class="panel controls">
       <label class="field">
@@ -26,67 +26,66 @@
         </select>
       </label>
 
-      <button class="primary" :disabled="isGenerating || !canGenerateQuiz" @click="onGenerateQuiz">
-        {{ isGenerating ? 'Generating...' : 'Generate Quiz' }}
+      <button class="primary" :disabled="isGenerating || !canGenerate" @click="onGeneratePrompt">
+        {{ isGenerating ? 'Generating...' : 'Generate Prompt' }}
       </button>
     </article>
 
     <article v-if="errorMessage" class="panel error">{{ errorMessage }}</article>
 
-    <article v-if="currentQuestion" class="panel question-card">
-      <header>
-        <p class="question-index">Question {{ currentIndex + 1 }} / {{ questions.length }}</p>
-        <h2>{{ currentQuestion.prompt }}</h2>
-      </header>
-
-      <fieldset v-if="!feedbackVisible" class="options">
-        <legend>Answer choices for question {{ currentIndex + 1 }}</legend>
-        <label v-for="(opt, idx) in currentQuestion.options" :key="opt + idx" class="option">
-          <input
-            v-model="selectedAnswer"
-            type="radio"
-            :name="`quiz-question-${currentQuestion.id}`"
-            :value="opt"
-          />
-          <span>{{ String.fromCharCode(65 + idx) }}. {{ opt }}</span>
-        </label>
-      </fieldset>
-
-      <div v-if="feedbackVisible && scoreResult" class="feedback" :class="scoreResult.correct ? 'good' : 'bad'">
-        <h3>{{ scoreResult.correct ? 'Correct' : 'Not quite' }} · Score {{ scoreResult.score }}</h3>
-        <p>{{ scoreResult.feedback }}</p>
-        <p class="hint">Hint: {{ scoreResult.hint }}</p>
-        <p v-if="!scoreResult.correct" class="expected">Expected: {{ scoreResult.expected }}</p>
+    <article v-if="isGenerating" class="panel loading-panel">
+      <div class="loading-bubble" aria-live="polite" aria-label="Generating short-answer question">
+        <span></span>
+        <span></span>
+        <span></span>
       </div>
-
-      <footer class="actions">
-        <button
-          v-if="!feedbackVisible"
-          class="primary"
-          :disabled="isScoring || !selectedAnswer"
-          @click="onSubmitAnswer"
-        >
-          {{ isScoring ? 'Scoring...' : 'Submit Answer' }}
-        </button>
-
-        <button
-          v-if="feedbackVisible"
-          class="primary"
-          :disabled="currentIndex >= questions.length - 1"
-          @click="onNext"
-        >
-          {{ currentIndex >= questions.length - 1 ? 'Quiz Complete' : 'Next Question' }}
-        </button>
-      </footer>
+      <p>Creating a grounded short-answer prompt...</p>
     </article>
 
-    <article v-else-if="questions.length === 0" class="panel">
-      <h2>Ready to generate</h2>
-      <p v-if="notebookTree.length === 0">Upload a notebook to start generating quizzes.</p>
+    <article v-if="questionState && !isGenerating" class="panel question-card">
+      <header>
+        <p class="question-index">Question</p>
+        <h2>{{ questionState.prompt }}</h2>
+      </header>
+
+      <label class="field answer-field">
+        <span>Your answer</span>
+        <textarea
+          v-model="userAnswer"
+          rows="7"
+          class="answer-input"
+          placeholder="Write a concise answer grounded in your notes..."
+          :disabled="isScoring"
+        ></textarea>
+      </label>
+
+      <div class="actions">
+        <button class="ghost" :disabled="isScoring" @click="onClear">Clear</button>
+        <button class="primary" :disabled="isScoring || !canSubmitAnswer" @click="onSubmitAnswer">
+          {{ isScoring ? 'Scoring...' : 'Submit Answer' }}
+        </button>
+      </div>
+
+      <section v-if="scoreResult" class="feedback" :class="ratingClass(scoreResult.fsrsRating)">
+        <h3>Score {{ scoreResult.score }}/10 · {{ formatRating(scoreResult.fsrsRating) }}</h3>
+        <p>{{ scoreResult.feedback }}</p>
+
+        <div class="actions">
+          <button class="ghost" :disabled="isGenerating" @click="onClear">Clear</button>
+          <button class="primary" :disabled="isGenerating || !canGenerate" @click="onNextPrompt">
+            {{ isGenerating ? 'Generating...' : 'Next Prompt' }}
+          </button>
+        </div>
+      </section>
+    </article>
+
+    <article v-else-if="!isGenerating" class="panel">
+      <h2>Ready to practice</h2>
+      <p v-if="notebookTree.length === 0">Upload a notebook to start generating written assessments.</p>
       <p v-else-if="selectedNotebook && availableTopics.length === 0">
         This notebook has no topics yet. Wait for extraction to finish or choose another notebook.
       </p>
-      <p v-else>Select a notebook and topic to generate a quiz.</p>
+      <p v-else>Select a notebook and topic to generate a short-answer prompt.</p>
     </article>
   </section>
 </template>
@@ -94,97 +93,121 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { generateQuiz, getNotebookTopicTree, scoreAnswer } from '../services/appApi'
+import { generateShortAnswerPrompt, getNotebookTopicTree, scoreShortAnswer } from '../services/appApi'
 
 const route = useRoute()
 
 const notebookTree = ref([])
 const selectedNotebookID = ref('')
 const selectedTopicID = ref('')
-const questions = ref([])
-const currentIndex = ref(0)
-const selectedAnswer = ref('')
+const questionState = ref(null)
+const userAnswer = ref('')
 const scoreResult = ref(null)
-const feedbackVisible = ref(false)
 const errorMessage = ref('')
 const isGenerating = ref(false)
 const isScoring = ref(false)
 
-const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
 const selectedNotebook = computed(() =>
   notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
 )
 const availableTopics = computed(() => selectedNotebook.value?.topics || [])
-const canGenerateQuiz = computed(() => selectedTopicID.value !== '')
+const canGenerate = computed(() => selectedTopicID.value !== '')
+const canSubmitAnswer = computed(() => userAnswer.value.trim().length > 0 && questionState.value !== null)
 
-// Helper to clear quiz state
-function resetQuizState() {
-  questions.value = []
-  currentIndex.value = 0
-  selectedAnswer.value = ''
-  scoreResult.value = null
-  feedbackVisible.value = false
-}
-
-// Clear quiz state when topic selection changes
 watch(selectedTopicID, () => {
-  resetQuizState()
+  resetAssessmentState()
 })
 
 onMounted(async () => {
+  await loadNotebookTopicTree()
+})
+
+async function loadNotebookTopicTree() {
   try {
     const data = await getNotebookTopicTree()
     notebookTree.value = Array.isArray(data) ? data : []
     applyInitialSelection(getPreferredTopicID())
   } catch (err) {
     errorMessage.value = err?.message || 'Failed to load notebook topics'
+    notebookTree.value = []
   }
-})
+}
 
-async function onGenerateQuiz() {
-  if (!selectedTopicID.value) {
+function resetAssessmentState() {
+  questionState.value = null
+  userAnswer.value = ''
+  scoreResult.value = null
+  errorMessage.value = ''
+}
+
+function onClear() {
+  resetAssessmentState()
+}
+
+async function onGeneratePrompt() {
+  if (!canGenerate.value) {
     return
   }
-  // Clear any stale quiz state before starting new generation
-  resetQuizState()
   isGenerating.value = true
+  isScoring.value = false
   errorMessage.value = ''
+  questionState.value = null
+  scoreResult.value = null
+  userAnswer.value = ''
+
   try {
-    const result = await generateQuiz(selectedTopicID.value)
+    const result = await generateShortAnswerPrompt(selectedTopicID.value)
     if (result?.error) {
       errorMessage.value = result.error
       return
     }
-    questions.value = Array.isArray(result?.questions) ? result.questions : []
-    if (questions.value.length === 0) {
-      errorMessage.value = 'No quiz questions were generated for this topic.'
+    if (!result?.questionID || !result?.prompt) {
+      errorMessage.value = 'Question generation returned invalid data.'
+      return
+    }
+    questionState.value = {
+      questionID: result.questionID,
+      prompt: result.prompt,
+      topicID: result.topicID || selectedTopicID.value,
     }
   } catch (err) {
-    errorMessage.value = err?.message || 'Quiz generation failed'
+    errorMessage.value = err?.message || 'Failed to generate short-answer prompt'
   } finally {
     isGenerating.value = false
   }
 }
 
 async function onSubmitAnswer() {
-  if (!currentQuestion.value || !selectedAnswer.value) {
+  if (!questionState.value || !userAnswer.value.trim()) {
     return
   }
   isScoring.value = true
   errorMessage.value = ''
   try {
-    const result = await scoreAnswer(currentQuestion.value.id, selectedAnswer.value)
+    const result = await scoreShortAnswer(
+      questionState.value.questionID,
+      questionState.value.prompt,
+      userAnswer.value.trim()
+    )
     if (result?.error) {
       errorMessage.value = result.error
       return
     }
-    scoreResult.value = result
-    feedbackVisible.value = true
+    scoreResult.value = {
+      score: Number(result.score || 0),
+      fsrsRating: String(result.fsrsRating || ''),
+      feedback: String(result.feedback || ''),
+    }
   } catch (err) {
-    errorMessage.value = err?.message || 'Failed to score answer'
+    errorMessage.value = err?.message || 'Failed to score short answer'
   } finally {
     isScoring.value = false
   }
+}
+
+async function onNextPrompt() {
+  resetAssessmentState()
+  await onGeneratePrompt()
 }
 
 function applyInitialSelection(preferredTopicID) {
@@ -229,13 +252,22 @@ function getPreferredTopicID() {
   return ''
 }
 
-function onNext() {
-  if (currentIndex.value < questions.value.length - 1) {
-    currentIndex.value += 1
-    selectedAnswer.value = ''
-    scoreResult.value = null
-    feedbackVisible.value = false
-  }
+function formatRating(raw) {
+  const value = String(raw || '').toLowerCase()
+  if (value === 'again') return 'Again'
+  if (value === 'hard') return 'Hard'
+  if (value === 'good') return 'Good'
+  if (value === 'easy') return 'Easy'
+  return 'Unrated'
+}
+
+function ratingClass(raw) {
+  const value = String(raw || '').toLowerCase()
+  if (value === 'again') return 'bad'
+  if (value === 'hard') return 'warn'
+  if (value === 'good') return 'good'
+  if (value === 'easy') return 'great'
+  return ''
 }
 </script>
 
@@ -304,18 +336,29 @@ select {
   font-size: 15px;
 }
 
-.primary {
-  border: 0;
+.primary,
+.ghost {
   border-radius: 12px;
   padding: 8px 14px;
-  background: #20222f;
-  color: #fff;
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
 }
 
-.primary:disabled {
+.primary {
+  border: 0;
+  background: #20222f;
+  color: #fff;
+}
+
+.ghost {
+  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+}
+
+.primary:disabled,
+.ghost:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -333,8 +376,6 @@ p {
 .question-card {
   display: grid;
   gap: 18px;
-  width: 100%;
-  box-sizing: border-box;
 }
 
 .question-index {
@@ -344,24 +385,26 @@ p {
   letter-spacing: 0.12em;
 }
 
-.options {
-  display: grid;
-  gap: 10px;
-  width: 100%;
-  box-sizing: border-box;
+.answer-field {
+  min-width: 100%;
 }
 
-.option {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
+.answer-input {
   border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
+  background: white;
   border-radius: 12px;
-  padding: 10px 12px;
   width: 100%;
   box-sizing: border-box;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
+  padding: 12px;
+  font-size: 15px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .feedback {
@@ -371,32 +414,70 @@ p {
   gap: 8px;
 }
 
-.feedback.good {
-  background: #e8f7ee;
+.feedback h3 {
+  margin: 0;
 }
 
 .feedback.bad {
   background: #fff1ee;
 }
 
-.feedback h3 {
-  margin: 0;
+.feedback.warn {
+  background: #fff6e8;
 }
 
-.hint,
-.expected {
-  color: #2f334a;
+.feedback.good {
+  background: #e8f7ee;
 }
 
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 8px;
+.feedback.great {
+  background: #e5f5ff;
+}
+
+.loading-panel {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.loading-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.loading-bubble span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #596080;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.loading-bubble span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.loading-bubble span:nth-child(3) {
+  animation-delay: 0.24s;
 }
 
 .error {
   border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-lowest));
   background: color-mix(in srgb, #b42318 10%, var(--surface-container-lowest));
   color: #8a2d16;
+}
+
+@keyframes pulse {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 </style>

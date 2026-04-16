@@ -25,13 +25,22 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type llmProviderInterface interface {
+	GenerateAnswer(prompt string) (string, error)
+}
+
+type ragPipelineInterface interface {
+	ProcessQuery(topicID, question string) (*rag.Response, error)
+}
+
 // App struct
+// Uses interface types for easy contract testing of LLM and RAG behavior.
 type App struct {
 	ctx               context.Context
-	ragPipeline       *rag.Pipeline
+	ragPipeline       ragPipelineInterface
 	embedStore        *rag.EmbeddingStore
 	embedder          *embeddings.OnnxEmbedder
-	llmProvider       *llm.Provider
+	llmProvider       llmProviderInterface
 	scheduler         scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
@@ -439,6 +448,15 @@ type flashcardLLMResponse struct {
 	Cards []flashcardLLMCard `json:"cards"`
 }
 
+type shortAnswerPromptLLMResponse struct {
+	Prompt string `json:"prompt"`
+}
+
+type shortAnswerScoreLLMResponse struct {
+	Score    int    `json:"score"`
+	Feedback string `json:"feedback"`
+}
+
 // GenerateQuiz creates topic-scoped multiple-choice questions and stores them.
 // Enforces exactly 5 questions per generation to keep quizzes consistent.
 func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
@@ -781,6 +799,147 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 	}
 }
 
+// GenerateShortAnswerPrompt creates one grounded short-answer question from topic content.
+func (a *App) GenerateShortAnswerPrompt(topicID string) map[string]interface{} {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return map[string]interface{}{"error": "topic ID is required"}
+	}
+	if a.llmProvider == nil {
+		return map[string]interface{}{"error": "LLM provider not initialized"}
+	}
+	if a.ragPipeline == nil {
+		return map[string]interface{}{"error": "RAG pipeline not initialized"}
+	}
+
+	request := `Generate exactly one short-answer assessment question grounded in the retrieved material.
+Return STRICT JSON only in this shape: {"prompt":"..."}.
+Rules:
+- Ask exactly one question.
+- Keep it concise (max 30 words).
+- Require understanding, not pure definition recall.
+- Do not include answer choices, rubric, preamble, or markdown.`
+
+	result, err := a.ragPipeline.ProcessQuery(topicID, request)
+	if err != nil {
+		return map[string]interface{}{"error": "short-answer prompt generation failed: " + err.Error()}
+	}
+
+	parsed, err := parseShortAnswerPromptLLMResponse(result.Answer)
+	if err != nil {
+		return map[string]interface{}{"error": "short-answer prompt parsing failed: " + err.Error()}
+	}
+
+	questionPrompt := strings.TrimSpace(parsed.Prompt)
+	if questionPrompt == "" {
+		return map[string]interface{}{"error": "short-answer prompt generation returned empty prompt"}
+	}
+
+	questionID := fmt.Sprintf("%s:%s", topicID, uuid.NewString())
+	return map[string]interface{}{
+		"questionID": questionID,
+		"prompt":     questionPrompt,
+		"topicID":    topicID,
+	}
+}
+
+// ScoreShortAnswer scores one short-answer response, validates the score range, and logs a generic FSRS review event.
+func (a *App) ScoreShortAnswer(questionID, prompt, userAnswer string) map[string]interface{} {
+	questionID = strings.TrimSpace(questionID)
+	prompt = strings.TrimSpace(prompt)
+	userAnswer = strings.TrimSpace(userAnswer)
+
+	if questionID == "" || prompt == "" || userAnswer == "" {
+		return map[string]interface{}{"error": "question ID, prompt, and user answer are required"}
+	}
+	if a.llmProvider == nil {
+		return map[string]interface{}{"error": "LLM provider not initialized"}
+	}
+
+	topicID, ok := topicIDFromShortAnswerQuestionID(questionID)
+	if !ok {
+		return map[string]interface{}{"error": "invalid question ID format"}
+	}
+
+	scorePrompt := fmt.Sprintf(`You are grading a student's short answer.
+Return STRICT JSON only in this shape: {"score":number,"feedback":"..."}.
+
+Scoring rubric:
+- Score must be an integer from 1 to 10.
+- 1-4 = major misunderstandings or mostly incorrect.
+- 5-7 = partially correct with gaps.
+- 8-9 = correct with minor omissions.
+- 10 = fully correct, precise, and concise.
+- Feedback must be concise (max 2 sentences), specific, and actionable.
+
+Question: %s
+Student answer: %s`, prompt, userAnswer)
+
+	raw, err := a.llmProvider.GenerateAnswer(scorePrompt)
+	if err != nil {
+		return map[string]interface{}{"error": "short-answer scoring failed: " + err.Error()}
+	}
+
+	parsed, err := parseShortAnswerScoreLLMResponse(raw)
+	if err != nil {
+		return map[string]interface{}{"error": "short-answer scoring parse failed: " + err.Error()}
+	}
+
+	score := parsed.Score
+	if score < 1 {
+		score = 1
+	}
+	if score > 10 {
+		score = 10
+	}
+
+	ratingLabel, ratingCode := shortAnswerScoreToFSRSRating(score)
+
+	stateBefore := map[string]string{
+		"prompt":      prompt,
+		"user_answer": userAnswer,
+	}
+	stateBeforeJSON, err := json.Marshal(stateBefore)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to encode short-answer review state: " + err.Error()}
+	}
+
+	stateAfter := map[string]interface{}{
+		"score_out_of_10": score,
+		"feedback":        strings.TrimSpace(parsed.Feedback),
+		"rating":          ratingLabel,
+	}
+	stateAfterJSON, err := json.Marshal(stateAfter)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to encode short-answer review result: " + err.Error()}
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              uuid.NewString(),
+		TopicID:         topicID,
+		ActivityType:    "short_answer",
+		ReferenceID:     questionID,
+		ReviewedAt:      time.Now().Unix(),
+		Rating:          ratingCode,
+		ScheduledDays:   0,
+		StateBeforeJSON: string(stateBeforeJSON),
+		StateAfterJSON:  string(stateAfterJSON),
+	}
+
+	if err := db.InsertFSRSReviewLog(reviewLog); err != nil {
+		return map[string]interface{}{"error": "failed to log short-answer review: " + err.Error()}
+	}
+
+	return map[string]interface{}{
+		"questionID":  questionID,
+		"prompt":      prompt,
+		"score":       score,
+		"feedback":    strings.TrimSpace(parsed.Feedback),
+		"fsrsRating":  ratingLabel,
+		"reviewLogID": reviewLog.ID,
+	}
+}
+
 func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
@@ -950,6 +1109,60 @@ func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
 	return &out, nil
 }
 
+func parseShortAnswerPromptLLMResponse(raw string) (*shortAnswerPromptLLMResponse, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty LLM response")
+	}
+
+	// Try to extract JSON from the response, but preserve original for fallback
+	jsonSlice := raw
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start >= 0 && end > start {
+		jsonSlice = raw[start : end+1]
+	}
+
+	var out shortAnswerPromptLLMResponse
+	if err := json.Unmarshal([]byte(jsonSlice), &out); err != nil {
+		// Fallback for providers that ignore JSON-only instruction.
+		// Use the original unmodified response, not the extracted JSON slice.
+		fallback := strings.TrimSpace(raw)
+		if fallback == "" {
+			return nil, err
+		}
+		out.Prompt = fallback
+	}
+	if strings.TrimSpace(out.Prompt) == "" {
+		return nil, fmt.Errorf("no prompt in LLM response")
+	}
+	return &out, nil
+}
+
+// parseShortAnswerScoreLLMResponse parses the LLM response and returns the raw score and feedback.
+// Score normalization and range enforcement is handled centrally in ScoreShortAnswer.
+func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty LLM response")
+	}
+
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start >= 0 && end > start {
+		raw = raw[start : end+1]
+	}
+
+	var out shortAnswerScoreLLMResponse
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out.Feedback) == "" {
+		out.Feedback = "Review key topic concepts and tighten your explanation."
+	}
+	return &out, nil
+}
+
 func normalizeQuizAnswer(answer string, options []string) string {
 	ans := strings.TrimSpace(strings.ToLower(answer))
 	if ans == "" {
@@ -1032,6 +1245,31 @@ func mapReviewRating(rating string) (int, bool) {
 		return scheduler.Easy, true
 	default:
 		return 0, false
+	}
+}
+
+func topicIDFromShortAnswerQuestionID(questionID string) (string, bool) {
+	parts := strings.SplitN(questionID, ":", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	topicID := strings.TrimSpace(parts[0])
+	if topicID == "" {
+		return "", false
+	}
+	return topicID, true
+}
+
+func shortAnswerScoreToFSRSRating(score int) (string, int) {
+	switch {
+	case score <= 4:
+		return "again", scheduler.Again
+	case score <= 7:
+		return "hard", scheduler.Hard
+	case score <= 9:
+		return "good", scheduler.Good
+	default:
+		return "easy", scheduler.Easy
 	}
 }
 
