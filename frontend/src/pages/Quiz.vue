@@ -395,8 +395,8 @@ p {
 }
 
 .error {
-  border: 1px solid #f3b5a7;
-  background: #fff3ef;
+  border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-lowest));
+  background: color-mix(in srgb, #b42318 10%, var(--surface-container-lowest));
   color: #8a2d16;
 }
 </style>

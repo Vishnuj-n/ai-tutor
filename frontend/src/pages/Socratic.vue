@@ -340,7 +340,7 @@ h1 {
 
 .control-group select {
   width: 100%;
-  border: 1px solid rgba(45, 51, 56, 0.18);
+  border: 1px solid var(--outline-variant);
   border-radius: 10px;
   padding: 10px;
   background: var(--surface-container-highest);
@@ -414,7 +414,7 @@ h1 {
   border-radius: 14px;
   padding: 10px 12px;
   background: var(--surface-container-lowest);
-  border: 1px solid rgba(45, 51, 56, 0.14);
+  border: 1px solid var(--outline-variant);
 }
 
 .bubble-row.user .bubble {
@@ -537,7 +537,7 @@ h1 {
   min-height: 88px;
   max-height: 160px;
   resize: vertical;
-  border: 1px solid rgba(45, 51, 56, 0.2);
+  border: 1px solid var(--outline-variant);
   border-radius: 12px;
   background: var(--surface-container-lowest);
   padding: 11px 12px;
