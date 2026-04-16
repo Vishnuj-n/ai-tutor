@@ -1,0 +1,34 @@
+flowchart TD
+  Upload["Upload notebook file (PDF / TXT / MD)"]
+  Upload --> Extract["ExtractDocument"]
+  Extract --> Sections["Normalized sections"]
+  Sections --> Candidate["extractChapterTitles"]
+
+  subgraph ChapterGen["Chapter generation"]
+    DC["Deterministic chapter candidates"]
+    LLM["Optional LLM normalization"]
+    FB["Fallback if LLM invalid"]
+  end
+
+  Candidate --> DC
+  DC --> LLM
+  LLM --> FB
+  FB --> Topics["Final chapter/topic list"]
+
+  Topics --> TopicIDs["Create topic IDs / EnsureTopic"]
+  Topics --> TopicTitles["Capture canonical titles"]
+  Sections --> Assign["buildTopicGroups"]
+  Assign -->|group by topic| Parents["Create parent sections"]
+  Assign --> Chunks["Create chunk rows"]
+
+  Parents --> DB["Persist parents in SQLite"]
+  Chunks --> DB
+  Chunks -->|link to notebook| NotebookLinks["notebook_chunks"]
+  DB -->|store topic metadata| Topics
+  Chunks --> Embeddings["embed text"]
+  Embeddings --> Vec["sqlite-vec vector index"]
+
+  style ChapterGen fill:#fef3c7,stroke:#d97706,stroke-width:1px
+  style DB fill:#e0f2fe,stroke:#0284c7,stroke-width:1px
+  style Upload fill:#f0f9ff,stroke:#0ea5e9,stroke-width:1px
+  style Embeddings fill:#ecfccb,stroke:#65a30d,stroke-width:1px
