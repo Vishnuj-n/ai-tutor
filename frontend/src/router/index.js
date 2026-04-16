@@ -5,6 +5,8 @@ import Reader from '../pages/Reader.vue'
 import Quiz from '../pages/Quiz.vue'
 import Flashcards from '../pages/Flashcards.vue'
 import Socratic from '../pages/Socratic.vue'
+import Tools from '../pages/Tools.vue'
+import ToolPlaceholder from '../pages/ToolPlaceholder.vue'
 import Settings from '../pages/Settings.vue'
 import Notebook from '../pages/Notebook.vue'
 
@@ -15,6 +17,25 @@ const routes = [
   { path: '/quiz', name: 'quiz', component: Quiz },
   { path: '/flashcards', name: 'flashcards', component: Flashcards },
   { path: '/socratic', name: 'socratic', component: Socratic },
+  { path: '/tools', name: 'tools', component: Tools },
+  {
+    path: '/tools/written-assessment',
+    name: 'written-assessment',
+    component: ToolPlaceholder,
+    meta: { title: 'Written Assessment' },
+  },
+  {
+    path: '/tools/acronym-generator',
+    name: 'acronym-generator',
+    component: ToolPlaceholder,
+    meta: { title: 'Acronym Generator' },
+  },
+  {
+    path: '/tools/mindmap-generator',
+    name: 'mindmap-generator',
+    component: ToolPlaceholder,
+    meta: { title: 'Mindmap Generator' },
+  },
   { path: '/notebooks', name: 'notebooks', component: Notebook },
   { path: '/settings', name: 'settings', component: Settings },
 ]

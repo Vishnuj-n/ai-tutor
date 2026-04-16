@@ -31,7 +31,7 @@ const topItems = [
   { to: '/notebooks', label: 'Notebooks' },
   { to: '/quiz', label: 'Quiz' },
   { to: '/flashcards', label: 'Flashcards' },
-  { to: '/socratic', label: 'Socratic Tutor' },
+  { to: '/tools', label: 'Tools' },
 ]
 </script>
 
