@@ -25,13 +25,22 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type llmProviderInterface interface {
+	GenerateAnswer(prompt string) (string, error)
+}
+
+type ragPipelineInterface interface {
+	ProcessQuery(topicID, question string) (*rag.Response, error)
+}
+
 // App struct
+// Uses interface types for easy contract testing of LLM and RAG behavior.
 type App struct {
 	ctx               context.Context
-	ragPipeline       *rag.Pipeline
+	ragPipeline       ragPipelineInterface
 	embedStore        *rag.EmbeddingStore
 	embedder          *embeddings.OnnxEmbedder
-	llmProvider       *llm.Provider
+	llmProvider       llmProviderInterface
 	scheduler         scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
@@ -834,7 +843,7 @@ Rules:
 	}
 }
 
-// ScoreShortAnswer scores one short-answer response and logs a generic FSRS review event.
+// ScoreShortAnswer scores one short-answer response, validates the score range, and logs a generic FSRS review event.
 func (a *App) ScoreShortAnswer(questionID, prompt, userAnswer string) map[string]interface{} {
 	questionID = strings.TrimSpace(questionID)
 	prompt = strings.TrimSpace(prompt)
@@ -1106,15 +1115,18 @@ func parseShortAnswerPromptLLMResponse(raw string) (*shortAnswerPromptLLMRespons
 		return nil, fmt.Errorf("empty LLM response")
 	}
 
+	// Try to extract JSON from the response, but preserve original for fallback
+	jsonSlice := raw
 	start := strings.Index(raw, "{")
 	end := strings.LastIndex(raw, "}")
 	if start >= 0 && end > start {
-		raw = raw[start : end+1]
+		jsonSlice = raw[start : end+1]
 	}
 
 	var out shortAnswerPromptLLMResponse
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+	if err := json.Unmarshal([]byte(jsonSlice), &out); err != nil {
 		// Fallback for providers that ignore JSON-only instruction.
+		// Use the original unmodified response, not the extracted JSON slice.
 		fallback := strings.TrimSpace(raw)
 		if fallback == "" {
 			return nil, err
@@ -1127,6 +1139,8 @@ func parseShortAnswerPromptLLMResponse(raw string) (*shortAnswerPromptLLMRespons
 	return &out, nil
 }
 
+// parseShortAnswerScoreLLMResponse parses the LLM response and returns the raw score and feedback.
+// Score normalization and range enforcement is handled centrally in ScoreShortAnswer.
 func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -1145,12 +1159,6 @@ func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse,
 	}
 	if strings.TrimSpace(out.Feedback) == "" {
 		out.Feedback = "Review key topic concepts and tighten your explanation."
-	}
-	if out.Score < 1 {
-		out.Score = 1
-	}
-	if out.Score > 10 {
-		out.Score = 10
 	}
 	return &out, nil
 }

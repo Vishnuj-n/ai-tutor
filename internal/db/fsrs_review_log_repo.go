@@ -22,7 +22,7 @@ func insertFSRSReviewLogRepo(reviewLog models.FSRSReviewLog) error {
 	var validatedTopicID string
 	if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, reviewLog.TopicID).Scan(&validatedTopicID); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("topic not found for review log topic %s", reviewLog.TopicID)
+			return fmt.Errorf("topic not found for review log topic_id=%q", reviewLog.TopicID)
 		}
 		return err
 	}
