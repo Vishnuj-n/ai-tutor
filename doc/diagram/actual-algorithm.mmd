@@ -1,0 +1,72 @@
+flowchart TD
+  User[User]
+  UI[Desktop UI: Wails + Vue]
+
+  User --> UI
+
+  subgraph Ingestion[Notebook Ingestion Pipeline]
+    Up[Upload PDF/TXT/MD]
+    Ex[Extract text sections]
+    Ch[Detect chapter topics]
+    Gr[Build topic groups]
+    Pc[Create parents + chunks]
+    Vg[Generate embeddings with ONNX]
+    Sv[Store vectors in sqlite-vec]
+  end
+
+  UI -->|UploadNotebook| Up
+  Up --> Ex --> Ch --> Gr --> Pc --> Vg --> Sv
+
+  subgraph Storage[Local Storage]
+    Sql[SQLite: topics/parents/chunks]
+    Vec[sqlite-vec: chunk_vectors]
+  end
+
+  Pc --> Sql
+  Sv --> Vec
+
+  subgraph AskAI[Ask AI Retrieval + Answer]
+    Q[User question + topic_id]
+    Vt[Validate topic]
+    Fc[Fetch topic chunks]
+    Sr[Search top-k]
+    Vs[Vector search: ONNX query embedding + sqlite-vec]
+    Lf[Fallback lexical search: TF cosine]
+    Hs[ApplyHeuristicScoring hook]
+    Ep[Expand chunk hits to parent sections]
+    Pb[Prompt assembly with token budget]
+    Llm[Single stateless LLM call]
+    Ar[Answer + cited section headings]
+  end
+
+  UI -->|AskAI| Q
+  Q --> Vt --> Fc --> Sr
+  Sr --> Vs
+  Sr --> Lf
+  Vs --> Hs
+  Lf --> Hs
+  Hs --> Ep --> Pb --> Llm --> Ar --> UI
+
+  subgraph ContentGen[Topic Content Generation]
+    Qz[GenerateQuiz: exactly 5]
+    Fg[GenerateFlashcards: exactly 8]
+  end
+
+  UI --> Qz
+  UI --> Fg
+  Qz -->|GetTopicContent sections + LLM JSON| Sql
+  Fg -->|GetTopicContent sections + LLM JSON| Sql
+
+  subgraph Review[Spaced Repetition]
+    Fs[FSRS scheduler]
+  end
+
+  Fg --> Fs
+  UI -->|RecordFlashcardReview| Fs
+  Fs --> Sql
+
+  style Ingestion fill:#f0fdf4,stroke:#15803d,stroke-width:1px
+  style AskAI fill:#eff6ff,stroke:#2563eb,stroke-width:1px
+  style Storage fill:#fff7ed,stroke:#c2410c,stroke-width:1px
+  style ContentGen fill:#f5f3ff,stroke:#6d28d9,stroke-width:1px
+  style Review fill:#ecfeff,stroke:#0e7490,stroke-width:1px
