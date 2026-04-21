@@ -45,11 +45,38 @@ func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interf
 		}
 	}
 
-	// Save file to disk
 	uploadResult, err := a.notebookService.SaveUploadedFile(fileData, fileName)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
+		}
+	}
+
+	return a.finalizeNotebookUpload(uploadResult)
+}
+
+// UploadNotebookFromPath stores a local file selected from desktop without bridge byte-array transfer.
+func (a *App) UploadNotebookFromPath(filePath string) map[string]interface{} {
+	if a.notebookService == nil {
+		return map[string]interface{}{
+			"error": "notebook service not initialized",
+		}
+	}
+
+	uploadResult, err := a.notebookService.SaveUploadedFileFromPath(filePath)
+	if err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	return a.finalizeNotebookUpload(uploadResult)
+}
+
+func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[string]interface{} {
+	if uploadResult == nil {
+		return map[string]interface{}{
+			"error": "upload failed",
 		}
 	}
 
@@ -63,7 +90,7 @@ func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interf
 	}
 
 	// Create notebook record as unlinked; Sprint 11 uses a draft/confirm ingestion flow.
-	err = db.CreateNotebook(uploadResult.ID, fileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount)
+	err = db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{
