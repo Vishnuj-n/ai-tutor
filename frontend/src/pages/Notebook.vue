@@ -219,8 +219,10 @@ const draftError = ref('')
 const isConfirmingDraft = ref(false)
 const showFallbackToast = ref(false)
 const fallbackToastMessage = ref('')
+const fallbackToastTimer = ref(null)
 const showActionToast = ref(false)
 const actionToastMessage = ref('')
+const actionToastTimer = ref(null)
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
@@ -232,6 +234,15 @@ onMounted(async () => {
 
 onUnmounted(() => {
   EventsOff('ingestion-progress')
+  // Clear any pending toast timers
+  if (fallbackToastTimer.value) {
+    clearTimeout(fallbackToastTimer.value)
+    fallbackToastTimer.value = null
+  }
+  if (actionToastTimer.value) {
+    clearTimeout(actionToastTimer.value)
+    actionToastTimer.value = null
+  }
 })
 
 function handleIngestionProgress(payload) {
@@ -424,8 +435,12 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
     if (draft?.fallback_used) {
       fallbackToastMessage.value = 'PDF bookmark extraction failed, using fallback chapter draft.'
       showFallbackToast.value = true
-      setTimeout(() => {
+      if (fallbackToastTimer.value) {
+        clearTimeout(fallbackToastTimer.value)
+      }
+      fallbackToastTimer.value = setTimeout(() => {
         showFallbackToast.value = false
+        fallbackToastTimer.value = null
       }, 5000)
     }
 
@@ -484,8 +499,12 @@ function chaptersEqual(a, b) {
 function showToast(message) {
   actionToastMessage.value = message
   showActionToast.value = true
-  setTimeout(() => {
+  if (actionToastTimer.value) {
+    clearTimeout(actionToastTimer.value)
+  }
+  actionToastTimer.value = setTimeout(() => {
     showActionToast.value = false
+    actionToastTimer.value = null
   }, 5000)
 }
 
@@ -528,7 +547,6 @@ async function confirmSyllabusDraft() {
 
   try {
     if (!chaptersChanged && titleChanged) {
-      closeSyllabusModal()
       ingestionStatusMessage.value = 'Saving notebook title...'
       const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
       if (titleResult?.error) {
@@ -539,6 +557,7 @@ async function confirmSyllabusDraft() {
         notebook.title = trimmedTitle
       }
       showToast('Notebook title updated successfully.')
+      closeSyllabusModal()
       return
     }
 
