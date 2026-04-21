@@ -185,10 +185,16 @@ func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, er
 	}
 	defer func() { _ = destination.Close() }()
 
-	if _, err = io.CopyN(destination, source, fi.Size()); err != nil {
+	copied, err := io.CopyN(destination, source, fi.Size())
+	if err != nil {
 		_ = destination.Close()
 		_ = os.Remove(destinationPath)
 		return nil, fmt.Errorf("failed to copy file: %w", err)
+	}
+	if copied != fi.Size() {
+		_ = destination.Close()
+		_ = os.Remove(destinationPath)
+		return nil, fmt.Errorf("failed to copy file: copied %d bytes, expected %d", copied, fi.Size())
 	}
 
 	return &UploadResult{

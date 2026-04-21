@@ -1109,6 +1109,11 @@ func chapterIndexForPage(page int, chapters []models.SyllabusChapterDraft) int {
 	if page < chapters[0].StartPage {
 		return 0
 	}
+	for i := 0; i < len(chapters)-1; i++ {
+		if page > chapters[i].EndPage && page < chapters[i+1].StartPage {
+			return i
+		}
+	}
 	return len(chapters) - 1
 }
 
