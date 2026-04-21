@@ -282,12 +282,12 @@ func (a *App) extractChapterTitles(doc *notebook.ExtractedDocument) []string {
 		return []string{"General"}
 	}
 
-	if a.llmProvider == nil {
+	if a.heavyLLMProvider == nil {
 		return fallbackChapterTitles(doc)
 	}
 
 	prompt := "Extract 5 to 10 major chapter titles from this study text sample. Return strict JSON as {\"chapters\":[\"Title 1\",\"Title 2\"]}. No extra text.\\n\\n" + joined
-	response, err := a.llmProvider.GenerateAnswer(prompt)
+	response, err := a.heavyLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return fallbackChapterTitles(doc)
 	}
