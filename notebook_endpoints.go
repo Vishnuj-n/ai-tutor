@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/utils"
@@ -524,6 +526,11 @@ func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount
 	nextPage := 1
 	for i, ch := range normalized {
 		start := ch.StartPage
+		if start > nextPage && len(resolved) > 0 {
+			// Assign gap pages to the previous chapter so no pages are dropped during ingestion.
+			resolved[len(resolved)-1].EndPage = start - 1
+			nextPage = start
+		}
 		if start < nextPage {
 			start = nextPage
 		}
@@ -652,32 +659,51 @@ func (a *App) indexChunksWithProgress(notebookID string, allChunks []models.Chun
 	indexedCount := 0
 	failedCount := 0
 	total := len(allChunks)
-	for i, chunk := range allChunks {
-		vector, embedErr := a.embedder.Embed(chunk.Text)
-		if embedErr != nil {
-			failedCount++
-		} else if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
-			failedCount++
-		} else {
+
+	for batchStart := 0; batchStart < total; batchStart += ingestionBatchSize {
+		batchEnd := batchStart + ingestionBatchSize
+		if batchEnd > total {
+			batchEnd = total
+		}
+
+		batchChunks := allChunks[batchStart:batchEnd]
+		batchTexts := make([]string, 0, len(batchChunks))
+		for _, chunk := range batchChunks {
+			batchTexts = append(batchTexts, chunk.Text)
+		}
+
+		batchVectors, batchErrs := embedChunkTextsInOrder(a.embedder, batchTexts)
+		for i := range batchChunks {
+			chunk := batchChunks[i]
+			if batchErrs[i] != nil {
+				log.Printf("Warning: embedding failed for chunk %s: %v", chunk.ID, batchErrs[i])
+				failedCount++
+				continue
+			}
+
+			vector := batchVectors[i]
+			if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
+				failedCount++
+				continue
+			}
+
 			indexedCount++
 			hash := computeChunkHash(chunk.Text)
 			_ = db.UpdateChunkEmbedding(chunk.ID, hash)
 		}
 
-		processed := i + 1
-		if processed%ingestionBatchSize == 0 || processed == total {
-			emitIngestionProgress(a, ingestionProgressPayload{
-				NotebookID:   notebookID,
-				Status:       status,
-				Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, total),
-				Phase:        "indexing",
-				Processed:    processed,
-				Total:        total,
-				IndexedCount: indexedCount,
-				FailedCount:  failedCount,
-				Percent:      calculatePercent(processed, total),
-			})
-		}
+		processed := batchEnd
+		emitIngestionProgress(a, ingestionProgressPayload{
+			NotebookID:   notebookID,
+			Status:       status,
+			Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, total),
+			Phase:        "indexing",
+			Processed:    processed,
+			Total:        total,
+			IndexedCount: indexedCount,
+			FailedCount:  failedCount,
+			Percent:      calculatePercent(processed, total),
+		})
 	}
 
 	finalStatus := "indexed"
@@ -685,6 +711,27 @@ func (a *App) indexChunksWithProgress(notebookID string, allChunks []models.Chun
 		finalStatus = "partial_indexed"
 	}
 	return finalStatus, indexedCount, failedCount
+}
+
+func embedChunkTextsInOrder(embedder *embeddings.OnnxEmbedder, texts []string) ([][]float32, []error) {
+	vectors := make([][]float32, len(texts))
+	errs := make([]error, len(texts))
+	if embedder == nil {
+		for i := range texts {
+			errs[i] = fmt.Errorf("embedder unavailable")
+		}
+		return vectors, errs
+	}
+
+	for i, text := range texts {
+		vector, err := embedder.Embed(text)
+		if err != nil {
+			errs[i] = err
+			continue
+		}
+		vectors[i] = vector
+	}
+	return vectors, errs
 }
 
 func validatePDFCPUInputFilePath(filePath string) (string, error) {
