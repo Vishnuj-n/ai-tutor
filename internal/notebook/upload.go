@@ -111,18 +111,9 @@ type ExtractedDocument struct {
 // SaveUploadedFile saves an uploaded file and returns metadata
 // fileData is the raw file bytes, fileName is the user-provided name
 func (s *Service) SaveUploadedFile(fileData []byte, fileName string) (*UploadResult, error) {
-	// Determine file type from extension
-	ext := strings.ToLower(filepath.Ext(fileName))
-	fileType := strings.TrimPrefix(ext, ".")
-
-	// Validate file type
-	validTypes := map[string]bool{
-		"pdf": true,
-		"txt": true,
-		"md":  true,
-	}
-	if !validTypes[fileType] {
-		return nil, fmt.Errorf("unsupported file type: %s", fileType)
+	ext, fileType, err := validateUploadFileType(fileName)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check file size
@@ -130,10 +121,7 @@ func (s *Service) SaveUploadedFile(fileData []byte, fileName string) (*UploadRes
 		return nil, fmt.Errorf("file too large: %d bytes (max %d)", len(fileData), s.config.MaxFileSize)
 	}
 
-	// Generate unique ID and filename
-	id := uuid.New().String()
-	uniqueFileName := fmt.Sprintf("%s_%s%s", id, sanitizeFileName(fileName), ext)
-	filePath := filepath.Join(s.config.UploadDir, uniqueFileName)
+	id, filePath := s.buildUploadPath(fileName, ext)
 
 	// Write file to disk
 	if err := os.WriteFile(filePath, fileData, 0o644); err != nil {
@@ -147,6 +135,78 @@ func (s *Service) SaveUploadedFile(fileData []byte, fileName string) (*UploadRes
 		FileType: fileType,
 		Size:     int64(len(fileData)),
 	}, nil
+}
+
+// SaveUploadedFileFromPath copies a user-selected local file into notebook storage.
+func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, error) {
+	sourcePath = strings.TrimSpace(sourcePath)
+	if sourcePath == "" {
+		return nil, fmt.Errorf("file path is required")
+	}
+
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to access file: %w", err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("file path points to a directory")
+	}
+	if info.Size() > s.config.MaxFileSize {
+		return nil, fmt.Errorf("file too large: %d bytes (max %d)", info.Size(), s.config.MaxFileSize)
+	}
+
+	fileName := filepath.Base(sourcePath)
+	ext, fileType, err := validateUploadFileType(fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	id, destinationPath := s.buildUploadPath(fileName, ext)
+
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer func() { _ = source.Close() }()
+
+	destination, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer func() { _ = destination.Close() }()
+
+	if _, err = io.Copy(destination, source); err != nil {
+		return nil, fmt.Errorf("failed to copy file: %w", err)
+	}
+
+	return &UploadResult{
+		ID:       id,
+		FileName: fileName,
+		FilePath: destinationPath,
+		FileType: fileType,
+		Size:     info.Size(),
+	}, nil
+}
+
+func (s *Service) buildUploadPath(fileName, ext string) (string, string) {
+	id := uuid.New().String()
+	uniqueFileName := fmt.Sprintf("%s_%s%s", id, sanitizeFileName(fileName), ext)
+	filePath := filepath.Join(s.config.UploadDir, uniqueFileName)
+	return id, filePath
+}
+
+func validateUploadFileType(fileName string) (string, string, error) {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	fileType := strings.TrimPrefix(ext, ".")
+	validTypes := map[string]bool{
+		"pdf": true,
+		"txt": true,
+		"md":  true,
+	}
+	if !validTypes[fileType] {
+		return "", "", fmt.Errorf("unsupported file type: %s", fileType)
+	}
+	return ext, fileType, nil
 }
 
 // GetFilePath returns the full path to a notebook file

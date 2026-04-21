@@ -189,12 +189,13 @@ import {
   getAvailableTopics,
   getNotebooks as fetchNotebooks,
   uploadNotebook as apiUploadNotebook,
+  uploadNotebookFromPath as apiUploadNotebookFromPath,
   draftNotebookSyllabus as apiDraftNotebookSyllabus,
   confirmNotebookSyllabus as apiConfirmNotebookSyllabus,
   updateNotebookTitle as apiUpdateNotebookTitle,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
-import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
+import { CanResolveFilePaths, EventsOff, EventsOn, ResolveFilePaths } from '../../wailsjs/runtime/runtime'
 
 const fileInput = ref(null)
 const isDragging = ref(false)
@@ -333,12 +334,18 @@ async function uploadFile(file) {
   }
 
   try {
-    // Read file as Buffer/bytes
-    const arrayBuffer = await file.arrayBuffer()
-    const bytes = new Uint8Array(arrayBuffer)
-    uploadProgress.value = 50
+    const localPath = await resolveLocalFilePath(file)
+    let result
+    if (localPath) {
+      uploadProgress.value = 40
+      result = await apiUploadNotebookFromPath(localPath)
+    } else {
+      const arrayBuffer = await file.arrayBuffer()
+      const bytes = new Uint8Array(arrayBuffer)
+      uploadProgress.value = 50
+      result = await apiUploadNotebook(Array.from(bytes), file.name)
+    }
 
-    const result = await apiUploadNotebook(Array.from(bytes), file.name)
     if (result?.error) {
       throw new Error(result.error)
     }
@@ -373,6 +380,25 @@ async function uploadFile(file) {
     uploadError.value = `Upload failed: ${error.message}`
     uploadProgress.value = 0
   }
+}
+
+async function resolveLocalFilePath(file) {
+  if (typeof file?.path === 'string' && file.path.trim() !== '') {
+    return file.path
+  }
+
+  try {
+    if (CanResolveFilePaths()) {
+      await Promise.resolve(ResolveFilePaths([file]))
+      if (typeof file?.path === 'string' && file.path.trim() !== '') {
+        return file.path
+      }
+    }
+  } catch (error) {
+    console.warn('Could not resolve local file path via Wails runtime:', error)
+  }
+
+  return ''
 }
 
 async function openSyllabusDraft(notebookID, notebookTitle = '') {
