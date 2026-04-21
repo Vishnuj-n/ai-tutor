@@ -169,27 +169,13 @@ func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, er
 	}
 	defer func() { _ = source.Close() }()
 
-	// Re-check file after opening to detect non-regular files and size drift
-	fi, err := source.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat source file: %w", err)
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("file is not a regular file")
-	}
-	if fi.Size() > s.config.MaxFileSize {
-		return nil, fmt.Errorf("file too large: %d bytes (max %d)", fi.Size(), s.config.MaxFileSize)
-	}
-
 	destination, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create destination file: %w", err)
 	}
 	defer func() { _ = destination.Close() }()
 
-	// Use bounded copy to prevent unbounded reads if file grows
-	if _, err = io.CopyN(destination, source, fi.Size()); err != nil && err != io.EOF {
-		_ = os.Remove(destinationPath) // cleanup destination on error
+	if _, err = io.Copy(destination, source); err != nil {
 		return nil, fmt.Errorf("failed to copy file: %w", err)
 	}
 
@@ -198,8 +184,29 @@ func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, er
 		FileName: fileName,
 		FilePath: destinationPath,
 		FileType: fileType,
-		Size:     fi.Size(),
+		Size:     info.Size(),
 	}, nil
+}
+
+func (s *Service) buildUploadPath(fileName, ext string) (string, string) {
+	id := uuid.New().String()
+	uniqueFileName := fmt.Sprintf("%s_%s%s", id, sanitizeFileName(fileName), ext)
+	filePath := filepath.Join(s.config.UploadDir, uniqueFileName)
+	return id, filePath
+}
+
+func validateUploadFileType(fileName string) (string, string, error) {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	fileType := strings.TrimPrefix(ext, ".")
+	validTypes := map[string]bool{
+		"pdf": true,
+		"txt": true,
+		"md":  true,
+	}
+	if !validTypes[fileType] {
+		return "", "", fmt.Errorf("unsupported file type: %s", fileType)
+	}
+	return ext, fileType, nil
 }
 
 // GetFilePath returns the full path to a notebook file

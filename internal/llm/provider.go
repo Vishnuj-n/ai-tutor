@@ -156,12 +156,10 @@ func (p *Provider) GenerateAnswer(prompt string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
-	timeoutMs := p.config.TimeoutMs
-	if timeoutMs <= 0 {
-		timeoutMs = 30000 // 30s default
-	}
 	client := &http.Client{}
-	client.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	if p.config.TimeoutMs > 0 {
+		client.Timeout = time.Duration(p.config.TimeoutMs) * time.Millisecond
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
