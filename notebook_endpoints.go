@@ -613,7 +613,7 @@ func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount
 
 	resolved := make([]models.SyllabusChapterDraft, 0, len(normalized))
 	nextPage := 1
-	for _, ch := range normalized {
+	for i, ch := range normalized {
 		start := ch.StartPage
 		if start < nextPage {
 			start = nextPage
@@ -622,6 +622,12 @@ func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount
 			break
 		}
 		end := ch.EndPage
+		if i < len(normalized)-1 {
+			nextStart := normalized[i+1].StartPage
+			if nextStart > start && end <= start {
+				end = nextStart - 1
+			}
+		}
 		if end < start {
 			end = start
 		}
@@ -1128,6 +1134,24 @@ func calculatePercent(processed, total int) int {
 
 func computeChunkHash(text string) string {
 	return utils.MD5Hex(text)
+}
+
+// UpdateNotebookTitle updates notebook metadata for user edits before re-ingestion.
+func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]interface{} {
+	notebookID = strings.TrimSpace(notebookID)
+	title = strings.TrimSpace(title)
+	if notebookID == "" {
+		return map[string]interface{}{"error": "notebook id is required"}
+	}
+	if title == "" {
+		return map[string]interface{}{"error": "title is required"}
+	}
+
+	if err := db.UpdateNotebookTitle(notebookID, title); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	return map[string]interface{}{"success": true}
 }
 
 // DeleteNotebook removes a notebook and its associated file

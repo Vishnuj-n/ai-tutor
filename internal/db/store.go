@@ -907,6 +907,25 @@ func UpdateNotebookTopic(notebookID string, topicID string) error {
 	return err
 }
 
+// UpdateNotebookTitle updates notebook display title.
+func UpdateNotebookTitle(notebookID string, title string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	title = strings.TrimSpace(title)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+	if title == "" {
+		return fmt.Errorf("title is required")
+	}
+
+	_, err := conn.Exec(`
+		UPDATE notebooks
+		SET title = ?
+		WHERE id = ?
+	`, title, notebookID)
+	return err
+}
+
 // EnsureTopic inserts a topic if it does not already exist.
 func EnsureTopic(topicID, title string) error {
 	if topicID == "" {
