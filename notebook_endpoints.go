@@ -193,34 +193,29 @@ func (a *App) processNotebookAutoIngestion(notebookID string, doc *notebook.Extr
 
 	status := "chunked"
 	chunkCount := len(allChunks)
-	status = a.indexChunksWithProgress(notebookID, allChunks)
-	_ = db.UpdateNotebookStatus(notebookID, status)
-}
-
-// indexChunksWithProgress performs vector indexing for chunks with progress emission.
-// Returns the final status ("indexed", "partial_indexed", or "chunked" if embedder is nil).
-func (a *App) indexChunksWithProgress(notebookID string, allChunks []models.Chunk) string {
 	if a.embedder == nil {
-		status := "chunked"
+		_ = db.UpdateNotebookStatus(notebookID, status)
 		emitIngestionProgress(a, ingestionProgressPayload{
 			NotebookID: notebookID,
 			Status:     status,
 			Message:    "Chunking complete; vector indexing skipped because embedder is unavailable",
 			Phase:      "indexing",
-			Processed:  len(allChunks),
-			Total:      len(allChunks),
+			Processed:  chunkCount,
+			Total:      chunkCount,
 			Percent:    100,
 		})
-		return status
+		return
 	}
 
+	status = "indexing"
+	_ = db.UpdateNotebookStatus(notebookID, status)
 	emitIngestionProgress(a, ingestionProgressPayload{
 		NotebookID: notebookID,
-		Status:     "indexing",
+		Status:     status,
 		Message:    "Starting vector indexing",
 		Phase:      "indexing",
 		Processed:  0,
-		Total:      len(allChunks),
+		Total:      chunkCount,
 		Percent:    30,
 	})
 
@@ -239,22 +234,21 @@ func (a *App) indexChunksWithProgress(notebookID string, allChunks []models.Chun
 		}
 
 		processed := i + 1
-		if processed%ingestionBatchSize == 0 || processed == len(allChunks) {
+		if processed%ingestionBatchSize == 0 || processed == chunkCount {
 			emitIngestionProgress(a, ingestionProgressPayload{
 				NotebookID:   notebookID,
-				Status:       "indexing",
-				Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, len(allChunks)),
+				Status:       status,
+				Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, chunkCount),
 				Phase:        "indexing",
 				Processed:    processed,
-				Total:        len(allChunks),
+				Total:        chunkCount,
 				IndexedCount: indexedCount,
 				FailedCount:  failedCount,
-				Percent:      calculatePercent(processed, len(allChunks)),
+				Percent:      calculatePercent(processed, chunkCount),
 			})
 		}
 	}
 
-	status := "indexed"
 	if failedCount > 0 {
 		status = "partial_indexed"
 		emitIngestionProgress(a, ingestionProgressPayload{
@@ -262,27 +256,28 @@ func (a *App) indexChunksWithProgress(notebookID string, allChunks []models.Chun
 			Status:       status,
 			Message:      "Indexing completed with partial failures",
 			Phase:        "indexing",
-			Processed:    len(allChunks),
-			Total:        len(allChunks),
+			Processed:    chunkCount,
+			Total:        chunkCount,
 			IndexedCount: indexedCount,
 			FailedCount:  failedCount,
 			Percent:      100,
 		})
 	} else {
+		status = "indexed"
 		emitIngestionProgress(a, ingestionProgressPayload{
 			NotebookID:   notebookID,
 			Status:       status,
 			Message:      "Vector indexing complete",
 			Phase:        "indexing",
-			Processed:    len(allChunks),
-			Total:        len(allChunks),
+			Processed:    chunkCount,
+			Total:        chunkCount,
 			IndexedCount: indexedCount,
 			FailedCount:  0,
 			Percent:      100,
 		})
 	}
 
-	return status
+	_ = db.UpdateNotebookStatus(notebookID, status)
 }
 
 // DraftNotebookSyllabus creates editable chapter ranges for HITL verification.
@@ -410,7 +405,87 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		}
 	}
 
-	status := a.indexChunksWithProgress(notebookID, allChunks)
+	status := "chunked"
+	if a.embedder != nil {
+		emitIngestionProgress(a, ingestionProgressPayload{
+			NotebookID: notebookID,
+			Status:     "indexing",
+			Message:    "Starting vector indexing",
+			Phase:      "indexing",
+			Processed:  0,
+			Total:      len(allChunks),
+			Percent:    30,
+		})
+
+		indexedCount := 0
+		failedCount := 0
+		for i, chunk := range allChunks {
+			vector, embedErr := a.embedder.Embed(chunk.Text)
+			if embedErr != nil {
+				failedCount++
+			} else if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
+				failedCount++
+			} else {
+				indexedCount++
+				hash := computeChunkHash(chunk.Text)
+				_ = db.UpdateChunkEmbedding(chunk.ID, hash)
+			}
+
+			processed := i + 1
+			if processed%ingestionBatchSize == 0 || processed == len(allChunks) {
+				emitIngestionProgress(a, ingestionProgressPayload{
+					NotebookID:   notebookID,
+					Status:       "indexing",
+					Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, len(allChunks)),
+					Phase:        "indexing",
+					Processed:    processed,
+					Total:        len(allChunks),
+					IndexedCount: indexedCount,
+					FailedCount:  failedCount,
+					Percent:      calculatePercent(processed, len(allChunks)),
+				})
+			}
+		}
+
+		if failedCount > 0 {
+			status = "partial_indexed"
+			emitIngestionProgress(a, ingestionProgressPayload{
+				NotebookID:   notebookID,
+				Status:       status,
+				Message:      "Indexing completed with partial failures",
+				Phase:        "indexing",
+				Processed:    len(allChunks),
+				Total:        len(allChunks),
+				IndexedCount: indexedCount,
+				FailedCount:  failedCount,
+				Percent:      100,
+			})
+		} else {
+			status = "indexed"
+			emitIngestionProgress(a, ingestionProgressPayload{
+				NotebookID:   notebookID,
+				Status:       status,
+				Message:      "Vector indexing complete",
+				Phase:        "indexing",
+				Processed:    len(allChunks),
+				Total:        len(allChunks),
+				IndexedCount: indexedCount,
+				FailedCount:  0,
+				Percent:      100,
+			})
+		}
+	} else {
+		emitIngestionProgress(a, ingestionProgressPayload{
+			NotebookID: notebookID,
+			Status:     status,
+			Message:    "Chunking complete; vector indexing skipped because embedder is unavailable",
+			Phase:      "indexing",
+			Processed:  len(allChunks),
+			Total:      len(allChunks),
+			Percent:    100,
+		})
+	}
+
 	_ = db.UpdateNotebookStatus(notebookID, status)
 	return map[string]interface{}{
 		"success":     true,
@@ -531,7 +606,7 @@ func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.Ext
 		return nil, false
 	}
 
-	bookmarkLikeDraft, fallbackUsed := extractBookmarkLikeDraft(fileType, filePath, doc, a.notebookUploadDir)
+	bookmarkLikeDraft, fallbackUsed := extractBookmarkLikeDraft(fileType, filePath, doc)
 	sample := buildPageSample(doc, 30)
 
 	if a.heavyLLMProvider != nil {
@@ -672,13 +747,13 @@ func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount
 	return resolved
 }
 
-func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.ExtractedDocument, uploadDir string) ([]models.SyllabusChapterDraft, bool) {
+func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.ExtractedDocument) ([]models.SyllabusChapterDraft, bool) {
 	if doc == nil || len(doc.Sections) == 0 {
 		return nil, false
 	}
 
 	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
-		if draft := extractPDFCPUBookmarkDraft(filePath, doc.PageCount, uploadDir); len(draft) > 0 {
+		if draft := extractPDFCPUBookmarkDraft(filePath, doc.PageCount); len(draft) > 0 {
 			return draft, false
 		}
 	}
@@ -721,8 +796,8 @@ func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.Extracted
 	return normalizeSyllabusChapters(draft, doc.PageCount), true
 }
 
-func extractPDFCPUBookmarkDraft(filePath string, pageCount int, uploadDir string) []models.SyllabusChapterDraft {
-	jsonOutput, err := runPDFCPUBookmarksExport(filePath, uploadDir)
+func extractPDFCPUBookmarkDraft(filePath string, pageCount int) []models.SyllabusChapterDraft {
+	jsonOutput, err := runPDFCPUBookmarksExport(filePath)
 	if err != nil || strings.TrimSpace(string(jsonOutput)) == "" {
 		return nil
 	}
@@ -730,77 +805,14 @@ func extractPDFCPUBookmarkDraft(filePath string, pageCount int, uploadDir string
 	return parsePDFCPUBookmarkDraftFromJSON(jsonOutput, pageCount)
 }
 
-func runPDFCPUBookmarksExport(filePath string, uploadDir string) ([]byte, error) {
-	// Validate and normalize filePath: must be absolute, within uploadDir, no traversal/null bytes
-	if strings.TrimSpace(filePath) == "" {
-		return nil, fmt.Errorf("file path is required")
-	}
-
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("invalid file path: %w", err)
-	}
-
-	// Reject paths with null bytes or suspicious patterns
-	if strings.ContainsAny(filePath, "\x00") {
-		return nil, fmt.Errorf("invalid file path: contains null bytes")
-	}
-	if strings.Contains(filePath, "..") {
-		return nil, fmt.Errorf("invalid file path: path traversal detected")
-	}
-
-	// Ensure file is within uploadDir
-	absUploadDir, err := filepath.Abs(uploadDir)
-	if err != nil {
-		return nil, fmt.Errorf("invalid upload directory: %w", err)
-	}
-
-	if !strings.HasPrefix(absPath, absUploadDir) {
-		return nil, fmt.Errorf("file path is outside upload directory")
-	}
-
-	// Verify it's a regular file
-	fi, err := os.Stat(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to access file: %w", err)
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("file is not a regular file")
-	}
-
-	// Find pdfcpu binary with OS-aware fallback lookup
+func runPDFCPUBookmarksExport(filePath string) ([]byte, error) {
 	pdfcpuPath, err := exec.LookPath("pdfcpu")
 	if err != nil {
-		// Try common install locations
-		candidates := []string{
-			filepath.Join(os.Getenv("GOBIN"), "pdfcpu"),
-			filepath.Join(os.Getenv("GOPATH"), "bin", "pdfcpu"),
+		candidate := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin", "pdfcpu.exe")
+		if _, statErr := os.Stat(candidate); statErr != nil {
+			return nil, err
 		}
-		// On Windows, add .exe variants
-		if strings.EqualFold(filepath.Ext(os.Args[0]), ".exe") {
-			candidates = append(candidates,
-				filepath.Join(os.Getenv("GOBIN"), "pdfcpu.exe"),
-				filepath.Join(os.Getenv("GOPATH"), "bin", "pdfcpu.exe"),
-				filepath.Join(os.Getenv("USERPROFILE"), "go", "bin", "pdfcpu.exe"),
-			)
-		} else {
-			// Unix paths
-			candidates = append(candidates, "/usr/local/bin/pdfcpu", "/usr/bin/pdfcpu")
-		}
-
-		found := false
-		for _, candidate := range candidates {
-			if candidate = strings.TrimSpace(candidate); candidate != "" {
-				if _, statErr := os.Stat(candidate); statErr == nil {
-					pdfcpuPath = candidate
-					found = true
-					break
-				}
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("pdfcpu not found in PATH or common install locations")
-		}
+		pdfcpuPath = candidate
 	}
 
 	tmpFile, err := os.CreateTemp("", "pdfcpu-bookmarks-*.json")
@@ -813,7 +825,7 @@ func runPDFCPUBookmarksExport(filePath string, uploadDir string) ([]byte, error)
 		_ = os.Remove(tmpPath)
 	}()
 
-	cmd := exec.Command(pdfcpuPath, "bookmarks", "export", absPath, tmpPath)
+	cmd := exec.Command(pdfcpuPath, "bookmarks", "export", filePath, tmpPath)
 	if _, runErr := cmd.Output(); runErr != nil {
 		return nil, runErr
 	}
