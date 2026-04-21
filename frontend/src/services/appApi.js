@@ -71,6 +71,22 @@ export function uploadNotebook(fileBytes, fileName) {
   return appBridge().UploadNotebook(fileBytes, fileName)
 }
 
+export function uploadNotebookFromPath(filePath) {
+  return appBridge().UploadNotebookFromPath(filePath)
+}
+
+export function draftNotebookSyllabus(notebookID) {
+  return appBridge().DraftNotebookSyllabus(notebookID)
+}
+
+export function confirmNotebookSyllabus(notebookID, chapters) {
+  return appBridge().ConfirmNotebookSyllabus(notebookID, chapters)
+}
+
+export function updateNotebookTitle(notebookID, title) {
+  return appBridge().UpdateNotebookTitle(notebookID, title)
+}
+
 export function deleteNotebook(notebookID) {
   return appBridge().DeleteNotebook(notebookID)
 }

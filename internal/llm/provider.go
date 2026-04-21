@@ -9,7 +9,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
+
+const minTimeoutMs = 1
 
 // Config holds LLM provider configuration.
 type Config struct {
@@ -19,32 +22,29 @@ type Config struct {
 	TimeoutMs int
 }
 
-// LoadConfigFromEnv loads provider config from environment variables.
-// Supports multiple key aliases so different providers can share one config path.
+// LoadConfigFromEnv loads the legacy single-provider config from environment variables.
 func LoadConfigFromEnv() *Config {
+	return LoadConfigFromEnvForPrefix("")
+}
+
+// LoadConfigFromEnvForPrefix loads provider config for a named tier.
+// Prefix examples: FAST_LLM or HEAVY_LLM.
+func LoadConfigFromEnvForPrefix(prefix string) *Config {
+	prefix = strings.TrimSpace(prefix)
+	if prefix != "" {
+		prefix = strings.TrimSuffix(prefix, "_")
+	}
+
+	baseURLKeys := prefixedKeys(prefix, "LLM_BASE_URL", "OPENAI_ENDPOINT", "OPENAI_BASE_URL", "BASE_URL")
+	apiKeyKeys := prefixedKeys(prefix, "LLM_API_KEY", "OPENAI_API_KEY", "API_KEY")
+	modelKeys := prefixedKeys(prefix, "LLM_MODEL", "BASE_MODEL", "OPENAI_MODEL", "MODEL")
+	timeoutKeys := prefixedKeys(prefix, "LLM_TIMEOUT_MS", "OPENAI_TIMEOUT_MS", "TIMEOUT_MS")
+
 	config := &Config{
-		BaseURL: firstEnv(
-			"LLM_BASE_URL",
-			"OPENAI_ENDPOINT",
-			"OPENAI_BASE_URL",
-			"BASE_URL",
-		),
-		APIKey: firstEnv(
-			"LLM_API_KEY",
-			"OPENAI_API_KEY",
-			"API_KEY",
-		),
-		Model: firstEnv(
-			"LLM_MODEL",
-			"BASE_MODEL",
-			"OPENAI_MODEL",
-			"MODEL",
-		),
-		TimeoutMs: firstEnvInt(30000,
-			"LLM_TIMEOUT_MS",
-			"OPENAI_TIMEOUT_MS",
-			"TIMEOUT_MS",
-		),
+		BaseURL:   firstEnv(baseURLKeys...),
+		APIKey:    firstEnv(apiKeyKeys...),
+		Model:     firstEnv(modelKeys...),
+		TimeoutMs: firstEnvInt(30000, timeoutKeys...),
 	}
 
 	if config.BaseURL == "" {
@@ -58,6 +58,19 @@ func LoadConfigFromEnv() *Config {
 	}
 
 	return config
+}
+
+func prefixedKeys(prefix string, keys ...string) []string {
+	if prefix == "" {
+		return keys
+	}
+
+	result := make([]string, 0, len(keys)*2)
+	for _, key := range keys {
+		result = append(result, prefix+"_"+key)
+	}
+	result = append(result, keys...)
+	return result
 }
 
 func firstEnv(keys ...string) string {
@@ -145,7 +158,16 @@ func (p *Provider) GenerateAnswer(prompt string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
-	client := &http.Client{}
+	effectiveTimeoutMs := firstEnvInt(30000, "LLM_TIMEOUT_MS", "OPENAI_TIMEOUT_MS", "TIMEOUT_MS")
+	if p.config.TimeoutMs > 0 {
+		effectiveTimeoutMs = p.config.TimeoutMs
+	}
+	if effectiveTimeoutMs <= 0 {
+		effectiveTimeoutMs = minTimeoutMs
+	}
+	client := &http.Client{
+		Timeout: time.Duration(effectiveTimeoutMs) * time.Millisecond,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

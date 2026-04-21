@@ -13,6 +13,7 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
 )
 
@@ -584,7 +585,7 @@ func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
 
 func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
@@ -610,7 +611,8 @@ func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 
 func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	provider := initTestProvider(t)
+	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
 
 	first := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := first["error"]; hasErr {
@@ -636,7 +638,7 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 
 func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
@@ -664,7 +666,8 @@ func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
 
 func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	provider := initTestProvider(t)
+	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
 
 	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
@@ -720,7 +723,8 @@ func TestRecordFlashcardReviewRejectsInvalidRating(t *testing.T) {
 
 func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	provider := initTestProvider(t)
+	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
 
 	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
@@ -756,7 +760,7 @@ func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
 	mockLLM := &mockLLMProvider{
 		answer: `{"prompt":"What is the primary purpose of scheduling in OS?"}`,
 	}
-	app.llmProvider = mockLLM
+	app.fastLLMProvider = mockLLM
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -820,7 +824,7 @@ func TestGenerateShortAnswerPrompt_WhitespaceTopicID(t *testing.T) {
 func TestGenerateShortAnswerPrompt_NoLLMProvider(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.llmProvider = nil
+	app.fastLLMProvider = nil
 
 	result := app.GenerateShortAnswerPrompt("os-scheduling")
 
@@ -836,7 +840,7 @@ func TestGenerateShortAnswerPrompt_NoLLMProvider(t *testing.T) {
 func TestGenerateShortAnswerPrompt_NoRAGPipeline(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.llmProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 	app.ragPipeline = nil
 
 	result := app.GenerateShortAnswerPrompt("os-scheduling")
@@ -853,7 +857,7 @@ func TestGenerateShortAnswerPrompt_NoRAGPipeline(t *testing.T) {
 func TestGenerateShortAnswerPrompt_RAGProcessQueryError(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.llmProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		err: fmt.Errorf("query processing failed"),
@@ -874,7 +878,7 @@ func TestGenerateShortAnswerPrompt_RAGProcessQueryError(t *testing.T) {
 func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.llmProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -898,7 +902,7 @@ func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
 func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.llmProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -921,7 +925,7 @@ func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
 func TestGenerateShortAnswerPrompt_MalformedJSON(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.llmProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -1066,7 +1070,8 @@ func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
 // Contract tests for ExplainReaderSection
 func TestExplainReaderSection_Success(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	provider := initTestProvider(t)
+	app := &App{fastLLMProvider: provider}
 
 	topicID := "test-topic-explain"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -1091,7 +1096,7 @@ func TestExplainReaderSection_Success(t *testing.T) {
 
 func TestExplainReaderSection_InvalidSection(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	resp := app.ExplainReaderSection("nonexistent-section", "Any question?")
 
@@ -1102,7 +1107,7 @@ func TestExplainReaderSection_InvalidSection(t *testing.T) {
 
 func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 	initTestDB(t)
-	app := &App{llmProvider: initTestProvider(t)}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	topicID := "test-topic-explain-empty"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -1123,5 +1128,96 @@ func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 
 	if _, ok := resp["answer"].(string); !ok {
 		t.Fatalf("expected answer string for empty question, got: %#v", resp["answer"])
+	}
+}
+
+func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
+	initTestDB(t)
+	uploadDir := t.TempDir()
+	service := notebook.NewService(uploadDir)
+	app := &App{notebookService: service}
+
+	uploadResult, err := service.SaveUploadedFile([]byte("Alpha beta gamma"), "draft.txt")
+	if err != nil {
+		t.Fatalf("SaveUploadedFile failed: %v", err)
+	}
+
+	doc, err := service.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	if err != nil {
+		t.Fatalf("ExtractDocument failed: %v", err)
+	}
+
+	if err := db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	resp := app.DraftNotebookSyllabus(uploadResult.ID)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected successful draft response, got error: %v", resp["error"])
+	}
+
+	chapters, ok := resp["chapters"].([]models.SyllabusChapterDraft)
+	if !ok {
+		t.Fatalf("expected typed chapters slice, got %#v", resp["chapters"])
+	}
+	if len(chapters) == 0 {
+		t.Fatalf("expected at least one chapter in draft")
+	}
+	if chapters[0].StartPage < 1 || chapters[0].EndPage < chapters[0].StartPage {
+		t.Fatalf("invalid chapter page bounds: %#v", chapters[0])
+	}
+}
+
+func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) {
+	initTestDB(t)
+	uploadDir := t.TempDir()
+	service := notebook.NewService(uploadDir)
+	app := &App{notebookService: service}
+
+	uploadResult, err := service.SaveUploadedFile([]byte("# Intro\n\nAlpha beta gamma\n\n## Details\n\nDelta epsilon zeta"), "confirm.md")
+	if err != nil {
+		t.Fatalf("SaveUploadedFile failed: %v", err)
+	}
+
+	doc, err := service.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	if err != nil {
+		t.Fatalf("ExtractDocument failed: %v", err)
+	}
+
+	if err := db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, []models.SyllabusChapterDraft{{
+		Title:     "Confirmed Chapter",
+		StartPage: 1,
+		EndPage:   doc.PageCount,
+	}})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected confirm success, got error: %v", resp["error"])
+	}
+
+	topicIDs, ok := resp["topic_ids"].([]string)
+	if !ok || len(topicIDs) == 0 {
+		t.Fatalf("expected topic ids, got %#v", resp["topic_ids"])
+	}
+
+	startPage, endPage, err := db.GetTopicPageBounds(topicIDs[0])
+	if err != nil {
+		t.Fatalf("GetTopicPageBounds failed: %v", err)
+	}
+	if startPage != 1 || endPage != doc.PageCount {
+		t.Fatalf("unexpected persisted bounds: got [%d,%d] want [1,%d]", startPage, endPage, doc.PageCount)
+	}
+
+	bundle, err := db.GetReaderTopicBundle(topicIDs[0], uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetReaderTopicBundle failed: %v", err)
+	}
+	if len(bundle.Sections) == 0 {
+		t.Fatalf("expected reader sections after confirm ingestion")
+	}
+	if bundle.Sections[0].PageNum <= 0 {
+		t.Fatalf("expected page-aware section mapping, got page_num=%d", bundle.Sections[0].PageNum)
 	}
 }
