@@ -1,0 +1,36 @@
+flowchart TD
+  Topic[Active Topic]
+  Topic -->|GetTopicContent| Sections["Topic Sections / Parent Content (heading + content)"]
+
+  subgraph Generation[Topic-Based Content Generation]
+    Qz[Generate Quiz]
+    Fg[Generate Flashcards]
+    QzPrompt[Build quiz prompt from sections]
+    FgPrompt[Build flashcard prompt from sections]
+    QzLLM[LLM generates JSON quiz]
+    FgLLM[LLM generates JSON flashcards]
+    QzSave[Persist 5 quiz questions]
+    FgSave[Persist 8 flashcards]
+  end
+
+  Sections --> QzPrompt --> QzLLM --> QzSave
+  Sections --> FgPrompt --> FgLLM --> FgSave
+
+  subgraph Review[Study / Examiner Flow]
+    QuizStart[User takes quiz question]
+    QuizAnswer[Submit answer]
+    Score[ScoreAnswer / normalize + compare]
+    FlashcardShow[Show flashcard prompt]
+    FlashcardGrade[User rating: again/hard/good/easy]
+    FSRS[Update due date via FSRS scheduler]
+  end
+
+  QzSave --> QuizStart
+  QuizStart --> QuizAnswer --> Score -->|store quiz score| Topic
+
+  FgSave --> FlashcardShow --> FlashcardGrade --> FSRS -->|update card due_at| Topic
+
+  style Generation fill:#f5f3ff,stroke:#7c3aed,stroke-width:1px
+  style Review fill:#ecfeff,stroke:#0e7490,stroke-width:1px
+  style Topic fill:#fef3c7,stroke:#d97706,stroke-width:1px
+  style Sections fill:#f0fdf4,stroke:#15803d,stroke-width:1px
