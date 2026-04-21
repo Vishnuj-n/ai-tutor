@@ -156,9 +156,12 @@ func (p *Provider) GenerateAnswer(prompt string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
-	client := &http.Client{}
+	effectiveTimeoutMs := firstEnvInt(30000, "LLM_TIMEOUT_MS", "OPENAI_TIMEOUT_MS", "TIMEOUT_MS")
 	if p.config.TimeoutMs > 0 {
-		client.Timeout = time.Duration(p.config.TimeoutMs) * time.Millisecond
+		effectiveTimeoutMs = p.config.TimeoutMs
+	}
+	client := &http.Client{
+		Timeout: time.Duration(effectiveTimeoutMs) * time.Millisecond,
 	}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -219,35 +220,7 @@ func (a *App) processNotebookAutoIngestion(notebookID string, doc *notebook.Extr
 		Percent:    30,
 	})
 
-	indexedCount := 0
-	failedCount := 0
-	for i, chunk := range allChunks {
-		vector, embedErr := a.embedder.Embed(chunk.Text)
-		if embedErr != nil {
-			failedCount++
-		} else if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
-			failedCount++
-		} else {
-			indexedCount++
-			hash := computeChunkHash(chunk.Text)
-			_ = db.UpdateChunkEmbedding(chunk.ID, hash)
-		}
-
-		processed := i + 1
-		if processed%ingestionBatchSize == 0 || processed == chunkCount {
-			emitIngestionProgress(a, ingestionProgressPayload{
-				NotebookID:   notebookID,
-				Status:       status,
-				Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, chunkCount),
-				Phase:        "indexing",
-				Processed:    processed,
-				Total:        chunkCount,
-				IndexedCount: indexedCount,
-				FailedCount:  failedCount,
-				Percent:      calculatePercent(processed, chunkCount),
-			})
-		}
-	}
+	_, indexedCount, failedCount := a.indexChunksWithProgress(notebookID, allChunks, status)
 
 	if failedCount > 0 {
 		status = "partial_indexed"
@@ -417,35 +390,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 			Percent:    30,
 		})
 
-		indexedCount := 0
-		failedCount := 0
-		for i, chunk := range allChunks {
-			vector, embedErr := a.embedder.Embed(chunk.Text)
-			if embedErr != nil {
-				failedCount++
-			} else if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
-				failedCount++
-			} else {
-				indexedCount++
-				hash := computeChunkHash(chunk.Text)
-				_ = db.UpdateChunkEmbedding(chunk.ID, hash)
-			}
-
-			processed := i + 1
-			if processed%ingestionBatchSize == 0 || processed == len(allChunks) {
-				emitIngestionProgress(a, ingestionProgressPayload{
-					NotebookID:   notebookID,
-					Status:       "indexing",
-					Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, len(allChunks)),
-					Phase:        "indexing",
-					Processed:    processed,
-					Total:        len(allChunks),
-					IndexedCount: indexedCount,
-					FailedCount:  failedCount,
-					Percent:      calculatePercent(processed, len(allChunks)),
-				})
-			}
-		}
+		_, indexedCount, failedCount := a.indexChunksWithProgress(notebookID, allChunks, "indexing")
 
 		if failedCount > 0 {
 			status = "partial_indexed"
@@ -806,13 +751,14 @@ func extractPDFCPUBookmarkDraft(filePath string, pageCount int) []models.Syllabu
 }
 
 func runPDFCPUBookmarksExport(filePath string) ([]byte, error) {
-	pdfcpuPath, err := exec.LookPath("pdfcpu")
+	absFilePath, err := validatePDFCPUInputFilePath(filePath)
 	if err != nil {
-		candidate := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin", "pdfcpu.exe")
-		if _, statErr := os.Stat(candidate); statErr != nil {
-			return nil, err
-		}
-		pdfcpuPath = candidate
+		return nil, err
+	}
+
+	pdfcpuPath, err := findPDFCPUExecutable()
+	if err != nil {
+		return nil, err
 	}
 
 	tmpFile, err := os.CreateTemp("", "pdfcpu-bookmarks-*.json")
@@ -825,7 +771,7 @@ func runPDFCPUBookmarksExport(filePath string) ([]byte, error) {
 		_ = os.Remove(tmpPath)
 	}()
 
-	cmd := exec.Command(pdfcpuPath, "bookmarks", "export", filePath, tmpPath)
+	cmd := exec.Command(pdfcpuPath, "bookmarks", "export", absFilePath, tmpPath)
 	if _, runErr := cmd.Output(); runErr != nil {
 		return nil, runErr
 	}
@@ -835,6 +781,135 @@ func runPDFCPUBookmarksExport(filePath string) ([]byte, error) {
 		return nil, readErr
 	}
 	return content, nil
+}
+
+func (a *App) indexChunksWithProgress(notebookID string, allChunks []models.Chunk, status string) (string, int, int) {
+	if strings.TrimSpace(status) == "" {
+		status = "indexing"
+	}
+	indexedCount := 0
+	failedCount := 0
+	total := len(allChunks)
+	for i, chunk := range allChunks {
+		vector, embedErr := a.embedder.Embed(chunk.Text)
+		if embedErr != nil {
+			failedCount++
+		} else if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
+			failedCount++
+		} else {
+			indexedCount++
+			hash := computeChunkHash(chunk.Text)
+			_ = db.UpdateChunkEmbedding(chunk.ID, hash)
+		}
+
+		processed := i + 1
+		if processed%ingestionBatchSize == 0 || processed == total {
+			emitIngestionProgress(a, ingestionProgressPayload{
+				NotebookID:   notebookID,
+				Status:       status,
+				Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, total),
+				Phase:        "indexing",
+				Processed:    processed,
+				Total:        total,
+				IndexedCount: indexedCount,
+				FailedCount:  failedCount,
+				Percent:      calculatePercent(processed, total),
+			})
+		}
+	}
+
+	finalStatus := "indexed"
+	if failedCount > 0 {
+		finalStatus = "partial_indexed"
+	}
+	return finalStatus, indexedCount, failedCount
+}
+
+func validatePDFCPUInputFilePath(filePath string) (string, error) {
+	trimmed := strings.TrimSpace(filePath)
+	if trimmed == "" {
+		return "", fmt.Errorf("file path is required")
+	}
+	if strings.Contains(trimmed, "\x00") {
+		return "", fmt.Errorf("invalid file path")
+	}
+	if strings.Contains(trimmed, "..\\") || strings.Contains(trimmed, "../") {
+		return "", fmt.Errorf("file path traversal is not allowed")
+	}
+
+	cleaned := filepath.Clean(trimmed)
+	absPath, err := filepath.Abs(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("invalid file path: %w", err)
+	}
+	uploadDir, err := resolveNotebookDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve upload directory: %w", err)
+	}
+	uploadRoot, err := filepath.Abs(uploadDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve upload directory: %w", err)
+	}
+	relToUploadRoot, err := filepath.Rel(uploadRoot, absPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid file path relation: %w", err)
+	}
+	if relToUploadRoot == ".." || strings.HasPrefix(relToUploadRoot, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("file path is outside allowed upload directory")
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat file path: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("file path must point to a regular file")
+	}
+	return absPath, nil
+}
+
+func findPDFCPUExecutable() (string, error) {
+	pdfcpuPath, err := exec.LookPath("pdfcpu")
+	if err == nil {
+		return pdfcpuPath, nil
+	}
+
+	binary := "pdfcpu"
+	if runtime.GOOS == "windows" {
+		binary = "pdfcpu.exe"
+	}
+
+	candidateDirs := make([]string, 0, 8)
+	if gobin := strings.TrimSpace(os.Getenv("GOBIN")); gobin != "" {
+		candidateDirs = append(candidateDirs, gobin)
+	}
+	if gopath := strings.TrimSpace(os.Getenv("GOPATH")); gopath != "" {
+		candidateDirs = append(candidateDirs, filepath.Join(gopath, "bin"))
+	} else if home, homeErr := os.UserHomeDir(); homeErr == nil && home != "" {
+		candidateDirs = append(candidateDirs, filepath.Join(home, "go", "bin"))
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		candidateDirs = append(candidateDirs, `C:\Program Files\pdfcpu`, `C:\Program Files (x86)\pdfcpu`)
+	case "darwin":
+		candidateDirs = append(candidateDirs, "/usr/local/bin", "/opt/homebrew/bin")
+	default:
+		candidateDirs = append(candidateDirs, "/usr/local/bin", "/usr/bin")
+	}
+
+	for _, dir := range candidateDirs {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, binary)
+		info, statErr := os.Stat(candidate)
+		if statErr == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("pdfcpu binary not found; install pdfcpu and ensure it is available on PATH, GOBIN, or GOPATH/bin")
 }
 
 func parsePDFCPUBookmarkDraftFromJSON(raw []byte, pageCount int) []models.SyllabusChapterDraft {

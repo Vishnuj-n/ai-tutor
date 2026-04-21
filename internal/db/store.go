@@ -955,6 +955,9 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	if endPage < 0 {
 		endPage = 0
 	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
 
 	_, err := conn.Exec(`
 		UPDATE topics
