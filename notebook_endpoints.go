@@ -277,7 +277,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 	}
 
 	_ = db.UpdateNotebookStatus(notebookID, "analyzing")
-	chapters := a.draftSyllabusChapters(nb.FileType, nb.FilePath, doc)
+	chapters, fallbackUsed := a.draftSyllabusChapters(nb.FileType, nb.FilePath, doc)
 	if len(chapters) == 0 {
 		chapters = []models.SyllabusChapterDraft{{
 			Title:     "General",
@@ -288,10 +288,11 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 
 	_ = db.UpdateNotebookStatus(notebookID, "draft_ready")
 	return map[string]interface{}{
-		"notebook_id": notebookID,
-		"page_count":  doc.PageCount,
-		"chapters":    chapters,
-		"status":      "draft_ready",
+		"notebook_id":   notebookID,
+		"page_count":    doc.PageCount,
+		"chapters":      chapters,
+		"status":        "draft_ready",
+		"fallback_used": fallbackUsed,
 	}
 }
 
@@ -498,12 +499,12 @@ func fallbackChapterTitles(doc *notebook.ExtractedDocument) []string {
 	return result
 }
 
-func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.ExtractedDocument) []models.SyllabusChapterDraft {
+func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.ExtractedDocument) ([]models.SyllabusChapterDraft, bool) {
 	if doc == nil || len(doc.Sections) == 0 {
-		return nil
+		return nil, false
 	}
 
-	bookmarkLikeDraft := extractBookmarkLikeDraft(fileType, filePath, doc)
+	bookmarkLikeDraft, fallbackUsed := extractBookmarkLikeDraft(fileType, filePath, doc)
 	sample := buildPageSample(doc, 30)
 
 	if a.heavyLLMProvider != nil {
@@ -513,18 +514,18 @@ func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.Ext
 		if err == nil {
 			parsed := parseSyllabusDraft(raw, doc.PageCount)
 			if len(parsed) > 0 {
-				return parsed
+				return parsed, false
 			}
 		}
 	}
 
 	if len(bookmarkLikeDraft) > 0 {
-		return normalizeSyllabusChapters(bookmarkLikeDraft, doc.PageCount)
+		return normalizeSyllabusChapters(bookmarkLikeDraft, doc.PageCount), fallbackUsed
 	}
 
 	titles := a.extractChapterTitles(doc)
 	if len(titles) == 0 {
-		return nil
+		return nil, false
 	}
 
 	fallback := make([]models.SyllabusChapterDraft, 0, len(titles))
@@ -550,7 +551,7 @@ func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.Ext
 		}
 	}
 
-	return normalizeSyllabusChapters(fallback, doc.PageCount)
+	return normalizeSyllabusChapters(fallback, doc.PageCount), true
 }
 
 func parseSyllabusDraft(raw string, pageCount int) []models.SyllabusChapterDraft {
@@ -638,14 +639,14 @@ func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount
 	return resolved
 }
 
-func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.ExtractedDocument) []models.SyllabusChapterDraft {
+func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.ExtractedDocument) ([]models.SyllabusChapterDraft, bool) {
 	if doc == nil || len(doc.Sections) == 0 {
-		return nil
+		return nil, false
 	}
 
 	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
 		if draft := extractPDFCPUBookmarkDraft(filePath, doc.PageCount); len(draft) > 0 {
-			return draft
+			return draft, false
 		}
 	}
 
@@ -660,7 +661,7 @@ func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.Extracted
 	}
 	matches := tocPattern.FindAllStringSubmatch(strings.Join(input, "\n"), 100)
 	if len(matches) == 0 {
-		return nil
+		return nil, false
 	}
 
 	seen := map[int]struct{}{}
@@ -684,11 +685,11 @@ func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.Extracted
 		draft = append(draft, models.SyllabusChapterDraft{Title: title, StartPage: page, EndPage: page})
 	}
 
-	return normalizeSyllabusChapters(draft, doc.PageCount)
+	return normalizeSyllabusChapters(draft, doc.PageCount), true
 }
 
 func extractPDFCPUBookmarkDraft(filePath string, pageCount int) []models.SyllabusChapterDraft {
-	jsonOutput, err := runPDFCPUBookmarksJSON(filePath)
+	jsonOutput, err := runPDFCPUBookmarksExport(filePath)
 	if err != nil || strings.TrimSpace(string(jsonOutput)) == "" {
 		return nil
 	}
@@ -696,7 +697,7 @@ func extractPDFCPUBookmarkDraft(filePath string, pageCount int) []models.Syllabu
 	return parsePDFCPUBookmarkDraftFromJSON(jsonOutput, pageCount)
 }
 
-func runPDFCPUBookmarksJSON(filePath string) ([]byte, error) {
+func runPDFCPUBookmarksExport(filePath string) ([]byte, error) {
 	pdfcpuPath, err := exec.LookPath("pdfcpu")
 	if err != nil {
 		candidate := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin", "pdfcpu.exe")
@@ -706,8 +707,26 @@ func runPDFCPUBookmarksJSON(filePath string) ([]byte, error) {
 		pdfcpuPath = candidate
 	}
 
-	cmd := exec.Command(pdfcpuPath, "bookmarks", "list", "-json", filePath)
-	return cmd.Output()
+	tmpFile, err := os.CreateTemp("", "pdfcpu-bookmarks-*.json")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmpFile.Name()
+	_ = tmpFile.Close()
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+
+	cmd := exec.Command(pdfcpuPath, "bookmarks", "export", filePath, tmpPath)
+	if _, runErr := cmd.Output(); runErr != nil {
+		return nil, runErr
+	}
+
+	content, readErr := os.ReadFile(tmpPath)
+	if readErr != nil {
+		return nil, readErr
+	}
+	return content, nil
 }
 
 func parsePDFCPUBookmarkDraftFromJSON(raw []byte, pageCount int) []models.SyllabusChapterDraft {

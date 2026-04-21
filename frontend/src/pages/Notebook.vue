@@ -157,6 +157,14 @@
         </div>
       </div>
     </div>
+    <transition name="toast-fade">
+      <div v-if="showFallbackToast" class="fallback-toast">
+        <div class="fallback-toast-inner">
+          <span class="fallback-toast-title">Fallback used</span>
+          <p>{{ fallbackToastMessage }}</p>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -188,6 +196,8 @@ const draftPageCount = ref(1)
 const draftChapters = ref([])
 const draftError = ref('')
 const isConfirmingDraft = ref(false)
+const showFallbackToast = ref(false)
+const fallbackToastMessage = ref('')
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
@@ -361,6 +371,14 @@ async function openSyllabusDraft(notebookID) {
         end_page: Number(ch?.end_page) || 1,
       }))
       : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
+
+    if (draft?.fallback_used) {
+      fallbackToastMessage.value = 'PDF bookmark extraction failed, using fallback chapter draft.'
+      showFallbackToast.value = true
+      setTimeout(() => {
+        showFallbackToast.value = false
+      }, 5000)
+    }
 
     showSyllabusModal.value = true
   } catch (error) {
@@ -916,5 +934,37 @@ function formatDate(dateString) {
   .modal-actions {
     flex-wrap: wrap;
   }
-}
-</style>
+
+  .fallback-toast {
+    position: fixed;
+    left: 20px;
+    bottom: 20px;
+    z-index: 1300;
+  }
+
+  .fallback-toast-inner {
+    max-width: 320px;
+    padding: 14px 16px;
+    background: #b33939;
+    color: #fff;
+    border-radius: 14px;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .fallback-toast-title {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .toast-fade-enter-active,
+  .toast-fade-leave-active {
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+
+  .toast-fade-enter-from,
+  .toast-fade-leave-to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
