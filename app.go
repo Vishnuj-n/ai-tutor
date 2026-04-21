@@ -40,7 +40,8 @@ type App struct {
 	ragPipeline       ragPipelineInterface
 	embedStore        *rag.EmbeddingStore
 	embedder          *embeddings.OnnxEmbedder
-	llmProvider       llmProviderInterface
+	fastLLMProvider   llmProviderInterface
+	heavyLLMProvider  llmProviderInterface
 	scheduler         scheduler.Service
 	notebookService   *notebook.Service
 	notebookUploadDir string
@@ -168,14 +169,17 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	// Initialize LLM provider from .env / environment variables.
-	llmConfig := llm.LoadConfigFromEnv()
+	// Initialize both LLM tiers from .env / environment variables.
+	fastLLMConfig := llm.LoadConfigFromEnvForPrefix("FAST_LLM")
+	heavyLLMConfig := llm.LoadConfigFromEnvForPrefix("HEAVY_LLM")
 
-	llmProvider := llm.NewProvider(llmConfig)
-	a.llmProvider = llmProvider
+	fastLLMProvider := llm.NewProvider(fastLLMConfig)
+	heavyLLMProvider := llm.NewProvider(heavyLLMConfig)
+	a.fastLLMProvider = fastLLMProvider
+	a.heavyLLMProvider = heavyLLMProvider
 
 	// Create RAG pipeline
-	a.ragPipeline = rag.NewPipeline(embedStore, llmProvider)
+	a.ragPipeline = rag.NewPipeline(embedStore, heavyLLMProvider)
 
 	// Initialize notebook service
 	notebookDir, err := resolveNotebookDir()
@@ -294,9 +298,9 @@ func (a *App) ExplainReaderSection(sectionID string, question string) map[string
 		}
 	}
 
-	if a.llmProvider == nil {
+	if a.fastLLMProvider == nil {
 		return map[string]interface{}{
-			"error": "LLM provider not initialized",
+			"error": "FAST_LLM provider not initialized",
 		}
 	}
 
@@ -327,7 +331,7 @@ Return a response with:
 3. Recall cue: one memorable phrase or question to test understanding
 4. Example (if the section includes a concrete example or scenario, highlight it; otherwise, skip this)`, section["heading"], section["content"], question)
 
-	answer, err := a.llmProvider.GenerateAnswer(prompt)
+	answer, err := a.fastLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{
 			"error": "section explanation failed: " + err.Error(),
@@ -465,8 +469,8 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
 
-	if a.llmProvider == nil {
-		return map[string]interface{}{"error": "LLM provider not initialized"}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
 	existingQuestions, err := db.GetQuestionsForTopic(topicID)
@@ -492,7 +496,7 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	}
 
 	prompt := buildQuizPrompt(topicID, sections)
-	raw, err := a.llmProvider.GenerateAnswer(prompt)
+	raw, err := a.fastLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{"error": "quiz generation failed: " + err.Error()}
 	}
@@ -563,8 +567,8 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
 
-	if a.llmProvider == nil {
-		return map[string]interface{}{"error": "LLM provider not initialized"}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
 	content, err := db.GetTopicContent(topicID)
@@ -578,7 +582,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	}
 
 	// Generate flashcard candidates from LLM
-	raw, err := a.llmProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections))
+	raw, err := a.fastLLMProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections))
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard generation failed: " + err.Error()}
 	}
@@ -805,8 +809,8 @@ func (a *App) GenerateShortAnswerPrompt(topicID string) map[string]interface{} {
 	if topicID == "" {
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
-	if a.llmProvider == nil {
-		return map[string]interface{}{"error": "LLM provider not initialized"}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 	if a.ragPipeline == nil {
 		return map[string]interface{}{"error": "RAG pipeline not initialized"}
@@ -852,8 +856,8 @@ func (a *App) ScoreShortAnswer(questionID, prompt, userAnswer string) map[string
 	if questionID == "" || prompt == "" || userAnswer == "" {
 		return map[string]interface{}{"error": "question ID, prompt, and user answer are required"}
 	}
-	if a.llmProvider == nil {
-		return map[string]interface{}{"error": "LLM provider not initialized"}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
 	topicID, ok := topicIDFromShortAnswerQuestionID(questionID)
@@ -875,7 +879,7 @@ Scoring rubric:
 Question: %s
 Student answer: %s`, prompt, userAnswer)
 
-	raw, err := a.llmProvider.GenerateAnswer(scorePrompt)
+	raw, err := a.fastLLMProvider.GenerateAnswer(scorePrompt)
 	if err != nil {
 		return map[string]interface{}{"error": "short-answer scoring failed: " + err.Error()}
 	}
