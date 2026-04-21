@@ -168,6 +168,16 @@ func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, er
 		return nil, fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer func() { _ = source.Close() }()
+	fi, err := source.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat source file: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("source file is not a regular file")
+	}
+	if fi.Size() > s.config.MaxFileSize {
+		return nil, fmt.Errorf("file too large: %d bytes (max %d)", fi.Size(), s.config.MaxFileSize)
+	}
 
 	destination, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -175,7 +185,9 @@ func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, er
 	}
 	defer func() { _ = destination.Close() }()
 
-	if _, err = io.Copy(destination, source); err != nil {
+	if _, err = io.CopyN(destination, source, fi.Size()); err != nil {
+		_ = destination.Close()
+		_ = os.Remove(destinationPath)
 		return nil, fmt.Errorf("failed to copy file: %w", err)
 	}
 
@@ -184,7 +196,7 @@ func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, er
 		FileName: fileName,
 		FilePath: destinationPath,
 		FileType: fileType,
-		Size:     info.Size(),
+		Size:     fi.Size(),
 	}, nil
 }
 
