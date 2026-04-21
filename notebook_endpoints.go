@@ -348,8 +348,27 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "confirmed chapters produced no chunks"}
 	}
 
+	emitIngestionProgress(a, ingestionProgressPayload{
+		NotebookID: notebookID,
+		Status:     "chunking",
+		Message:    fmt.Sprintf("Creating %d chunks for confirmed chapters", len(allChunks)),
+		Phase:      "chunking",
+		Processed:  0,
+		Total:      len(allChunks),
+		Percent:    20,
+	})
+
 	if err := a.notebookService.IngestNotebookContentByTopic(notebookID, groups); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		emitIngestionProgress(a, ingestionProgressPayload{
+			NotebookID: notebookID,
+			Status:     "failed",
+			Message:    "Chunk ingestion failed",
+			Phase:      "chunking",
+			Processed:  0,
+			Total:      len(allChunks),
+			Percent:    100,
+		})
 		return map[string]interface{}{"error": "chunk ingestion failed: " + err.Error()}
 	}
 
@@ -361,27 +380,83 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	status := "chunked"
 	if a.embedder != nil {
+		emitIngestionProgress(a, ingestionProgressPayload{
+			NotebookID: notebookID,
+			Status:     "indexing",
+			Message:    "Starting vector indexing",
+			Phase:      "indexing",
+			Processed:  0,
+			Total:      len(allChunks),
+			Percent:    30,
+		})
+
 		indexedCount := 0
 		failedCount := 0
-		for _, chunk := range allChunks {
+		for i, chunk := range allChunks {
 			vector, embedErr := a.embedder.Embed(chunk.Text)
 			if embedErr != nil {
 				failedCount++
-				continue
-			}
-			if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
+			} else if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
 				failedCount++
-				continue
+			} else {
+				indexedCount++
+				hash := computeChunkHash(chunk.Text)
+				_ = db.UpdateChunkEmbedding(chunk.ID, hash)
 			}
-			indexedCount++
-			hash := computeChunkHash(chunk.Text)
-			_ = db.UpdateChunkEmbedding(chunk.ID, hash)
+
+			processed := i + 1
+			if processed%ingestionBatchSize == 0 || processed == len(allChunks) {
+				emitIngestionProgress(a, ingestionProgressPayload{
+					NotebookID:   notebookID,
+					Status:       "indexing",
+					Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, len(allChunks)),
+					Phase:        "indexing",
+					Processed:    processed,
+					Total:        len(allChunks),
+					IndexedCount: indexedCount,
+					FailedCount:  failedCount,
+					Percent:      calculatePercent(processed, len(allChunks)),
+				})
+			}
 		}
+
 		if failedCount > 0 {
 			status = "partial_indexed"
-		} else if indexedCount > 0 {
+			emitIngestionProgress(a, ingestionProgressPayload{
+				NotebookID:   notebookID,
+				Status:       status,
+				Message:      "Indexing completed with partial failures",
+				Phase:        "indexing",
+				Processed:    len(allChunks),
+				Total:        len(allChunks),
+				IndexedCount: indexedCount,
+				FailedCount:  failedCount,
+				Percent:      100,
+			})
+		} else {
 			status = "indexed"
+			emitIngestionProgress(a, ingestionProgressPayload{
+				NotebookID:   notebookID,
+				Status:       status,
+				Message:      "Vector indexing complete",
+				Phase:        "indexing",
+				Processed:    len(allChunks),
+				Total:        len(allChunks),
+				IndexedCount: indexedCount,
+				FailedCount:  0,
+				Percent:      100,
+			})
 		}
+	} else {
+		emitIngestionProgress(a, ingestionProgressPayload{
+			NotebookID: notebookID,
+			Status:     status,
+			Message:    "Chunking complete; vector indexing skipped because embedder is unavailable",
+			Phase:      "indexing",
+			Processed:  len(allChunks),
+			Total:      len(allChunks),
+			Percent:    100,
+		})
 	}
 
 	_ = db.UpdateNotebookStatus(notebookID, status)

@@ -43,7 +43,7 @@
           {{ uploadError }}
         </div>
 
-        <div v-if="uploadSuccess" class="success-message">✓ Upload successful!</div>
+        <div v-if="successMessage" class="success-message">{{ successMessage }}</div>
       </div>
     </div>
 
@@ -87,7 +87,6 @@
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
 
           <div class="notebook-actions">
-            <button class="btn-view" @click="viewNotebook(notebook.id)">View</button>
             <button class="btn-download" @click="downloadNotebook(notebook.id)">Download</button>
             <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
           </div>
@@ -173,6 +172,14 @@
         </div>
       </div>
     </transition>
+    <transition name="toast-fade">
+      <div v-if="showActionToast" class="action-toast">
+        <div class="action-toast-inner">
+          <span class="fallback-toast-title">Notice</span>
+          <p>{{ actionToastMessage }}</p>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -194,6 +201,7 @@ const isDragging = ref(false)
 const uploadProgress = ref(0)
 const uploadError = ref('')
 const uploadSuccess = ref(false)
+const successMessage = ref('')
 const notebooks = ref([])
 const availableTopics = ref([])
 const loading = ref(false)
@@ -202,12 +210,16 @@ const ingestionNotebookID = ref('')
 const showSyllabusModal = ref(false)
 const draftNotebookID = ref('')
 const draftNotebookTitle = ref('')
+const originalDraftTitle = ref('')
 const draftPageCount = ref(1)
 const draftChapters = ref([])
+const originalDraftChapters = ref([])
 const draftError = ref('')
 const isConfirmingDraft = ref(false)
 const showFallbackToast = ref(false)
 const fallbackToastMessage = ref('')
+const showActionToast = ref(false)
+const actionToastMessage = ref('')
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
@@ -391,6 +403,13 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
       }, 5000)
     }
 
+    originalDraftTitle.value = draftNotebookTitle.value
+    originalDraftChapters.value = draftChapters.value.map((ch) => ({
+      title: String(ch.title || '').trim(),
+      start_page: Number(ch.start_page) || 1,
+      end_page: Number(ch.end_page) || 1,
+    }))
+
     showSyllabusModal.value = true
   } catch (error) {
     draftError.value = `Could not draft syllabus: ${error.message}`
@@ -422,6 +441,28 @@ function sanitizeChapterPages(chapter) {
   chapter.end_page = Math.max(chapter.start_page, Math.min(Number(chapter.end_page) || chapter.start_page, draftPageCount.value))
 }
 
+function chaptersEqual(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+    return false
+  }
+  return a.every((chapter, index) => {
+    const other = b[index]
+    return (
+      chapter.title === other.title &&
+      chapter.start_page === other.start_page &&
+      chapter.end_page === other.end_page
+    )
+  })
+}
+
+function showToast(message) {
+  actionToastMessage.value = message
+  showActionToast.value = true
+  setTimeout(() => {
+    showActionToast.value = false
+  }, 5000)
+}
+
 async function confirmSyllabusDraft() {
   if (!draftNotebookID.value) {
     draftError.value = 'Notebook id is missing for confirmation.'
@@ -446,16 +487,47 @@ async function confirmSyllabusDraft() {
     chapter.end_page = Math.max(chapter.start_page, Math.min(chapter.end_page, draftPageCount.value))
   }
 
-  isConfirmingDraft.value = true
+  const trimmedTitle = String(draftNotebookTitle.value || '').trim()
+  const titleChanged = trimmedTitle !== String(originalDraftTitle.value || '').trim()
+  const chaptersChanged = !chaptersEqual(sanitized, originalDraftChapters.value)
+
+  if (!titleChanged && !chaptersChanged) {
+    closeSyllabusModal()
+    showToast('No changes detected.')
+    return
+  }
+
   draftError.value = ''
-  ingestionStatusMessage.value = 'Ingesting notebook using confirmed chapter ranges...'
+  isConfirmingDraft.value = true
 
   try {
-    const trimmedTitle = String(draftNotebookTitle.value || '').trim()
-    if (trimmedTitle) {
+    if (!chaptersChanged && titleChanged) {
+      closeSyllabusModal()
+      ingestionStatusMessage.value = 'Saving notebook title...'
       const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
       if (titleResult?.error) {
         throw new Error(titleResult.error)
+      }
+      const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
+      if (notebook) {
+        notebook.title = trimmedTitle
+      }
+      showToast('Notebook title updated successfully.')
+      return
+    }
+
+    closeSyllabusModal()
+    ingestionStatusMessage.value = 'Starting notebook ingestion. Progress will appear below.'
+    uploadProgress.value = 0
+
+    if (titleChanged) {
+      const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
+      if (titleResult?.error) {
+        throw new Error(titleResult.error)
+      }
+      const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
+      if (notebook) {
+        notebook.title = trimmedTitle
       }
     }
 
@@ -463,20 +535,14 @@ async function confirmSyllabusDraft() {
     if (result?.error) {
       throw new Error(result.error)
     }
-    closeSyllabusModal()
+    showToast('Notebook confirmed. Indexing is in progress.')
     await loadTopics()
     await loadNotebooks()
-    ingestionStatusMessage.value = 'Notebook ingestion completed.'
   } catch (error) {
-    draftError.value = `Failed to confirm syllabus: ${error.message}`
+    uploadError.value = `Failed to confirm syllabus: ${error.message}`
   } finally {
     isConfirmingDraft.value = false
   }
-}
-
-function viewNotebook(notebookId) {
-  // TODO: Navigate to notebook viewer or open preview modal
-  console.log('View notebook:', notebookId)
 }
 
 function downloadNotebook(notebookId) {
@@ -973,6 +1039,46 @@ function formatDate(dateString) {
 .btn-primary:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.action-toast,
+.fallback-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1300;
+}
+
+.action-toast-inner,
+.fallback-toast-inner {
+  max-width: 320px;
+  padding: 14px 16px;
+  background: #1f8b4c;
+  color: #fff;
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.fallback-toast-inner {
+  background: #b33939;
+}
+
+.fallback-toast-title {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
 }
 
 @media (max-width: 768px) {
