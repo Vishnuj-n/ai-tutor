@@ -332,6 +332,7 @@ function handleFileDrop(event) {
 async function uploadFile(file) {
   uploadError.value = ''
   uploadSuccess.value = false
+  successMessage.value = ''
   ingestionStatusMessage.value = ''
   ingestionNotebookID.value = ''
   draftError.value = ''
@@ -378,8 +379,10 @@ async function uploadFile(file) {
       ingestionStatusMessage.value = 'Uploaded. Drafting syllabus for review...'
     }
 
+    successMessage.value = `Upload successful${result?.file_name ? `: ${result.file_name}` : ''}`
+
     if (result?.id) {
-      await openSyllabusDraft(result.id)
+      await openSyllabusDraft(result.id, result?.file_name || '')
     }
 
     uploadProgress.value = 100
@@ -387,6 +390,7 @@ async function uploadFile(file) {
     setTimeout(() => {
       uploadProgress.value = 0
       uploadSuccess.value = false
+      successMessage.value = ''
       ingestionStatusMessage.value = ''
       ingestionNotebookID.value = ''
       if (fileInput.value) {
@@ -395,6 +399,7 @@ async function uploadFile(file) {
       void loadNotebooks()
     }, 2000)
   } catch (error) {
+    successMessage.value = ''
     uploadError.value = `Upload failed: ${error.message}`
     uploadProgress.value = 0
   }
@@ -458,6 +463,7 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
 
     showSyllabusModal.value = true
   } catch (error) {
+    showSyllabusModal.value = true
     draftError.value = `Could not draft syllabus: ${error.message}`
   }
 }
@@ -553,6 +559,7 @@ async function confirmSyllabusDraft() {
       ingestionStatusMessage.value = 'Saving notebook title...'
       const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
       if (titleResult?.error) {
+        draftError.value = `Failed to update notebook title: ${titleResult.error}`
         uploadError.value = `Failed to update notebook title: ${titleResult.error}`
         ingestionStatusMessage.value = 'Failed to update notebook title. Please retry.'
         return
@@ -566,7 +573,6 @@ async function confirmSyllabusDraft() {
       return
     }
 
-    closeSyllabusModal()
     ingestionStatusMessage.value = 'Starting notebook ingestion. Progress will appear below.'
     uploadProgress.value = 0
 
@@ -588,7 +594,9 @@ async function confirmSyllabusDraft() {
     showToast('Notebook confirmed. Indexing is in progress.')
     await loadTopics()
     await loadNotebooks()
+    closeSyllabusModal()
   } catch (error) {
+    draftError.value = `Failed to confirm syllabus: ${error.message}`
     uploadError.value = `Failed to confirm syllabus: ${error.message}`
   } finally {
     isConfirmingDraft.value = false
