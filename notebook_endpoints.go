@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -274,7 +277,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 	}
 
 	_ = db.UpdateNotebookStatus(notebookID, "analyzing")
-	chapters := a.draftSyllabusChapters(nb.FileType, doc)
+	chapters := a.draftSyllabusChapters(nb.FileType, nb.FilePath, doc)
 	if len(chapters) == 0 {
 		chapters = []models.SyllabusChapterDraft{{
 			Title:     "General",
@@ -495,12 +498,12 @@ func fallbackChapterTitles(doc *notebook.ExtractedDocument) []string {
 	return result
 }
 
-func (a *App) draftSyllabusChapters(fileType string, doc *notebook.ExtractedDocument) []models.SyllabusChapterDraft {
+func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.ExtractedDocument) []models.SyllabusChapterDraft {
 	if doc == nil || len(doc.Sections) == 0 {
 		return nil
 	}
 
-	bookmarkLikeDraft := extractBookmarkLikeDraft(doc)
+	bookmarkLikeDraft := extractBookmarkLikeDraft(fileType, filePath, doc)
 	sample := buildPageSample(doc, 30)
 
 	if a.heavyLLMProvider != nil {
@@ -635,9 +638,15 @@ func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount
 	return resolved
 }
 
-func extractBookmarkLikeDraft(doc *notebook.ExtractedDocument) []models.SyllabusChapterDraft {
+func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.ExtractedDocument) []models.SyllabusChapterDraft {
 	if doc == nil || len(doc.Sections) == 0 {
 		return nil
+	}
+
+	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
+		if draft := extractPDFCPUBookmarkDraft(filePath, doc.PageCount); len(draft) > 0 {
+			return draft
+		}
 	}
 
 	tocPattern := regexp.MustCompile(`(?m)^([A-Za-z0-9][A-Za-z0-9 .,:;()'"/-]{2,120}?)\s+([0-9]{1,4})\s*$`)
@@ -676,6 +685,108 @@ func extractBookmarkLikeDraft(doc *notebook.ExtractedDocument) []models.Syllabus
 	}
 
 	return normalizeSyllabusChapters(draft, doc.PageCount)
+}
+
+func extractPDFCPUBookmarkDraft(filePath string, pageCount int) []models.SyllabusChapterDraft {
+	jsonOutput, err := runPDFCPUBookmarksJSON(filePath)
+	if err != nil || strings.TrimSpace(string(jsonOutput)) == "" {
+		return nil
+	}
+
+	return parsePDFCPUBookmarkDraftFromJSON(jsonOutput, pageCount)
+}
+
+func runPDFCPUBookmarksJSON(filePath string) ([]byte, error) {
+	pdfcpuPath, err := exec.LookPath("pdfcpu")
+	if err != nil {
+		candidate := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin", "pdfcpu.exe")
+		if _, statErr := os.Stat(candidate); statErr != nil {
+			return nil, err
+		}
+		pdfcpuPath = candidate
+	}
+
+	cmd := exec.Command(pdfcpuPath, "bookmarks", "list", "-json", filePath)
+	return cmd.Output()
+}
+
+func parsePDFCPUBookmarkDraftFromJSON(raw []byte, pageCount int) []models.SyllabusChapterDraft {
+	var payload interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+
+	type bookmarkNode struct {
+		title string
+		page  int
+	}
+
+	collected := make([]bookmarkNode, 0)
+	var walk func(node interface{})
+	walk = func(node interface{}) {
+		switch typed := node.(type) {
+		case map[string]interface{}:
+			title := strings.TrimSpace(firstString(typed, "title", "Title", "name", "Name"))
+			page := firstInt(typed, "page", "Page", "pageNr", "PageNr", "p", "PageFrom", "from")
+			if title != "" && page > 0 {
+				collected = append(collected, bookmarkNode{title: title, page: page})
+			}
+			for _, key := range []string{"children", "Children", "bookmarks", "Bookmarks", "items", "Items", "nodes", "Nodes", "sub", "Sub"} {
+				if child, ok := typed[key]; ok {
+					walk(child)
+				}
+			}
+		case []interface{}:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+
+	walk(payload)
+	if len(collected) == 0 {
+		return nil
+	}
+
+	draft := make([]models.SyllabusChapterDraft, 0, len(collected))
+	for _, item := range collected {
+		draft = append(draft, models.SyllabusChapterDraft{Title: item.title, StartPage: item.page, EndPage: item.page})
+	}
+
+	return normalizeSyllabusChapters(draft, pageCount)
+}
+
+func firstString(node map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := node[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				if strings.TrimSpace(typed) != "" {
+					return typed
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func firstInt(node map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		if value, ok := node[key]; ok {
+			switch typed := value.(type) {
+			case float64:
+				return int(typed)
+			case int:
+				return typed
+			case string:
+				var parsed int
+				if _, err := fmt.Sscanf(strings.TrimSpace(typed), "%d", &parsed); err == nil {
+					return parsed
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func buildPageSample(doc *notebook.ExtractedDocument, maxSections int) string {
