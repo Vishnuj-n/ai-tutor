@@ -81,6 +81,10 @@ func Init(dbPath, vec0DllPath string) error {
 		return err
 	}
 
+	if err := ensureTopicBoundsSchema(); err != nil {
+		return err
+	}
+
 	if err := ensureQuestionsSchema(); err != nil {
 		return err
 	}
@@ -142,6 +146,8 @@ func createTables() error {
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
 		status TEXT DEFAULT 'reading',
+		start_page INTEGER DEFAULT 0,
+		end_page INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -265,6 +271,50 @@ func ensureNotebookSchema() error {
 
 	if !hasStatus {
 		if _, alterErr := conn.Exec("ALTER TABLE notebooks ADD COLUMN status TEXT DEFAULT 'uploaded'"); alterErr != nil {
+			return alterErr
+		}
+	}
+
+	return rows.Err()
+}
+
+func ensureTopicBoundsSchema() error {
+	rows, err := conn.Query("PRAGMA table_info(topics)")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	hasStartPage := false
+	hasEndPage := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+			return scanErr
+		}
+		switch name {
+		case "start_page":
+			hasStartPage = true
+		case "end_page":
+			hasEndPage = true
+		}
+	}
+
+	if !hasStartPage {
+		if _, alterErr := conn.Exec("ALTER TABLE topics ADD COLUMN start_page INTEGER DEFAULT 0"); alterErr != nil {
+			return alterErr
+		}
+	}
+
+	if !hasEndPage {
+		if _, alterErr := conn.Exec("ALTER TABLE topics ADD COLUMN end_page INTEGER DEFAULT 0"); alterErr != nil {
 			return alterErr
 		}
 	}
@@ -872,6 +922,48 @@ func EnsureTopic(topicID, title string) error {
 		ON CONFLICT(id) DO UPDATE SET title = excluded.title
 	`, topicID, title)
 	return err
+}
+
+// UpdateTopicPageBounds stores deterministic chapter bounds for a topic.
+func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if startPage < 0 {
+		startPage = 0
+	}
+	if endPage < 0 {
+		endPage = 0
+	}
+
+	_, err := conn.Exec(`
+		UPDATE topics
+		SET start_page = ?, end_page = ?
+		WHERE id = ?
+	`, startPage, endPage, topicID)
+	return err
+}
+
+// GetTopicPageBounds returns persisted chapter bounds for a topic.
+func GetTopicPageBounds(topicID string) (int, int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, 0, fmt.Errorf("topic id is required")
+	}
+
+	var startPage int
+	var endPage int
+	err := conn.QueryRow(`
+		SELECT COALESCE(start_page, 0), COALESCE(end_page, 0)
+		FROM topics
+		WHERE id = ?
+	`, topicID).Scan(&startPage, &endPage)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return startPage, endPage, nil
 }
 
 // IngestNotebookContent performs a transactional relational commit for notebook sections/chunks.

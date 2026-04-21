@@ -91,6 +91,72 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showSyllabusModal" class="modal-backdrop">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Verify Syllabus Chapters</h3>
+          <button type="button" class="modal-close" @click="closeSyllabusModal">×</button>
+        </div>
+
+        <p class="modal-warning">
+          Use absolute PDF page numbers. Page labels shown inside the PDF viewer may differ from file page numbers.
+        </p>
+
+        <div v-if="draftError" class="error-message modal-error">{{ draftError }}</div>
+
+        <div class="chapter-table-wrap">
+          <table class="chapter-table">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Start Page</th>
+                <th>End Page</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(chapter, index) in draftChapters" :key="`chapter-${index}`">
+                <td>
+                  <input v-model="chapter.title" type="text" class="chapter-input" placeholder="Chapter title" />
+                </td>
+                <td>
+                  <input
+                    v-model.number="chapter.start_page"
+                    type="number"
+                    min="1"
+                    :max="draftPageCount"
+                    class="chapter-input chapter-page"
+                    @change="sanitizeChapterPages(chapter)"
+                  />
+                </td>
+                <td>
+                  <input
+                    v-model.number="chapter.end_page"
+                    type="number"
+                    min="1"
+                    :max="draftPageCount"
+                    class="chapter-input chapter-page"
+                    @change="sanitizeChapterPages(chapter)"
+                  />
+                </td>
+                <td>
+                  <button type="button" class="row-delete" @click="removeDraftChapter(index)">Delete</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" @click="addDraftChapter">Add Chapter</button>
+          <button type="button" class="btn-secondary" @click="closeSyllabusModal">Cancel</button>
+          <button type="button" class="btn-primary" :disabled="isConfirmingDraft" @click="confirmSyllabusDraft">
+            {{ isConfirmingDraft ? 'Confirming...' : 'Confirm and Ingest' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -100,6 +166,8 @@ import {
   getAvailableTopics,
   getNotebooks as fetchNotebooks,
   uploadNotebook as apiUploadNotebook,
+  draftNotebookSyllabus as apiDraftNotebookSyllabus,
+  confirmNotebookSyllabus as apiConfirmNotebookSyllabus,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
@@ -114,6 +182,12 @@ const availableTopics = ref([])
 const loading = ref(false)
 const ingestionStatusMessage = ref('')
 const ingestionNotebookID = ref('')
+const showSyllabusModal = ref(false)
+const draftNotebookID = ref('')
+const draftPageCount = ref(1)
+const draftChapters = ref([])
+const draftError = ref('')
+const isConfirmingDraft = ref(false)
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
@@ -209,6 +283,7 @@ async function uploadFile(file) {
   uploadSuccess.value = false
   ingestionStatusMessage.value = ''
   ingestionNotebookID.value = ''
+  draftError.value = ''
   uploadProgress.value = 10
 
   // Validate file type
@@ -242,22 +317,123 @@ async function uploadFile(file) {
       ingestionStatusMessage.value = 'Vector indexing completed with partial failures'
     } else if (result?.status === 'chunked') {
       ingestionStatusMessage.value = 'Chunking complete'
+    } else {
+      ingestionStatusMessage.value = 'Uploaded. Drafting syllabus for review...'
+    }
+
+    if (result?.id) {
+      await openSyllabusDraft(result.id)
     }
 
     uploadProgress.value = 100
     uploadSuccess.value = true
-    // Reset after 2 seconds
     setTimeout(() => {
       uploadProgress.value = 0
       uploadSuccess.value = false
       ingestionStatusMessage.value = ''
       ingestionNotebookID.value = ''
-      fileInput.value.value = ''
+      if (fileInput.value) {
+        fileInput.value.value = ''
+      }
       void loadNotebooks()
     }, 2000)
   } catch (error) {
     uploadError.value = `Upload failed: ${error.message}`
     uploadProgress.value = 0
+  }
+}
+
+async function openSyllabusDraft(notebookID) {
+  draftNotebookID.value = notebookID
+  draftError.value = ''
+  try {
+    const draft = await apiDraftNotebookSyllabus(notebookID)
+    if (draft?.error) {
+      throw new Error(draft.error)
+    }
+
+    const chapters = Array.isArray(draft?.chapters) ? draft.chapters : []
+    draftPageCount.value = Number(draft?.page_count) > 0 ? Number(draft.page_count) : 1
+    draftChapters.value = chapters.length > 0
+      ? chapters.map((ch) => ({
+        title: String(ch?.title || 'Untitled Chapter').trim() || 'Untitled Chapter',
+        start_page: Number(ch?.start_page) || 1,
+        end_page: Number(ch?.end_page) || 1,
+      }))
+      : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
+
+    showSyllabusModal.value = true
+  } catch (error) {
+    draftError.value = `Could not draft syllabus: ${error.message}`
+  }
+}
+
+function closeSyllabusModal() {
+  showSyllabusModal.value = false
+  isConfirmingDraft.value = false
+}
+
+function addDraftChapter() {
+  const start = draftChapters.value.length > 0
+    ? Number(draftChapters.value[draftChapters.value.length - 1].end_page) + 1
+    : 1
+  draftChapters.value.push({
+    title: `Chapter ${draftChapters.value.length + 1}`,
+    start_page: Math.min(start, draftPageCount.value),
+    end_page: draftPageCount.value,
+  })
+}
+
+function removeDraftChapter(index) {
+  draftChapters.value.splice(index, 1)
+}
+
+function sanitizeChapterPages(chapter) {
+  chapter.start_page = Math.max(1, Math.min(Number(chapter.start_page) || 1, draftPageCount.value))
+  chapter.end_page = Math.max(chapter.start_page, Math.min(Number(chapter.end_page) || chapter.start_page, draftPageCount.value))
+}
+
+async function confirmSyllabusDraft() {
+  if (!draftNotebookID.value) {
+    draftError.value = 'Notebook id is missing for confirmation.'
+    return
+  }
+
+  const sanitized = draftChapters.value
+    .map((ch) => ({
+      title: String(ch?.title || '').trim(),
+      start_page: Number(ch?.start_page) || 1,
+      end_page: Number(ch?.end_page) || 1,
+    }))
+    .filter((ch) => ch.title !== '')
+
+  if (sanitized.length === 0) {
+    draftError.value = 'Add at least one chapter before confirming.'
+    return
+  }
+
+  for (const chapter of sanitized) {
+    chapter.start_page = Math.max(1, Math.min(chapter.start_page, draftPageCount.value))
+    chapter.end_page = Math.max(chapter.start_page, Math.min(chapter.end_page, draftPageCount.value))
+  }
+
+  isConfirmingDraft.value = true
+  draftError.value = ''
+  ingestionStatusMessage.value = 'Ingesting notebook using confirmed chapter ranges...'
+
+  try {
+    const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
+    if (result?.error) {
+      throw new Error(result.error)
+    }
+    closeSyllabusModal()
+    await loadTopics()
+    await loadNotebooks()
+    ingestionStatusMessage.value = 'Notebook ingestion completed.'
+  } catch (error) {
+    draftError.value = `Failed to confirm syllabus: ${error.message}`
+  } finally {
+    isConfirmingDraft.value = false
   }
 }
 
@@ -600,9 +776,145 @@ function formatDate(dateString) {
   opacity: 0.9;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 22, 28, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1200;
+}
+
+.modal-card {
+  width: min(920px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 14px;
+  padding: 18px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--on-surface);
+}
+
+.modal-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted-text);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff8e6;
+  color: #8c6700;
+  font-size: 13px;
+}
+
+.modal-error {
+  margin-bottom: 10px;
+}
+
+.chapter-table-wrap {
+  overflow-x: auto;
+}
+
+.chapter-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.chapter-table th,
+.chapter-table td {
+  text-align: left;
+  border-bottom: 1px solid var(--outline-variant);
+  padding: 8px;
+  vertical-align: middle;
+}
+
+.chapter-table th {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.chapter-input {
+  width: 100%;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
+.chapter-page {
+  min-width: 100px;
+}
+
+.row-delete {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffe9e8;
+  color: #b5423d;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.btn-secondary,
+.btn-primary {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-secondary {
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 @media (max-width: 768px) {
   .notebook-grid {
     grid-template-columns: 1fr;
+  }
+
+  .modal-actions {
+    flex-wrap: wrap;
   }
 }
 </style>
