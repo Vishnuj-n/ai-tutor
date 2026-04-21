@@ -59,6 +59,9 @@
 
       <div v-if="!loading && notebooks.length > 0" class="notebook-grid">
         <div v-for="notebook in notebooks" :key="notebook.id" class="notebook-card">
+          <button class="btn-edit-pen" @click="openSyllabusDraft(notebook.id, notebook.title)" title="Edit notebook and chapters">
+            ✎
+          </button>
           <div class="notebook-header-card">
             <div class="file-icon">{{ getFileIcon(notebook.file_type) }}</div>
             <div class="notebook-info">
@@ -102,6 +105,11 @@
         <p class="modal-warning">
           Use absolute PDF page numbers. Page labels shown inside the PDF viewer may differ from file page numbers.
         </p>
+
+        <div class="modal-title-edit">
+          <label for="notebook-title">Notebook title</label>
+          <input id="notebook-title" v-model="draftNotebookTitle" type="text" class="chapter-input" placeholder="Notebook name" />
+        </div>
 
         <div v-if="draftError" class="error-message modal-error">{{ draftError }}</div>
 
@@ -176,6 +184,7 @@ import {
   uploadNotebook as apiUploadNotebook,
   draftNotebookSyllabus as apiDraftNotebookSyllabus,
   confirmNotebookSyllabus as apiConfirmNotebookSyllabus,
+  updateNotebookTitle as apiUpdateNotebookTitle,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
@@ -192,6 +201,7 @@ const ingestionStatusMessage = ref('')
 const ingestionNotebookID = ref('')
 const showSyllabusModal = ref(false)
 const draftNotebookID = ref('')
+const draftNotebookTitle = ref('')
 const draftPageCount = ref(1)
 const draftChapters = ref([])
 const draftError = ref('')
@@ -353,8 +363,9 @@ async function uploadFile(file) {
   }
 }
 
-async function openSyllabusDraft(notebookID) {
+async function openSyllabusDraft(notebookID, notebookTitle = '') {
   draftNotebookID.value = notebookID
+  draftNotebookTitle.value = String(notebookTitle || '').trim()
   draftError.value = ''
   try {
     const draft = await apiDraftNotebookSyllabus(notebookID)
@@ -440,6 +451,14 @@ async function confirmSyllabusDraft() {
   ingestionStatusMessage.value = 'Ingesting notebook using confirmed chapter ranges...'
 
   try {
+    const trimmedTitle = String(draftNotebookTitle.value || '').trim()
+    if (trimmedTitle) {
+      const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
+      if (titleResult?.error) {
+        throw new Error(titleResult.error)
+      }
+    }
+
     const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
     if (result?.error) {
       throw new Error(result.error)
@@ -691,6 +710,7 @@ function formatDate(dateString) {
   padding: 16px;
   border: 1px solid var(--outline-variant);
   transition: all 0.2s;
+  position: relative;
 }
 
 .notebook-card:hover {
@@ -701,6 +721,24 @@ function formatDate(dateString) {
   display: flex;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.btn-edit-pen {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  width: 30px;
+  height: 30px;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.btn-edit-pen:hover {
+  background: var(--surface-container-high, #e6e9ef);
 }
 
 .file-icon {
@@ -846,6 +884,17 @@ function formatDate(dateString) {
   font-size: 13px;
 }
 
+.modal-title-edit {
+  margin: 0 0 12px;
+}
+
+.modal-title-edit label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted-text);
+  margin-bottom: 6px;
+}
+
 .modal-error {
   margin-bottom: 10px;
 }
@@ -968,3 +1017,5 @@ function formatDate(dateString) {
     opacity: 0;
     transform: translateY(12px);
   }
+}
+</style>

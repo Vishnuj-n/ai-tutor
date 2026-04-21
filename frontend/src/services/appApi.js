@@ -79,6 +79,10 @@ export function confirmNotebookSyllabus(notebookID, chapters) {
   return appBridge().ConfirmNotebookSyllabus(notebookID, chapters)
 }
 
+export function updateNotebookTitle(notebookID, title) {
+  return appBridge().UpdateNotebookTitle(notebookID, title)
+}
+
 export function deleteNotebook(notebookID) {
   return appBridge().DeleteNotebook(notebookID)
 }
