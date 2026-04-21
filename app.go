@@ -298,9 +298,9 @@ func (a *App) ExplainReaderSection(sectionID string, question string) map[string
 		}
 	}
 
-	if a.heavyLLMProvider == nil {
+	if a.fastLLMProvider == nil {
 		return map[string]interface{}{
-			"error": "HEAVY_LLM provider not initialized",
+			"error": "FAST_LLM provider not initialized",
 		}
 	}
 
@@ -331,7 +331,7 @@ Return a response with:
 3. Recall cue: one memorable phrase or question to test understanding
 4. Example (if the section includes a concrete example or scenario, highlight it; otherwise, skip this)`, section["heading"], section["content"], question)
 
-	answer, err := a.heavyLLMProvider.GenerateAnswer(prompt)
+	answer, err := a.fastLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{
 			"error": "section explanation failed: " + err.Error(),
@@ -809,8 +809,8 @@ func (a *App) GenerateShortAnswerPrompt(topicID string) map[string]interface{} {
 	if topicID == "" {
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
-	if a.heavyLLMProvider == nil {
-		return map[string]interface{}{"error": "HEAVY_LLM provider not initialized"}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 	if a.ragPipeline == nil {
 		return map[string]interface{}{"error": "RAG pipeline not initialized"}
@@ -856,8 +856,8 @@ func (a *App) ScoreShortAnswer(questionID, prompt, userAnswer string) map[string
 	if questionID == "" || prompt == "" || userAnswer == "" {
 		return map[string]interface{}{"error": "question ID, prompt, and user answer are required"}
 	}
-	if a.heavyLLMProvider == nil {
-		return map[string]interface{}{"error": "HEAVY_LLM provider not initialized"}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
 	topicID, ok := topicIDFromShortAnswerQuestionID(questionID)
@@ -879,7 +879,7 @@ Scoring rubric:
 Question: %s
 Student answer: %s`, prompt, userAnswer)
 
-	raw, err := a.heavyLLMProvider.GenerateAnswer(scorePrompt)
+	raw, err := a.fastLLMProvider.GenerateAnswer(scorePrompt)
 	if err != nil {
 		return map[string]interface{}{"error": "short-answer scoring failed: " + err.Error()}
 	}
