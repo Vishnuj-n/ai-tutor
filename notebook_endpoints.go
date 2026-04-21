@@ -17,6 +17,8 @@ import (
 
 const ingestionEventName = "ingestion-progress"
 const ingestionBatchSize = 20
+const topicExtractionMaxChars = 30000
+const topicExtractionMaxSections = 30
 
 type ingestionProgressPayload struct {
 	NotebookID   string `json:"notebook_id"`
@@ -265,18 +267,21 @@ func (a *App) extractChapterTitles(doc *notebook.ExtractedDocument) []string {
 	}
 
 	input := make([]string, 0, len(doc.Sections))
-	for _, section := range doc.Sections {
+	for i, section := range doc.Sections {
+		if i >= topicExtractionMaxSections {
+			break
+		}
 		if strings.TrimSpace(section.Text) == "" {
 			continue
 		}
 		input = append(input, section.Text)
-		if len(strings.Join(input, "\n")) > 10000 {
+		if len(strings.Join(input, "\n")) > topicExtractionMaxChars {
 			break
 		}
 	}
 	joined := strings.Join(input, "\n")
-	if len(joined) > 10000 {
-		joined = joined[:10000]
+	if len(joined) > topicExtractionMaxChars {
+		joined = joined[:topicExtractionMaxChars]
 	}
 	if strings.TrimSpace(joined) == "" {
 		return []string{"General"}
@@ -286,7 +291,7 @@ func (a *App) extractChapterTitles(doc *notebook.ExtractedDocument) []string {
 		return fallbackChapterTitles(doc)
 	}
 
-	prompt := "Extract 5 to 10 major chapter titles from this study text sample. Return strict JSON as {\"chapters\":[\"Title 1\",\"Title 2\"]}. No extra text.\\n\\n" + joined
+	prompt := "Extract all chapter or major topic headings from this PDF text sample in original order. Include every distinct chapter/topic you can infer from the material. Return strict JSON only as {\"chapters\":[\"Title 1\",\"Title 2\"]}. No markdown, no prose, no keys besides chapters.\\n\\n" + joined
 	response, err := a.heavyLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return fallbackChapterTitles(doc)
@@ -327,7 +332,7 @@ func parseChapterTitles(raw string) []string {
 		}
 		seen[key] = struct{}{}
 		result = append(result, t)
-		if len(result) == 10 {
+		if len(result) == 50 {
 			break
 		}
 	}

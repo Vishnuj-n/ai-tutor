@@ -584,8 +584,7 @@ func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
 
 func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	initTestDB(t)
-	provider := initTestProvider(t)
-	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
@@ -638,8 +637,7 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 
 func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
 	initTestDB(t)
-	provider := initTestProvider(t)
-	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
@@ -761,7 +759,7 @@ func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
 	mockLLM := &mockLLMProvider{
 		answer: `{"prompt":"What is the primary purpose of scheduling in OS?"}`,
 	}
-	app.heavyLLMProvider = mockLLM
+	app.fastLLMProvider = mockLLM
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -825,7 +823,7 @@ func TestGenerateShortAnswerPrompt_WhitespaceTopicID(t *testing.T) {
 func TestGenerateShortAnswerPrompt_NoLLMProvider(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.heavyLLMProvider = nil
+	app.fastLLMProvider = nil
 
 	result := app.GenerateShortAnswerPrompt("os-scheduling")
 
@@ -841,7 +839,7 @@ func TestGenerateShortAnswerPrompt_NoLLMProvider(t *testing.T) {
 func TestGenerateShortAnswerPrompt_NoRAGPipeline(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.heavyLLMProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 	app.ragPipeline = nil
 
 	result := app.GenerateShortAnswerPrompt("os-scheduling")
@@ -858,7 +856,7 @@ func TestGenerateShortAnswerPrompt_NoRAGPipeline(t *testing.T) {
 func TestGenerateShortAnswerPrompt_RAGProcessQueryError(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.heavyLLMProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		err: fmt.Errorf("query processing failed"),
@@ -879,7 +877,7 @@ func TestGenerateShortAnswerPrompt_RAGProcessQueryError(t *testing.T) {
 func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.heavyLLMProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -903,7 +901,7 @@ func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
 func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.heavyLLMProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -926,7 +924,7 @@ func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
 func TestGenerateShortAnswerPrompt_MalformedJSON(t *testing.T) {
 	app := NewApp()
 	app.ctx = context.Background()
-	app.heavyLLMProvider = &mockLLMProvider{}
+	app.fastLLMProvider = &mockLLMProvider{}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -1072,7 +1070,7 @@ func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
 func TestExplainReaderSection_Success(t *testing.T) {
 	initTestDB(t)
 	provider := initTestProvider(t)
-	app := &App{heavyLLMProvider: provider}
+	app := &App{fastLLMProvider: provider}
 
 	topicID := "test-topic-explain"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -1097,7 +1095,7 @@ func TestExplainReaderSection_Success(t *testing.T) {
 
 func TestExplainReaderSection_InvalidSection(t *testing.T) {
 	initTestDB(t)
-	app := &App{heavyLLMProvider: initTestProvider(t)}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	resp := app.ExplainReaderSection("nonexistent-section", "Any question?")
 
@@ -1108,7 +1106,7 @@ func TestExplainReaderSection_InvalidSection(t *testing.T) {
 
 func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 	initTestDB(t)
-	app := &App{heavyLLMProvider: initTestProvider(t)}
+	app := &App{fastLLMProvider: initTestProvider(t)}
 
 	topicID := "test-topic-explain-empty"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
