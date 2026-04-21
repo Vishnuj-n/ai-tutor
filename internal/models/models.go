@@ -74,6 +74,20 @@ type NotebookTopicTreeNode struct {
 	Topics     []NotebookTopicTreeTopic `json:"topics"`
 }
 
+// SyllabusChapterDraft represents one editable chapter range proposed during notebook ingestion.
+type SyllabusChapterDraft struct {
+	Title     string `json:"title"`
+	StartPage int    `json:"start_page"`
+	EndPage   int    `json:"end_page"`
+}
+
+// SyllabusDraft captures the backend-generated chapter draft shown in the Notebook verification modal.
+type SyllabusDraft struct {
+	NotebookID string                 `json:"notebook_id"`
+	PageCount  int                    `json:"page_count"`
+	Chapters   []SyllabusChapterDraft `json:"chapters"`
+}
+
 // ReaderSection is one ordered section used by the augmented reader.
 type ReaderSection struct {
 	ID      string `json:"id"`
