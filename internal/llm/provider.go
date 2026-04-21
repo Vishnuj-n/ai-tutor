@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const minTimeoutMs = 1
+
 // Config holds LLM provider configuration.
 type Config struct {
 	BaseURL   string
@@ -159,6 +161,9 @@ func (p *Provider) GenerateAnswer(prompt string) (string, error) {
 	effectiveTimeoutMs := firstEnvInt(30000, "LLM_TIMEOUT_MS", "OPENAI_TIMEOUT_MS", "TIMEOUT_MS")
 	if p.config.TimeoutMs > 0 {
 		effectiveTimeoutMs = p.config.TimeoutMs
+	}
+	if effectiveTimeoutMs <= 0 {
+		effectiveTimeoutMs = minTimeoutMs
 	}
 	client := &http.Client{
 		Timeout: time.Duration(effectiveTimeoutMs) * time.Millisecond,

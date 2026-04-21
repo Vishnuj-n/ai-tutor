@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"ai-tutor/internal/db"
-	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/utils"
@@ -114,143 +113,6 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		"failed_count":  0,
 		"status":        status,
 	}
-}
-
-func (a *App) processNotebookAutoIngestion(notebookID string, doc *notebook.ExtractedDocument) {
-	chapters := a.extractChapterTitles(doc)
-	if len(chapters) == 0 {
-		chapters = []string{"General"}
-	}
-
-	topicIDs := make([]string, 0, len(chapters))
-	topicTitles := make([]string, 0, len(chapters))
-	for i, title := range chapters {
-		normalized := strings.TrimSpace(title)
-		if normalized == "" {
-			continue
-		}
-		topicID := fmt.Sprintf("nb-%s-ch-%02d-%s", notebookID, i+1, slugify(normalized))
-		if err := db.EnsureTopic(topicID, normalized); err != nil {
-			_ = db.UpdateNotebookStatus(notebookID, "failed")
-			emitIngestionProgress(a, ingestionProgressPayload{
-				NotebookID: notebookID,
-				Status:     "failed",
-				Message:    "Failed to create topics for notebook",
-				Phase:      "analysis",
-				Percent:    100,
-			})
-			return
-		}
-		topicIDs = append(topicIDs, topicID)
-		topicTitles = append(topicTitles, normalized)
-	}
-	if len(topicIDs) == 0 {
-		topicID := fmt.Sprintf("nb-%s-general", notebookID)
-		_ = db.EnsureTopic(topicID, "General")
-		topicIDs = []string{topicID}
-		topicTitles = []string{"General"}
-	}
-
-	_ = db.UpdateNotebookTopic(notebookID, topicIDs[0])
-
-	emitIngestionProgress(a, ingestionProgressPayload{
-		NotebookID: notebookID,
-		Status:     "analyzing",
-		Message:    fmt.Sprintf("Detected %d chapter topics", len(topicIDs)),
-		Phase:      "analysis",
-		Percent:    20,
-	})
-
-	groups, allChunks := buildTopicGroups(notebookID, doc, topicIDs, topicTitles)
-	if len(groups) == 0 || len(allChunks) == 0 {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID: notebookID,
-			Status:     "failed",
-			Message:    "Document produced no chunks",
-			Phase:      "chunking",
-			Percent:    100,
-		})
-		return
-	}
-
-	if err := a.notebookService.IngestNotebookContentByTopic(notebookID, groups); err != nil {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID: notebookID,
-			Status:     "failed",
-			Message:    "Chunk ingestion failed",
-			Phase:      "chunking",
-			Percent:    100,
-		})
-		return
-	}
-
-	if a.embedStore != nil {
-		for _, chunk := range allChunks {
-			a.embedStore.AddChunk(chunk)
-		}
-	}
-
-	status := "chunked"
-	chunkCount := len(allChunks)
-	if a.embedder == nil {
-		_ = db.UpdateNotebookStatus(notebookID, status)
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID: notebookID,
-			Status:     status,
-			Message:    "Chunking complete; vector indexing skipped because embedder is unavailable",
-			Phase:      "indexing",
-			Processed:  chunkCount,
-			Total:      chunkCount,
-			Percent:    100,
-		})
-		return
-	}
-
-	status = "indexing"
-	_ = db.UpdateNotebookStatus(notebookID, status)
-	emitIngestionProgress(a, ingestionProgressPayload{
-		NotebookID: notebookID,
-		Status:     status,
-		Message:    "Starting vector indexing",
-		Phase:      "indexing",
-		Processed:  0,
-		Total:      chunkCount,
-		Percent:    30,
-	})
-
-	_, indexedCount, failedCount := a.indexChunksWithProgress(notebookID, allChunks, status)
-
-	if failedCount > 0 {
-		status = "partial_indexed"
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID:   notebookID,
-			Status:       status,
-			Message:      "Indexing completed with partial failures",
-			Phase:        "indexing",
-			Processed:    chunkCount,
-			Total:        chunkCount,
-			IndexedCount: indexedCount,
-			FailedCount:  failedCount,
-			Percent:      100,
-		})
-	} else {
-		status = "indexed"
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID:   notebookID,
-			Status:       status,
-			Message:      "Vector indexing complete",
-			Phase:        "indexing",
-			Processed:    chunkCount,
-			Total:        chunkCount,
-			IndexedCount: indexedCount,
-			FailedCount:  0,
-			Percent:      100,
-		})
-	}
-
-	_ = db.UpdateNotebookStatus(notebookID, status)
 }
 
 // DraftNotebookSyllabus creates editable chapter ranges for HITL verification.
@@ -1109,12 +971,11 @@ func chapterIndexForPage(page int, chapters []models.SyllabusChapterDraft) int {
 	if page < chapters[0].StartPage {
 		return 0
 	}
-	for i := 0; i < len(chapters)-1; i++ {
-		if page > chapters[i].EndPage && page < chapters[i+1].StartPage {
-			return i
-		}
+	last := chapters[len(chapters)-1]
+	if page > last.EndPage {
+		return len(chapters) - 1
 	}
-	return len(chapters) - 1
+	return -1
 }
 
 type topicGroupBuilder struct {
@@ -1122,107 +983,6 @@ type topicGroupBuilder struct {
 	parents []db.NotebookParentInput
 	chunks  []db.NotebookChunkInput
 	order   int
-}
-
-func buildTopicGroups(notebookID string, doc *notebook.ExtractedDocument, topicIDs, topicTitles []string) ([]db.NotebookTopicIngestionGroup, []models.Chunk) {
-	if doc == nil || len(doc.Sections) == 0 || len(topicIDs) == 0 {
-		return nil, nil
-	}
-
-	builders := make([]*topicGroupBuilder, len(topicIDs))
-	for i := range topicIDs {
-		builders[i] = &topicGroupBuilder{topicID: topicIDs[i]}
-	}
-
-	allChunks := make([]models.Chunk, 0)
-	for sectionIndex, section := range doc.Sections {
-		sectionText := strings.TrimSpace(section.Text)
-		if sectionText == "" {
-			continue
-		}
-
-		topicIdx := pickTopicForSection(section, topicTitles)
-		if topicIdx < 0 || topicIdx >= len(builders) {
-			topicIdx = 0
-		}
-
-		builder := builders[topicIdx]
-		builder.order++
-		parentID := fmt.Sprintf("nbp_%s_%02d_%04d", notebookID, topicIdx+1, builder.order)
-		heading := strings.TrimSpace(section.Heading)
-		if heading == "" {
-			heading = fmt.Sprintf("Section %d", sectionIndex+1)
-		}
-
-		builder.parents = append(builder.parents, db.NotebookParentInput{
-			ID:         parentID,
-			Heading:    heading,
-			Content:    sectionText,
-			OrderIndex: builder.order,
-		})
-
-		chunkTexts := notebook.SplitIntoWordChunks(sectionText, notebook.ChunkWordWindow, notebook.ChunkWordOverlap)
-		for chunkIndex, chunkText := range chunkTexts {
-			chunkID := fmt.Sprintf("nbc_%s_%02d_%04d_%03d", notebookID, topicIdx+1, builder.order, chunkIndex+1)
-			builder.chunks = append(builder.chunks, db.NotebookChunkInput{
-				ID:         chunkID,
-				ParentID:   parentID,
-				Text:       chunkText,
-				TokenCount: len(strings.Fields(chunkText)),
-				PageNum:    section.PageNum,
-			})
-			allChunks = append(allChunks, models.Chunk{
-				ID:              chunkID,
-				TopicID:         builder.topicID,
-				ParentID:        parentID,
-				Text:            chunkText,
-				ImportanceScore: 0,
-				WeaknessScore:   0,
-			})
-		}
-	}
-
-	groups := make([]db.NotebookTopicIngestionGroup, 0, len(builders))
-	for _, builder := range builders {
-		if len(builder.chunks) == 0 {
-			continue
-		}
-		groups = append(groups, db.NotebookTopicIngestionGroup{
-			TopicID: builder.topicID,
-			Parents: builder.parents,
-			Chunks:  builder.chunks,
-		})
-	}
-
-	return groups, allChunks
-}
-
-func pickTopicForSection(section notebook.ExtractedSection, topicTitles []string) int {
-	if len(topicTitles) == 0 {
-		return 0
-	}
-	text := strings.ToLower(section.Heading + " " + firstN(section.Text, 800))
-	textTokens := embeddings.TokenizeSimple(text)
-	if len(textTokens) == 0 {
-		return 0
-	}
-
-	bestIdx := 0
-	bestScore := -1
-	for i, title := range topicTitles {
-		tokens := embeddings.TokenizeSimple(strings.ToLower(title))
-		score := 0
-		for token := range tokens {
-			if _, ok := textTokens[token]; ok {
-				score++
-			}
-		}
-		if score > bestScore {
-			bestScore = score
-			bestIdx = i
-		}
-	}
-	return bestIdx
 }
 
 func firstN(text string, n int) string {
