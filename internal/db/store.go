@@ -918,12 +918,24 @@ func UpdateNotebookTitle(notebookID string, title string) error {
 		return fmt.Errorf("title is required")
 	}
 
-	_, err := conn.Exec(`
+	result, err := conn.Exec(`
 		UPDATE notebooks
 		SET title = ?
 		WHERE id = ?
 	`, title, notebookID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }
 
 // EnsureTopic inserts a topic if it does not already exist.
