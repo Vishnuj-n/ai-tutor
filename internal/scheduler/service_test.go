@@ -11,14 +11,14 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	svc := New(
 		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }),
 		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
-		WithQueryNextReadingTopic(func() (*models.ReadingTopicCursor, error) {
-			return &models.ReadingTopicCursor{
+		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+			return models.ReadingTopicCursor{
 				ID:                "ch1",
 				Title:             "Chapter 1",
 				StartPage:         1,
 				EndPage:           40,
 				CurrentPageCursor: 1,
-			}, nil
+			}, true, nil
 		}),
 	)
 
@@ -53,14 +53,14 @@ func TestBuildTodayPlanClampNearTopicEnd(t *testing.T) {
 	svc := New(
 		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }),
 		WithQueryDailyStudyMinutes(func() (int, error) { return 30, nil }),
-		WithQueryNextReadingTopic(func() (*models.ReadingTopicCursor, error) {
-			return &models.ReadingTopicCursor{
+		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+			return models.ReadingTopicCursor{
 				ID:                "ch1",
 				Title:             "Chapter 1",
 				StartPage:         1,
 				EndPage:           20,
 				CurrentPageCursor: 13,
-			}, nil
+			}, true, nil
 		}),
 	)
 
@@ -86,8 +86,8 @@ func TestBuildTodayPlanNoTopicReturnsEstimate(t *testing.T) {
 	svc := New(
 		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
-		WithQueryNextReadingTopic(func() (*models.ReadingTopicCursor, error) {
-			return nil, nil
+		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+			return models.ReadingTopicCursor{}, false, nil
 		}),
 	)
 

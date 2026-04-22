@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { getDailyStudySettings, updateDailyStudyMinutes } from '../services/appApi'
 
 const loading = ref(true)
@@ -35,6 +35,14 @@ const saving = ref(false)
 const error = ref('')
 const success = ref('')
 const dailyMinutes = ref(90)
+const successTimeout = ref(null)
+
+onUnmounted(() => {
+  if (successTimeout.value !== null) {
+    clearTimeout(successTimeout.value)
+    successTimeout.value = null
+  }
+})
 
 onMounted(async () => {
   try {
@@ -59,6 +67,11 @@ async function saveSettings() {
   error.value = ''
   success.value = ''
 
+  if (successTimeout.value !== null) {
+    clearTimeout(successTimeout.value)
+    successTimeout.value = null
+  }
+
   const minutes = Number(dailyMinutes.value)
   if (!Number.isInteger(minutes) || minutes < 15 || minutes > 480) {
     error.value = 'Enter a value between 15 and 480 minutes.'
@@ -75,6 +88,10 @@ async function saveSettings() {
 
     dailyMinutes.value = Number(response.daily_study_minutes) || minutes
     success.value = 'Daily study limit updated.'
+    successTimeout.value = setTimeout(() => {
+      success.value = ''
+      successTimeout.value = null
+    }, 4000)
   } catch (err) {
     error.value = err.message || 'Failed to save settings'
   } finally {

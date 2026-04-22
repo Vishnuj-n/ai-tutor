@@ -695,7 +695,7 @@ func UpsertDailyStudyMinutes(minutes int) error {
 }
 
 // QueryNextReadingTopic returns the next reading topic with deterministic page bounds and cursor.
-func QueryNextReadingTopic() (*models.ReadingTopicCursor, error) {
+func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	var topic models.ReadingTopicCursor
 	err := conn.QueryRow(`
 		SELECT
@@ -711,12 +711,12 @@ func QueryNextReadingTopic() (*models.ReadingTopicCursor, error) {
 		LIMIT 1
 	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return models.ReadingTopicCursor{}, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return models.ReadingTopicCursor{}, false, err
 	}
-	return &topic, nil
+	return topic, true, nil
 }
 
 // QueryActiveTopics returns top N active topic titles
