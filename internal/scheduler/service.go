@@ -177,6 +177,11 @@ func resolvePageWindow(topic models.ReadingTopicCursor, pagesToRead int) (int, i
 	if topic.EndPage-endPage <= ClampWindowPages {
 		endPage = topic.EndPage
 	}
+	// Enforce hard cap: window should never exceed pagesToRead budget
+	maxEndPage := startPage + pagesToRead - 1
+	if endPage > maxEndPage {
+		endPage = maxEndPage
+	}
 
 	if endPage < startPage {
 		return 0, 0, false
