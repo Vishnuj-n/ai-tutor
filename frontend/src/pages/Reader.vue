@@ -262,10 +262,7 @@ async function loadBundle() {
     activeSection.value = sections.value[0] || null
 
     const firstPage = Number(activeSection.value?.page_num)
-    const topicStartPage = Number(result?.topic_start_page)
-    if (Number.isFinite(topicStartPage) && topicStartPage > 0) {
-      currentPage.value = Math.min(Math.max(1, topicStartPage), pageCount.value)
-    } else if (Number.isFinite(firstPage) && firstPage > 0) {
+    if (Number.isFinite(firstPage) && firstPage > 0) {
       currentPage.value = Math.min(Math.max(1, firstPage), pageCount.value)
     } else {
       currentPage.value = 1
