@@ -149,6 +149,9 @@ func resolvePageWindow(topic models.ReadingTopicCursor, pagesToRead int) (int, i
 	if topic.EndPage <= 0 {
 		return 0, 0, false
 	}
+	if pagesToRead <= 0 {
+		return 0, 0, false
+	}
 
 	startPage := topic.CurrentPageCursor
 	if startPage <= 0 {
@@ -164,7 +167,7 @@ func resolvePageWindow(topic models.ReadingTopicCursor, pagesToRead int) (int, i
 		return 0, 0, false
 	}
 
-	endPage := startPage + pagesToRead
+	endPage := startPage + pagesToRead - 1
 	if endPage < startPage {
 		endPage = startPage
 	}

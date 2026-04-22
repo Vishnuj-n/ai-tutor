@@ -473,13 +473,15 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 }
 
 type quizLLMQuestion struct {
-	Prompt        string   `json:"prompt"`
-	Options       []string `json:"options"`
-	CorrectAnswer string   `json:"correct_answer"`
-	Explanation   string   `json:"explanation"`
-	Hint          string   `json:"hint"`
-	SourceHeading string   `json:"source_heading"`
-	SourceSnippet string   `json:"source_snippet"`
+	Prompt          string   `json:"prompt"`
+	Options         []string `json:"options"`
+	CorrectAnswer   string   `json:"correct_answer"`
+	Explanation     string   `json:"explanation"`
+	Hint            string   `json:"hint"`
+	SourceHeading   string   `json:"source_heading"`
+	SourceSnippet   string   `json:"source_snippet"`
+	SourcePageStart int      `json:"source_page_start"`
+	SourcePageEnd   int      `json:"source_page_end"`
 }
 
 type quizLLMResponse struct {
@@ -549,6 +551,13 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "quiz generation parsing failed: " + err.Error()}
 	}
 
+	headingPageRanges, rangeErr := db.GetTopicHeadingPageRanges(topicID)
+	if rangeErr != nil {
+		utils.Warnf("could not resolve topic heading page ranges for quiz lineage (topic=%s): %v", topicID, rangeErr)
+		headingPageRanges = map[string][2]int{}
+	}
+	modelName := providerModelName(a.fastLLMProvider)
+
 	const expectedQuestionCount = 5
 
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
@@ -572,6 +581,22 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			continue
 		}
 
+		sourcePageStart := q.SourcePageStart
+		sourcePageEnd := q.SourcePageEnd
+		if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
+			rangeByHeading, ok := headingPageRanges[normalizeHeadingKey(q.SourceHeading)]
+			if ok {
+				sourcePageStart = rangeByHeading[0]
+				sourcePageEnd = rangeByHeading[1]
+			}
+		}
+		if sourcePageStart > 0 && sourcePageEnd <= 0 {
+			sourcePageEnd = sourcePageStart
+		}
+		if sourcePageEnd > 0 && sourcePageStart <= 0 {
+			sourcePageStart = sourcePageEnd
+		}
+
 		questions = append(questions, models.QuizQuestion{
 			ID:              uuid.NewString(),
 			TopicID:         topicID,
@@ -582,9 +607,9 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			Hint:            strings.TrimSpace(q.Hint),
 			SourceHeading:   strings.TrimSpace(q.SourceHeading),
 			SourceSnippet:   strings.TrimSpace(q.SourceSnippet),
-			SourcePageStart: 0,
-			SourcePageEnd:   0,
-			LLMModel:        "FAST_LLM",
+			SourcePageStart: sourcePageStart,
+			SourcePageEnd:   sourcePageEnd,
+			LLMModel:        modelName,
 			PromptVersion:   "quiz-v1",
 		})
 	}
@@ -1212,6 +1237,18 @@ func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse,
 		out.Feedback = "Review key topic concepts and tighten your explanation."
 	}
 	return &out, nil
+}
+
+func providerModelName(provider llmProviderInterface) string {
+	typed, ok := provider.(interface{ ModelName() string })
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(typed.ModelName())
+}
+
+func normalizeHeadingKey(heading string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(heading)), " "))
 }
 
 func normalizeQuizAnswer(answer string, options []string) string {

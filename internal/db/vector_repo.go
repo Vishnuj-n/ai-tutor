@@ -176,22 +176,20 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, sta
 	if len(allowedRowIDs) == 0 {
 		return []string{}, nil
 	}
-
-	placeholders := make([]string, 0, len(allowedRowIDs))
-	vectorArgs := make([]interface{}, 0, len(allowedRowIDs)+2)
-	for _, rowID := range allowedRowIDs {
-		placeholders = append(placeholders, "?")
-		vectorArgs = append(vectorArgs, rowID)
+	allowedRowIDsJSON, err := json.Marshal(allowedRowIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode allowed row ids: %w", err)
 	}
-	vectorArgs = append(vectorArgs, queryVectorJSON, k)
 
-	vectorSQL := fmt.Sprintf(`
+	vectorArgs := []interface{}{string(allowedRowIDsJSON), queryVectorJSON, k}
+
+	vectorSQL := `
 		SELECT rowid
 		FROM chunk_vectors
-		WHERE rowid IN (%s)
+		WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
 		ORDER BY distance(embedding, ?) ASC
 		LIMIT ?
-	`, strings.Join(placeholders, ","))
+	`
 
 	rows, err := conn.Query(vectorSQL, vectorArgs...)
 	if err != nil {
