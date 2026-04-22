@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
@@ -65,7 +66,7 @@ func Init(dbPath, vec0DllPath string) error {
 				log.Printf("Warning: could not load sqlite-vec extension from %s: %v", absPath, err)
 				// Non-fatal; continue without vec0 for backward compat
 			} else {
-				log.Printf("Successfully loaded sqlite-vec extension from %s", absPath)
+				utils.Infof("Successfully loaded sqlite-vec extension from %s", absPath)
 			}
 		} else {
 			log.Printf("Warning: vec0.dll not found at %s", vec0DllPath)
@@ -1281,7 +1282,7 @@ func createVectorTable() error {
 		return fmt.Errorf("failed to create vec0 table: %w", err)
 	}
 
-	log.Printf("Created vec0 virtual table with embedding dimension %d", embeddingDimension)
+	utils.Infof("Created vec0 virtual table with embedding dimension %d", embeddingDimension)
 	return nil
 }
 
