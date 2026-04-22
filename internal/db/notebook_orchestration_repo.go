@@ -237,9 +237,9 @@ func insertParentRowRepo(exec sqlExecer, topicID string, parent NotebookParentIn
 
 func insertChunkRowRepo(exec sqlExecer, topicID string, chunk NotebookChunkInput) error {
 	_, err := exec.Exec(`
-		INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
-		VALUES (?, ?, ?, ?, ?, 0, 0)
-	`, chunk.ID, topicID, chunk.ParentID, chunk.Text, chunk.TokenCount)
+		INSERT INTO chunks (id, topic_id, parent_id, chunk_text, page_num, token_count, importance_score, weakness_score)
+		VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+	`, chunk.ID, topicID, chunk.ParentID, chunk.Text, chunk.PageNum, chunk.TokenCount)
 	return err
 }
 

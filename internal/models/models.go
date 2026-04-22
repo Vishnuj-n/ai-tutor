@@ -6,6 +6,8 @@ type ScheduledTask struct {
 	ActionType      string `json:"action_type"`
 	Title           string `json:"title"`
 	TopicID         string `json:"topic_id,omitempty"`
+	StartPage       int    `json:"start_page,omitempty"`
+	EndPage         int    `json:"end_page,omitempty"`
 	EstimateMinutes int    `json:"estimate_minutes"`
 	Priority        int    `json:"priority"`
 	Meta            string `json:"meta,omitempty"`
@@ -28,6 +30,15 @@ type TopicSummary struct {
 	ID     string
 	Title  string
 	Status string
+}
+
+// ReadingTopicCursor contains page bounds and the active cursor for one reading topic.
+type ReadingTopicCursor struct {
+	ID                string
+	Title             string
+	StartPage         int
+	EndPage           int
+	CurrentPageCursor int
 }
 
 // Chunk represents a retrieval chunk with metadata and future scoring hooks.
@@ -111,15 +122,19 @@ type ReaderTopicBundle struct {
 
 // QuizQuestion is a generated question persisted per topic.
 type QuizQuestion struct {
-	ID            string   `json:"id"`
-	TopicID       string   `json:"topic_id"`
-	Prompt        string   `json:"prompt"`
-	Options       []string `json:"options"`
-	CorrectAnswer string   `json:"correct_answer"`
-	Explanation   string   `json:"explanation"`
-	Hint          string   `json:"hint,omitempty"`
-	SourceHeading string   `json:"source_heading,omitempty"`
-	SourceSnippet string   `json:"source_snippet,omitempty"`
+	ID              string   `json:"id"`
+	TopicID         string   `json:"topic_id"`
+	Prompt          string   `json:"prompt"`
+	Options         []string `json:"options"`
+	CorrectAnswer   string   `json:"correct_answer"`
+	Explanation     string   `json:"explanation"`
+	Hint            string   `json:"hint,omitempty"`
+	SourceHeading   string   `json:"source_heading,omitempty"`
+	SourceSnippet   string   `json:"source_snippet,omitempty"`
+	SourcePageStart int      `json:"source_page_start,omitempty"`
+	SourcePageEnd   int      `json:"source_page_end,omitempty"`
+	LLMModel        string   `json:"llm_model,omitempty"`
+	PromptVersion   string   `json:"prompt_version,omitempty"`
 }
 
 // QuizScore is returned after scoring a user's answer.

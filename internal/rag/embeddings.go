@@ -143,7 +143,7 @@ func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int) 
 		queryVector, err := s.embedder.Embed(query)
 		if err == nil {
 			topicID := chunks[0].TopicID
-			chunkIDs, searchErr := db.SearchVectorsForTopic(topicID, queryVector, k)
+			chunkIDs, searchErr := db.SearchVectorsForTopic(topicID, queryVector, k, 0, 0)
 			if searchErr == nil && len(chunkIDs) > 0 {
 				chunkByID := make(map[string]models.Chunk, len(chunks))
 				for _, chunk := range chunks {
