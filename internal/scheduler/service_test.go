@@ -41,10 +41,10 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	if task.ActionType != "read" {
 		t.Fatalf("expected read task, got %s", task.ActionType)
 	}
-	if task.StartPage != 1 || task.EndPage != 35 {
-		t.Fatalf("expected pages 1-35, got %d-%d", task.StartPage, task.EndPage)
+	if task.StartPage != 1 || task.EndPage != 34 {
+		t.Fatalf("expected pages 1-34, got %d-%d", task.StartPage, task.EndPage)
 	}
-	if task.Title != "Read: Chapter 1 (Pages 1 to 35)" {
+	if task.Title != "Read: Chapter 1 (Pages 1 to 34)" {
 		t.Fatalf("unexpected task title: %s", task.Title)
 	}
 }
@@ -101,5 +101,22 @@ func TestBuildTodayPlanNoTopicReturnsEstimate(t *testing.T) {
 	}
 	if !plan.IsEstimate {
 		t.Fatalf("expected estimate=true when no reading task exists")
+	}
+}
+
+func TestResolvePageWindowRejectsZeroPagesToRead(t *testing.T) {
+	start, end, ok := resolvePageWindow(models.ReadingTopicCursor{
+		ID:                "ch1",
+		Title:             "Chapter 1",
+		StartPage:         1,
+		EndPage:           20,
+		CurrentPageCursor: 3,
+	}, 0)
+
+	if ok {
+		t.Fatalf("expected ok=false, got ok=true with window %d-%d", start, end)
+	}
+	if start != 0 || end != 0 {
+		t.Fatalf("expected window 0-0 for zero pages, got %d-%d", start, end)
 	}
 }

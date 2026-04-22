@@ -1138,6 +1138,82 @@ func GetTopicPageBounds(topicID string) (int, int, error) {
 	return startPage, endPage, nil
 }
 
+// GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
+// Key format is normalized lower-case heading text with single spaces.
+func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+
+	rows, err := conn.Query(`
+		SELECT
+			COALESCE(NULLIF(TRIM(p.heading), ''), ''),
+			COALESCE(MIN(NULLIF(c.page_num, 0)), 0) AS start_page,
+			COALESCE(MAX(NULLIF(c.page_num, 0)), 0) AS end_page
+		FROM parents p
+		LEFT JOIN chunks c ON c.parent_id = p.id AND c.topic_id = p.topic_id
+		WHERE p.topic_id = ?
+		GROUP BY p.id, p.heading
+	`, topicID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	ranges := make(map[string][2]int)
+	for rows.Next() {
+		var heading string
+		var startPage int
+		var endPage int
+		if err := rows.Scan(&heading, &startPage, &endPage); err != nil {
+			return nil, err
+		}
+
+		key := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(heading)), " "))
+		if key == "" {
+			continue
+		}
+
+		if startPage > 0 && endPage <= 0 {
+			endPage = startPage
+		}
+		if endPage > 0 && startPage <= 0 {
+			startPage = endPage
+		}
+		if startPage <= 0 || endPage <= 0 {
+			continue
+		}
+		if startPage > endPage {
+			startPage, endPage = endPage, startPage
+		}
+
+		existing, ok := ranges[key]
+		if !ok {
+			ranges[key] = [2]int{startPage, endPage}
+			continue
+		}
+
+		mergedStart := existing[0]
+		mergedEnd := existing[1]
+		if startPage < mergedStart {
+			mergedStart = startPage
+		}
+		if endPage > mergedEnd {
+			mergedEnd = endPage
+		}
+		ranges[key] = [2]int{mergedStart, mergedEnd}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return ranges, nil
+}
+
 // IngestNotebookContent performs a transactional relational commit for notebook sections/chunks.
 func IngestNotebookContent(notebookID string, topicID string, parents []NotebookParentInput, chunks []NotebookChunkInput) error {
 	notebookID = strings.TrimSpace(notebookID)

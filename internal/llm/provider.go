@@ -107,6 +107,14 @@ func NewProvider(config *Config) *Provider {
 	return &Provider{config: config}
 }
 
+// ModelName returns the configured model identifier sent to the provider API.
+func (p *Provider) ModelName() string {
+	if p == nil || p.config == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.config.Model)
+}
+
 // openAIRequest follows the OpenAI API format.
 type openAIRequest struct {
 	Model    string          `json:"model"`
