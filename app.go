@@ -219,6 +219,12 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 		}
 	}
 
+	topicStartPage, topicEndPage, boundsErr := db.GetTopicPageBounds(topicID)
+	if boundsErr != nil {
+		topicStartPage = 0
+		topicEndPage = 0
+	}
+
 	if bundle.NotebookURL != "" {
 		bundle.NotebookURL = notebookAssetURL(bundle.NotebookURL)
 	}
@@ -234,14 +240,16 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 	}
 
 	return map[string]interface{}{
-		"topic_id":       bundle.TopicID,
-		"topic_title":    bundle.TopicTitle,
-		"notebook_id":    bundle.NotebookID,
-		"notebook_title": bundle.NotebookTitle,
-		"notebook_url":   bundle.NotebookURL,
-		"file_type":      bundle.FileType,
-		"page_count":     bundle.PageCount,
-		"sections":       lightSections,
+		"topic_id":         bundle.TopicID,
+		"topic_title":      bundle.TopicTitle,
+		"topic_start_page": topicStartPage,
+		"topic_end_page":   topicEndPage,
+		"notebook_id":      bundle.NotebookID,
+		"notebook_title":   bundle.NotebookTitle,
+		"notebook_url":     bundle.NotebookURL,
+		"file_type":        bundle.FileType,
+		"page_count":       bundle.PageCount,
+		"sections":         lightSections,
 	}
 }
 

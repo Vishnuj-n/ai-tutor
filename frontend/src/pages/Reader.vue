@@ -262,7 +262,14 @@ async function loadBundle() {
     activeSection.value = sections.value[0] || null
 
     const firstPage = Number(activeSection.value?.page_num)
-    currentPage.value = Number.isFinite(firstPage) && firstPage > 0 ? firstPage : 1
+    const topicStartPage = Number(result?.topic_start_page)
+    if (Number.isFinite(firstPage) && firstPage > 0) {
+      currentPage.value = Math.min(Math.max(1, firstPage), pageCount.value)
+    } else if (Number.isFinite(topicStartPage) && topicStartPage > 0) {
+      currentPage.value = Math.min(Math.max(1, topicStartPage), pageCount.value)
+    } else {
+      currentPage.value = 1
+    }
   } catch (err) {
     topicTitle.value = 'Reader'
     notebookUrl.value = ''
