@@ -488,6 +488,27 @@ h3 {
 
 .chat.closed {
   padding: 10px 8px;
+  gap: 0;
+}
+
+.chat.closed .chat-head {
+  flex-direction: column;
+}
+
+.chat.closed h2 {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.chat.closed button {
+  width: 100%;
+  padding: 8px 4px;
+  font-size: 11px;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .chat-head {
