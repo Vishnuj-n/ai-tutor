@@ -177,7 +177,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	}
 
 	query := []float32{1, 0, 0}
-	gotA, err := SearchVectorsForTopic(topicA, query, 5)
+	gotA, err := SearchVectorsForTopic(topicA, query, 5, 0, 0)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicA failed: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 		t.Fatalf("expected scoped results to contain chunkA, got %#v", gotA)
 	}
 
-	gotB, err := SearchVectorsForTopic(topicB, query, 5)
+	gotB, err := SearchVectorsForTopic(topicB, query, 5, 0, 0)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicB failed: %v", err)
 	}

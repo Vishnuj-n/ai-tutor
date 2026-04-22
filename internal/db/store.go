@@ -89,6 +89,10 @@ func Init(dbPath, vec0DllPath string) error {
 		return err
 	}
 
+	if err := ensureUserSettingsSchema(); err != nil {
+		return err
+	}
+
 	if err := ensureFSRSSchema(); err != nil {
 		return err
 	}
@@ -148,6 +152,7 @@ func createTables() error {
 		status TEXT DEFAULT 'reading',
 		start_page INTEGER DEFAULT 0,
 		end_page INTEGER DEFAULT 0,
+		current_page_cursor INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -167,6 +172,7 @@ func createTables() error {
 		topic_id TEXT NOT NULL,
 		parent_id TEXT NOT NULL,
 		chunk_text TEXT NOT NULL,
+		page_num INTEGER DEFAULT 0,
 		token_count INTEGER DEFAULT 0,
 		importance_score REAL DEFAULT 0,
 		weakness_score REAL DEFAULT 0,
@@ -195,8 +201,18 @@ func createTables() error {
 		hint TEXT,
 		source_heading TEXT,
 		source_snippet TEXT,
+		source_page_start INTEGER DEFAULT 0,
+		source_page_end INTEGER DEFAULT 0,
+		llm_model TEXT,
+		prompt_version TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (topic_id) REFERENCES topics(id)
+	);
+
+	CREATE TABLE IF NOT EXISTS user_settings (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		daily_study_minutes INTEGER NOT NULL DEFAULT 90,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS user_answers (
@@ -236,6 +252,15 @@ func createTables() error {
 	`
 
 	_, err := conn.Exec(schema)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(`
+		INSERT INTO user_settings (id, daily_study_minutes)
+		VALUES (1, 90)
+		ON CONFLICT(id) DO NOTHING
+	`)
 	if err != nil {
 		return err
 	}
@@ -289,6 +314,7 @@ func ensureTopicBoundsSchema() error {
 
 	hasStartPage := false
 	hasEndPage := false
+	hasCursor := false
 	for rows.Next() {
 		var cid int
 		var name string
@@ -304,6 +330,8 @@ func ensureTopicBoundsSchema() error {
 			hasStartPage = true
 		case "end_page":
 			hasEndPage = true
+		case "current_page_cursor":
+			hasCursor = true
 		}
 	}
 
@@ -315,6 +343,12 @@ func ensureTopicBoundsSchema() error {
 
 	if !hasEndPage {
 		if _, alterErr := conn.Exec("ALTER TABLE topics ADD COLUMN end_page INTEGER DEFAULT 0"); alterErr != nil {
+			return alterErr
+		}
+	}
+
+	if !hasCursor {
+		if _, alterErr := conn.Exec("ALTER TABLE topics ADD COLUMN current_page_cursor INTEGER DEFAULT 0"); alterErr != nil {
 			return alterErr
 		}
 	}
@@ -350,9 +384,13 @@ func ensureQuestionsSchema() error {
 	}
 
 	requiredColumns := map[string]string{
-		"hint":           "TEXT",
-		"source_heading": "TEXT",
-		"source_snippet": "TEXT",
+		"hint":              "TEXT",
+		"source_heading":    "TEXT",
+		"source_snippet":    "TEXT",
+		"source_page_start": "INTEGER DEFAULT 0",
+		"source_page_end":   "INTEGER DEFAULT 0",
+		"llm_model":         "TEXT",
+		"prompt_version":    "TEXT",
 	}
 
 	for col, colType := range requiredColumns {
@@ -393,6 +431,49 @@ func ensureQuestionsSchema() error {
 	}
 
 	return rows2.Err()
+}
+
+func ensureUserSettingsSchema() error {
+	rows, err := conn.Query("PRAGMA table_info(user_settings)")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	hasDailyStudyMinutes := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+			return scanErr
+		}
+		if name == "daily_study_minutes" {
+			hasDailyStudyMinutes = true
+		}
+	}
+
+	if !hasDailyStudyMinutes {
+		if _, alterErr := conn.Exec("ALTER TABLE user_settings ADD COLUMN daily_study_minutes INTEGER NOT NULL DEFAULT 90"); alterErr != nil {
+			return alterErr
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(`
+		INSERT INTO user_settings (id, daily_study_minutes)
+		VALUES (1, 90)
+		ON CONFLICT(id) DO NOTHING
+	`)
+	return err
 }
 
 func ensureFSRSSchema() error {
@@ -580,6 +661,61 @@ func QueryDueReviewCards(now int64) (int, error) {
 		  AND fc.due_at <= ?
 	`, now).Scan(&count)
 	return count, err
+}
+
+// GetDailyStudyMinutes returns the persisted global daily study budget.
+func GetDailyStudyMinutes() (int, error) {
+	var minutes int
+	err := conn.QueryRow(`
+		SELECT daily_study_minutes
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&minutes)
+	if err == sql.ErrNoRows {
+		return 90, nil
+	}
+	return minutes, err
+}
+
+// UpsertDailyStudyMinutes stores the global daily study budget.
+func UpsertDailyStudyMinutes(minutes int) error {
+	if minutes <= 0 {
+		return fmt.Errorf("daily study minutes must be positive")
+	}
+
+	_, err := conn.Exec(`
+		INSERT INTO user_settings (id, daily_study_minutes)
+		VALUES (1, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			daily_study_minutes = excluded.daily_study_minutes,
+			updated_at = CURRENT_TIMESTAMP
+	`, minutes)
+	return err
+}
+
+// QueryNextReadingTopic returns the next reading topic with deterministic page bounds and cursor.
+func QueryNextReadingTopic() (*models.ReadingTopicCursor, error) {
+	var topic models.ReadingTopicCursor
+	err := conn.QueryRow(`
+		SELECT
+			id,
+			title,
+			COALESCE(start_page, 0),
+			COALESCE(end_page, 0),
+			COALESCE(current_page_cursor, 0)
+		FROM topics
+		WHERE status IN ('unseen', 'reading')
+		  AND COALESCE(end_page, 0) > 0
+		ORDER BY updated_at ASC, created_at ASC
+		LIMIT 1
+	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &topic, nil
 }
 
 // QueryActiveTopics returns top N active topic titles
@@ -852,9 +988,9 @@ func insertParentRow(exec sqlExecer, topicID string, parent NotebookParentInput)
 
 func insertChunkRow(exec sqlExecer, topicID string, chunk NotebookChunkInput) error {
 	_, err := exec.Exec(`
-		INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
-		VALUES (?, ?, ?, ?, ?, 0, 0)
-	`, chunk.ID, topicID, chunk.ParentID, chunk.Text, chunk.TokenCount)
+		INSERT INTO chunks (id, topic_id, parent_id, chunk_text, page_num, token_count, importance_score, weakness_score)
+		VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+	`, chunk.ID, topicID, chunk.ParentID, chunk.Text, chunk.PageNum, chunk.TokenCount)
 	return err
 }
 
@@ -874,6 +1010,7 @@ func CreateChunk(id, topicID, parentID, text string, tokenCount int) error {
 		ID:         id,
 		ParentID:   parentID,
 		Text:       text,
+		PageNum:    0,
 		TokenCount: tokenCount,
 	})
 }
@@ -1190,8 +1327,8 @@ func UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error {
 }
 
 // SearchVectorsForTopic finds the top-k most similar vectors for a topic-scoped query.
-// Returns list of chunk IDs ordered by similarity (highest first).
-func SearchVectorsForTopic(topicID string, queryVector []float32, k int) ([]string, error) {
+// When startPage and endPage are positive, search is context-locked to that page window.
+func SearchVectorsForTopic(topicID string, queryVector []float32, k int, startPage int, endPage int) ([]string, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
@@ -1202,7 +1339,7 @@ func SearchVectorsForTopic(topicID string, queryVector []float32, k int) ([]stri
 	if k <= 0 || k > maxRetrievalK {
 		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
 	}
-	return searchVectorsForTopicRepo(topicID, queryVector, k)
+	return searchVectorsForTopicRepo(topicID, queryVector, k, startPage, endPage)
 }
 
 // GetAllTopicIDs returns all topic IDs currently in the database.

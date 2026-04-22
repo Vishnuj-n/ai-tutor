@@ -425,7 +425,41 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"data_fresh":         true,
 		"is_estimate":        plan.IsEstimate,
 		"insights_available": insightsAvailable,
-		"plan_source":        "scheduler-v1",
+		"plan_source":        "scheduler-v2-context-locked",
+	}
+}
+
+// GetDailyStudySettings returns persisted scheduler settings for sprint-12 pacing.
+func (a *App) GetDailyStudySettings() map[string]interface{} {
+	minutes, err := db.GetDailyStudyMinutes()
+	if err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"daily_study_minutes": minutes,
+	}
+}
+
+// UpdateDailyStudyMinutes stores the global daily study limit used by scheduler math.
+func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
+	if minutes < 15 || minutes > 480 {
+		return map[string]interface{}{
+			"error": "daily study minutes must be between 15 and 480",
+		}
+	}
+
+	if err := db.UpsertDailyStudyMinutes(minutes); err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"ok":                  true,
+		"daily_study_minutes": minutes,
 	}
 }
 
@@ -530,15 +564,19 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		}
 
 		questions = append(questions, models.QuizQuestion{
-			ID:            uuid.NewString(),
-			TopicID:       topicID,
-			Prompt:        strings.TrimSpace(q.Prompt),
-			Options:       q.Options,
-			CorrectAnswer: matchedOption,
-			Explanation:   strings.TrimSpace(q.Explanation),
-			Hint:          strings.TrimSpace(q.Hint),
-			SourceHeading: strings.TrimSpace(q.SourceHeading),
-			SourceSnippet: strings.TrimSpace(q.SourceSnippet),
+			ID:              uuid.NewString(),
+			TopicID:         topicID,
+			Prompt:          strings.TrimSpace(q.Prompt),
+			Options:         q.Options,
+			CorrectAnswer:   matchedOption,
+			Explanation:     strings.TrimSpace(q.Explanation),
+			Hint:            strings.TrimSpace(q.Hint),
+			SourceHeading:   strings.TrimSpace(q.SourceHeading),
+			SourceSnippet:   strings.TrimSpace(q.SourceSnippet),
+			SourcePageStart: 0,
+			SourcePageEnd:   0,
+			LLMModel:        "FAST_LLM",
+			PromptVersion:   "quiz-v1",
 		})
 	}
 
