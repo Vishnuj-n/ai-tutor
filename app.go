@@ -20,6 +20,7 @@ import (
 	"ai-tutor/internal/rag"
 	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
+	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -66,28 +67,28 @@ func (a *App) startup(ctx context.Context) {
 	assetValidator := runtime.NewAssetValidator("asset")
 	if err := assetValidator.ValidateAll(); err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Warning: local RAG assets missing: %v\n", err)
-		fmt.Println("Ask AI features may be unavailable. Ensure asset/ contains tokenizer.json, model_int8.onnx, onnxruntime.dll, vec0.dll")
+		utils.Warnf("local RAG assets missing: %v", err)
+		utils.Warnf("Ask AI features may be unavailable. Ensure asset/ contains tokenizer.json, model_int8.onnx, onnxruntime.dll, vec0.dll")
 	}
 
 	appDir, err := resolveAppDir()
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Error resolving app directory: %v\n", err)
+		utils.Errorf("resolving app directory: %v", err)
 		return
 	}
 
 	runtimeAssets, err := assetValidator.PrepareRuntimeAssets(appDir)
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Warning: could not stage runtime assets to app-data: %v\n", err)
+		utils.Warnf("could not stage runtime assets to app-data: %v", err)
 	}
 
 	// Initialize persistent database
 	dbPath, err := resolveDBPath()
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Error resolving database path: %v\n", err)
+		utils.Errorf("resolving database path: %v", err)
 		return
 	}
 
@@ -97,10 +98,10 @@ func (a *App) startup(ctx context.Context) {
 	}
 	if err := db.Init(dbPath, vec0DllPath); err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Error initializing database: %v\n", err)
+		utils.Errorf("initializing database: %v", err)
 		return
 	}
-	fmt.Printf("Database initialized at %s\n", dbPath)
+	utils.Infof("Database initialized at %s", dbPath)
 
 	// Initialize scheduler after database is ready so it can query due cards and active topics.
 	a.scheduler = scheduler.New()
@@ -114,15 +115,15 @@ func (a *App) startup(ctx context.Context) {
 	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath(), onnxRuntimePath)
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
+		utils.Warnf("could not initialize ONNX embedder: %v", err)
 		a.aiReady = false
 	} else {
 		if err := embeddings.InitPromptTokenizer(assetValidator.TokenizerPath()); err != nil {
 			a.aiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
-			fmt.Printf("Warning: %s\n", a.aiInitError)
+			utils.Warnf("%s", a.aiInitError)
 			a.aiReady = false
 			if closeErr := embedder.Close(); closeErr != nil {
-				fmt.Printf("Warning: could not close embedder after tokenizer init failure: %v\n", closeErr)
+				utils.Warnf("could not close embedder after tokenizer init failure: %v", closeErr)
 			}
 			embedder = nil
 		} else {
@@ -131,7 +132,7 @@ func (a *App) startup(ctx context.Context) {
 			a.embedder = embedder
 
 			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
-				fmt.Printf("Warning: could not initialize vector table; Ask AI will use lexical fallback: %v\n", err)
+				utils.Warnf("could not initialize vector table; Ask AI will use lexical fallback: %v", err)
 			} else {
 				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
 					RecomputeOnHashMismatch: true,
@@ -139,7 +140,7 @@ func (a *App) startup(ctx context.Context) {
 				})
 				go func() {
 					if err := indexer.IndexAllTopics(); err != nil {
-						fmt.Printf("Warning: vector indexing failed: %v\n", err)
+						utils.Warnf("vector indexing failed: %v", err)
 					}
 				}()
 			}
@@ -153,17 +154,17 @@ func (a *App) startup(ctx context.Context) {
 	// Load chunks for lexical fallback retrieval path.
 	topicIDs, err := db.GetAllTopicIDs()
 	if err != nil {
-		fmt.Printf("Warning: could not list topics for lexical fallback: %v\n", err)
+		utils.Warnf("could not list topics for lexical fallback: %v", err)
 		topicIDs = []string{"os-scheduling"}
 	}
 
 	for _, topicID := range topicIDs {
 		chunks, err := db.GetChunksForTopic(topicID)
 		if err != nil {
-			fmt.Printf("Warning: could not load chunks for topic %s: %v\n", topicID, err)
+			utils.Warnf("could not load chunks for topic %s: %v", topicID, err)
 			continue
 		}
-		fmt.Printf("Loaded %d chunks for topic %s\n", len(chunks), topicID)
+		utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
 		for _, chunk := range chunks {
 			embedStore.AddChunk(chunk)
 		}
@@ -184,14 +185,14 @@ func (a *App) startup(ctx context.Context) {
 	// Initialize notebook service
 	notebookDir, err := resolveNotebookDir()
 	if err != nil {
-		fmt.Printf("Error resolving notebook directory: %v\n", err)
+		utils.Errorf("resolving notebook directory: %v", err)
 		return
 	}
 	a.notebookUploadDir = notebookDir
 	a.notebookService = notebook.NewService(notebookDir)
-	fmt.Printf("Notebook service initialized at %s\n", notebookDir)
+	utils.Infof("Notebook service initialized at %s", notebookDir)
 
-	fmt.Println("App initialized successfully")
+	utils.Infof("App initialized successfully")
 }
 
 // Greet returns a greeting for the given name
