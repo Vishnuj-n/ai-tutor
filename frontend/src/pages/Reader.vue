@@ -510,7 +510,7 @@ h3 {
   word-break: break-word;
 }
 
-.chat.closed button {
+.chat.closed .chat-head button.ghost {
   width: 100%;
   padding: 8px 4px;
   font-size: 11px;

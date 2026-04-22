@@ -555,8 +555,6 @@ async function confirmSyllabusDraft() {
   isConfirmingDraft.value = true
   ingestionStatusMessage.value = 'Starting notebook ingestion. Progress will appear below.'
   uploadProgress.value = 0
-  showToast('Notebook confirmed. Indexing is in progress.')
-  closeSyllabusModal()
 
   try {
     if (!chaptersChanged && titleChanged) {
@@ -568,6 +566,8 @@ async function confirmSyllabusDraft() {
       if (notebook) {
         notebook.title = trimmedTitle
       }
+      showToast('Notebook title updated successfully.')
+      closeSyllabusModal()
       return
     }
 
@@ -588,6 +588,8 @@ async function confirmSyllabusDraft() {
     }
     await loadTopics()
     await loadNotebooks()
+    showToast('Notebook confirmed. Indexing is in progress.')
+    closeSyllabusModal()
   } catch (error) {
     draftError.value = `Failed to confirm syllabus: ${error.message}`
     uploadError.value = `Failed to confirm syllabus: ${error.message}`

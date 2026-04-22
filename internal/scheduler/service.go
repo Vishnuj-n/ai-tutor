@@ -18,7 +18,7 @@ const (
 
 type queryDueReviewCardsFn func(now int64) (int, error)
 type queryDailyStudyMinutesFn func() (int, error)
-type queryNextReadingTopicFn func() (*models.ReadingTopicCursor, error)
+type queryNextReadingTopicFn func() (models.ReadingTopicCursor, bool, error)
 
 // service builds one context-locked daily reading task.
 type service struct {
@@ -107,7 +107,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		pagesToRead = 0
 	}
 
-	readingTopic, err := s.queryNextReadingTopic()
+	readingTopic, foundReadingTopic, err := s.queryNextReadingTopic()
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +115,8 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	tasks := make([]models.ScheduledTask, 0, 1)
 	activeTopics := make([]string, 0, 1)
 
-	if readingTopic != nil {
-		startPage, endPage, ok := resolvePageWindow(*readingTopic, pagesToRead)
+	if foundReadingTopic {
+		startPage, endPage, ok := resolvePageWindow(readingTopic, pagesToRead)
 		if ok {
 			activeTopics = append(activeTopics, readingTopic.Title)
 			tasks = append(tasks, models.ScheduledTask{

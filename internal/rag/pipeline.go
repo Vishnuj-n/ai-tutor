@@ -65,7 +65,7 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	if len(chunks) < topK {
 		topK = len(chunks)
 	}
-	results := p.embedStore.SearchTopK(userQuestion, chunks, topK)
+	results := p.embedStore.SearchTopK(userQuestion, chunks, topK, 0, 0)
 
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no relevant content found for your question")
