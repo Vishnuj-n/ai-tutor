@@ -27,6 +27,10 @@ export function explainReaderSection(sectionID, question = '') {
   return appBridge().ExplainReaderSection(sectionID, question)
 }
 
+export function completeReadingSession(topicID, startPage, targetPage) {
+  return appBridge().CompleteReadingSession(topicID, startPage, targetPage)
+}
+
 export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }

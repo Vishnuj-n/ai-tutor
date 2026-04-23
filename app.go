@@ -631,6 +631,155 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	}
 }
 
+// CompleteReadingSession generates and stores incremental assessment questions for a locked page window.
+func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage int) map[string]interface{} {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return map[string]interface{}{"error": "topic ID is required"}
+	}
+	if targetPage <= 0 {
+		return map[string]interface{}{"error": "target page must be positive"}
+	}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
+	}
+
+	topicStartPage, topicEndPage, err := db.GetTopicPageBounds(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch topic page bounds: " + err.Error()}
+	}
+	if topicEndPage <= 0 {
+		return map[string]interface{}{"error": "topic has no page bounds configured"}
+	}
+
+	if startPage <= 0 {
+		if topicStartPage > 0 {
+			startPage = topicStartPage
+		} else {
+			startPage = 1
+		}
+	}
+	if topicStartPage > 0 && startPage < topicStartPage {
+		startPage = topicStartPage
+	}
+	if targetPage > topicEndPage {
+		targetPage = topicEndPage
+	}
+	if targetPage < startPage {
+		return map[string]interface{}{"error": "invalid completion window: target page must be >= start page"}
+	}
+
+	contextEndPage := targetPage + 1
+	if contextEndPage > topicEndPage {
+		contextEndPage = topicEndPage
+	}
+
+	chunkTexts, err := db.GetChunkTextsForTopicPageRange(topicID, startPage, contextEndPage)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch completion chunks: " + err.Error()}
+	}
+	if len(chunkTexts) == 0 {
+		return map[string]interface{}{"error": "no chunk content found for completion window"}
+	}
+
+	raw, err := a.fastLLMProvider.GenerateAnswer(buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, chunkTexts))
+	if err != nil {
+		return map[string]interface{}{"error": "completion quiz generation failed: " + err.Error()}
+	}
+
+	parsed, err := parseQuizLLMResponse(raw)
+	if err != nil {
+		return map[string]interface{}{"error": "completion quiz parsing failed: " + err.Error()}
+	}
+
+	const expectedQuestionCount = 5
+	modelName := providerModelName(a.fastLLMProvider)
+	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
+	for _, q := range parsed.Questions {
+		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" {
+			continue
+		}
+
+		correctAnswerCanonical := strings.TrimSpace(strings.ToLower(q.CorrectAnswer))
+		var matchedOption string
+		for _, opt := range q.Options {
+			optCanonical := strings.TrimSpace(strings.ToLower(opt))
+			if optCanonical == correctAnswerCanonical {
+				matchedOption = strings.TrimSpace(opt)
+				break
+			}
+		}
+		if matchedOption == "" {
+			continue
+		}
+
+		sourcePageStart := q.SourcePageStart
+		sourcePageEnd := q.SourcePageEnd
+		if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
+			sourcePageStart = startPage
+			sourcePageEnd = contextEndPage
+		}
+		if sourcePageStart < startPage {
+			sourcePageStart = startPage
+		}
+		if sourcePageEnd > contextEndPage {
+			sourcePageEnd = contextEndPage
+		}
+		if sourcePageEnd < sourcePageStart {
+			sourcePageEnd = sourcePageStart
+		}
+
+		questions = append(questions, models.QuizQuestion{
+			ID:              uuid.NewString(),
+			TopicID:         topicID,
+			Prompt:          strings.TrimSpace(q.Prompt),
+			Options:         q.Options,
+			CorrectAnswer:   matchedOption,
+			Explanation:     strings.TrimSpace(q.Explanation),
+			Hint:            strings.TrimSpace(q.Hint),
+			SourceHeading:   strings.TrimSpace(q.SourceHeading),
+			SourceSnippet:   strings.TrimSpace(q.SourceSnippet),
+			SourcePageStart: sourcePageStart,
+			SourcePageEnd:   sourcePageEnd,
+			LLMModel:        modelName,
+			PromptVersion:   "reader-complete-v1",
+		})
+	}
+
+	if len(questions) != expectedQuestionCount {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("completion quiz produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
+		}
+	}
+
+	if err := db.AppendQuestionsForTopic(topicID, questions); err != nil {
+		return map[string]interface{}{"error": "failed to append completion questions: " + err.Error()}
+	}
+
+	nextCursor := targetPage + 1
+	markLearned := targetPage >= topicEndPage
+	if err := db.UpdateTopicReadingCursor(topicID, nextCursor, markLearned); err != nil {
+		return map[string]interface{}{"error": "failed to update topic cursor: " + err.Error()}
+	}
+
+	status := "reading"
+	if markLearned {
+		status = "learned"
+	}
+
+	return map[string]interface{}{
+		"ok":                  true,
+		"topic_id":            topicID,
+		"source_page_start":   startPage,
+		"source_page_end":     contextEndPage,
+		"target_page":         targetPage,
+		"questions_generated": len(questions),
+		"prompt_version":      "reader-complete-v1",
+		"current_page_cursor": nextCursor,
+		"topic_status":        status,
+	}
+}
+
 // GenerateFlashcards creates flashcards for a topic or returns the existing set.
 // Enforces exactly 8 flashcards per generation to keep decks consistent and predictable.
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
@@ -1071,6 +1220,37 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 		sectionCount++
 	}
 
+	return b.String()
+}
+
+func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, chunkTexts []string) string {
+	var b strings.Builder
+	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
+	b.WriteString("Generate exactly 5 multiple-choice questions for this completed reading session.\n")
+	b.WriteString("Topic ID: ")
+	b.WriteString(topicID)
+	b.WriteString("\nLocked completion window: pages ")
+	b.WriteString(fmt.Sprintf("%d-%d", startPage, targetPage))
+	b.WriteString("\nAssessment context window: pages ")
+	b.WriteString(fmt.Sprintf("%d-%d", startPage, contextEndPage))
+	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Return exactly 5 questions.\n")
+	b.WriteString("- correct_answer must match one option exactly.\n")
+	b.WriteString("- Keep all questions grounded in the context below.\n")
+	b.WriteString("- source_page_start/source_page_end must be within the context window.\n")
+	b.WriteString("- Cover definitions, application, and one misconception.\n")
+	b.WriteString("\nContext chunks (ordered):\n")
+
+	const maxChunks = 20
+	for i, text := range chunkTexts {
+		if i >= maxChunks {
+			break
+		}
+		b.WriteString("- ")
+		b.WriteString(semanticSnippet(text, 700))
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,16 +12,13 @@ import (
 	"strings"
 
 	"ai-tutor/internal/db"
-	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
-	"ai-tutor/internal/utils"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const ingestionEventName = "ingestion-progress"
-const ingestionBatchSize = 20
 const topicExtractionMaxChars = 30000
 const topicExtractionMaxSections = 30
 
@@ -243,57 +239,15 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	}
 
 	status := "chunked"
-	if a.embedder != nil {
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID: notebookID,
-			Status:     "indexing",
-			Message:    "Starting vector indexing",
-			Phase:      "indexing",
-			Processed:  0,
-			Total:      len(allChunks),
-			Percent:    30,
-		})
-
-		_, indexedCount, failedCount := a.indexChunksWithProgress(notebookID, allChunks, "indexing")
-
-		if failedCount > 0 {
-			status = "partial_indexed"
-			emitIngestionProgress(a, ingestionProgressPayload{
-				NotebookID:   notebookID,
-				Status:       status,
-				Message:      "Indexing completed with partial failures",
-				Phase:        "indexing",
-				Processed:    len(allChunks),
-				Total:        len(allChunks),
-				IndexedCount: indexedCount,
-				FailedCount:  failedCount,
-				Percent:      100,
-			})
-		} else {
-			status = "indexed"
-			emitIngestionProgress(a, ingestionProgressPayload{
-				NotebookID:   notebookID,
-				Status:       status,
-				Message:      "Vector indexing complete",
-				Phase:        "indexing",
-				Processed:    len(allChunks),
-				Total:        len(allChunks),
-				IndexedCount: indexedCount,
-				FailedCount:  0,
-				Percent:      100,
-			})
-		}
-	} else {
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID: notebookID,
-			Status:     status,
-			Message:    "Chunking complete; vector indexing skipped because embedder is unavailable",
-			Phase:      "indexing",
-			Processed:  len(allChunks),
-			Total:      len(allChunks),
-			Percent:    100,
-		})
-	}
+	emitIngestionProgress(a, ingestionProgressPayload{
+		NotebookID: notebookID,
+		Status:     status,
+		Message:    "Chunking complete",
+		Phase:      "indexing",
+		Processed:  len(allChunks),
+		Total:      len(allChunks),
+		Percent:    100,
+	})
 
 	_ = db.UpdateNotebookStatus(notebookID, status)
 	return map[string]interface{}{
@@ -415,7 +369,11 @@ func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.Ext
 		return nil, false
 	}
 
-	bookmarkLikeDraft, fallbackUsed := extractBookmarkLikeDraft(fileType, filePath, doc)
+	bookmarkLikeDraft := []models.SyllabusChapterDraft{}
+	fallbackUsed := false
+	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
+		bookmarkLikeDraft = extractPDFCPUBookmarkDraft(filePath, doc.PageCount)
+	}
 	sample := buildPageSample(doc, 30)
 
 	if a.heavyLLMProvider != nil {
@@ -561,55 +519,6 @@ func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount
 	return resolved
 }
 
-func extractBookmarkLikeDraft(fileType, filePath string, doc *notebook.ExtractedDocument) ([]models.SyllabusChapterDraft, bool) {
-	if doc == nil || len(doc.Sections) == 0 {
-		return nil, false
-	}
-
-	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
-		if draft := extractPDFCPUBookmarkDraft(filePath, doc.PageCount); len(draft) > 0 {
-			return draft, false
-		}
-	}
-
-	tocPattern := regexp.MustCompile(`(?m)^([A-Za-z0-9][A-Za-z0-9 .,:;()'"/-]{2,120}?)\s+([0-9]{1,4})\s*$`)
-	maxPages := 10
-	if len(doc.Sections) < maxPages {
-		maxPages = len(doc.Sections)
-	}
-	input := make([]string, 0, maxPages)
-	for i := 0; i < maxPages; i++ {
-		input = append(input, doc.Sections[i].Text)
-	}
-	matches := tocPattern.FindAllStringSubmatch(strings.Join(input, "\n"), 100)
-	if len(matches) == 0 {
-		return nil, false
-	}
-
-	seen := map[int]struct{}{}
-	draft := make([]models.SyllabusChapterDraft, 0, len(matches))
-	for _, m := range matches {
-		if len(m) < 3 {
-			continue
-		}
-		title := strings.TrimSpace(m[1])
-		var page int
-		if _, err := fmt.Sscanf(strings.TrimSpace(m[2]), "%d", &page); err != nil {
-			continue
-		}
-		if page <= 0 || page > maxPage(doc.PageCount) {
-			continue
-		}
-		if _, ok := seen[page]; ok {
-			continue
-		}
-		seen[page] = struct{}{}
-		draft = append(draft, models.SyllabusChapterDraft{Title: title, StartPage: page, EndPage: page})
-	}
-
-	return normalizeSyllabusChapters(draft, doc.PageCount), true
-}
-
 func extractPDFCPUBookmarkDraft(filePath string, pageCount int) []models.SyllabusChapterDraft {
 	jsonOutput, err := runPDFCPUBookmarksExport(filePath)
 	if err != nil || strings.TrimSpace(string(jsonOutput)) == "" {
@@ -650,88 +559,6 @@ func runPDFCPUBookmarksExport(filePath string) ([]byte, error) {
 		return nil, readErr
 	}
 	return content, nil
-}
-
-func (a *App) indexChunksWithProgress(notebookID string, allChunks []models.Chunk, status string) (string, int, int) {
-	if strings.TrimSpace(status) == "" {
-		status = "indexing"
-	}
-	indexedCount := 0
-	failedCount := 0
-	total := len(allChunks)
-
-	for batchStart := 0; batchStart < total; batchStart += ingestionBatchSize {
-		batchEnd := batchStart + ingestionBatchSize
-		if batchEnd > total {
-			batchEnd = total
-		}
-
-		batchChunks := allChunks[batchStart:batchEnd]
-		batchTexts := make([]string, 0, len(batchChunks))
-		for _, chunk := range batchChunks {
-			batchTexts = append(batchTexts, chunk.Text)
-		}
-
-		batchVectors, batchErrs := embedChunkTextsInOrder(a.embedder, batchTexts)
-		for i := range batchChunks {
-			chunk := batchChunks[i]
-			if batchErrs[i] != nil {
-				log.Printf("Warning: embedding failed for chunk %s: %v", chunk.ID, batchErrs[i])
-				failedCount++
-				continue
-			}
-
-			vector := batchVectors[i]
-			if storeErr := db.UpsertChunkVector(chunk.ID, vector); storeErr != nil {
-				failedCount++
-				continue
-			}
-
-			indexedCount++
-			hash := computeChunkHash(chunk.Text)
-			_ = db.UpdateChunkEmbedding(chunk.ID, hash)
-		}
-
-		processed := batchEnd
-		emitIngestionProgress(a, ingestionProgressPayload{
-			NotebookID:   notebookID,
-			Status:       status,
-			Message:      fmt.Sprintf("Indexing chunk %d/%d", processed, total),
-			Phase:        "indexing",
-			Processed:    processed,
-			Total:        total,
-			IndexedCount: indexedCount,
-			FailedCount:  failedCount,
-			Percent:      calculatePercent(processed, total),
-		})
-	}
-
-	finalStatus := "indexed"
-	if failedCount > 0 {
-		finalStatus = "partial_indexed"
-	}
-	return finalStatus, indexedCount, failedCount
-}
-
-func embedChunkTextsInOrder(embedder *embeddings.OnnxEmbedder, texts []string) ([][]float32, []error) {
-	vectors := make([][]float32, len(texts))
-	errs := make([]error, len(texts))
-	if embedder == nil {
-		for i := range texts {
-			errs[i] = fmt.Errorf("embedder unavailable")
-		}
-		return vectors, errs
-	}
-
-	for i, text := range texts {
-		vector, err := embedder.Embed(text)
-		if err != nil {
-			errs[i] = err
-			continue
-		}
-		vectors[i] = vector
-	}
-	return vectors, errs
 }
 
 func validatePDFCPUInputFilePath(filePath string) (string, error) {
@@ -970,7 +797,7 @@ func buildTopicGroupsFromChapters(notebookID string, doc *notebook.ExtractedDocu
 			OrderIndex: builder.order,
 		})
 
-		chunkTexts := notebook.SplitIntoWordChunks(sectionText, notebook.ChunkWordWindow, notebook.ChunkWordOverlap)
+		chunkTexts := notebook.SplitPageIntoSemanticChunks(sectionText, notebook.DefaultSemanticChunkTargetWords)
 		for chunkIndex, chunkText := range chunkTexts {
 			chunkID := fmt.Sprintf("nbc_%s_%02d_%04d_%03d", notebookID, topicIdx+1, builder.order, chunkIndex+1)
 			builder.chunks = append(builder.chunks, db.NotebookChunkInput{
@@ -1106,23 +933,6 @@ func emitIngestionProgress(a *App, payload ingestionProgressPayload) {
 		return
 	}
 	wailsruntime.EventsEmit(a.ctx, ingestionEventName, payload)
-}
-
-func calculatePercent(processed, total int) int {
-	if total <= 0 {
-		return 0
-	}
-	if processed >= total {
-		return 100
-	}
-	if processed <= 0 {
-		return 0
-	}
-	return int(float64(processed) / float64(total) * 100)
-}
-
-func computeChunkHash(text string) string {
-	return utils.MD5Hex(text)
 }
 
 // UpdateNotebookTitle updates notebook metadata for user edits before re-ingestion.

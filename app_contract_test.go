@@ -959,6 +959,16 @@ func (m *mockLLMProvider) GenerateAnswer(prompt string) (string, error) {
 	return m.answer, nil
 }
 
+func fiveQuestionJSON() string {
+	return `{"questions":[
+{"prompt":"Question 1?","options":["A","B","C","D"],"correct_answer":"A","explanation":"Explanation 1.","hint":"Hint 1.","source_heading":"Complete Section","source_snippet":"Snippet 1."},
+{"prompt":"Question 2?","options":["A","B","C","D"],"correct_answer":"B","explanation":"Explanation 2.","hint":"Hint 2.","source_heading":"Complete Section","source_snippet":"Snippet 2."},
+{"prompt":"Question 3?","options":["A","B","C","D"],"correct_answer":"C","explanation":"Explanation 3.","hint":"Hint 3.","source_heading":"Complete Section","source_snippet":"Snippet 3."},
+{"prompt":"Question 4?","options":["A","B","C","D"],"correct_answer":"D","explanation":"Explanation 4.","hint":"Hint 4.","source_heading":"Complete Section","source_snippet":"Snippet 4."},
+{"prompt":"Question 5?","options":["A","B","C","D"],"correct_answer":"A","explanation":"Explanation 5.","hint":"Hint 5.","source_heading":"Complete Section","source_snippet":"Snippet 5."}
+]}`
+}
+
 type mockRAGPipeline struct {
 	result *rag.Response
 	err    error
@@ -1128,6 +1138,107 @@ func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 
 	if _, ok := resp["answer"].(string); !ok {
 		t.Fatalf("expected answer string for empty question, got: %#v", resp["answer"])
+	}
+}
+
+func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) {
+	initTestDB(t)
+
+	topicID := "complete-session-topic"
+	notebookID := "complete-session-notebook"
+	if err := db.EnsureTopic(topicID, "Complete Session Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.UpdateTopicPageBounds(topicID, 1, 4); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+	if err := db.CreateNotebook(notebookID, "Complete Session Notebook", "/tmp/complete.txt", "txt", "", 4); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	parentID := "complete-session-parent"
+	if err := db.IngestNotebookContentByTopic(notebookID, []db.NotebookTopicIngestionGroup{{
+		TopicID: topicID,
+		Parents: []db.NotebookParentInput{{
+			ID: parentID, Heading: "Complete Section", Content: "complete section body", OrderIndex: 1,
+		}},
+		Chunks: []db.NotebookChunkInput{
+			{ID: "complete-session-c1", ParentID: parentID, Text: "page one context.", TokenCount: 3, PageNum: 1},
+			{ID: "complete-session-c2", ParentID: parentID, Text: "page two context.", TokenCount: 3, PageNum: 2},
+			{ID: "complete-session-c3", ParentID: parentID, Text: "page three buffer.", TokenCount: 3, PageNum: 3},
+		},
+	}}); err != nil {
+		t.Fatalf("IngestNotebookContentByTopic failed: %v", err)
+	}
+
+	if err := db.ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{{
+		ID:            "complete-session-existing",
+		TopicID:       topicID,
+		Prompt:        "Existing?",
+		Options:       []string{"A", "B"},
+		CorrectAnswer: "A",
+	}}); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	app := &App{fastLLMProvider: &mockLLMProvider{answer: fiveQuestionJSON()}}
+	resp := app.CompleteReadingSession(topicID, 1, 2)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected completion success, got error: %v", resp["error"])
+	}
+	if got := resp["questions_generated"]; got != 5 {
+		t.Fatalf("expected 5 generated questions, got %#v", got)
+	}
+	if got := resp["current_page_cursor"]; got != 3 {
+		t.Fatalf("expected cursor 3, got %#v", got)
+	}
+
+	questions, err := db.GetQuestionsForTopic(topicID)
+	if err != nil {
+		t.Fatalf("GetQuestionsForTopic failed: %v", err)
+	}
+	if len(questions) != 6 {
+		t.Fatalf("expected existing question plus 5 generated questions, got %d", len(questions))
+	}
+	generated := 0
+	for _, q := range questions {
+		if q.PromptVersion == "reader-complete-v1" {
+			generated++
+			if q.SourcePageStart != 1 || q.SourcePageEnd != 3 {
+				t.Fatalf("expected generated question lineage pages 1-3, got %#v", q)
+			}
+		}
+	}
+	if generated != 5 {
+		t.Fatalf("expected 5 reader-complete questions, got %d", generated)
+	}
+}
+
+func TestCompleteReadingSession_RequiresFastLLM(t *testing.T) {
+	initTestDB(t)
+
+	app := &App{}
+	resp := app.CompleteReadingSession("os-scheduling", 1, 2)
+	if _, hasErr := resp["error"]; !hasErr {
+		t.Fatalf("expected error without FAST_LLM, got %#v", resp)
+	}
+}
+
+func TestCompleteReadingSession_RejectsInvalidWindow(t *testing.T) {
+	initTestDB(t)
+
+	topicID := "complete-invalid-window"
+	if err := db.EnsureTopic(topicID, "Invalid Window"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.UpdateTopicPageBounds(topicID, 5, 8); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+
+	app := &App{fastLLMProvider: &mockLLMProvider{answer: fiveQuestionJSON()}}
+	resp := app.CompleteReadingSession(topicID, 7, 6)
+	if _, hasErr := resp["error"]; !hasErr {
+		t.Fatalf("expected invalid window error, got %#v", resp)
 	}
 }
 
