@@ -39,7 +39,7 @@ The app is a guided tutor, not a chatbot. Retrieval must support the learning fl
 
 The pipeline consumes:
 
-- Active topic context
+- Active topic context (using `current_page_cursor` for pacing)
 - User question or explain request
 - Topic content stored as parent sections and child chunks
 - Token budget and output constraints
@@ -52,29 +52,30 @@ RAG must be deterministic about what it can see and how much it can send to the 
 
 - The UI sends the active topic identifier with the request
 - Backend validates that the topic exists and is eligible for retrieval
-- Retrieval queries only the embeddings associated with that topic
-- Each chunk uses one canonical string `chunk_id` in relational tables, mapped to integer SQLite rowids for `sqlite-vec` storage.
+- Retrieval queries only the embeddings associated with that topic and its specific `page_num` bounds
+- Each chunk uses one canonical string `id` in relational tables, mapped to integer SQLite rowids for `sqlite-vec` storage.
 
 ## 4. Content Structure
 
 ### What
 
-Source material is stored in a parent-child retrieval layout:
+Source material is stored in a parent-child retrieval layout within a Context-Locked Session Architecture:
 
-- Parent section: heading-level or section-level content block
-- Child chunk: smaller embedded unit used for similarity search
+- Parent section: section-level content block (now using LLM-drafted boundaries instead of regex extraction)
+- Child chunk: smaller embedded unit used for similarity search, retaining exact `page_num` provenance
 
 ### Why
 
-- Parent sections preserve readable context
-- Child chunks improve recall and semantic matching
+- LLM-drafted boundaries provide higher quality parent section boundaries than automated regex tools
+- `page_num` provenance enforces strict pacing and contextual boundaries
 - Parent expansion prevents awkward fragment-only answers
 
 ### How
 
-- Parse content into heading-aware parent sections first
+- Parse content into parent sections utilizing LLM-drafted boundaries
+- Create chunks with strict adherence to `page_num` bounds
 - Split oversized sections with token-aware fallback chunking
-- Assign a stable, unique chunk_id to every child chunk at ingest time
+- Assign a stable, unique `id` to every child chunk at ingest time
 - Store embeddings on child chunks
 - Keep parent and topic references so retrieval can return original section text and enforce scope
 
@@ -113,30 +114,33 @@ Heuristic scoring contract:
 
 ### What
 
-Embeddings are stored in a `sqlite-vec` virtual table with integer rowids and JSON serialization.
+Embeddings are stored in a `sqlite-vec` virtual table with integer rowids and JSON serialization. A "Two-Step Fast Retrieval" process is utilized for efficiency.
 
 ### Why
 
 - SQLite extensions are connection-scoped, so a single persistent connection is required.
 - The `sqlite-vec` virtual table requires integer rowids, not string IDs.
+- Virtual table join penalties are high. Pre-filtering before distance calculation avoids them.
 - `database/sql` parameter binding requires concrete Go types; float32 slices must be serialized.
 
 ### How
 
 **Storage:**
 - Application maintains a single SQLite connection with vec0 extension loaded (via `db.Init()` and connection pool constraints).
-- Each chunk has a stable string `chunk_id` stored in the `chunks` table.
-- The `chunk_vectors` table maps chunk IDs to integer SQLite rowids and stores embeddings as JSON strings.
-- On insert, `UpsertChunkVector()` resolves the string chunk_id to its integer rowid before inserting into vec0.
+- Each chunk has a stable string `id` stored in the `chunks` table, alongside its `page_num`. The `id` is the stable primary identifier stored on the `chunks` table.
+- The `chunk_vectors` table stores the mapping to SQLite `rowid`s while referencing the canonical chunk identifier, storing embeddings as JSON strings.
+- On insert, `UpsertChunkVector()` resolves the string `id` to its integer rowid before inserting into vec0.
 
 **Serialization:**
 - `vectorToJSON()` converts float32 slices to compact JSON strings before passing to database parameters.
 - This avoids database/sql type binding errors and keeps the storage format compatible with direct SQL inspection.
 
-**Retrieval:**
-- `SearchVectorsForTopic()` embeds the query, searches the vec0 table for cosine-distance matches within the topic, returns matching chunk IDs and distances.
+**Retrieval (Two-Step Fast Retrieval):**
+1. Pre-filter target rowids by querying the `chunks` table directly, strictly bounded by the active `topic_id` and the relevant `page_num` scope. This yields the vector `rowid`s for the `chunk_vectors` mapping table.
+2. Execute the `sqlite-vec` cosine-distance calculation explicitly restricted to that pre-filtered set of `rowid`s in the `chunk_vectors` table.
+- This two-step process explicitly avoids complex JOINs against the virtual table during distance calculation.
 - Results are joined with chunks/parents to populate context for prompt assembly.
-- Integer rowid-to-chunk_id mapping is transparent to the RAG pipeline layer.
+- Integer rowid-to-`id` mapping is transparent to the RAG pipeline layer.
 
 **Architectural Constraints:**
 - Connection pool is fixed at 1 active connection (`SetMaxOpenConns(1)`). Do not change this.
@@ -164,8 +168,8 @@ Prompt payload should include:
 
 Embedding metadata requirements (ingestion-time):
 
-- Persist `topic_id`, `parent_id`, and `chunk_id` in SQLite chunk rows.
-- Persist vectors in sqlite-vec by integer SQLite rowid, resolved from relational chunk_id.
+- Persist `topic_id`, `parent_id`, and `id` in SQLite chunk rows.
+- Persist vectors in sqlite-vec by integer SQLite rowid, resolved from relational `id`.
 - Keep metadata minimal but sufficient for fast topic-filtered retrieval.
 
 Prompt rules:
@@ -305,10 +309,11 @@ Step 3: Persist in SQLite + `sqlite-vec`
 - Store vectors in a `sqlite-vec` virtual table (for example `vec0`).
 - Keep a stable key mapping so vector rows map 1:1 to chunk rows.
 
-Step 4: Retrieve top-k for active topic
+Step 4: Retrieve top-k for active topic (Two-Step Fast Retrieval)
 
 - Embed user query using the same tokenizer and ONNX model.
-- Execute topic-scoped vector similarity search (cosine or equivalent supported metric).
+- Step A: Pre-filter target `rowid`s by querying `topic_id` and `page_num` boundaries from the `chunks` table.
+- Step B: Execute vector similarity search on the `sqlite-vec` virtual table, restricted to the pre-filtered `rowid` set (avoiding virtual table joins).
 - Expand child hits to parent sections before prompt assembly.
 
 Step 5: Generate answer
@@ -319,12 +324,12 @@ Step 5: Generate answer
 
 ## 13. Windows Runtime Assets
 
-Required for local Windows builds:
+Required for local Windows builds (these must be physically present in the `asset/` folder):
 
 - `asset/onnxruntime.dll`
 - `asset/vec0.dll`
 
-If either dependency is missing, ingestion/retrieval must fail with an explicit setup error instead of synthetic fallback output.
+If either dependency is missing from the `asset/` folder, ingestion/retrieval must fail with an explicit setup error instead of synthetic fallback output.
 
 ## 14. Build and Compilation Constraints
 
