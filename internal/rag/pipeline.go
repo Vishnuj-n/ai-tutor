@@ -43,7 +43,7 @@ type Response struct {
 }
 
 // ProcessQuery runs the full RAG pipeline
-func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error) {
+func (p *Pipeline) ProcessQuery(topicID, userQuestion string, startPage, endPage int) (*Response, error) {
 	// Step 1: Validate topic exists
 	content, err := db.GetTopicContent(topicID)
 	if err != nil {
@@ -65,7 +65,16 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string) (*Response, error)
 	if len(chunks) < topK {
 		topK = len(chunks)
 	}
-	results := p.embedStore.SearchTopK(userQuestion, chunks, topK)
+
+	// Validate page bounds - treat non-positive bounds as "no filter"
+	searchStartPage := startPage
+	searchEndPage := endPage
+	if searchStartPage <= 0 || searchEndPage <= 0 {
+		searchStartPage = 0
+		searchEndPage = 0
+	}
+
+	results := p.embedStore.SearchTopK(userQuestion, chunks, topK, searchStartPage, searchEndPage)
 
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no relevant content found for your question")

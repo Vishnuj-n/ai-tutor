@@ -51,22 +51,6 @@
         <div v-else class="pdf-wrap">
           <iframe class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
         </div>
-
-        <div class="sections" v-if="sections.length > 0">
-          <h3>Sections</h3>
-          <div class="section-list">
-            <button
-              v-for="section in sections"
-              :key="section.id"
-              class="section-item"
-              :class="{ active: activeSection?.id === section.id }"
-              @click="selectSection(section)"
-            >
-              <span class="section-title">{{ section.heading }}</span>
-              <span class="section-page">{{ section.page_num > 0 ? `Page ${section.page_num}` : 'No page map' }}</span>
-            </button>
-          </div>
-        </div>
       </article>
 
       <aside class="panel chat" :class="{ closed: chatCollapsed }">
@@ -141,11 +125,30 @@ const loadingBundle = ref(false)
 const globalError = ref('')
 
 const selectedNotebook = computed(() => notebookTree.value.find((n) => n.notebook_id === selectedNotebookID.value) || null)
-const availableTopics = computed(() => selectedNotebook.value?.topics || [])
 const selectedNotebookTitle = computed(() => selectedNotebook.value?.title || '')
 const selectedTopicTitle = computed(() => {
   const match = availableTopics.value.find((t) => t.topic_id === selectedTopicID.value)
   return match?.title || ''
+})
+
+const availableTopics = computed(() => {
+  const topics = selectedNotebook.value?.topics || []
+  return [...topics].sort((a, b) => {
+    const aNum = extractChapterNumber(a.title)
+    const bNum = extractChapterNumber(b.title)
+    if (aNum !== null || bNum !== null) {
+      if (aNum !== null && bNum !== null) {
+        if (aNum !== bNum) {
+          return aNum - bNum
+        }
+      } else if (aNum !== null) {
+        return -1
+      } else if (bNum !== null) {
+        return 1
+      }
+    }
+    return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
+  })
 })
 
 const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
@@ -199,6 +202,15 @@ function applyInitialSelection() {
   selectedTopicID.value = fallback?.topics?.[0]?.topic_id || ''
 }
 
+function extractChapterNumber(title) {
+  const matches = /^chapter\s*(\d+)\b/i.exec(String(title).trim())
+  if (!matches) {
+    return null
+  }
+  const num = Number(matches[1])
+  return Number.isFinite(num) ? num : null
+}
+
 function onNotebookChange() {
   if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
     selectedTopicID.value = availableTopics.value[0]?.topic_id || ''
@@ -250,7 +262,11 @@ async function loadBundle() {
     activeSection.value = sections.value[0] || null
 
     const firstPage = Number(activeSection.value?.page_num)
-    currentPage.value = Number.isFinite(firstPage) && firstPage > 0 ? firstPage : 1
+    if (Number.isFinite(firstPage) && firstPage > 0) {
+      currentPage.value = Math.min(Math.max(1, firstPage), pageCount.value)
+    } else {
+      currentPage.value = 1
+    }
   } catch (err) {
     topicTitle.value = 'Reader'
     notebookUrl.value = ''
@@ -476,6 +492,27 @@ h3 {
 
 .chat.closed {
   padding: 10px 8px;
+  gap: 0;
+}
+
+.chat.closed .chat-head {
+  flex-direction: column;
+}
+
+.chat.closed h2 {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.chat.closed .chat-head button.ghost {
+  width: 100%;
+  padding: 8px 4px;
+  font-size: 11px;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .chat-head {

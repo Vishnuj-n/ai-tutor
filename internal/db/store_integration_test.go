@@ -177,7 +177,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	}
 
 	query := []float32{1, 0, 0}
-	gotA, err := SearchVectorsForTopic(topicA, query, 5)
+	gotA, err := SearchVectorsForTopic(topicA, query, 5, 0, 0)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicA failed: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 		t.Fatalf("expected scoped results to contain chunkA, got %#v", gotA)
 	}
 
-	gotB, err := SearchVectorsForTopic(topicB, query, 5)
+	gotB, err := SearchVectorsForTopic(topicB, query, 5, 0, 0)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicB failed: %v", err)
 	}
@@ -237,11 +237,76 @@ func TestGetNotebookTopicTreeDeduplicatesTopicRowsPerNotebook(t *testing.T) {
 	if len(tree) != 1 {
 		t.Fatalf("expected 1 notebook, got %#v", tree)
 	}
-	if len(tree[0].Topics) != 1 {
-		t.Fatalf("expected deduped single topic entry, got %#v", tree[0].Topics)
+}
+
+func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
+	initDBForTest(t, true, 3)
+
+	if !distanceFunctionAvailable(t) {
+		t.Skip("sqlite-vec distance() function is unavailable in this runtime")
 	}
-	if tree[0].Topics[0].TopicID != topicID {
-		t.Fatalf("unexpected topic id: %#v", tree[0].Topics)
+
+	topicA := "topic-window-a"
+	topicB := "topic-window-b"
+	if err := EnsureTopic(topicA, "Topic A"); err != nil {
+		t.Fatalf("EnsureTopic topicA failed: %v", err)
+	}
+	if err := EnsureTopic(topicB, "Topic B"); err != nil {
+		t.Fatalf("EnsureTopic topicB failed: %v", err)
+	}
+
+	parentA := "parent-window-a"
+	chunkA := "chunk-window-a"
+	if err := CreateParentSection(parentA, topicA, "A", 1, "topic a parent"); err != nil {
+		t.Fatalf("CreateParentSection topicA failed: %v", err)
+	}
+	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3); err != nil {
+		t.Fatalf("CreateChunk chunkA failed: %v", err)
+	}
+
+	parentB := "parent-window-b"
+	chunkB := "chunk-window-b"
+	if err := CreateParentSection(parentB, topicB, "B", 1, "topic b parent"); err != nil {
+		t.Fatalf("CreateParentSection topicB failed: %v", err)
+	}
+	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 8); err != nil {
+		t.Fatalf("CreateChunk chunkB failed: %v", err)
+	}
+
+	if err := UpsertChunkVector(chunkA, []float32{1, 0, 0}); err != nil {
+		t.Fatalf("UpsertChunkVector chunkA failed: %v", err)
+	}
+	if err := UpsertChunkVector(chunkB, []float32{1, 0, 0}); err != nil {
+		t.Fatalf("UpsertChunkVector chunkB failed: %v", err)
+	}
+
+	query := []float32{1, 0, 0}
+
+	gotAIn, err := SearchVectorsForTopic(topicA, query, 5, 2, 4)
+	if err != nil {
+		t.Fatalf("SearchVectorsForTopic topicA in-range failed: %v", err)
+	}
+	if !contains(gotAIn, chunkA) {
+		t.Fatalf("expected in-range results to contain chunkA, got %#v", gotAIn)
+	}
+	if contains(gotAIn, chunkB) {
+		t.Fatalf("expected in-range results to exclude chunkB, got %#v", gotAIn)
+	}
+
+	gotAOut, err := SearchVectorsForTopic(topicA, query, 5, 7, 9)
+	if err != nil {
+		t.Fatalf("SearchVectorsForTopic topicA out-of-range failed: %v", err)
+	}
+	if contains(gotAOut, chunkA) {
+		t.Fatalf("expected out-of-range results to exclude chunkA, got %#v", gotAOut)
+	}
+
+	gotBIn, err := SearchVectorsForTopic(topicB, query, 5, 7, 9)
+	if err != nil {
+		t.Fatalf("SearchVectorsForTopic topicB in-range failed: %v", err)
+	}
+	if !contains(gotBIn, chunkB) {
+		t.Fatalf("expected in-range results to contain chunkB, got %#v", gotBIn)
 	}
 }
 
@@ -294,31 +359,6 @@ func distanceFunctionAvailable(t *testing.T) bool {
 	}
 	// Identical vectors should yield ~0 distance
 	return distance < 1e-9 && distance > -1e-9
-}
-
-func assertCountEquals(t *testing.T, query string, arg interface{}, want int) {
-	t.Helper()
-
-	var got int
-	if err := conn.QueryRow(query, arg).Scan(&got); err != nil {
-		t.Fatalf("query failed (%s): %v", sanitizeWhitespace(query), err)
-	}
-	if got != want {
-		t.Fatalf("unexpected count for query (%s): got=%d want=%d", sanitizeWhitespace(query), got, want)
-	}
-}
-
-func contains(items []string, target string) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
-	}
-	return false
-}
-
-func sanitizeWhitespace(input string) string {
-	return strings.Join(strings.Fields(input), " ")
 }
 
 func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {

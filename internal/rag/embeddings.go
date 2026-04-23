@@ -136,14 +136,15 @@ type RetrievalResult struct {
 	Score           float64
 }
 
-// SearchTopK retrieves the top-k most similar chunks for a query
-func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int) []RetrievalResult {
+// SearchTopK retrieves the top-k most similar chunks for a query.
+// When startPage and endPage are positive, ONNX/sqlite-vec retrieval is scoped to that page window.
+func (s *EmbeddingStore) SearchTopK(query string, chunks []models.Chunk, k int, startPage, endPage int) []RetrievalResult {
 	// Preferred path: ONNX embed query and run sqlite-vec search scoped by topic.
 	if s.embedder != nil && len(chunks) > 0 {
 		queryVector, err := s.embedder.Embed(query)
 		if err == nil {
 			topicID := chunks[0].TopicID
-			chunkIDs, searchErr := db.SearchVectorsForTopic(topicID, queryVector, k)
+			chunkIDs, searchErr := db.SearchVectorsForTopic(topicID, queryVector, k, startPage, endPage)
 			if searchErr == nil && len(chunkIDs) > 0 {
 				chunkByID := make(map[string]models.Chunk, len(chunks))
 				for _, chunk := range chunks {

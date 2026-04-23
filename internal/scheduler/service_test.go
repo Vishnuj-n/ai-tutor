@@ -1,231 +1,122 @@
 package scheduler
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"ai-tutor/internal/models"
 )
 
-func TestBuildTodayPlanEmptyFallback(t *testing.T) {
-	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return nil, nil }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
-		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
-	)
-
-	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatalf("BuildTodayPlan returned error: %v", err)
-	}
-	if plan == nil {
-		t.Fatalf("BuildTodayPlan returned nil plan")
-	}
-
-	if plan.ReviewMinutes != 0 {
-		t.Fatalf("expected review minutes to be 0, got %d", plan.ReviewMinutes)
-	}
-	if plan.LearningMinutes != DefaultDailyStudyMinutes {
-		t.Fatalf("expected learning minutes to be %d, got %d", DefaultDailyStudyMinutes, plan.LearningMinutes)
-	}
-	if len(plan.Tasks) != 1 || plan.Tasks[0].ActionType != "explore" {
-		t.Fatalf("expected single explore fallback task, got %#v", plan.Tasks)
-	}
-}
-
-func TestBuildTodayPlanPrioritizesDueReviews(t *testing.T) {
+func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	svc := New(
 		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS", "Networks"}, nil }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) {
-			return []models.TopicSummary{
-				{ID: "topic-a", Title: "Topic A"},
-				{ID: "topic-b", Title: "Topic B"},
-			}, nil
+		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
+		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+			return models.ReadingTopicCursor{
+				ID:                "ch1",
+				Title:             "Chapter 1",
+				StartPage:         1,
+				EndPage:           40,
+				CurrentPageCursor: 1,
+			}, true, nil
 		}),
-		WithCountLearnedTopics(func() (int, error) { return 1, nil }),
 	)
 
 	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
-	if plan == nil {
-		t.Fatalf("BuildTodayPlan returned nil plan")
+
+	if plan.ReviewMinutes != 5 {
+		t.Fatalf("expected review minutes 5, got %d", plan.ReviewMinutes)
+	}
+	if plan.LearningMinutes != 85 {
+		t.Fatalf("expected learning minutes 85, got %d", plan.LearningMinutes)
+	}
+	if len(plan.Tasks) != 1 {
+		t.Fatalf("expected exactly one read task, got %d", len(plan.Tasks))
 	}
 
-	if plan.ReviewMinutes != 20 {
-		t.Fatalf("expected review minutes to be 20, got %d", plan.ReviewMinutes)
+	task := plan.Tasks[0]
+	if task.ActionType != "read" {
+		t.Fatalf("expected read task, got %s", task.ActionType)
 	}
-	if plan.LearningMinutes != 70 {
-		t.Fatalf("expected learning minutes to be 70, got %d", plan.LearningMinutes)
+	if task.StartPage != 1 || task.EndPage != 34 {
+		t.Fatalf("expected pages 1-34, got %d-%d", task.StartPage, task.EndPage)
 	}
-	if len(plan.Tasks) < 3 {
-		t.Fatalf("expected at least 3 tasks, got %d", len(plan.Tasks))
+	if task.Title != "Read: Chapter 1 (Pages 1 to 34)" {
+		t.Fatalf("unexpected task title: %s", task.Title)
 	}
-
-	if plan.Tasks[0].ActionType != "review" || plan.Tasks[0].Priority != 1 {
-		t.Fatalf("expected first task to be priority-1 review, got %#v", plan.Tasks[0])
-	}
-	if plan.Tasks[1].ActionType != "read" || plan.Tasks[1].Priority != 2 {
-		t.Fatalf("expected second task to be read priority-2, got %#v", plan.Tasks[1])
-	}
-	if plan.Tasks[2].ActionType != "read" || plan.Tasks[2].Priority != 3 {
-		t.Fatalf("expected third task to be read priority-3, got %#v", plan.Tasks[2])
-	}
-
-	assertPlanMinutesWithinBudget(t, *plan)
 }
 
-func TestBuildTodayPlanReviewMinutesCap(t *testing.T) {
+func TestBuildTodayPlanClampNearTopicEnd(t *testing.T) {
 	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 100, nil }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS"}, nil }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) {
-			return []models.TopicSummary{
-				{ID: "topic-a", Title: "Topic A"},
-				{ID: "topic-b", Title: "Topic B"},
-			}, nil
+		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }),
+		WithQueryDailyStudyMinutes(func() (int, error) { return 30, nil }),
+		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+			return models.ReadingTopicCursor{
+				ID:                "ch1",
+				Title:             "Chapter 1",
+				StartPage:         1,
+				EndPage:           20,
+				CurrentPageCursor: 13,
+			}, true, nil
 		}),
-		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
 	)
 
 	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
-	if plan == nil {
-		t.Fatalf("BuildTodayPlan returned nil plan")
+
+	if len(plan.Tasks) != 1 {
+		t.Fatalf("expected one read task, got %d", len(plan.Tasks))
 	}
 
-	if plan.ReviewMinutes != DefaultDailyStudyMinutes {
-		t.Fatalf("expected catch-up mode review minutes=%d, got %d", DefaultDailyStudyMinutes, plan.ReviewMinutes)
+	task := plan.Tasks[0]
+	if task.StartPage != 13 {
+		t.Fatalf("expected start page 13, got %d", task.StartPage)
 	}
-	if plan.LearningMinutes != 0 {
-		t.Fatalf("expected catch-up mode learning minutes=0, got %d", plan.LearningMinutes)
+	if task.EndPage != 20 {
+		t.Fatalf("expected end page clamped to 20, got %d", task.EndPage)
 	}
-	if len(plan.Tasks) != 1 || plan.Tasks[0].ActionType != "review" {
-		t.Fatalf("expected review-only task list in catch-up mode, got %#v", plan.Tasks)
-	}
-
-	assertPlanMinutesWithinBudget(t, *plan)
 }
 
-func TestBuildTodayPlanAddsLearnedTopicBonusesWhenTimeRemains(t *testing.T) {
+func TestBuildTodayPlanNoTopicReturnsEstimate(t *testing.T) {
 	svc := New(
 		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return []string{"OS"}, nil }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
-		WithCountLearnedTopics(func() (int, error) { return 2, nil }),
+		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
+		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+			return models.ReadingTopicCursor{}, false, nil
+		}),
 	)
 
 	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
-	if plan == nil {
-		t.Fatalf("BuildTodayPlan returned nil plan")
-	}
 
-	if len(plan.Tasks) != 2 {
-		t.Fatalf("expected quiz and socratic tasks, got %#v", plan.Tasks)
+	if len(plan.Tasks) != 0 {
+		t.Fatalf("expected no tasks, got %d", len(plan.Tasks))
 	}
-	if plan.Tasks[0].ActionType != "quiz" || plan.Tasks[0].Priority != 1 {
-		t.Fatalf("expected first task to be quiz priority-1, got %#v", plan.Tasks[0])
-	}
-	if plan.Tasks[1].ActionType != "socratic" || plan.Tasks[1].Priority != 2 {
-		t.Fatalf("expected second task to be socratic priority-2, got %#v", plan.Tasks[1])
-	}
-
-	assertPlanMinutesWithinBudget(t, *plan)
-}
-
-func TestBuildTodayPlanQueryDueReviewCardsReturnsError(t *testing.T) {
-	expectedErr := fmt.Errorf("database connection failed")
-	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 0, expectedErr }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return nil, nil }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
-		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
-	)
-
-	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
-	if err != expectedErr {
-		t.Fatalf("expected error %v, got %v", expectedErr, err)
-	}
-	if plan != nil {
-		t.Fatalf("expected nil plan on error, got %#v", plan)
+	if !plan.IsEstimate {
+		t.Fatalf("expected estimate=true when no reading task exists")
 	}
 }
 
-func TestBuildTodayPlanQueryActiveTopicsReturnsError(t *testing.T) {
-	expectedErr := fmt.Errorf("topics query failed")
-	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 5, nil }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return nil, expectedErr }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, nil }),
-		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
-	)
+func TestResolvePageWindowRejectsZeroPagesToRead(t *testing.T) {
+	start, end, ok := resolvePageWindow(models.ReadingTopicCursor{
+		ID:                "ch1",
+		Title:             "Chapter 1",
+		StartPage:         1,
+		EndPage:           20,
+		CurrentPageCursor: 3,
+	}, 0)
 
-	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
-	if err != expectedErr {
-		t.Fatalf("expected error %v, got %v", expectedErr, err)
+	if ok {
+		t.Fatalf("expected ok=false, got ok=true with window %d-%d", start, end)
 	}
-	if plan != nil {
-		t.Fatalf("expected nil plan on error, got %#v", plan)
-	}
-}
-
-func TestBuildTodayPlanQueryLearningTopicsReturnsError(t *testing.T) {
-	expectedErr := fmt.Errorf("learning topics query failed")
-	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return []string{}, nil }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return nil, expectedErr }),
-		WithCountLearnedTopics(func() (int, error) { return 0, nil }),
-	)
-
-	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
-	if err != expectedErr {
-		t.Fatalf("expected error %v, got %v", expectedErr, err)
-	}
-	if plan != nil {
-		t.Fatalf("expected nil plan on error, got %#v", plan)
-	}
-}
-
-func TestBuildTodayPlanCountLearnedTopicsReturnsError(t *testing.T) {
-	expectedErr := fmt.Errorf("learned topics count failed")
-	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryActiveTopics(func(int) ([]string, error) { return []string{}, nil }),
-		WithQueryLearningTopics(func(int) ([]models.TopicSummary, error) { return []models.TopicSummary{}, nil }),
-		WithCountLearnedTopics(func() (int, error) { return 0, expectedErr }),
-	)
-
-	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
-	if err != expectedErr {
-		t.Fatalf("expected error %v, got %v", expectedErr, err)
-	}
-	if plan != nil {
-		t.Fatalf("expected nil plan on error, got %#v", plan)
-	}
-}
-
-func assertPlanMinutesWithinBudget(t *testing.T, plan models.TodayPlan) {
-	t.Helper()
-
-	totalTaskMinutes := 0
-	for _, task := range plan.Tasks {
-		totalTaskMinutes += task.EstimateMinutes
-	}
-	if totalTaskMinutes > DefaultDailyStudyMinutes {
-		t.Fatalf("task minutes exceeded daily budget: %d > %d", totalTaskMinutes, DefaultDailyStudyMinutes)
-	}
-	if plan.ReviewMinutes+plan.LearningMinutes != DefaultDailyStudyMinutes {
-		t.Fatalf("review+learning minutes must equal daily budget, got review=%d learning=%d total=%d",
-			plan.ReviewMinutes, plan.LearningMinutes, DefaultDailyStudyMinutes)
+	if start != 0 || end != 0 {
+		t.Fatalf("expected window 0-0 for zero pages, got %d-%d", start, end)
 	}
 }

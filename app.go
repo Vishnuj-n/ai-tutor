@@ -20,6 +20,7 @@ import (
 	"ai-tutor/internal/rag"
 	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
+	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -30,7 +31,7 @@ type llmProviderInterface interface {
 }
 
 type ragPipelineInterface interface {
-	ProcessQuery(topicID, question string) (*rag.Response, error)
+	ProcessQuery(topicID, question string, startPage, endPage int) (*rag.Response, error)
 }
 
 // App struct
@@ -66,28 +67,28 @@ func (a *App) startup(ctx context.Context) {
 	assetValidator := runtime.NewAssetValidator("asset")
 	if err := assetValidator.ValidateAll(); err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Warning: local RAG assets missing: %v\n", err)
-		fmt.Println("Ask AI features may be unavailable. Ensure asset/ contains tokenizer.json, model_int8.onnx, onnxruntime.dll, vec0.dll")
+		utils.Warnf("local RAG assets missing: %v", err)
+		utils.Warnf("Ask AI features may be unavailable. Ensure asset/ contains tokenizer.json, model_int8.onnx, onnxruntime.dll, vec0.dll")
 	}
 
 	appDir, err := resolveAppDir()
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Error resolving app directory: %v\n", err)
+		utils.Errorf("resolving app directory: %v", err)
 		return
 	}
 
 	runtimeAssets, err := assetValidator.PrepareRuntimeAssets(appDir)
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Warning: could not stage runtime assets to app-data: %v\n", err)
+		utils.Warnf("could not stage runtime assets to app-data: %v", err)
 	}
 
 	// Initialize persistent database
 	dbPath, err := resolveDBPath()
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Error resolving database path: %v\n", err)
+		utils.Errorf("resolving database path: %v", err)
 		return
 	}
 
@@ -97,10 +98,10 @@ func (a *App) startup(ctx context.Context) {
 	}
 	if err := db.Init(dbPath, vec0DllPath); err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Error initializing database: %v\n", err)
+		utils.Errorf("initializing database: %v", err)
 		return
 	}
-	fmt.Printf("Database initialized at %s\n", dbPath)
+	utils.Infof("Database initialized at %s", dbPath)
 
 	// Initialize scheduler after database is ready so it can query due cards and active topics.
 	a.scheduler = scheduler.New()
@@ -114,15 +115,15 @@ func (a *App) startup(ctx context.Context) {
 	embedder, err = embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath(), onnxRuntimePath)
 	if err != nil {
 		a.aiInitError = err.Error()
-		fmt.Printf("Warning: could not initialize ONNX embedder: %v\n", err)
+		utils.Warnf("could not initialize ONNX embedder: %v", err)
 		a.aiReady = false
 	} else {
 		if err := embeddings.InitPromptTokenizer(assetValidator.TokenizerPath()); err != nil {
 			a.aiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
-			fmt.Printf("Warning: %s\n", a.aiInitError)
+			utils.Warnf("%s", a.aiInitError)
 			a.aiReady = false
 			if closeErr := embedder.Close(); closeErr != nil {
-				fmt.Printf("Warning: could not close embedder after tokenizer init failure: %v\n", closeErr)
+				utils.Warnf("could not close embedder after tokenizer init failure: %v", closeErr)
 			}
 			embedder = nil
 		} else {
@@ -131,7 +132,7 @@ func (a *App) startup(ctx context.Context) {
 			a.embedder = embedder
 
 			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
-				fmt.Printf("Warning: could not initialize vector table; Ask AI will use lexical fallback: %v\n", err)
+				utils.Warnf("could not initialize vector table; Ask AI will use lexical fallback: %v", err)
 			} else {
 				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{
 					RecomputeOnHashMismatch: true,
@@ -139,7 +140,7 @@ func (a *App) startup(ctx context.Context) {
 				})
 				go func() {
 					if err := indexer.IndexAllTopics(); err != nil {
-						fmt.Printf("Warning: vector indexing failed: %v\n", err)
+						utils.Warnf("vector indexing failed: %v", err)
 					}
 				}()
 			}
@@ -153,17 +154,17 @@ func (a *App) startup(ctx context.Context) {
 	// Load chunks for lexical fallback retrieval path.
 	topicIDs, err := db.GetAllTopicIDs()
 	if err != nil {
-		fmt.Printf("Warning: could not list topics for lexical fallback: %v\n", err)
+		utils.Warnf("could not list topics for lexical fallback: %v", err)
 		topicIDs = []string{"os-scheduling"}
 	}
 
 	for _, topicID := range topicIDs {
 		chunks, err := db.GetChunksForTopic(topicID)
 		if err != nil {
-			fmt.Printf("Warning: could not load chunks for topic %s: %v\n", topicID, err)
+			utils.Warnf("could not load chunks for topic %s: %v", topicID, err)
 			continue
 		}
-		fmt.Printf("Loaded %d chunks for topic %s\n", len(chunks), topicID)
+		utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
 		for _, chunk := range chunks {
 			embedStore.AddChunk(chunk)
 		}
@@ -184,14 +185,14 @@ func (a *App) startup(ctx context.Context) {
 	// Initialize notebook service
 	notebookDir, err := resolveNotebookDir()
 	if err != nil {
-		fmt.Printf("Error resolving notebook directory: %v\n", err)
+		utils.Errorf("resolving notebook directory: %v", err)
 		return
 	}
 	a.notebookUploadDir = notebookDir
 	a.notebookService = notebook.NewService(notebookDir)
-	fmt.Printf("Notebook service initialized at %s\n", notebookDir)
+	utils.Infof("Notebook service initialized at %s", notebookDir)
 
-	fmt.Println("App initialized successfully")
+	utils.Infof("App initialized successfully")
 }
 
 // Greet returns a greeting for the given name
@@ -219,6 +220,12 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 		}
 	}
 
+	topicStartPage, topicEndPage, boundsErr := db.GetTopicPageBounds(topicID)
+	if boundsErr != nil {
+		topicStartPage = 0
+		topicEndPage = 0
+	}
+
 	if bundle.NotebookURL != "" {
 		bundle.NotebookURL = notebookAssetURL(bundle.NotebookURL)
 	}
@@ -234,14 +241,16 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 	}
 
 	return map[string]interface{}{
-		"topic_id":       bundle.TopicID,
-		"topic_title":    bundle.TopicTitle,
-		"notebook_id":    bundle.NotebookID,
-		"notebook_title": bundle.NotebookTitle,
-		"notebook_url":   bundle.NotebookURL,
-		"file_type":      bundle.FileType,
-		"page_count":     bundle.PageCount,
-		"sections":       lightSections,
+		"topic_id":         bundle.TopicID,
+		"topic_title":      bundle.TopicTitle,
+		"topic_start_page": topicStartPage,
+		"topic_end_page":   topicEndPage,
+		"notebook_id":      bundle.NotebookID,
+		"notebook_title":   bundle.NotebookTitle,
+		"notebook_url":     bundle.NotebookURL,
+		"file_type":        bundle.FileType,
+		"page_count":       bundle.PageCount,
+		"sections":         lightSections,
 	}
 }
 
@@ -273,7 +282,7 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		}
 	}
 
-	result, err := a.ragPipeline.ProcessQuery(topicID, question)
+	result, err := a.ragPipeline.ProcessQuery(topicID, question, 0, 0)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
@@ -425,18 +434,54 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"data_fresh":         true,
 		"is_estimate":        plan.IsEstimate,
 		"insights_available": insightsAvailable,
-		"plan_source":        "scheduler-v1",
+		"plan_source":        "scheduler-v2-context-locked",
+	}
+}
+
+// GetDailyStudySettings returns persisted scheduler settings for sprint-12 pacing.
+func (a *App) GetDailyStudySettings() map[string]interface{} {
+	minutes, err := db.GetDailyStudyMinutes()
+	if err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"daily_study_minutes": minutes,
+	}
+}
+
+// UpdateDailyStudyMinutes stores the global daily study limit used by scheduler math.
+func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
+	if minutes < 15 || minutes > 480 {
+		return map[string]interface{}{
+			"error": "daily study minutes must be between 15 and 480",
+		}
+	}
+
+	if err := db.UpsertDailyStudyMinutes(minutes); err != nil {
+		return map[string]interface{}{
+			"error": err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"ok":                  true,
+		"daily_study_minutes": minutes,
 	}
 }
 
 type quizLLMQuestion struct {
-	Prompt        string   `json:"prompt"`
-	Options       []string `json:"options"`
-	CorrectAnswer string   `json:"correct_answer"`
-	Explanation   string   `json:"explanation"`
-	Hint          string   `json:"hint"`
-	SourceHeading string   `json:"source_heading"`
-	SourceSnippet string   `json:"source_snippet"`
+	Prompt          string   `json:"prompt"`
+	Options         []string `json:"options"`
+	CorrectAnswer   string   `json:"correct_answer"`
+	Explanation     string   `json:"explanation"`
+	Hint            string   `json:"hint"`
+	SourceHeading   string   `json:"source_heading"`
+	SourceSnippet   string   `json:"source_snippet"`
+	SourcePageStart int      `json:"source_page_start"`
+	SourcePageEnd   int      `json:"source_page_end"`
 }
 
 type quizLLMResponse struct {
@@ -506,6 +551,13 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "quiz generation parsing failed: " + err.Error()}
 	}
 
+	headingPageRanges, rangeErr := db.GetTopicHeadingPageRanges(topicID)
+	if rangeErr != nil {
+		utils.Warnf("could not resolve topic heading page ranges for quiz lineage (topic=%s): %v", topicID, rangeErr)
+		headingPageRanges = map[string][2]int{}
+	}
+	modelName := providerModelName(a.fastLLMProvider)
+
 	const expectedQuestionCount = 5
 
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
@@ -529,16 +581,36 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			continue
 		}
 
+		sourcePageStart := q.SourcePageStart
+		sourcePageEnd := q.SourcePageEnd
+		if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
+			rangeByHeading, ok := headingPageRanges[normalizeHeadingKey(q.SourceHeading)]
+			if ok {
+				sourcePageStart = rangeByHeading[0]
+				sourcePageEnd = rangeByHeading[1]
+			}
+		}
+		if sourcePageStart > 0 && sourcePageEnd <= 0 {
+			sourcePageEnd = sourcePageStart
+		}
+		if sourcePageEnd > 0 && sourcePageStart <= 0 {
+			sourcePageStart = sourcePageEnd
+		}
+
 		questions = append(questions, models.QuizQuestion{
-			ID:            uuid.NewString(),
-			TopicID:       topicID,
-			Prompt:        strings.TrimSpace(q.Prompt),
-			Options:       q.Options,
-			CorrectAnswer: matchedOption,
-			Explanation:   strings.TrimSpace(q.Explanation),
-			Hint:          strings.TrimSpace(q.Hint),
-			SourceHeading: strings.TrimSpace(q.SourceHeading),
-			SourceSnippet: strings.TrimSpace(q.SourceSnippet),
+			ID:              uuid.NewString(),
+			TopicID:         topicID,
+			Prompt:          strings.TrimSpace(q.Prompt),
+			Options:         q.Options,
+			CorrectAnswer:   matchedOption,
+			Explanation:     strings.TrimSpace(q.Explanation),
+			Hint:            strings.TrimSpace(q.Hint),
+			SourceHeading:   strings.TrimSpace(q.SourceHeading),
+			SourceSnippet:   strings.TrimSpace(q.SourceSnippet),
+			SourcePageStart: sourcePageStart,
+			SourcePageEnd:   sourcePageEnd,
+			LLMModel:        modelName,
+			PromptVersion:   "quiz-v1",
 		})
 	}
 
@@ -824,7 +896,7 @@ Rules:
 - Require understanding, not pure definition recall.
 - Do not include answer choices, rubric, preamble, or markdown.`
 
-	result, err := a.ragPipeline.ProcessQuery(topicID, request)
+	result, err := a.ragPipeline.ProcessQuery(topicID, request, 0, 0)
 	if err != nil {
 		return map[string]interface{}{"error": "short-answer prompt generation failed: " + err.Error()}
 	}
@@ -1165,6 +1237,18 @@ func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse,
 		out.Feedback = "Review key topic concepts and tighten your explanation."
 	}
 	return &out, nil
+}
+
+func providerModelName(provider llmProviderInterface) string {
+	typed, ok := provider.(interface{ ModelName() string })
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(typed.ModelName())
+}
+
+func normalizeHeadingKey(heading string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(heading)), " "))
 }
 
 func normalizeQuizAnswer(answer string, options []string) string {
