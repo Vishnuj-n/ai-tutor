@@ -1168,7 +1168,7 @@ func EnsureTopicsBatch(items []TopicBatchItem) error {
 	stmt, err := tx.Prepare(`
 		INSERT INTO topics (id, title, status)
 		VALUES (?, ?, 'reading')
-		ON CONFLICT(id) DO UPDATE SET title = excluded.title
+		ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = 'reading'
 	`)
 	if err != nil {
 		return err
@@ -1274,9 +1274,16 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 			startPage, endPage = endPage, startPage
 		}
 
-		_, err = stmt.Exec(startPage, endPage, topicID)
+		res, err := stmt.Exec(startPage, endPage, topicID)
 		if err != nil {
 			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no rows updated for topicID %s", topicID)
 		}
 	}
 
@@ -1383,7 +1390,7 @@ func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage i
 	rows, err := conn.Query(`
 		SELECT c.chunk_text, COALESCE(p.heading, ''), COALESCE(p.content_text, '')
 		FROM chunks c
-		LEFT JOIN parents p ON c.parent_id = p.id
+		LEFT JOIN parents p ON c.parent_id = p.id AND p.topic_id = c.topic_id
 		WHERE c.topic_id = ?
 		  AND c.page_num BETWEEN ? AND ?
 		ORDER BY c.page_num ASC, c.id ASC
@@ -1895,9 +1902,16 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 			return err
 		}
 
-		_, err = stmt.Exec(item.Hash, item.ChunkID)
+		res, err := stmt.Exec(item.Hash, item.ChunkID)
 		if err != nil {
 			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no rows inserted for chunk_id %s", item.ChunkID)
 		}
 	}
 
@@ -2087,6 +2101,10 @@ func AppendQuestionsAndAdvanceCursor(topicID string, questions []models.QuizQues
 
 	// Append questions first
 	for _, q := range questions {
+		if q.TopicID != topicID {
+			err = fmt.Errorf("question topic_id %s does not match target topic %s", q.TopicID, topicID)
+			return err
+		}
 		optionsJSON, marshalErr := json.Marshal(q.Options)
 		if marshalErr != nil {
 			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
