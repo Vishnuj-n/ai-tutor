@@ -1304,6 +1304,26 @@ func GetTopicPageBounds(topicID string) (int, int, error) {
 	return startPage, endPage, nil
 }
 
+// GetTopicCurrentPageCursor returns the current page cursor for a topic.
+func GetTopicCurrentPageCursor(topicID string) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
+
+	var cursor int
+	err := conn.QueryRow(`
+		SELECT COALESCE(current_page_cursor, 0)
+		FROM topics
+		WHERE id = ?
+	`, topicID).Scan(&cursor)
+	if err != nil {
+		return 0, err
+	}
+
+	return cursor, nil
+}
+
 // GetChunkTextsForTopicPageRange returns chunk_text rows ordered by chunk id for one topic/page window.
 func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
 	topicID = strings.TrimSpace(topicID)
@@ -1361,7 +1381,7 @@ func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage i
 	}
 
 	rows, err := conn.Query(`
-		SELECT c.chunk_text, p.heading, p.content_text
+		SELECT c.chunk_text, COALESCE(p.heading, ''), COALESCE(p.content_text, '')
 		FROM chunks c
 		LEFT JOIN parents p ON c.parent_id = p.id
 		WHERE c.topic_id = ?
@@ -1605,6 +1625,17 @@ func DeleteNotebook(notebookID string) error {
 		return fmt.Errorf("notebook id is required")
 	}
 	return deleteNotebookRepo(notebookID)
+}
+
+// DeleteTopic removes a topic and all associated data
+func DeleteTopic(topicID string) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+
+	_, err := conn.Exec("DELETE FROM topics WHERE id = ?", topicID)
+	return err
 }
 
 // Vector Search and Storage Functions

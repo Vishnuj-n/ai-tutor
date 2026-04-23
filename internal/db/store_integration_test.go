@@ -691,10 +691,13 @@ func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
 		durations = append(durations, time.Since(started))
 	}
 
-	// Only assert performance when PERF_RUN environment variable is set
-	if os.Getenv("PERF_RUN") != "" && p95Duration(durations) >= 50*time.Millisecond {
-		t.Logf("context-locked vector retrieval p95: %s (threshold: 50ms)", p95Duration(durations))
-		t.Skip("performance assertion disabled by default - run with PERF_RUN=1 to enable")
+	// Skip test when PERF_RUN is not set, evaluate performance when it is set
+	if os.Getenv("PERF_RUN") == "" {
+		t.Skip("performance test disabled - run with PERF_RUN=1 to enable")
+	}
+
+	if p95Duration(durations) >= 50*time.Millisecond {
+		t.Fatalf("context-locked vector retrieval p95: %s exceeds threshold: 50ms", p95Duration(durations))
 	}
 }
 
@@ -733,10 +736,13 @@ func TestMacroQuizAssemblyFromStoredQuestionsP95Under100ms(t *testing.T) {
 		durations = append(durations, time.Since(started))
 	}
 
-	// Only assert performance when PERF_RUN environment variable is set
-	if os.Getenv("PERF_RUN") != "" && p95Duration(durations) >= 100*time.Millisecond {
-		t.Logf("macro quiz assembly p95: %s (threshold: 100ms)", p95Duration(durations))
-		t.Skip("performance assertion disabled by default - run with PERF_RUN=1 to enable")
+	// Skip test when PERF_RUN is not set, evaluate performance when it is set
+	if os.Getenv("PERF_RUN") == "" {
+		t.Skip("performance test disabled - run with PERF_RUN=1 to enable")
+	}
+
+	if p95Duration(durations) >= 100*time.Millisecond {
+		t.Fatalf("macro quiz assembly p95: %s exceeds threshold: 100ms", p95Duration(durations))
 	}
 }
 

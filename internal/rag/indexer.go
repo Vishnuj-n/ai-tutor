@@ -88,14 +88,14 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	// Generate embeddings for all chunks that need reindexing
 	vectorBatch := make([]db.ChunkVectorBatchItem, 0, len(chunksToReindex))
 	embeddingBatch := make([]db.ChunkEmbeddingBatchItem, 0, len(chunksToReindex))
-	failed := 0
+	failedChunks := make(map[string]struct{})
 
 	for _, chunk := range chunksToReindex {
 		// Generate new embedding
 		vector, err := vi.embedder.Embed(chunk.Text)
 		if err != nil {
 			utils.Warnf("embedding failed for chunk %s: %v", chunk.ID, err)
-			failed++
+			failedChunks[chunk.ID] = struct{}{}
 			continue
 		}
 
@@ -113,7 +113,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	}
 
 	if len(vectorBatch) == 0 {
-		utils.Infof("Indexing complete for topic %s: reindexed=0, skipped=%d, failed=%d", topicID, skipped, failed)
+		utils.Infof("Indexing complete for topic %s: reindexed=0, skipped=%d, failed=%d", topicID, skipped, len(failedChunks))
 		return nil
 	}
 
@@ -124,7 +124,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		for _, item := range vectorBatch {
 			if err := db.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
 				utils.Warnf("failed to store vector for chunk %s: %v", item.ChunkID, err)
-				failed++
+				failedChunks[item.ChunkID] = struct{}{}
 			}
 		}
 	}
@@ -136,13 +136,13 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		for _, item := range embeddingBatch {
 			if err := db.UpdateChunkEmbedding(item.ChunkID, item.Hash); err != nil {
 				utils.Warnf("failed to update chunk embedding metadata for chunk %s: %v", item.ChunkID, err)
-				failed++
+				failedChunks[item.ChunkID] = struct{}{}
 			}
 		}
 	}
 
-	reindexed := len(vectorBatch) - failed
-	utils.Infof("Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d", topicID, reindexed, skipped, failed)
+	reindexed := len(vectorBatch) - len(failedChunks)
+	utils.Infof("Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d", topicID, reindexed, skipped, len(failedChunks))
 	return nil
 }
 
