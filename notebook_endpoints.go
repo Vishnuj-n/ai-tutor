@@ -184,18 +184,37 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "at least one valid chapter is required"}
 	}
 
+	// Collect all topics and bounds for batch processing
+	topicItems := make([]db.TopicBatchItem, 0, len(normalized))
+	boundsItems := make([]db.TopicPageBoundsBatchItem, 0, len(normalized))
 	topicIDs := make([]string, 0, len(normalized))
+
 	for i, ch := range normalized {
 		topicID := fmt.Sprintf("nb-%s-ch-%02d-%s", notebookID, i+1, slugify(ch.Title))
-		if err := db.EnsureTopic(topicID, ch.Title); err != nil {
-			_ = db.UpdateNotebookStatus(notebookID, "failed")
-			return map[string]interface{}{"error": "failed to create topics: " + err.Error()}
-		}
-		if err := db.UpdateTopicPageBounds(topicID, ch.StartPage, ch.EndPage); err != nil {
-			_ = db.UpdateNotebookStatus(notebookID, "failed")
-			return map[string]interface{}{"error": "failed to persist topic bounds: " + err.Error()}
-		}
 		topicIDs = append(topicIDs, topicID)
+
+		topicItems = append(topicItems, db.TopicBatchItem{
+			TopicID: topicID,
+			Title:   ch.Title,
+		})
+
+		boundsItems = append(boundsItems, db.TopicPageBoundsBatchItem{
+			TopicID:   topicID,
+			StartPage: ch.StartPage,
+			EndPage:   ch.EndPage,
+		})
+	}
+
+	// Batch create/update topics
+	if err := db.EnsureTopicsBatch(topicItems); err != nil {
+		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		return map[string]interface{}{"error": "failed to create topics: " + err.Error()}
+	}
+
+	// Batch update page bounds
+	if err := db.UpdateTopicPageBoundsBatch(boundsItems); err != nil {
+		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		return map[string]interface{}{"error": "failed to persist topic bounds: " + err.Error()}
 	}
 
 	if len(topicIDs) > 0 {

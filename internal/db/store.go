@@ -631,6 +631,54 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 	return chunks, nil
 }
 
+// GetChunksForTopics retrieves chunks for multiple topics in a single batch query
+func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
+	if len(topicIDs) == 0 {
+		return make(map[string][]models.Chunk), nil
+	}
+
+	// Build IN clause placeholders
+	placeholders := make([]string, len(topicIDs))
+	args := make([]interface{}, len(topicIDs))
+	for i, topicID := range topicIDs {
+		placeholders[i] = "?"
+		args[i] = topicID
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
+		FROM chunks
+		WHERE topic_id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	// Group chunks by topic_id
+	result := make(map[string][]models.Chunk)
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(
+			&chunk.ID,
+			&chunk.TopicID,
+			&chunk.ParentID,
+			&chunk.Text,
+			&chunk.ImportanceScore,
+			&chunk.WeaknessScore,
+		); err != nil {
+			return nil, err
+		}
+		result[chunk.TopicID] = append(result[chunk.TopicID], chunk)
+	}
+
+	return result, nil
+}
+
 // GetParentSection retrieves a parent section by ID
 func GetParentSection(parentID string) (map[string]string, error) {
 	var id, heading, content string
@@ -1094,6 +1142,59 @@ func EnsureTopic(topicID, title string) error {
 	return err
 }
 
+// TopicBatchItem represents a topic to be created/updated in batch
+type TopicBatchItem struct {
+	TopicID string
+	Title   string
+}
+
+// EnsureTopicsBatch creates or updates multiple topics in a single transaction
+func EnsureTopicsBatch(items []TopicBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO topics (id, title, status)
+		VALUES (?, ?, 'reading')
+		ON CONFLICT(id) DO UPDATE SET title = excluded.title
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = stmt.Close()
+	}()
+
+	for _, item := range items {
+		if item.TopicID == "" {
+			err = fmt.Errorf("topic id is required for all batch items")
+			return err
+		}
+		title := item.Title
+		if title == "" {
+			title = item.TopicID
+		}
+
+		_, err = stmt.Exec(item.TopicID, title)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // UpdateTopicPageBounds stores deterministic chapter bounds for a topic.
 func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	topicID = strings.TrimSpace(topicID)
@@ -1116,6 +1217,69 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		WHERE id = ?
 	`, startPage, endPage, topicID)
 	return err
+}
+
+// TopicPageBoundsBatchItem represents topic page bounds to be updated in batch
+type TopicPageBoundsBatchItem struct {
+	TopicID   string
+	StartPage int
+	EndPage   int
+}
+
+// UpdateTopicPageBoundsBatch updates page bounds for multiple topics in a single transaction
+func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmt, err := tx.Prepare(`
+		UPDATE topics
+		SET start_page = ?, end_page = ?
+		WHERE id = ?
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = stmt.Close()
+	}()
+
+	for _, item := range items {
+		topicID := strings.TrimSpace(item.TopicID)
+		if topicID == "" {
+			err = fmt.Errorf("topic id is required for all batch items")
+			return err
+		}
+
+		startPage := item.StartPage
+		endPage := item.EndPage
+		if startPage < 0 {
+			startPage = 0
+		}
+		if endPage < 0 {
+			endPage = 0
+		}
+		if startPage > endPage {
+			startPage, endPage = endPage, startPage
+		}
+
+		_, err = stmt.Exec(startPage, endPage, topicID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetTopicPageBounds returns persisted chapter bounds for a topic.
@@ -1531,6 +1695,53 @@ func UpdateChunkEmbedding(chunkID string, hash string) error {
 		UPDATE chunks SET embedding_ref = ? WHERE id = ?
 	`, hash, chunkID)
 	return err
+}
+
+// ChunkEmbeddingBatchItem represents a chunk embedding update to be processed in batch
+type ChunkEmbeddingBatchItem struct {
+	ChunkID string
+	Hash    string
+}
+
+// UpdateChunkEmbeddingsBatch updates embedding metadata for multiple chunks in a single transaction
+func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmt, err := tx.Prepare(`
+		UPDATE chunks SET embedding_ref = ? WHERE id = ?
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = stmt.Close()
+	}()
+
+	for _, item := range items {
+		if item.ChunkID == "" {
+			err = fmt.Errorf("chunk id is required for all batch items")
+			return err
+		}
+
+		_, err = stmt.Exec(item.Hash, item.ChunkID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetChunkEmbeddingRef returns the stored embedding_ref hash for a topic-scoped chunk.

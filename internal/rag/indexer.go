@@ -59,10 +59,9 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		}
 	}
 
-	// Index each chunk
-	reindexed := 0
+	// Collect chunks that need reindexing
+	chunksToReindex := make([]models.Chunk, 0)
 	skipped := 0
-	failed := 0
 
 	for _, chunk := range chunks {
 		shouldReindex := vi.config.ForceReindex
@@ -73,34 +72,76 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		}
 
 		if shouldReindex {
-			// Generate new embedding
-			vector, err := vi.embedder.Embed(chunk.Text)
-			if err != nil {
-				utils.Warnf("embedding failed for chunk %s: %v", chunk.ID, err)
-				failed++
-				continue
-			}
-
-			// Store in vec0
-			if err := db.UpsertChunkVector(chunk.ID, vector); err != nil {
-				utils.Warnf("failed to store vector for chunk %s: %v", chunk.ID, err)
-				failed++
-				continue
-			}
-
-			hash := computeTextHash(chunk.Text)
-			if err := db.UpdateChunkEmbedding(chunk.ID, hash); err != nil {
-				utils.Warnf("failed to update chunk embedding metadata for chunk %s: %v", chunk.ID, err)
-				failed++
-				continue
-			}
-
-			reindexed++
+			chunksToReindex = append(chunksToReindex, chunk)
 		} else {
 			skipped++
 		}
 	}
 
+	if len(chunksToReindex) == 0 {
+		utils.Infof("Indexing complete for topic %s: reindexed=0, skipped=%d, failed=0", topicID, skipped)
+		return nil
+	}
+
+	utils.Infof("Processing %d chunks for reindexing in topic %s", len(chunksToReindex), topicID)
+
+	// Generate embeddings for all chunks that need reindexing
+	vectorBatch := make([]db.ChunkVectorBatchItem, 0, len(chunksToReindex))
+	embeddingBatch := make([]db.ChunkEmbeddingBatchItem, 0, len(chunksToReindex))
+	failed := 0
+
+	for _, chunk := range chunksToReindex {
+		// Generate new embedding
+		vector, err := vi.embedder.Embed(chunk.Text)
+		if err != nil {
+			utils.Warnf("embedding failed for chunk %s: %v", chunk.ID, err)
+			failed++
+			continue
+		}
+
+		hash := computeTextHash(chunk.Text)
+
+		vectorBatch = append(vectorBatch, db.ChunkVectorBatchItem{
+			ChunkID: chunk.ID,
+			Vector:  vector,
+		})
+
+		embeddingBatch = append(embeddingBatch, db.ChunkEmbeddingBatchItem{
+			ChunkID: chunk.ID,
+			Hash:    hash,
+		})
+	}
+
+	if len(vectorBatch) == 0 {
+		utils.Infof("Indexing complete for topic %s: reindexed=0, skipped=%d, failed=%d", topicID, skipped, failed)
+		return nil
+	}
+
+	// Batch store vectors
+	if err := db.UpsertChunkVectorsBatch(vectorBatch); err != nil {
+		utils.Warnf("failed to batch store vectors for topic %s: %v", topicID, err)
+		// Fall back to individual operations on batch failure
+		for _, item := range vectorBatch {
+			if err := db.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
+				utils.Warnf("failed to store vector for chunk %s: %v", item.ChunkID, err)
+				failed++
+			}
+		}
+	}
+
+	// Batch update embedding metadata
+	if err := db.UpdateChunkEmbeddingsBatch(embeddingBatch); err != nil {
+		utils.Warnf("failed to batch update embedding metadata for topic %s: %v", topicID, err)
+		// Fall back to individual operations on batch failure
+		for _, item := range embeddingBatch {
+			if err := db.UpdateChunkEmbedding(item.ChunkID, item.Hash); err != nil {
+				utils.Warnf("failed to update chunk embedding metadata for chunk %s: %v", item.ChunkID, err)
+				failed++
+			}
+		}
+	}
+
+	reindexed := len(vectorBatch) - failed
 	utils.Infof("Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d", topicID, reindexed, skipped, failed)
 	return nil
 }
