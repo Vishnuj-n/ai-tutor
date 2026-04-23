@@ -1256,6 +1256,7 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	fmt.Fprintf(&b, "%d-%d", startPage, targetPage)
 	b.WriteString("\nAssessment context window: pages ")
 	fmt.Fprintf(&b, "%d-%d", startPage, contextEndPage)
+	b.WriteString(fmt.Sprintf("\nGenerate questions only from pages %d-%d. Page %d is buffer/supporting context only.", startPage, targetPage, contextEndPage))
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Return exactly 5 questions.\n")
@@ -1581,6 +1582,43 @@ func semanticSnippetByTokens(content string, maxTokens int) string {
 		return semanticSnippet(trimmed, charLimit)
 	}
 
+	// Re-verify token count after truncation to ensure strict bounds
+	truncatedTokens, err := embeddings.CountTokens(truncated)
+	if err != nil {
+		// Fallback to character-based truncation if token counting fails
+		charLimit := maxTokens * 4
+		return semanticSnippet(trimmed, charLimit)
+	}
+
+	// If truncated still exceeds maxTokens, truncate more conservatively
+	if truncatedTokens > maxTokens {
+		conservativeLimit := maxTokens - 10
+		if conservativeLimit > 0 {
+			conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
+			if err == nil {
+				// Verify the conservative truncation
+				conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
+				if verifyErr == nil && conservativeTokens <= maxTokens {
+					truncated = conservative
+					truncatedTokens = conservativeTokens
+				} else {
+					// If still exceeds, use even more conservative limit
+					veryConservativeLimit := maxTokens - 20
+					if veryConservativeLimit > 0 {
+						veryConservative, veryErr := embeddings.TruncateToTokens(trimmed, veryConservativeLimit)
+						if veryErr == nil {
+							veryTokens, veryVerifyErr := embeddings.CountTokens(veryConservative)
+							if veryVerifyErr == nil && veryTokens <= maxTokens {
+								truncated = veryConservative
+								truncatedTokens = veryTokens
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Apply semantic boundary logic to the token-truncated text
 	// Prefer sentence boundaries to avoid abrupt truncation
 	best := strings.LastIndex(truncated, ". ")
@@ -1606,24 +1644,37 @@ func semanticSnippetByTokens(content string, maxTokens int) string {
 		}
 	}
 
-	// Ensure final result fits within token budget
-	finalTokens, err := embeddings.CountTokens(truncated)
-	if err == nil && finalTokens <= maxTokens {
+	// Final verification: ensure truncated text fits within token budget
+	if truncatedTokens <= maxTokens {
 		return truncated
 	}
 
-	// Final fallback: truncate more conservatively
+	// Final fallback: truncate more conservatively with verification
 	conservativeLimit := maxTokens - 10 // leave buffer
 	if conservativeLimit > 0 {
 		conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
 		if err == nil {
-			return conservative + "..."
+			// Verify conservative truncation before returning
+			conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
+			if verifyErr == nil && conservativeTokens <= maxTokens {
+				return conservative + "..."
+			}
 		}
 	}
 
-	// Last resort: character-based fallback
+	// Last resort: character-based fallback with verification
 	charLimit := maxTokens * 3 // more conservative character estimate
-	return semanticSnippet(trimmed, charLimit)
+	result := semanticSnippet(trimmed, charLimit)
+	// Verify final result
+	if finalTokens, verifyErr := embeddings.CountTokens(result); verifyErr == nil && finalTokens <= maxTokens {
+		return result
+	}
+	// If even the fallback exceeds, truncate more aggressively
+	if finalTokens, verifyErr := embeddings.CountTokens(result); verifyErr == nil && finalTokens > maxTokens {
+		charLimit = maxTokens * 2 // even more conservative
+		return semanticSnippet(trimmed, charLimit)
+	}
+	return result
 }
 
 func minInt(a, b int) int {
