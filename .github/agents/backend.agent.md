@@ -44,7 +44,7 @@ You are responsible only for Go backend development in a Wails application.
 
 ## Validation and Testing
 After implementing changes, **always**:
-1. Run `golangci-lint ./...` to check for code quality issues
+1. Run `golangci-lint run ./...` to check for code quality issues
 2. Run `go vet ./...` to check for potential bugs
 3. Run `go fmt ./...` to verify code formatting
 4. Run `go build ./...` to verify compilation
