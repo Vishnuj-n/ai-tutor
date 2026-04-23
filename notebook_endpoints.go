@@ -214,6 +214,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	// Batch update page bounds
 	if err := db.UpdateTopicPageBoundsBatch(boundsItems); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		// Cleanup: delete created topic rows to avoid orphaned records
+		for _, item := range topicItems {
+			_ = db.DeleteTopic(item.TopicID)
+		}
 		return map[string]interface{}{"error": "failed to persist topic bounds: " + err.Error()}
 	}
 
@@ -224,6 +228,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	groups, allChunks := buildTopicGroupsFromChapters(notebookID, doc, topicIDs, normalized)
 	if len(groups) == 0 || len(allChunks) == 0 {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		// Cleanup: delete created topic rows to avoid orphaned records
+		for _, item := range topicItems {
+			_ = db.DeleteTopic(item.TopicID)
+		}
 		return map[string]interface{}{"error": "confirmed chapters produced no chunks"}
 	}
 
@@ -239,6 +247,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	if err := a.notebookService.IngestNotebookContentByTopic(notebookID, groups); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		// Cleanup: delete created topic rows to avoid orphaned records
+		for _, item := range topicItems {
+			_ = db.DeleteTopic(item.TopicID)
+		}
 		emitIngestionProgress(a, ingestionProgressPayload{
 			NotebookID: notebookID,
 			Status:     "failed",

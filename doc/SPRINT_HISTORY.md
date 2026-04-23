@@ -161,10 +161,9 @@ For more details see `doc/solutions/SOLUTIONS_2026-04-11.md` and the linked code
 
 ## Backend API
 
-- `GetFlashcards(dueOnly bool) []Card` – returns cards with next review dates
-- `RecordReview(cardID string, quality int) Card` – updates FSRS state and returns next card
-- `GetProgress() Progress` – returns metrics
-- SQLite: `flashcards`, `review_history`, `card_state` tables
+- `GetFlashcards(topicID string, dueOnly bool) map[string]interface{}` – returns cards for a topic, optionally filtered by due status
+- `RecordFlashcardReview(cardID string, rating string) map[string]interface{}` – updates FSRS state and returns review result
+- SQLite: `fsrs_cards` and `fsrs_review_log` tables
 
 ## Workflow
 

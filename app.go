@@ -732,13 +732,13 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		sourcePageEnd := q.SourcePageEnd
 		if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
 			sourcePageStart = startPage
-			sourcePageEnd = contextEndPage
+			sourcePageEnd = targetPage
 		}
 		if sourcePageStart < startPage {
 			sourcePageStart = startPage
 		}
-		if sourcePageEnd > contextEndPage {
-			sourcePageEnd = contextEndPage
+		if sourcePageEnd > targetPage {
+			sourcePageEnd = targetPage
 		}
 		if sourcePageEnd < sourcePageStart {
 			sourcePageEnd = sourcePageStart
@@ -765,6 +765,18 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{
 			"error": fmt.Sprintf("completion quiz produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
 		}
+	}
+
+	// Validate cursor before appending questions to prevent replayed/backwards advances
+	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
+	}
+	if startPage != currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
+	}
+	if targetPage <= currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
 	}
 
 	nextCursor := targetPage + 1
@@ -1274,6 +1286,15 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 
 		// Check if adding this passage would exceed budget
 		if currentTokens+passageTokens > availableContextTokens {
+			// Add truncated snippet if we have remaining tokens
+			remainingTokens := availableContextTokens - currentTokens
+			if remainingTokens > 0 {
+				b.WriteString("- ")
+				truncatedSnippet := semanticSnippetByTokens(text, remainingTokens)
+				b.WriteString(truncatedSnippet)
+				b.WriteString("\n")
+				currentTokens = availableContextTokens // enforce token limit
+			}
 			break
 		}
 
