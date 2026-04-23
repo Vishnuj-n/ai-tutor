@@ -85,7 +85,7 @@ Relational structure with JSON extensions.
 Suggested schema:
 
 - topics
-  - id, title, status, source_ref, current_page_cursor, created_at, updated_at
+  - id, title, status, start_page, end_page, current_page_cursor, created_at, updated_at
 - parents
   - id, topic_id, heading, order_index, content_text
 - chunks
