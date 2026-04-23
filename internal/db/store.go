@@ -495,9 +495,7 @@ func ensureFSRSSchema() error {
 			return beginErr
 		}
 		defer func() {
-			if err != nil {
-				_ = tx.Rollback()
-			}
+			_ = tx.Rollback()
 		}()
 
 		stmts := []string{
