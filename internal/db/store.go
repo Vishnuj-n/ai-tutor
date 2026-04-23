@@ -707,6 +707,7 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 		FROM topics
 		WHERE status IN ('unseen', 'reading')
 		  AND COALESCE(end_page, 0) > 0
+		  AND COALESCE(current_page_cursor, 0) < COALESCE(end_page, 0)
 		ORDER BY updated_at ASC, created_at ASC
 		LIMIT 1
 	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor)

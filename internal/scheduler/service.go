@@ -119,6 +119,8 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		startPage, endPage, ok := resolvePageWindow(readingTopic, pagesToRead)
 		if ok {
 			activeTopics = append(activeTopics, readingTopic.Title)
+			// Calculate actual task minutes based on page span
+			actualTaskMinutes := int(float64(endPage-startPage+1) * MinutesPerPage)
 			tasks = append(tasks, models.ScheduledTask{
 				ID:              "task-read-" + readingTopic.ID,
 				ActionType:      "read",
@@ -126,18 +128,24 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 				TopicID:         readingTopic.ID,
 				StartPage:       startPage,
 				EndPage:         endPage,
-				EstimateMinutes: readingBudget,
+				EstimateMinutes: actualTaskMinutes,
 				Priority:        1,
 				Meta:            fmt.Sprintf("Context-locked to pages %d-%d", startPage, endPage),
 			})
 		}
 	}
 
+	// Calculate total learning minutes from actual tasks
+	totalLearningMinutes := 0
+	for _, task := range tasks {
+		totalLearningMinutes += task.EstimateMinutes
+	}
+
 	return &models.TodayPlan{
 		Date:            now.Format("2006-01-02"),
 		TotalMinutes:    dailyStudyMinutes,
 		ReviewMinutes:   reviewBudget,
-		LearningMinutes: readingBudget,
+		LearningMinutes: totalLearningMinutes,
 		DueReviewCards:  dueCards,
 		ActiveTopics:    activeTopics,
 		Tasks:           tasks,
