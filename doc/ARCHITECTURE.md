@@ -85,11 +85,11 @@ Relational structure with JSON extensions.
 Suggested schema:
 
 - topics
-  - id, title, status, source_ref, created_at, updated_at
+  - id, title, status, source_ref, current_page_cursor, created_at, updated_at
 - parents
   - id, topic_id, heading, order_index, content_text
 - chunks
-  - id, topic_id, parent_id, chunk_text, token_count, embedding_ref
+  - id, topic_id, parent_id, page_num, chunk_text, token_count, embedding_ref
 - quiz_sets
   - id, topic_id, version, payload_json, created_at
 - topic_progress
@@ -103,23 +103,23 @@ Suggested schema:
 
 ### What
 
-Hybrid chunking with parent-document retrieval extension.
+Context-Locked Session Architecture with LLM-drafted boundaries and exact page provenance.
 
 ### Why
 
-- Heading-aware chunks preserve semantic boundaries
-- Token fallback prevents oversized or malformed sections
-- Parent expansion gives coherent context without full-document load
+- Automated regex chapter extraction was dropped in favor of reliable LLM-drafted boundaries.
+- `page_num` provenance provides exact location tracking for chunks.
+- Parent expansion gives coherent context without full-document load.
 
 ### How
 
-1. Parse source into heading-based parent sections.
-2. Create child chunks from each parent section.
+1. Parse source into parent sections using LLM-drafted boundaries (dropping automated regex parsers).
+2. Create child chunks from each parent section, recording exact `page_num` provenance.
 3. If a section exceeds token target, split by token budget.
 4. Tokenize chunk text using `asset/tokenizer.json`.
 5. Generate embeddings with `asset/model_int8.onnx` via ONNX Runtime.
 6. Persist vectors in a `sqlite-vec` virtual table and keep chunk metadata in SQLite relational tables.
-5. On retrieval, fetch top-k child chunks then expand to parent sections.
+7. On retrieval, fetch top-k child chunks then expand to parent sections.
 
 ## 6. RAG Pipeline (Topic-Scoped)
 
@@ -155,7 +155,7 @@ Constraints:
 
 ### What
 
-The embedding pipeline depends on local model/runtime assets.
+The embedding pipeline depends on local model/runtime assets located in the `asset/` folder.
 
 ### Why
 
@@ -163,7 +163,7 @@ Embedding generation must be deterministic and available without external vector
 
 ### How
 
-- Required assets:
+- Required assets (must be present in the `asset/` folder):
   - `asset/tokenizer.json`
   - `asset/model_int8.onnx`
   - `asset/onnxruntime.dll` (Windows runtime)
