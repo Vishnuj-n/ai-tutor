@@ -158,15 +158,30 @@ func (a *App) startup(ctx context.Context) {
 		topicIDs = []string{"os-scheduling"}
 	}
 
-	for _, topicID := range topicIDs {
-		chunks, err := db.GetChunksForTopic(topicID)
-		if err != nil {
-			utils.Warnf("could not load chunks for topic %s: %v", topicID, err)
-			continue
+	// Batch load all chunks in a single query
+	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
+	if err != nil {
+		utils.Warnf("could not load chunks for topics: %v", err)
+		// Fall back to individual queries on batch failure
+		for _, topicID := range topicIDs {
+			chunks, err := db.GetChunksForTopic(topicID)
+			if err != nil {
+				utils.Warnf("could not load chunks for topic %s: %v", topicID, err)
+				continue
+			}
+			utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
+			for _, chunk := range chunks {
+				embedStore.AddChunk(chunk)
+			}
 		}
-		utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
-		for _, chunk := range chunks {
-			embedStore.AddChunk(chunk)
+	} else {
+		// Process batch results
+		for _, topicID := range topicIDs {
+			chunks := chunksByTopic[topicID]
+			utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
+			for _, chunk := range chunks {
+				embedStore.AddChunk(chunk)
+			}
 		}
 	}
 
