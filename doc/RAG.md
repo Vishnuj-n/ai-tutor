@@ -53,7 +53,7 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - The UI sends the active topic identifier with the request
 - Backend validates that the topic exists and is eligible for retrieval
 - Retrieval queries only the embeddings associated with that topic and its specific `page_num` bounds
-- Each chunk uses one canonical string `chunk_id` in relational tables, mapped to integer SQLite rowids for `sqlite-vec` storage.
+- Each chunk uses one canonical string `id` in relational tables, mapped to integer SQLite rowids for `sqlite-vec` storage.
 
 ## 4. Content Structure
 
@@ -75,7 +75,7 @@ Source material is stored in a parent-child retrieval layout within a Context-Lo
 - Parse content into parent sections utilizing LLM-drafted boundaries
 - Create chunks with strict adherence to `page_num` bounds
 - Split oversized sections with token-aware fallback chunking
-- Assign a stable, unique chunk_id to every child chunk at ingest time
+- Assign a stable, unique `id` to every child chunk at ingest time
 - Store embeddings on child chunks
 - Keep parent and topic references so retrieval can return original section text and enforce scope
 
@@ -127,20 +127,20 @@ Embeddings are stored in a `sqlite-vec` virtual table with integer rowids and JS
 
 **Storage:**
 - Application maintains a single SQLite connection with vec0 extension loaded (via `db.Init()` and connection pool constraints).
-- Each chunk has a stable string `chunk_id` stored in the `chunks` table, alongside its `page_num`.
-- The `chunk_vectors` table maps chunk IDs to integer SQLite rowids and stores embeddings as JSON strings.
-- On insert, `UpsertChunkVector()` resolves the string chunk_id to its integer rowid before inserting into vec0.
+- Each chunk has a stable string `id` stored in the `chunks` table, alongside its `page_num`. The `id` is the stable primary identifier stored on the `chunks` table.
+- The `chunk_vectors` table stores the mapping to SQLite `rowid`s while referencing the canonical chunk identifier, storing embeddings as JSON strings.
+- On insert, `UpsertChunkVector()` resolves the string `id` to its integer rowid before inserting into vec0.
 
 **Serialization:**
 - `vectorToJSON()` converts float32 slices to compact JSON strings before passing to database parameters.
 - This avoids database/sql type binding errors and keeps the storage format compatible with direct SQL inspection.
 
 **Retrieval (Two-Step Fast Retrieval):**
-1. Pre-filter target rowids by querying the `chunks` table directly, strictly bounded by the active `topic_id` and the relevant `page_num` scope.
-2. Execute the `sqlite-vec` cosine-distance calculation explicitly restricted to that pre-filtered set of `rowid`s.
+1. Pre-filter target rowids by querying the `chunks` table directly, strictly bounded by the active `topic_id` and the relevant `page_num` scope. This yields the vector `rowid`s for the `chunk_vectors` mapping table.
+2. Execute the `sqlite-vec` cosine-distance calculation explicitly restricted to that pre-filtered set of `rowid`s in the `chunk_vectors` table.
 - This two-step process explicitly avoids complex JOINs against the virtual table during distance calculation.
 - Results are joined with chunks/parents to populate context for prompt assembly.
-- Integer rowid-to-chunk_id mapping is transparent to the RAG pipeline layer.
+- Integer rowid-to-`id` mapping is transparent to the RAG pipeline layer.
 
 **Architectural Constraints:**
 - Connection pool is fixed at 1 active connection (`SetMaxOpenConns(1)`). Do not change this.
@@ -168,8 +168,8 @@ Prompt payload should include:
 
 Embedding metadata requirements (ingestion-time):
 
-- Persist `topic_id`, `parent_id`, and `chunk_id` in SQLite chunk rows.
-- Persist vectors in sqlite-vec by integer SQLite rowid, resolved from relational chunk_id.
+- Persist `topic_id`, `parent_id`, and `id` in SQLite chunk rows.
+- Persist vectors in sqlite-vec by integer SQLite rowid, resolved from relational `id`.
 - Keep metadata minimal but sufficient for fast topic-filtered retrieval.
 
 Prompt rules:
