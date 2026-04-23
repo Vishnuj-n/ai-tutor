@@ -689,15 +689,15 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		contextEndPage = topicEndPage
 	}
 
-	chunkTexts, err := db.GetChunkTextsForTopicPageRange(topicID, startPage, contextEndPage)
+	parentPassages, err := db.GetParentPassagesForTopicPageRange(topicID, startPage, contextEndPage)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch completion chunks: " + err.Error()}
+		return map[string]interface{}{"error": "failed to fetch completion passages: " + err.Error()}
 	}
-	if len(chunkTexts) == 0 {
-		return map[string]interface{}{"error": "no chunk content found for completion window"}
+	if len(parentPassages) == 0 {
+		return map[string]interface{}{"error": "no passage content found for completion window"}
 	}
 
-	raw, err := a.fastLLMProvider.GenerateAnswer(buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, chunkTexts))
+	raw, err := a.fastLLMProvider.GenerateAnswer(buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages))
 	if err != nil {
 		return map[string]interface{}{"error": "completion quiz generation failed: " + err.Error()}
 	}
@@ -767,14 +767,10 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		}
 	}
 
-	if err := db.AppendQuestionsForTopic(topicID, questions); err != nil {
-		return map[string]interface{}{"error": "failed to append completion questions: " + err.Error()}
-	}
-
 	nextCursor := targetPage + 1
 	markLearned := targetPage >= topicEndPage
-	if err := db.UpdateTopicReadingCursor(topicID, nextCursor, markLearned); err != nil {
-		return map[string]interface{}{"error": "failed to update topic cursor: " + err.Error()}
+	if err := db.AppendQuestionsAndAdvanceCursor(topicID, questions, nextCursor, markLearned); err != nil {
+		return map[string]interface{}{"error": "failed to append completion questions and update cursor: " + err.Error()}
 	}
 
 	status := "reading"
@@ -1238,16 +1234,16 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	return b.String()
 }
 
-func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, chunkTexts []string) string {
+func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
 	b.WriteString("Generate exactly 5 multiple-choice questions for this completed reading session.\n")
 	b.WriteString("Topic ID: ")
 	b.WriteString(topicID)
 	b.WriteString("\nLocked completion window: pages ")
-	b.WriteString(fmt.Sprintf("%d-%d", startPage, targetPage))
+	fmt.Fprintf(&b, "%d-%d", startPage, targetPage)
 	b.WriteString("\nAssessment context window: pages ")
-	b.WriteString(fmt.Sprintf("%d-%d", startPage, contextEndPage))
+	fmt.Fprintf(&b, "%d-%d", startPage, contextEndPage)
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Return exactly 5 questions.\n")
@@ -1257,14 +1253,37 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	b.WriteString("- Cover definitions, application, and one misconception.\n")
 	b.WriteString("\nContext chunks (ordered):\n")
 
-	const maxChunks = 20
-	for i, text := range chunkTexts {
-		if i >= maxChunks {
+	// Reserve tokens for system prompt and instructions (estimated 300 tokens)
+	const systemPromptTokens = 300
+	// Reserve tokens for JSON structure and questions (estimated 800 tokens)
+	const outputStructureTokens = 800
+
+	// Get model token budget - use conservative 4k limit for compatibility
+	const maxModelTokens = 4096
+	availableContextTokens := maxModelTokens - systemPromptTokens - outputStructureTokens
+
+	// Accumulate passages within token budget
+	currentTokens := 0
+	for _, text := range parentPassages {
+		// Count tokens for this passage
+		passageTokens, err := embeddings.CountTokens(text)
+		if err != nil {
+			// Fallback to character-based estimate if tokenizer fails
+			passageTokens = len(text) / 4 // rough estimate
+		}
+
+		// Check if adding this passage would exceed budget
+		if currentTokens+passageTokens > availableContextTokens {
 			break
 		}
+
 		b.WriteString("- ")
-		b.WriteString(semanticSnippet(text, 700))
+		// Use semantic snippet but truncate by tokens instead of characters
+		snippet := semanticSnippetByTokens(text, passageTokens)
+		b.WriteString(snippet)
 		b.WriteString("\n")
+
+		currentTokens += passageTokens
 	}
 	return b.String()
 }
@@ -1507,6 +1526,83 @@ func semanticSnippet(content string, limit int) string {
 		cutRunes = cutRunes[:limit-3]
 	}
 	return string(cutRunes) + "..."
+}
+
+// semanticSnippetByTokens truncates text to fit within a token budget using the tokenizer
+func semanticSnippetByTokens(content string, maxTokens int) string {
+	trimmed := strings.TrimSpace(content)
+	if maxTokens <= 0 || trimmed == "" {
+		return ""
+	}
+
+	// Check if content already fits within token budget
+	tokens, err := embeddings.CountTokens(trimmed)
+	if err != nil {
+		// Fallback to character-based estimate if tokenizer fails
+		estimatedTokens := len(trimmed) / 4
+		if estimatedTokens <= maxTokens {
+			return trimmed
+		}
+		// Rough character-based truncation as fallback
+		charLimit := maxTokens * 4
+		return semanticSnippet(trimmed, charLimit)
+	}
+
+	if tokens <= maxTokens {
+		return trimmed
+	}
+
+	// Use tokenizer to truncate to token limit
+	truncated, err := embeddings.TruncateToTokens(trimmed, maxTokens)
+	if err != nil {
+		// Fallback to character-based truncation if tokenizer truncate fails
+		charLimit := maxTokens * 4
+		return semanticSnippet(trimmed, charLimit)
+	}
+
+	// Apply semantic boundary logic to the token-truncated text
+	// Prefer sentence boundaries to avoid abrupt truncation
+	best := strings.LastIndex(truncated, ". ")
+	if idx := strings.LastIndex(truncated, "\n"); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(truncated, "? "); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(truncated, "! "); idx > best {
+		best = idx
+	}
+
+	// Only use boundary if we keep at least half the content
+	if best > len(truncated)/2 {
+		candidate := strings.TrimSpace(truncated[:best+1])
+		if candidate != "" {
+			// Verify candidate still fits within token budget
+			candidateTokens, err := embeddings.CountTokens(candidate)
+			if err == nil && candidateTokens <= maxTokens {
+				return candidate + "..."
+			}
+		}
+	}
+
+	// Ensure final result fits within token budget
+	finalTokens, err := embeddings.CountTokens(truncated)
+	if err == nil && finalTokens <= maxTokens {
+		return truncated
+	}
+
+	// Final fallback: truncate more conservatively
+	conservativeLimit := maxTokens - 10 // leave buffer
+	if conservativeLimit > 0 {
+		conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
+		if err == nil {
+			return conservative + "..."
+		}
+	}
+
+	// Last resort: character-based fallback
+	charLimit := maxTokens * 3 // more conservative character estimate
+	return semanticSnippet(trimmed, charLimit)
 }
 
 func minInt(a, b int) int {

@@ -262,7 +262,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		NotebookID: notebookID,
 		Status:     status,
 		Message:    "Chunking complete",
-		Phase:      "indexing",
+		Phase:      "complete",
 		Processed:  len(allChunks),
 		Total:      len(allChunks),
 		Percent:    100,
