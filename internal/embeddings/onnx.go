@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"ai-tutor/internal/utils"
+
 	"github.com/sugarme/tokenizer"
 	"github.com/sugarme/tokenizer/pretrained"
 	ort "github.com/yalue/onnxruntime_go"
@@ -32,7 +34,7 @@ type OnnxEmbedder struct {
 
 // NewOnnxEmbedder creates a new ONNX embedder from model, tokenizer, and runtime paths.
 func NewOnnxEmbedder(modelPath, tokenizerPath, configuredRuntimePath string) (*OnnxEmbedder, error) {
-	log.Printf("Initializing OnnxEmbedder")
+	utils.Infof("Initializing OnnxEmbedder")
 
 	if _, err := os.Stat(tokenizerPath); err != nil {
 		return nil, fmt.Errorf("failed to access tokenizer file %s: %w", tokenizerPath, err)
@@ -128,7 +130,7 @@ func NewOnnxEmbedder(modelPath, tokenizerPath, configuredRuntimePath string) (*O
 	}
 	embedder.dimCount = int32(len(warmupVec))
 
-	log.Printf("OnnxEmbedder initialized (seq=%d dim=%d runtime=%s)", embedder.maxSeqLen, embedder.dimCount, runtimePath)
+	utils.Infof("OnnxEmbedder initialized (seq=%d dim=%d runtime=%s)", embedder.maxSeqLen, embedder.dimCount, runtimePath)
 
 	return embedder, nil
 }

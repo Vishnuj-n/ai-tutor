@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -10,22 +11,20 @@ import (
 
 const (
 	DefaultDailyStudyMinutes = 90
-	MinLearningMinutes       = 20
-	MaxReviewMinutes         = 60
+	ReviewMinutesPerCard     = 0.5
+	MinutesPerPage           = 2.5
+	ClampWindowPages         = 4
 )
 
 type queryDueReviewCardsFn func(now int64) (int, error)
-type queryActiveTopicsFn func(limit int) ([]string, error)
-type queryLearningTopicsFn func(limit int) ([]models.TopicSummary, error)
-type countLearnedTopicsFn func() (int, error)
+type queryDailyStudyMinutesFn func() (int, error)
+type queryNextReadingTopicFn func() (models.ReadingTopicCursor, bool, error)
 
-// service builds one daily plan that can include all study modes.
-// Use New() or exported functional options to construct safely.
+// service builds one context-locked daily reading task.
 type service struct {
-	queryDueReviewCards queryDueReviewCardsFn
-	queryActiveTopics   queryActiveTopicsFn
-	queryLearningTopics queryLearningTopicsFn
-	countLearnedTopics  countLearnedTopicsFn
+	queryDueReviewCards   queryDueReviewCardsFn
+	queryDailyStudyMinute queryDailyStudyMinutesFn
+	queryNextReadingTopic queryNextReadingTopicFn
 }
 
 // Option customizes service dependencies for testing and advanced setups.
@@ -40,29 +39,20 @@ func WithQueryDueReviewCards(fn queryDueReviewCardsFn) Option {
 	}
 }
 
-// WithQueryActiveTopics overrides the active topics query dependency.
-func WithQueryActiveTopics(fn queryActiveTopicsFn) Option {
+// WithQueryDailyStudyMinutes overrides the user settings query dependency.
+func WithQueryDailyStudyMinutes(fn queryDailyStudyMinutesFn) Option {
 	return func(s *service) {
 		if fn != nil {
-			s.queryActiveTopics = fn
+			s.queryDailyStudyMinute = fn
 		}
 	}
 }
 
-// WithQueryLearningTopics overrides the learning topics query dependency.
-func WithQueryLearningTopics(fn queryLearningTopicsFn) Option {
+// WithQueryNextReadingTopic overrides the topic cursor query dependency.
+func WithQueryNextReadingTopic(fn queryNextReadingTopicFn) Option {
 	return func(s *service) {
 		if fn != nil {
-			s.queryLearningTopics = fn
-		}
-	}
-}
-
-// WithCountLearnedTopics overrides the learned topics count dependency.
-func WithCountLearnedTopics(fn countLearnedTopicsFn) Option {
-	return func(s *service) {
-		if fn != nil {
-			s.countLearnedTopics = fn
+			s.queryNextReadingTopic = fn
 		}
 	}
 }
@@ -73,13 +63,11 @@ type Service interface {
 }
 
 // New creates a new scheduler service with real database queries.
-// Use functional options to override dependencies for testing.
 func New(opts ...Option) Service {
 	s := &service{
-		queryDueReviewCards: db.QueryDueReviewCards,
-		queryActiveTopics:   db.QueryActiveTopics,
-		queryLearningTopics: db.QueryLearningTopics,
-		countLearnedTopics:  db.CountLearnedTopics,
+		queryDueReviewCards:   db.QueryDueReviewCards,
+		queryDailyStudyMinute: db.GetDailyStudyMinutes,
+		queryNextReadingTopic: db.QueryNextReadingTopic,
 	}
 
 	for _, opt := range opts {
@@ -89,136 +77,123 @@ func New(opts ...Option) Service {
 	return s
 }
 
-// BuildTodayPlan builds the complete daily schedule
+// BuildTodayPlan calculates review budget, reading budget, and one context-locked reading task.
 func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
-
 	dueCards, err := s.queryDueReviewCards(now.Unix())
 	if err != nil {
 		return nil, err
 	}
 
-	activeTopics, err := s.queryActiveTopics(3)
+	dailyStudyMinutes, err := s.queryDailyStudyMinute()
+	if err != nil {
+		return nil, err
+	}
+	if dailyStudyMinutes <= 0 {
+		dailyStudyMinutes = DefaultDailyStudyMinutes
+	}
+
+	reviewBudget := int(math.Ceil(float64(dueCards) * ReviewMinutesPerCard))
+	if reviewBudget > dailyStudyMinutes {
+		reviewBudget = dailyStudyMinutes
+	}
+
+	readingBudget := dailyStudyMinutes - reviewBudget
+	if readingBudget < 0 {
+		readingBudget = 0
+	}
+
+	pagesToRead := int(math.Floor(float64(readingBudget) / MinutesPerPage))
+	if pagesToRead < 0 {
+		pagesToRead = 0
+	}
+
+	readingTopic, foundReadingTopic, err := s.queryNextReadingTopic()
 	if err != nil {
 		return nil, err
 	}
 
-	// Determine catch-up mode first; learning queries are only needed if NOT in catch-up
-	catchUpMode := dueCards*2 > MaxReviewMinutes
+	tasks := make([]models.ScheduledTask, 0, 1)
+	activeTopics := make([]string, 0, 1)
 
-	reviewMinutes := dueCards * 2
-	if catchUpMode {
-		reviewMinutes = DefaultDailyStudyMinutes
-	}
-
-	// Skip learning queries during catch-up to avoid transient DB failures aborting the entire plan
-	var learningTopics []models.TopicSummary
-	var learnedTopicsCount int
-	if !catchUpMode {
-		var err error
-		learningTopics, err = s.queryLearningTopics(2)
-		if err != nil {
-			return nil, err
-		}
-
-		learnedTopicsCount, err = s.countLearnedTopics()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if dueCards == 0 {
-		reviewMinutes = 0
-	}
-
-	learningMinutes := DefaultDailyStudyMinutes - reviewMinutes
-
-	tasks := make([]models.ScheduledTask, 0, 6)
-	priority := 1
-	usedMinutes := 0
-
-	if dueCards > 0 {
-		tasks = append(tasks, models.ScheduledTask{
-			ID:              "task-review-due",
-			ActionType:      "review",
-			Title:           "Due Flashcard Reviews",
-			EstimateMinutes: reviewMinutes,
-			Priority:        priority,
-			Meta:            fmt.Sprintf("%d cards due today", dueCards),
-		})
-		priority++
-		usedMinutes += reviewMinutes
-	}
-
-	if !catchUpMode && len(learningTopics) > 0 {
-		perTopic := learningMinutes / len(learningTopics)
-		if perTopic < 15 {
-			perTopic = 15
-		}
-
-		for _, topic := range learningTopics {
+	if foundReadingTopic {
+		startPage, endPage, ok := resolvePageWindow(readingTopic, pagesToRead)
+		if ok {
+			activeTopics = append(activeTopics, readingTopic.Title)
+			// Calculate actual task minutes based on page span
+			actualTaskMinutes := int(float64(endPage-startPage+1) * MinutesPerPage)
 			tasks = append(tasks, models.ScheduledTask{
-				ID:              "task-read-" + topic.ID,
+				ID:              "task-read-" + readingTopic.ID,
 				ActionType:      "read",
-				Title:           "Read: " + topic.Title,
-				TopicID:         topic.ID,
-				EstimateMinutes: perTopic,
-				Priority:        priority,
-				Meta:            "Concept-building session",
-			})
-			priority++
-			usedMinutes += perTopic
-		}
-	}
-
-	if !catchUpMode && learnedTopicsCount > 0 {
-		remaining := DefaultDailyStudyMinutes - usedMinutes
-		if remaining >= 15 {
-			tasks = append(tasks, models.ScheduledTask{
-				ID:              "task-quiz-practice",
-				ActionType:      "quiz",
-				Title:           "Quiz Checkpoint",
-				EstimateMinutes: 15,
-				Priority:        priority,
-				Meta:            "Validate understanding on learned topics",
-			})
-			priority++
-			usedMinutes += 15
-		}
-
-		remaining = DefaultDailyStudyMinutes - usedMinutes
-		if remaining >= 10 {
-			tasks = append(tasks, models.ScheduledTask{
-				ID:              "task-socratic-reflection",
-				ActionType:      "socratic",
-				Title:           "Socratic Reflection",
-				EstimateMinutes: 10,
-				Priority:        priority,
-				Meta:            "Explain ideas in your own words",
+				Title:           fmt.Sprintf("Read: %s (Pages %d to %d)", readingTopic.Title, startPage, endPage),
+				TopicID:         readingTopic.ID,
+				StartPage:       startPage,
+				EndPage:         endPage,
+				EstimateMinutes: actualTaskMinutes,
+				Priority:        1,
+				Meta:            fmt.Sprintf("Context-locked to pages %d-%d", startPage, endPage),
 			})
 		}
 	}
 
-	if len(tasks) == 0 {
-		tasks = append(tasks, models.ScheduledTask{
-			ID:              "task-explore",
-			ActionType:      "explore",
-			Title:           "Optional Exploration",
-			EstimateMinutes: 20,
-			Priority:        1,
-			Meta:            "Pick any topic and do a short learning pass",
-		})
+	// Calculate total learning minutes from actual tasks
+	totalLearningMinutes := 0
+	for _, task := range tasks {
+		totalLearningMinutes += task.EstimateMinutes
 	}
-
-	isEstimate := len(tasks) == 1 && tasks[0].ActionType == "explore"
 
 	return &models.TodayPlan{
 		Date:            now.Format("2006-01-02"),
-		TotalMinutes:    DefaultDailyStudyMinutes,
-		ReviewMinutes:   reviewMinutes,
-		LearningMinutes: learningMinutes,
+		TotalMinutes:    dailyStudyMinutes,
+		ReviewMinutes:   reviewBudget,
+		LearningMinutes: totalLearningMinutes,
 		DueReviewCards:  dueCards,
 		ActiveTopics:    activeTopics,
 		Tasks:           tasks,
-		IsEstimate:      isEstimate,
+		IsEstimate:      len(tasks) == 0,
 	}, nil
+}
+
+func resolvePageWindow(topic models.ReadingTopicCursor, pagesToRead int) (int, int, bool) {
+	if topic.EndPage <= 0 {
+		return 0, 0, false
+	}
+	if pagesToRead <= 0 {
+		return 0, 0, false
+	}
+
+	startPage := topic.CurrentPageCursor
+	if startPage <= 0 {
+		startPage = topic.StartPage
+	}
+	if startPage <= 0 {
+		startPage = 1
+	}
+	if topic.StartPage > 0 && startPage < topic.StartPage {
+		startPage = topic.StartPage
+	}
+	if startPage > topic.EndPage {
+		return 0, 0, false
+	}
+
+	endPage := startPage + pagesToRead - 1
+	if endPage < startPage {
+		endPage = startPage
+	}
+	if endPage > topic.EndPage {
+		endPage = topic.EndPage
+	}
+	if topic.EndPage-endPage <= ClampWindowPages {
+		endPage = topic.EndPage
+	}
+	// Enforce hard cap: window should never exceed pagesToRead budget
+	maxEndPage := startPage + pagesToRead - 1
+	if endPage > maxEndPage {
+		endPage = maxEndPage
+	}
+
+	if endPage < startPage {
+		return 0, 0, false
+	}
+
+	return startPage, endPage, true
 }

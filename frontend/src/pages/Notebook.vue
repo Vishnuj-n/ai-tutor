@@ -553,28 +553,23 @@ async function confirmSyllabusDraft() {
 
   draftError.value = ''
   isConfirmingDraft.value = true
+  ingestionStatusMessage.value = 'Starting notebook ingestion. Progress will appear below.'
+  uploadProgress.value = 0
 
   try {
     if (!chaptersChanged && titleChanged) {
-      ingestionStatusMessage.value = 'Saving notebook title...'
       const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
       if (titleResult?.error) {
-        draftError.value = `Failed to update notebook title: ${titleResult.error}`
-        uploadError.value = `Failed to update notebook title: ${titleResult.error}`
-        ingestionStatusMessage.value = 'Failed to update notebook title. Please retry.'
-        return
+        throw new Error(titleResult.error)
       }
       const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
       if (notebook) {
         notebook.title = trimmedTitle
       }
-      closeSyllabusModal()
       showToast('Notebook title updated successfully.')
+      closeSyllabusModal()
       return
     }
-
-    ingestionStatusMessage.value = 'Starting notebook ingestion. Progress will appear below.'
-    uploadProgress.value = 0
 
     if (titleChanged) {
       const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
@@ -591,13 +586,14 @@ async function confirmSyllabusDraft() {
     if (result?.error) {
       throw new Error(result.error)
     }
-    showToast('Notebook confirmed. Indexing is in progress.')
     await loadTopics()
     await loadNotebooks()
+    showToast('Notebook confirmed. Indexing is in progress.')
     closeSyllabusModal()
   } catch (error) {
     draftError.value = `Failed to confirm syllabus: ${error.message}`
     uploadError.value = `Failed to confirm syllabus: ${error.message}`
+    showToast(`Failed to confirm syllabus: ${error.message}`)
   } finally {
     isConfirmingDraft.value = false
   }

@@ -2,7 +2,6 @@ package rag
 
 import (
 	"fmt"
-	"log"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
@@ -46,11 +45,11 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	}
 
 	if len(chunks) == 0 {
-		log.Printf("No chunks found for topic %s", topicID)
+		utils.Infof("No chunks found for topic %s", topicID)
 		return nil
 	}
 
-	log.Printf("Indexing %d chunks for topic %s", len(chunks), topicID)
+	utils.Infof("Indexing %d chunks for topic %s", len(chunks), topicID)
 
 	chunkHashRefs := map[string]string{}
 	if vi.config.RecomputeOnHashMismatch && !vi.config.ForceReindex {
@@ -77,21 +76,21 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 			// Generate new embedding
 			vector, err := vi.embedder.Embed(chunk.Text)
 			if err != nil {
-				log.Printf("Warning: embedding failed for chunk %s: %v", chunk.ID, err)
+				utils.Warnf("embedding failed for chunk %s: %v", chunk.ID, err)
 				failed++
 				continue
 			}
 
 			// Store in vec0
 			if err := db.UpsertChunkVector(chunk.ID, vector); err != nil {
-				log.Printf("Warning: failed to store vector for chunk %s: %v", chunk.ID, err)
+				utils.Warnf("failed to store vector for chunk %s: %v", chunk.ID, err)
 				failed++
 				continue
 			}
 
 			hash := computeTextHash(chunk.Text)
 			if err := db.UpdateChunkEmbedding(chunk.ID, hash); err != nil {
-				log.Printf("Warning: failed to update chunk embedding metadata for chunk %s: %v", chunk.ID, err)
+				utils.Warnf("failed to update chunk embedding metadata for chunk %s: %v", chunk.ID, err)
 				failed++
 				continue
 			}
@@ -102,7 +101,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		}
 	}
 
-	log.Printf("Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d", topicID, reindexed, skipped, failed)
+	utils.Infof("Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d", topicID, reindexed, skipped, failed)
 	return nil
 }
 
@@ -115,7 +114,7 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 
 	for _, topicID := range topicIDs {
 		if err := vi.IndexTopicChunks(topicID); err != nil {
-			log.Printf("Warning: indexing failed for topic %s: %v", topicID, err)
+			utils.Warnf("indexing failed for topic %s: %v", topicID, err)
 		}
 	}
 

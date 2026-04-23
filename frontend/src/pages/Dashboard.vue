@@ -131,7 +131,7 @@ const generatedLabel = computed(() => {
 })
 
 const currentTask = computed(() => tasks.value[0] || null)
-  const focusItems = computed(() => tasks.value.slice(1))
+const focusItems = computed(() => tasks.value.slice(1))
 const reviewTask = computed(() =>
   tasks.value.find((task) => task.action_type === 'review') || null
 )
@@ -192,6 +192,19 @@ function startTask(task) {
   }
 
   const path = actionRoutes[task.action_type] || '/dashboard'
+
+  if (task.action_type === 'read' && task.topic_id) {
+    const query = { topic: task.topic_id }
+    if (task.start_page) {
+      query.start = String(task.start_page)
+    }
+    if (task.end_page) {
+      query.end = String(task.end_page)
+    }
+    router.push({ path, query })
+    return
+  }
+
   if (task.topic_id) {
     router.push({ path, query: { topic: task.topic_id } })
     return

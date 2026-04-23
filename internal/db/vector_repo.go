@@ -118,7 +118,7 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 	return err
 }
 
-func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int) ([]string, error) {
+func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, startPage int, endPage int) ([]string, error) {
 	if embeddingDimension <= 0 {
 		log.Printf("warning: vector search skipped for topic %s because embedding dimension is not initialized", topicID)
 		return []string{}, nil
@@ -133,14 +133,65 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int) ([]
 		return nil, fmt.Errorf("failed to encode query vector: %w", err)
 	}
 
-	rows, err := conn.Query(`
-		SELECT c.id
-		FROM chunk_vectors cv
-		JOIN chunks c ON c.rowid = cv.rowid
-		WHERE c.topic_id = ?
-		ORDER BY distance(cv.embedding, ?) ASC
+	filterByPage := startPage > 0 && endPage > 0
+	if filterByPage && startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	rowidQuery := `
+		SELECT rowid, id
+		FROM chunks
+		WHERE topic_id = ?
+	`
+	rowidArgs := []interface{}{topicID}
+	if filterByPage {
+		rowidQuery += " AND page_num BETWEEN ? AND ?"
+		rowidArgs = append(rowidArgs, startPage, endPage)
+	}
+
+	rowRows, err := conn.Query(rowidQuery, rowidArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("chunk prefilter failed: %w", err)
+	}
+	defer func() {
+		if closeErr := rowRows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close chunk prefilter rows: %v", closeErr)
+		}
+	}()
+
+	allowedChunkByRowID := make(map[int64]string)
+	allowedRowIDs := make([]int64, 0)
+	for rowRows.Next() {
+		var rowID int64
+		var chunkID string
+		if scanErr := rowRows.Scan(&rowID, &chunkID); scanErr != nil {
+			return nil, scanErr
+		}
+		allowedChunkByRowID[rowID] = chunkID
+		allowedRowIDs = append(allowedRowIDs, rowID)
+	}
+	if err := rowRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(allowedRowIDs) == 0 {
+		return []string{}, nil
+	}
+	allowedRowIDsJSON, err := json.Marshal(allowedRowIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode allowed row ids: %w", err)
+	}
+
+	vectorArgs := []interface{}{string(allowedRowIDsJSON), queryVectorJSON, k}
+
+	vectorSQL := `
+		SELECT rowid
+		FROM chunk_vectors
+		WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
+		ORDER BY distance(embedding, ?) ASC
 		LIMIT ?
-	`, topicID, queryVectorJSON, k)
+	`
+
+	rows, err := conn.Query(vectorSQL, vectorArgs...)
 	if err != nil {
 		if isVectorUnavailableError(err) {
 			log.Printf("warning: vector search unavailable for topic %s, using lexical fallback: %v", topicID, err)
@@ -154,13 +205,15 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int) ([]
 		}
 	}()
 
-	var chunkIDs []string
+	chunkIDs := make([]string, 0, k)
 	for rows.Next() {
-		var chunkID string
-		if err := rows.Scan(&chunkID); err != nil {
+		var rowID int64
+		if err := rows.Scan(&rowID); err != nil {
 			return nil, err
 		}
-		chunkIDs = append(chunkIDs, chunkID)
+		if chunkID, ok := allowedChunkByRowID[rowID]; ok {
+			chunkIDs = append(chunkIDs, chunkID)
+		}
 	}
 
 	if err := rows.Err(); err != nil {

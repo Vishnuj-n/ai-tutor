@@ -31,6 +31,14 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
+export function getDailyStudySettings() {
+  return appBridge().GetDailyStudySettings()
+}
+
+export function updateDailyStudyMinutes(minutes) {
+  return appBridge().UpdateDailyStudyMinutes(minutes)
+}
+
 export function generateQuiz(topicID) {
   return appBridge().GenerateQuiz(topicID)
 }
