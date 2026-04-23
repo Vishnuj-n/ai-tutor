@@ -1634,8 +1634,77 @@ func DeleteTopic(topicID string) error {
 		return fmt.Errorf("topic id is required")
 	}
 
-	_, err := conn.Exec("DELETE FROM topics WHERE id = ?", topicID)
-	return err
+	// Begin transaction for atomic deletion
+	tx, err := conn.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Rollback on error
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Delete dependent tables in order to respect foreign key constraints
+
+	// Delete user_answers (via questions)
+	if _, err = tx.Exec("DELETE FROM user_answers WHERE question_id IN (SELECT id FROM questions WHERE topic_id = ?)", topicID); err != nil {
+		return fmt.Errorf("failed to delete user_answers: %w", err)
+	}
+
+	// Delete notebook_chunks (via chunks)
+	if _, err = tx.Exec("DELETE FROM notebook_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE topic_id = ?)", topicID); err != nil {
+		return fmt.Errorf("failed to delete notebook_chunks: %w", err)
+	}
+
+	// Delete fsrs_review_log
+	if _, err = tx.Exec("DELETE FROM fsrs_review_log WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete fsrs_review_log: %w", err)
+	}
+
+	// Delete fsrs_cards
+	if _, err = tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete fsrs_cards: %w", err)
+	}
+
+	// Delete questions
+	if _, err = tx.Exec("DELETE FROM questions WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete questions: %w", err)
+	}
+
+	// Delete topic_progress
+	if _, err = tx.Exec("DELETE FROM topic_progress WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete topic_progress: %w", err)
+	}
+
+	// Delete chunks
+	if _, err = tx.Exec("DELETE FROM chunks WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete chunks: %w", err)
+	}
+
+	// Delete parents
+	if _, err = tx.Exec("DELETE FROM parents WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete parents: %w", err)
+	}
+
+	// Update notebooks that reference this topic to null
+	if _, err = tx.Exec("UPDATE notebooks SET topic_id = NULL WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to update notebooks: %w", err)
+	}
+
+	// Finally delete the topic
+	if _, err = tx.Exec("DELETE FROM topics WHERE id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete topic: %w", err)
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 // Vector Search and Storage Functions
