@@ -202,7 +202,6 @@ Across all sprints:
 - Pointers only when modifying data
 - Avoid unnecessary interfaces
 - No premature optimization
-# SPRINT.md — AI Tutor (Sprint 1 → Sprint 3)
 
 ## Goal (Overall)
 

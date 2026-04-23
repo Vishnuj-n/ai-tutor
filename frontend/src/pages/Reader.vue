@@ -103,7 +103,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { askAI, completeReadingSession, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
@@ -169,8 +169,20 @@ const availableTopics = computed(() => {
 
 const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
 const pdfSource = computed(() => `${notebookUrl.value}#page=${currentPage.value}&zoom=page-fit`)
-const canGoPrev = computed(() => pdfVisible.value && currentPage.value > 1)
-const canGoNext = computed(() => pdfVisible.value && currentPage.value < Math.max(1, pageCount.value))
+const canGoPrev = computed(() => {
+  if (!pdfVisible.value) return false
+  if (hasLockedWindow.value) {
+    return currentPage.value > Math.max(1, lockedStartPage.value)
+  }
+  return currentPage.value > 1
+})
+const canGoNext = computed(() => {
+  if (!pdfVisible.value) return false
+  if (hasLockedWindow.value) {
+    return currentPage.value < Math.min(pageCount.value, lockedTargetPage.value)
+  }
+  return currentPage.value < Math.max(1, pageCount.value)
+})
 const hasLockedWindow = computed(() => lockedStartPage.value > 0 && lockedTargetPage.value >= lockedStartPage.value)
 const canCompleteSession = computed(() =>
   !loadingBundle.value &&
@@ -277,6 +289,9 @@ async function loadBundle() {
       currentPage.value = 1
       sections.value = []
       activeSection.value = null
+      // Reset lock state on bundle error
+      lockedStartPage.value = 0
+      lockedTargetPage.value = 0
       globalError.value = result.error
       return
     }
@@ -422,6 +437,23 @@ function clampPage(page, maxPageCount) {
   }
   return Math.floor(normalized)
 }
+
+// Watch route query parameters for start/end page changes
+watch(() => route.query.start, () => {
+  const newStartPage = parsePageQueryValue(route.query.start)
+  if (newStartPage !== routeStartPage) {
+    routeStartPage = newStartPage
+    void loadBundle()
+  }
+})
+
+watch(() => route.query.end, () => {
+  const newEndPage = parsePageQueryValue(route.query.end)
+  if (newEndPage !== routeEndPage) {
+    routeEndPage = newEndPage
+    void loadBundle()
+  }
+})
 </script>
 
 <style scoped>

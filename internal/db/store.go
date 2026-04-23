@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -1321,7 +1322,7 @@ func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) 
 		FROM chunks
 		WHERE topic_id = ?
 		  AND page_num BETWEEN ? AND ?
-		ORDER BY id ASC
+		ORDER BY page_num ASC, id ASC
 	`, topicID, startPage, endPage)
 	if err != nil {
 		return nil, err
@@ -1330,27 +1331,86 @@ func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) 
 		_ = rows.Close()
 	}()
 
-	texts := make([]string, 0)
+	var chunkTexts []string
 	for rows.Next() {
-		var text string
-		if err := rows.Scan(&text); err != nil {
+		var chunkText string
+		if err := rows.Scan(&chunkText); err != nil {
 			return nil, err
 		}
-		text = strings.TrimSpace(text)
-		if text != "" {
-			texts = append(texts, text)
-		}
+		chunkTexts = append(chunkTexts, chunkText)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return texts, nil
+
+	return chunkTexts, nil
+}
+
+// GetParentPassagesForTopicPageRange retrieves chunks with their parent passage context for a topic page range
+func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	rows, err := conn.Query(`
+		SELECT c.chunk_text, p.heading, p.content_text
+		FROM chunks c
+		LEFT JOIN parents p ON c.parent_id = p.id
+		WHERE c.topic_id = ?
+		  AND c.page_num BETWEEN ? AND ?
+		ORDER BY c.page_num ASC, c.id ASC
+	`, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var parentPassages []string
+	for rows.Next() {
+		var chunkText, parentHeading, parentContent string
+		if err := rows.Scan(&chunkText, &parentHeading, &parentContent); err != nil {
+			return nil, err
+		}
+
+		// Build parent passage context
+		var passage strings.Builder
+		if parentHeading != "" {
+			passage.WriteString("Section: ")
+			passage.WriteString(parentHeading)
+			passage.WriteString("\n")
+		}
+		if parentContent != "" {
+			passage.WriteString("Context: ")
+			passage.WriteString(parentContent)
+			passage.WriteString("\n")
+		}
+		passage.WriteString("Content: ")
+		passage.WriteString(chunkText)
+
+		parentPassages = append(parentPassages, passage.String())
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return parentPassages, nil
 }
 
 // GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
 // Key format is normalized lower-case heading text with single spaces.
 func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
+	// ... (rest of the code remains the same)
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
@@ -1895,8 +1955,77 @@ func UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) erro
 		return err
 	}
 	if rowsAffected == 0 {
-		return sql.ErrNoRows
+		return fmt.Errorf("topic not found: %s", topicID)
 	}
 
 	return nil
+}
+
+// AppendQuestionsAndAdvanceCursor atomically appends questions and updates the reading cursor in a single transaction
+func AppendQuestionsAndAdvanceCursor(topicID string, questions []models.QuizQuestion, nextCursor int, markLearned bool) error {
+	if len(questions) == 0 {
+		return fmt.Errorf("at least one question is required")
+	}
+
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if nextCursor < 0 {
+		nextCursor = 0
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Append questions first
+	for _, q := range questions {
+		optionsJSON, marshalErr := json.Marshal(q.Options)
+		if marshalErr != nil {
+			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+			return err
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO questions (
+				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+				source_page_start, source_page_end, llm_model, prompt_version
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
+			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
+			return err
+		}
+	}
+
+	// Update cursor
+	status := "reading"
+	if markLearned {
+		status = "learned"
+	}
+
+	result, err := tx.Exec(`
+		UPDATE topics
+		SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nextCursor, status, topicID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("topic not found: %s", topicID)
+	}
+
+	return tx.Commit()
 }
