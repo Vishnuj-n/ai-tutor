@@ -964,7 +964,7 @@ type mockRAGPipeline struct {
 	err    error
 }
 
-func (m *mockRAGPipeline) ProcessQuery(topicID, question string) (*rag.Response, error) {
+func (m *mockRAGPipeline) ProcessQuery(topicID, question string, startPage, endPage int) (*rag.Response, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

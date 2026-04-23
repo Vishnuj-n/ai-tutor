@@ -31,7 +31,7 @@ type llmProviderInterface interface {
 }
 
 type ragPipelineInterface interface {
-	ProcessQuery(topicID, question string) (*rag.Response, error)
+	ProcessQuery(topicID, question string, startPage, endPage int) (*rag.Response, error)
 }
 
 // App struct
@@ -282,7 +282,7 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		}
 	}
 
-	result, err := a.ragPipeline.ProcessQuery(topicID, question)
+	result, err := a.ragPipeline.ProcessQuery(topicID, question, 0, 0)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
@@ -896,7 +896,7 @@ Rules:
 - Require understanding, not pure definition recall.
 - Do not include answer choices, rubric, preamble, or markdown.`
 
-	result, err := a.ragPipeline.ProcessQuery(topicID, request)
+	result, err := a.ragPipeline.ProcessQuery(topicID, request, 0, 0)
 	if err != nil {
 		return map[string]interface{}{"error": "short-answer prompt generation failed: " + err.Error()}
 	}
