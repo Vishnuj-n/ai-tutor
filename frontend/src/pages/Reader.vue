@@ -45,12 +45,21 @@
             <button class="secondary" :disabled="!canGoNext" @click="goNext">Next</button>
           </div>
         </div>
+        <p v-if="hasLockedWindow" class="lock-meta">Locked Session: Pages {{ lockedStartPage }}-{{ lockedTargetPage }}</p>
 
         <div v-if="loadingBundle" class="empty">Loading document...</div>
         <div v-else-if="!pdfVisible" class="empty">PDF not available for selected notebook/topic.</div>
         <div v-else class="pdf-wrap">
           <iframe class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
         </div>
+
+        <article class="complete-session">
+          <button class="primary" :disabled="!canCompleteSession" @click="completeSession">
+            {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
+          </button>
+          <p v-if="completionMessage" class="completion-message">{{ completionMessage }}</p>
+          <p v-if="completionError" class="error">{{ completionError }}</p>
+        </article>
       </article>
 
       <aside class="panel chat" :class="{ closed: chatCollapsed }">
@@ -96,7 +105,7 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { askAI, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
+import { askAI, completeReadingSession, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
@@ -104,6 +113,8 @@ const route = useRoute()
 const notebookTree = ref([])
 const selectedNotebookID = ref('')
 const selectedTopicID = ref(typeof route.query.topic === 'string' ? route.query.topic : '')
+const routeStartPage = parsePageQueryValue(route.query.start)
+const routeEndPage = parsePageQueryValue(route.query.end)
 
 const topicTitle = ref('Reader')
 const notebookUrl = ref('')
@@ -112,6 +123,11 @@ const pageCount = ref(1)
 const currentPage = ref(1)
 const sections = ref([])
 const activeSection = ref(null)
+const lockedStartPage = ref(0)
+const lockedTargetPage = ref(0)
+const completingSession = ref(false)
+const completionMessage = ref('')
+const completionError = ref('')
 
 const chatCollapsed = ref(false)
 const chatMessages = ref([])
@@ -155,6 +171,13 @@ const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value 
 const pdfSource = computed(() => `${notebookUrl.value}#page=${currentPage.value}&zoom=page-fit`)
 const canGoPrev = computed(() => pdfVisible.value && currentPage.value > 1)
 const canGoNext = computed(() => pdfVisible.value && currentPage.value < Math.max(1, pageCount.value))
+const hasLockedWindow = computed(() => lockedStartPage.value > 0 && lockedTargetPage.value >= lockedStartPage.value)
+const canCompleteSession = computed(() =>
+  !loadingBundle.value &&
+  !completingSession.value &&
+  Boolean(selectedTopicID.value) &&
+  hasLockedWindow.value
+)
 
 onMounted(async () => {
   await loadNotebookTree()
@@ -216,11 +239,15 @@ function onNotebookChange() {
     selectedTopicID.value = availableTopics.value[0]?.topic_id || ''
   }
   chatMessages.value = []
+  completionMessage.value = ''
+  completionError.value = ''
   void loadBundle()
 }
 
 function onTopicChange() {
   chatMessages.value = []
+  completionMessage.value = ''
+  completionError.value = ''
   void loadBundle()
 }
 
@@ -260,13 +287,17 @@ async function loadBundle() {
     pageCount.value = Math.max(1, Number(result?.page_count) || 1)
     sections.value = Array.isArray(result?.sections) ? result.sections : []
     activeSection.value = sections.value[0] || null
+    const topicStart = Number(result?.topic_start_page) || 1
+    const topicEnd = Number(result?.topic_end_page) || pageCount.value
+    const normalizedTopicStart = clampPage(topicStart, pageCount.value)
+    const normalizedTopicEnd = clampPage(Math.max(topicEnd, normalizedTopicStart), pageCount.value)
 
-    const firstPage = Number(activeSection.value?.page_num)
-    if (Number.isFinite(firstPage) && firstPage > 0) {
-      currentPage.value = Math.min(Math.max(1, firstPage), pageCount.value)
-    } else {
-      currentPage.value = 1
+    lockedStartPage.value = routeStartPage > 0 ? clampPage(routeStartPage, pageCount.value) : normalizedTopicStart
+    lockedTargetPage.value = routeEndPage > 0 ? clampPage(routeEndPage, pageCount.value) : normalizedTopicEnd
+    if (lockedTargetPage.value < lockedStartPage.value) {
+      lockedTargetPage.value = lockedStartPage.value
     }
+    currentPage.value = hasLockedWindow.value ? lockedStartPage.value : normalizedTopicStart
   } catch (err) {
     topicTitle.value = 'Reader'
     notebookUrl.value = ''
@@ -275,6 +306,8 @@ async function loadBundle() {
     currentPage.value = 1
     sections.value = []
     activeSection.value = null
+    lockedStartPage.value = 0
+    lockedTargetPage.value = 0
     globalError.value = err?.message || 'Failed to load reader data'
   } finally {
     loadingBundle.value = false
@@ -303,6 +336,34 @@ function goNext() {
 
 function toggleChat() {
   chatCollapsed.value = !chatCollapsed.value
+}
+
+async function completeSession() {
+  if (!canCompleteSession.value) {
+    return
+  }
+
+  completionError.value = ''
+  completionMessage.value = ''
+  completingSession.value = true
+  try {
+    const result = await completeReadingSession(
+      selectedTopicID.value,
+      lockedStartPage.value,
+      lockedTargetPage.value
+    )
+    if (result?.error) {
+      completionError.value = result.error
+      return
+    }
+    const generated = Number(result?.questions_generated) || 0
+    const nextCursor = Number(result?.current_page_cursor) || lockedTargetPage.value + 1
+    completionMessage.value = `Saved ${generated} questions. Cursor advanced to page ${nextCursor}.`
+  } catch (err) {
+    completionError.value = err?.message || 'Failed to complete session'
+  } finally {
+    completingSession.value = false
+  }
 }
 
 async function sendChat() {
@@ -337,6 +398,29 @@ async function sendChat() {
   } finally {
     chatLoading.value = false
   }
+}
+
+function parsePageQueryValue(value) {
+  if (typeof value !== 'string') {
+    return 0
+  }
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0
+  }
+  return Math.floor(parsed)
+}
+
+function clampPage(page, maxPageCount) {
+  const max = Math.max(1, Number(maxPageCount) || 1)
+  const normalized = Number(page)
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return 1
+  }
+  if (normalized > max) {
+    return max
+  }
+  return Math.floor(normalized)
 }
 </script>
 
@@ -415,6 +499,12 @@ h3 {
   gap: 10px;
 }
 
+.lock-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
 .stage-head {
   display: flex;
   justify-content: space-between;
@@ -444,6 +534,18 @@ h3 {
   border: 0;
   display: block;
   background: #fff;
+}
+
+.complete-session {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.completion-message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
 }
 
 .sections {

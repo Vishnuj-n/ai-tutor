@@ -1139,6 +1139,51 @@ func GetTopicPageBounds(topicID string) (int, int, error) {
 	return startPage, endPage, nil
 }
 
+// GetChunkTextsForTopicPageRange returns chunk_text rows ordered by chunk id for one topic/page window.
+func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	rows, err := conn.Query(`
+		SELECT chunk_text
+		FROM chunks
+		WHERE topic_id = ?
+		  AND page_num BETWEEN ? AND ?
+		ORDER BY id ASC
+	`, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	texts := make([]string, 0)
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, err
+		}
+		text = strings.TrimSpace(text)
+		if text != "" {
+			texts = append(texts, text)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return texts, nil
+}
+
 // GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
 // Key format is normalized lower-case heading text with single spaces.
 func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
@@ -1554,6 +1599,30 @@ func ReplaceQuestionsForTopic(topicID string, questions []models.QuizQuestion) e
 	return replaceQuestionsForTopicRepo(topicID, normalized)
 }
 
+// AppendQuestionsForTopic appends generated quiz questions without deleting existing rows.
+func AppendQuestionsForTopic(topicID string, questions []models.QuizQuestion) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if len(questions) == 0 {
+		return fmt.Errorf("at least one question is required")
+	}
+
+	normalized := make([]models.QuizQuestion, 0, len(questions))
+	for _, q := range questions {
+		q.TopicID = strings.TrimSpace(q.TopicID)
+		if q.TopicID == "" {
+			q.TopicID = topicID
+		} else if q.TopicID != topicID {
+			return fmt.Errorf("question topic id must match topic id")
+		}
+		normalized = append(normalized, q)
+	}
+
+	return appendQuestionsForTopicRepo(topicID, normalized)
+}
+
 // GetQuestionsForTopic returns generated quiz questions for a topic.
 func GetQuestionsForTopic(topicID string) ([]models.QuizQuestion, error) {
 	topicID = strings.TrimSpace(topicID)
@@ -1584,4 +1653,39 @@ func SaveUserAnswer(score models.QuizScore) error {
 		return fmt.Errorf("user answer is required")
 	}
 	return saveUserAnswerRepo(score)
+}
+
+// UpdateTopicReadingCursor persists the current page cursor and optionally marks topic as learned.
+func UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+
+	status := "reading"
+	if markLearned {
+		status = "learned"
+	}
+
+	result, err := conn.Exec(`
+		UPDATE topics
+		SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, cursor, status, topicID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }

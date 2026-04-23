@@ -32,6 +32,18 @@ func contains(items []string, target string) bool {
 	return false
 }
 
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i]) != strings.TrimSpace(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // sanitizeWhitespace normalizes whitespace in a string for consistent error messages
 func sanitizeWhitespace(input string) string {
 	return strings.Join(strings.Fields(input), " ")
