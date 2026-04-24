@@ -522,7 +522,7 @@ type shortAnswerScoreLLMResponse struct {
 }
 
 // GenerateQuiz creates topic-scoped multiple-choice questions and stores them.
-// Enforces exactly 5 questions per generation to keep quizzes consistent.
+// Existing generated sets are returned as-is to protect user progress.
 func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -537,7 +537,7 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
 	}
-	if len(existingQuestions) == 5 {
+	if len(existingQuestions) > 0 {
 		return map[string]interface{}{
 			"topic_id":  topicID,
 			"questions": existingQuestions,
@@ -555,7 +555,13 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "topic has no sections for quiz generation"}
 	}
 
-	prompt := buildQuizPrompt(topicID, sections)
+	totalChunkTokens, err := db.GetTotalChunkTokens(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to calculate quiz density: " + err.Error()}
+	}
+	expectedQuestionCount := scaledQuizQuestionCount(totalChunkTokens)
+
+	prompt := buildQuizPrompt(topicID, sections, totalChunkTokens, expectedQuestionCount)
 	raw, err := a.fastLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{"error": "quiz generation failed: " + err.Error()}
@@ -572,8 +578,6 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		headingPageRanges = map[string][2]int{}
 	}
 	modelName := providerModelName(a.fastLLMProvider)
-
-	const expectedQuestionCount = 5
 
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
 	for _, q := range parsed.Questions {
@@ -625,7 +629,7 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			SourcePageStart: sourcePageStart,
 			SourcePageEnd:   sourcePageEnd,
 			LLMModel:        modelName,
-			PromptVersion:   "quiz-v1",
+			PromptVersion:   "quiz-v2-density",
 		})
 	}
 
@@ -697,7 +701,13 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{"error": "no passage content found for completion window"}
 	}
 
-	prompt, err := buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages)
+	totalChunkTokens, err := db.GetTotalChunkTokensForPageRange(topicID, startPage, contextEndPage)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to calculate completion quiz density: " + err.Error()}
+	}
+	expectedQuestionCount := scaledQuizQuestionCount(totalChunkTokens)
+
+	prompt, err := buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages, totalChunkTokens, expectedQuestionCount)
 	if err != nil {
 		return map[string]interface{}{"error": "completion quiz prompt generation failed: " + err.Error()}
 	}
@@ -711,7 +721,6 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{"error": "completion quiz parsing failed: " + err.Error()}
 	}
 
-	const expectedQuestionCount = 5
 	modelName := providerModelName(a.fastLLMProvider)
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
 	for _, q := range parsed.Questions {
@@ -761,7 +770,7 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 			SourcePageStart: sourcePageStart,
 			SourcePageEnd:   sourcePageEnd,
 			LLMModel:        modelName,
-			PromptVersion:   "reader-complete-v1",
+			PromptVersion:   "reader-complete-v2-density",
 		})
 	}
 
@@ -801,14 +810,14 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		"source_page_end":     contextEndPage,
 		"target_page":         targetPage,
 		"questions_generated": len(questions),
-		"prompt_version":      "reader-complete-v1",
+		"prompt_version":      "reader-complete-v2-density",
 		"current_page_cursor": nextCursor,
 		"topic_status":        status,
 	}
 }
 
 // GenerateFlashcards creates flashcards for a topic or returns the existing set.
-// Enforces exactly 8 flashcards per generation to keep decks consistent and predictable.
+// Existing generated sets are returned as-is to protect user progress.
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -817,6 +826,30 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 
 	if a.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
+	}
+
+	existingCards, err := db.GetFlashcardsForTopic(topicID, false, 0)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to load existing flashcards: " + err.Error()}
+	}
+	if len(existingCards) > 0 {
+		states := make(map[string]models.FlashcardState, len(existingCards))
+		for _, card := range existingCards {
+			_, state, getErr := db.GetFlashcardByID(card.ID)
+			if getErr != nil {
+				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
+			}
+			if state != nil {
+				states[card.ID] = *state
+			}
+		}
+
+		return map[string]interface{}{
+			"topic_id": topicID,
+			"cards":    existingCards,
+			"states":   states,
+			"existing": true,
+		}
 	}
 
 	content, err := db.GetTopicContent(topicID)
@@ -829,8 +862,14 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "topic has no sections for flashcard generation"}
 	}
 
+	totalChunkTokens, err := db.GetTotalChunkTokens(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to calculate flashcard density: " + err.Error()}
+	}
+	expectedFlashcardCount := scaledFlashcardCount(totalChunkTokens)
+
 	// Generate flashcard candidates from LLM
-	raw, err := a.fastLLMProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections))
+	raw, err := a.fastLLMProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections, totalChunkTokens, expectedFlashcardCount))
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard generation failed: " + err.Error()}
 	}
@@ -839,8 +878,6 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard generation parsing failed: " + err.Error()}
 	}
-
-	const expectedFlashcardCount = 8
 
 	// Filter valid cards
 	now := time.Now().Unix()
@@ -865,16 +902,14 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		states[id] = models.FlashcardState{}
 	}
 
-	// Enforce exactly 8 cards
+	// Enforce exactly the scaled card count.
 	if len(cards) != expectedFlashcardCount {
 		return map[string]interface{}{
 			"error": fmt.Sprintf("flashcard generation produced %d valid cards; expected exactly %d", len(cards), expectedFlashcardCount),
 		}
 	}
 
-	// Use atomic get-or-create to prevent race condition:
-	// If cards already exist for this topic, return them
-	// Otherwise, insert the generated cards transactionally
+	// Use atomic get-or-create to protect against concurrent first-generation requests.
 	cards, wasExisting, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to persist flashcards: " + err.Error()}
@@ -1234,18 +1269,44 @@ func buildContextString(sections []map[string]interface{}, maxSections, maxConte
 	return b.String()
 }
 
-func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
+func scaledQuizQuestionCount(totalChunkTokens int) int {
+	switch {
+	case totalChunkTokens <= 600:
+		return 3
+	case totalChunkTokens <= 1500:
+		return 5
+	case totalChunkTokens <= 3000:
+		return 7
+	default:
+		return 10
+	}
+}
+
+func scaledFlashcardCount(totalChunkTokens int) int {
+	switch {
+	case totalChunkTokens <= 600:
+		return 5
+	case totalChunkTokens <= 1500:
+		return 8
+	case totalChunkTokens <= 3000:
+		return 12
+	default:
+		return 16
+	}
+}
+
+func buildQuizPrompt(topicID string, sections []map[string]interface{}, totalChunkTokens int, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
+	b.WriteString(fmt.Sprintf("Generate exactly %d multiple-choice questions for topic: ", targetCount))
 	b.WriteString(topicID)
+	b.WriteString(fmt.Sprintf("\nMaterial density estimate: %d chunk tokens.", totalChunkTokens))
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
 	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
 	b.WriteString("Cover different concepts and question types. AVOID repetition.\n")
-	b.WriteString("Required mix:\n")
-	b.WriteString("  - 1–2 definitional/recall questions\n")
-	b.WriteString("  - 2–3 application/analysis questions (test understanding, not just memory)\n")
-	b.WriteString("  - 1 misconception/tricky question (common student errors)\n")
+	b.WriteString("Scale the mix to the requested count.\n")
+	b.WriteString("- Include recall, application/analysis, and one misconception/tricky question when count allows.\n")
+	b.WriteString("- For very small sets, maximize concept coverage instead of forcing rigid proportions.\n")
 	b.WriteString("\n=== DISTRACTORS ===\n")
 	b.WriteString("- Make wrong options plausible and specific (not obviously wrong).\n")
 	b.WriteString("- Common misconceptions as distractors are encouraged.\n")
@@ -1262,12 +1323,13 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	return b.String()
 }
 
-func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string) (string, error) {
+func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string, totalChunkTokens int, targetCount int) (string, error) {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 5 multiple-choice questions for this completed reading session.\n")
+	b.WriteString(fmt.Sprintf("Generate exactly %d multiple-choice questions for this completed reading session.\n", targetCount))
 	b.WriteString("Topic ID: ")
 	b.WriteString(topicID)
+	b.WriteString(fmt.Sprintf("\nMaterial density estimate: %d chunk tokens.", totalChunkTokens))
 	b.WriteString("\nLocked completion window: pages ")
 	fmt.Fprintf(&b, "%d-%d", startPage, targetPage)
 	b.WriteString("\nAssessment context window: pages ")
@@ -1277,11 +1339,11 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	}
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
 	b.WriteString("Rules:\n")
-	b.WriteString("- Return exactly 5 questions.\n")
+	b.WriteString(fmt.Sprintf("- Return exactly %d questions.\n", targetCount))
 	b.WriteString("- correct_answer must match one option exactly.\n")
 	b.WriteString("- Keep all questions grounded in the context below.\n")
 	b.WriteString("- source_page_start/source_page_end must be within the context window.\n")
-	b.WriteString("- Cover definitions, application, and one misconception.\n")
+	b.WriteString("- Scale the mix to the requested count and cover definitions, application, and one misconception when count allows.\n")
 	b.WriteString("\nContext chunks (ordered):\n")
 
 	// Reserve tokens for system prompt and instructions (estimated 300 tokens)
@@ -1345,11 +1407,12 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	return b.String(), nil
 }
 
-func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) string {
+func buildFlashcardPrompt(topicID string, sections []map[string]interface{}, totalChunkTokens int, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 8 flashcards for topic: ")
+	b.WriteString(fmt.Sprintf("Generate exactly %d flashcards for topic: ", targetCount))
 	b.WriteString(topicID)
+	b.WriteString(fmt.Sprintf("\nMaterial density estimate: %d chunk tokens.", totalChunkTokens))
 	b.WriteString("\nJSON format: {\"cards\":[{\"prompt\":string,\"answer\":string}]}\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
 	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")
@@ -1359,9 +1422,8 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 	b.WriteString("- Make prompts specific and testable (not vague).\n")
 	b.WriteString("- Example bad: 'What is X?' → Example good: 'What is the purpose of X in context Y?'\n")
 	b.WriteString("\n=== DIFFICULTY DISTRIBUTION (CRITICAL) ===\n")
-	b.WriteString("- 3 cards: Basic (definitions, key terms, simple facts)\n")
-	b.WriteString("- 3 cards: Intermediate (relationships, processes, mechanisms)\n")
-	b.WriteString("- 2 cards: Challenging (applications, synthesis, edge cases)\n")
+	b.WriteString("- Scale difficulty to the requested count.\n")
+	b.WriteString("- Include basic, intermediate, and challenging cards with broader coverage as count increases.\n")
 	b.WriteString("\n=== ANSWER QUALITY ===\n")
 	b.WriteString("- Answers must be short (1–2 sentences max, grounded in source).\n")
 	b.WriteString("- Include terminology but keep accessible.\n")

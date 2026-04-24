@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -102,9 +103,9 @@ func initTestProvider(t *testing.T) *llm.Provider {
 			prompt := body.Messages[0].Content
 			switch {
 			case strings.Contains(prompt, "flashcard generator"):
-				content = `{"cards":[{"prompt":"What does Round Robin assign to each process?","answer":"A fixed time slice."},{"prompt":"What happens when a process uses up its quantum?","answer":"It moves to the back of the ready queue."},{"prompt":"What system type is Round Robin good for?","answer":"Time-sharing systems."},{"prompt":"What tradeoff increases with smaller quantums?","answer":"Context switching overhead."},{"prompt":"What fairness property does Round Robin provide?","answer":"Each process gets a turn."},{"prompt":"What is another term for the time quantum?","answer":"Time slice."},{"prompt":"Why is Round Robin considered preemptive?","answer":"The CPU can be taken away after the quantum expires."},{"prompt":"What queue does Round Robin cycle through?","answer":"The ready queue."}]}`
+				content = flashcardJSON(extractRequestedCount(prompt, "Generate exactly "))
 			case strings.Contains(prompt, "quiz generator"):
-				content = `{"questions":[{"prompt":"What is Round Robin scheduling?","options":["A scheduling algorithm","A disk format","A file system","A network layer"],"correct_answer":"A scheduling algorithm","explanation":"Round Robin is a CPU scheduling algorithm.","hint":"Think CPU time slices.","source_heading":"Round Robin Scheduling","source_snippet":"Round Robin assigns time slices."}]}`
+				content = questionJSON(extractRequestedCount(prompt, "Generate exactly "))
 			}
 		}
 
@@ -586,6 +587,11 @@ func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
 func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	initTestDB(t)
 	app := &App{fastLLMProvider: initTestProvider(t)}
+	expectedCount, err := db.GetTotalChunkTokens("os-scheduling")
+	if err != nil {
+		t.Fatalf("GetTotalChunkTokens failed: %v", err)
+	}
+	want := scaledFlashcardCount(expectedCount)
 
 	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
@@ -596,16 +602,16 @@ func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected typed flashcards slice, got %#v", resp["cards"])
 	}
-	if len(cards) != 8 {
-		t.Fatalf("expected 8 flashcards, got %d", len(cards))
+	if len(cards) != want {
+		t.Fatalf("expected %d flashcards, got %d", want, len(cards))
 	}
 
 	count, err := db.CountFlashcardsForTopic("os-scheduling")
 	if err != nil {
 		t.Fatalf("CountFlashcardsForTopic failed: %v", err)
 	}
-	if count != 8 {
-		t.Fatalf("expected 8 stored flashcards, got %d", count)
+	if count != want {
+		t.Fatalf("expected %d stored flashcards, got %d", want, count)
 	}
 }
 
@@ -613,6 +619,11 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 	initTestDB(t)
 	provider := initTestProvider(t)
 	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
+	totalTokens, err := db.GetTotalChunkTokens("os-scheduling")
+	if err != nil {
+		t.Fatalf("GetTotalChunkTokens failed: %v", err)
+	}
+	want := scaledFlashcardCount(totalTokens)
 
 	first := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := first["error"]; hasErr {
@@ -631,7 +642,7 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CountFlashcardsForTopic failed: %v", err)
 	}
-	if count != 8 {
+	if count != want {
 		t.Fatalf("expected no duplicate flashcards, got %d", count)
 	}
 }
@@ -659,8 +670,8 @@ func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected typed flashcards slice, got %#v", dueResp["cards"])
 	}
-	if len(dueCards) != 7 {
-		t.Fatalf("expected 7 due cards after scheduling one into the future, got %d", len(dueCards))
+	if len(dueCards) != len(cards)-1 {
+		t.Fatalf("expected %d due cards after scheduling one into the future, got %d", len(cards)-1, len(dueCards))
 	}
 }
 
@@ -706,7 +717,7 @@ func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryDueReviewCards failed: %v", err)
 	}
-	if dueCount != 8 {
+	if dueCount != len(cards) {
 		t.Fatalf("expected all cards to be due by far-future cutoff, got %d", dueCount)
 	}
 }
@@ -959,14 +970,39 @@ func (m *mockLLMProvider) GenerateAnswer(prompt string) (string, error) {
 	return m.answer, nil
 }
 
-func fiveQuestionJSON() string {
-	return `{"questions":[
-{"prompt":"Question 1?","options":["A","B","C","D"],"correct_answer":"A","explanation":"Explanation 1.","hint":"Hint 1.","source_heading":"Complete Section","source_snippet":"Snippet 1."},
-{"prompt":"Question 2?","options":["A","B","C","D"],"correct_answer":"B","explanation":"Explanation 2.","hint":"Hint 2.","source_heading":"Complete Section","source_snippet":"Snippet 2."},
-{"prompt":"Question 3?","options":["A","B","C","D"],"correct_answer":"C","explanation":"Explanation 3.","hint":"Hint 3.","source_heading":"Complete Section","source_snippet":"Snippet 3."},
-{"prompt":"Question 4?","options":["A","B","C","D"],"correct_answer":"D","explanation":"Explanation 4.","hint":"Hint 4.","source_heading":"Complete Section","source_snippet":"Snippet 4."},
-{"prompt":"Question 5?","options":["A","B","C","D"],"correct_answer":"A","explanation":"Explanation 5.","hint":"Hint 5.","source_heading":"Complete Section","source_snippet":"Snippet 5."}
-]}`
+func extractRequestedCount(prompt string, prefix string) int {
+	idx := strings.Index(prompt, prefix)
+	if idx < 0 {
+		return 1
+	}
+	rest := prompt[idx+len(prefix):]
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return 1
+	}
+	count, err := strconv.Atoi(fields[0])
+	if err != nil || count <= 0 {
+		return 1
+	}
+	return count
+}
+
+func questionJSON(count int) string {
+	items := make([]string, 0, count)
+	correct := []string{"A", "B", "C", "D"}
+	for i := 0; i < count; i++ {
+		answer := correct[i%len(correct)]
+		items = append(items, fmt.Sprintf(`{"prompt":"Question %d?","options":["A","B","C","D"],"correct_answer":"%s","explanation":"Explanation %d.","hint":"Hint %d.","source_heading":"Complete Section","source_snippet":"Snippet %d."}`, i+1, answer, i+1, i+1, i+1))
+	}
+	return `{"questions":[` + strings.Join(items, ",") + `]}`
+}
+
+func flashcardJSON(count int) string {
+	items := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		items = append(items, fmt.Sprintf(`{"prompt":"Flashcard %d prompt?","answer":"Flashcard %d answer."}`, i+1, i+1))
+	}
+	return `{"cards":[` + strings.Join(items, ",") + `]}`
 }
 
 type mockRAGPipeline struct {
@@ -1181,13 +1217,13 @@ func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) 
 		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
 	}
 
-	app := &App{fastLLMProvider: &mockLLMProvider{answer: fiveQuestionJSON()}}
+	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3)}}
 	resp := app.CompleteReadingSession(topicID, 1, 2)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("expected completion success, got error: %v", resp["error"])
 	}
-	if got := resp["questions_generated"]; got != 5 {
-		t.Fatalf("expected 5 generated questions, got %#v", got)
+	if got := resp["questions_generated"]; got != 3 {
+		t.Fatalf("expected 3 generated questions, got %#v", got)
 	}
 	if got := resp["current_page_cursor"]; got != 3 {
 		t.Fatalf("expected cursor 3, got %#v", got)
@@ -1197,20 +1233,20 @@ func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetQuestionsForTopic failed: %v", err)
 	}
-	if len(questions) != 6 {
-		t.Fatalf("expected existing question plus 5 generated questions, got %d", len(questions))
+	if len(questions) != 4 {
+		t.Fatalf("expected existing question plus 3 generated questions, got %d", len(questions))
 	}
 	generated := 0
 	for _, q := range questions {
-		if q.PromptVersion == "reader-complete-v1" {
+		if q.PromptVersion == "reader-complete-v2-density" {
 			generated++
 			if q.SourcePageStart != 1 || q.SourcePageEnd != 3 {
 				t.Fatalf("expected generated question lineage pages 1-3, got %#v", q)
 			}
 		}
 	}
-	if generated != 5 {
-		t.Fatalf("expected 5 reader-complete questions, got %d", generated)
+	if generated != 3 {
+		t.Fatalf("expected 3 reader-complete questions, got %d", generated)
 	}
 }
 
@@ -1235,7 +1271,7 @@ func TestCompleteReadingSession_RejectsInvalidWindow(t *testing.T) {
 		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
 	}
 
-	app := &App{fastLLMProvider: &mockLLMProvider{answer: fiveQuestionJSON()}}
+	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3)}}
 	resp := app.CompleteReadingSession(topicID, 7, 6)
 	if _, hasErr := resp["error"]; !hasErr {
 		t.Fatalf("expected invalid window error, got %#v", resp)
