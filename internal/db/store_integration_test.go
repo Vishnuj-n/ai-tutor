@@ -14,6 +14,9 @@ func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing
 	initDBForTest(t, false, 0)
 
 	notebookID := "nb-rollback"
+	if err := EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
 	if err := CreateNotebook(notebookID, "Rollback Notebook", "/tmp/rollback.txt", "txt", "os-scheduling", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
@@ -1095,4 +1098,154 @@ func TestInsertFSRSReviewLogRejectsNegativeScheduledDays(t *testing.T) {
 	}
 
 	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-neg-scheduled", 0)
+}
+
+func TestInitEnablesForeignKeys(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	var enabled int
+	if err := conn.QueryRow(`PRAGMA foreign_keys`).Scan(&enabled); err != nil {
+		t.Fatalf("PRAGMA foreign_keys failed: %v", err)
+	}
+	if enabled != 1 {
+		t.Fatalf("expected foreign_keys pragma enabled, got %d", enabled)
+	}
+}
+
+func TestQuestionDeletionCascadesToUserAnswers(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "cascade-quiz-topic"
+	if err := EnsureTopic(topicID, "Cascade Quiz Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{{
+		ID:            "cascade-question",
+		TopicID:       topicID,
+		Prompt:        "Prompt?",
+		Options:       []string{"A", "B"},
+		CorrectAnswer: "A",
+	}}); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+	if err := SaveUserAnswer(models.QuizScore{
+		QuestionID: "cascade-question",
+		Correct:    true,
+		Score:      100,
+		UserAnswer: "A",
+	}); err != nil {
+		t.Fatalf("SaveUserAnswer failed: %v", err)
+	}
+
+	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
+		t.Fatalf("topic delete failed: %v", err)
+	}
+
+	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE id = ?`, "cascade-question", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM user_answers WHERE question_id = ?`, "cascade-question", 0)
+}
+
+func TestTopicDeletionCascadesToFSRSTables(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "cascade-fsrs-topic"
+	if err := EnsureTopic(topicID, "Cascade FSRS Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateFlashcards(topicID, []models.Flashcard{{
+		ID:      "cascade-card",
+		TopicID: topicID,
+		Prompt:  "Prompt?",
+		Answer:  "Answer.",
+		DueAt:   123,
+	}}, map[string]models.FlashcardState{
+		"cascade-card": {},
+	}); err != nil {
+		t.Fatalf("CreateFlashcards failed: %v", err)
+	}
+	if err := InsertFSRSReviewLog(models.FSRSReviewLog{
+		ID:              "cascade-log",
+		TopicID:         topicID,
+		ActivityType:    "flashcard",
+		ReferenceID:     "cascade-card",
+		ReviewedAt:      1234567890,
+		Rating:          3,
+		ScheduledDays:   2,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}); err != nil {
+		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
+	}
+
+	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
+		t.Fatalf("topic delete failed: %v", err)
+	}
+
+	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_cards WHERE id = ?`, "cascade-card", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "cascade-log", 0)
+}
+
+func TestTopicDeletionCascadesToAssessmentTables(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "cascade-assessment-topic"
+	if err := EnsureTopic(topicID, "Cascade Assessment Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	if _, err := conn.Exec(`
+		INSERT INTO written_questions (
+			id, topic_id, prompt, source_heading, source_page_start, source_page_end, llm_model, prompt_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, "written-1", topicID, "Explain RR", "RR", 1, 2, "test-model", "written-v1"); err != nil {
+		t.Fatalf("insert written_questions failed: %v", err)
+	}
+	if _, err := conn.Exec(`
+		INSERT INTO assessment_fsrs (
+			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, "written_question", "written-1", topicID, `{}`, 100, 50); err != nil {
+		t.Fatalf("insert assessment_fsrs failed: %v", err)
+	}
+
+	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
+		t.Fatalf("topic delete failed: %v", err)
+	}
+
+	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-1", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE reference_id = ?`, "written-1", 0)
+}
+
+func TestGetTotalChunkTokensFallsBackWhenTokenCountMissing(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "token-fallback-topic"
+	if err := EnsureTopic(topicID, "Token Fallback Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateParentSection("token-parent", topicID, "Heading", 1, "content"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+	if err := CreateChunk("token-c1", topicID, "token-parent", "abcdabcd", 0, 1); err != nil {
+		t.Fatalf("CreateChunk c1 failed: %v", err)
+	}
+	if err := CreateChunk("token-c2", topicID, "token-parent", "abcdefghijkl", 3, 2); err != nil {
+		t.Fatalf("CreateChunk c2 failed: %v", err)
+	}
+
+	total, err := GetTotalChunkTokens(topicID)
+	if err != nil {
+		t.Fatalf("GetTotalChunkTokens failed: %v", err)
+	}
+	if total != 5 {
+		t.Fatalf("expected token total 5, got %d", total)
+	}
+
+	rangeTotal, err := GetTotalChunkTokensForPageRange(topicID, 1, 1)
+	if err != nil {
+		t.Fatalf("GetTotalChunkTokensForPageRange failed: %v", err)
+	}
+	if rangeTotal != 2 {
+		t.Fatalf("expected page-range token total 2, got %d", rangeTotal)
+	}
 }

@@ -49,6 +49,9 @@ func Init(dbPath, vec0DllPath string) error {
 	if err := conn.Ping(); err != nil {
 		return err
 	}
+	if _, err := conn.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
 
 	// Load sqlite-vec extension if available
 	if vec0DllPath != "" {
@@ -93,6 +96,12 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	if err := ensureFSRSSchema(); err != nil {
+		return err
+	}
+	if err := ensureAssessmentSchema(); err != nil {
+		return err
+	}
+	if err := ensureCascadeForeignKeys(); err != nil {
 		return err
 	}
 
@@ -173,7 +182,7 @@ func createTables() error {
 		llm_model TEXT,
 		prompt_version TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (topic_id) REFERENCES topics(id)
+		FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 	);
 
 	CREATE TABLE IF NOT EXISTS user_settings (
@@ -191,7 +200,7 @@ func createTables() error {
 		feedback TEXT,
 		hint TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (question_id) REFERENCES questions(id)
+		FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
 	);
 
 	CREATE TABLE IF NOT EXISTS notebooks (
@@ -477,7 +486,7 @@ func ensureFSRSSchema() error {
 					suspended BOOLEAN DEFAULT 0,
 					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (topic_id) REFERENCES topics(id)
+					FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 				)`,
 			`CREATE TABLE fsrs_review_log (
 					id TEXT PRIMARY KEY,
@@ -490,7 +499,7 @@ func ensureFSRSSchema() error {
 					state_before_json TEXT NOT NULL,
 					state_after_json TEXT NOT NULL,
 					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (topic_id) REFERENCES topics(id)
+					FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 				)`,
 		}
 
@@ -518,6 +527,371 @@ func ensureFSRSSchema() error {
 	}
 
 	return nil
+}
+
+func ensureAssessmentSchema() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS written_questions (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			source_heading TEXT,
+			source_page_start INTEGER DEFAULT 0,
+			source_page_end INTEGER DEFAULT 0,
+			llm_model TEXT,
+			prompt_version TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS assessment_fsrs (
+			activity_type TEXT NOT NULL,
+			reference_id TEXT NOT NULL,
+			topic_id TEXT NOT NULL,
+			state_json TEXT NOT NULL,
+			due_at INTEGER,
+			last_reviewed_at INTEGER,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (activity_type, reference_id),
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_written_questions_topic_created_at ON written_questions(topic_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_assessment_fsrs_topic_due_at ON assessment_fsrs(topic_id, due_at)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ensureCascadeForeignKeys() error {
+	if needsCascadeRebuild("questions", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) ||
+		needsCascadeRebuild("user_answers", []string{"foreign key (question_id) references questions(id) on delete cascade"}) {
+		if err := rebuildQuestionsAndUserAnswersForCascade(); err != nil {
+			return err
+		}
+	}
+
+	if needsCascadeRebuild("fsrs_cards", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) ||
+		needsCascadeRebuild("fsrs_review_log", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) {
+		if err := rebuildFSRSTablesForCascade(); err != nil {
+			return err
+		}
+	}
+
+	if needsCascadeRebuild("written_questions", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) {
+		if err := rebuildWrittenQuestionsForCascade(); err != nil {
+			return err
+		}
+	}
+
+	if needsCascadeRebuild("assessment_fsrs", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) {
+		if err := rebuildAssessmentFSRSForCascade(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func needsCascadeRebuild(tableName string, requiredSnippets []string) bool {
+	createSQL, err := tableCreateSQL(tableName)
+	if err != nil || createSQL == "" {
+		return false
+	}
+
+	normalized := strings.ToLower(strings.Join(strings.Fields(createSQL), " "))
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(normalized, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+func tableCreateSQL(tableName string) (string, error) {
+	var createSQL sql.NullString
+	err := conn.QueryRow(`
+		SELECT sql
+		FROM sqlite_master
+		WHERE type = 'table' AND name = ?
+	`, tableName).Scan(&createSQL)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return createSQL.String, nil
+}
+
+func rebuildQuestionsAndUserAnswersForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`CREATE TABLE questions_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			options_json TEXT NOT NULL,
+			correct_answer TEXT NOT NULL,
+			explanation TEXT,
+			hint TEXT,
+			source_heading TEXT,
+			source_snippet TEXT,
+			source_page_start INTEGER DEFAULT 0,
+			source_page_end INTEGER DEFAULT 0,
+			llm_model TEXT,
+			prompt_version TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO questions_new (
+			id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+			source_page_start, source_page_end, llm_model, prompt_version, created_at
+		)
+		SELECT
+			id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+			source_page_start, source_page_end, llm_model, prompt_version, created_at
+		FROM questions`,
+		`CREATE TABLE user_answers_new (
+			id TEXT PRIMARY KEY,
+			question_id TEXT NOT NULL,
+			user_answer TEXT NOT NULL,
+			is_correct INTEGER NOT NULL,
+			score INTEGER NOT NULL,
+			feedback TEXT,
+			hint TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO user_answers_new (id, question_id, user_answer, is_correct, score, feedback, hint, created_at)
+		SELECT id, question_id, user_answer, is_correct, score, feedback, hint, created_at
+		FROM user_answers`,
+		`DROP TABLE user_answers`,
+		`DROP TABLE questions`,
+		`ALTER TABLE questions_new RENAME TO questions`,
+		`ALTER TABLE user_answers_new RENAME TO user_answers`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func rebuildFSRSTablesForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`DROP INDEX IF EXISTS idx_fsrs_cards_topic_prompt`,
+		`DROP INDEX IF EXISTS idx_fsrs_review_log_activity_ref_reviewed_at`,
+		`DROP INDEX IF EXISTS idx_fsrs_review_log_topic_reviewed_at`,
+		`DROP INDEX IF EXISTS idx_fsrs_cards_suspended_due_at`,
+		`CREATE TABLE fsrs_cards_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			answer TEXT NOT NULL,
+			state_json TEXT,
+			due_at INTEGER,
+			suspended BOOLEAN DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO fsrs_cards_new (id, topic_id, prompt, answer, state_json, due_at, suspended, created_at, updated_at)
+		SELECT id, topic_id, prompt, answer, state_json, due_at, suspended, created_at, updated_at
+		FROM fsrs_cards`,
+		`CREATE TABLE fsrs_review_log_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			activity_type TEXT NOT NULL,
+			reference_id TEXT NOT NULL,
+			reviewed_at INTEGER NOT NULL,
+			rating INTEGER NOT NULL,
+			scheduled_days INTEGER NOT NULL,
+			state_before_json TEXT NOT NULL,
+			state_after_json TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO fsrs_review_log_new (
+			id, topic_id, activity_type, reference_id, reviewed_at, rating,
+			scheduled_days, state_before_json, state_after_json, created_at
+		)
+		SELECT
+			id, topic_id, activity_type, reference_id, reviewed_at, rating,
+			scheduled_days, state_before_json, state_after_json, created_at
+		FROM fsrs_review_log`,
+		`DROP TABLE fsrs_review_log`,
+		`DROP TABLE fsrs_cards`,
+		`ALTER TABLE fsrs_cards_new RENAME TO fsrs_cards`,
+		`ALTER TABLE fsrs_review_log_new RENAME TO fsrs_review_log`,
+		`CREATE UNIQUE INDEX idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt)`,
+		`CREATE INDEX idx_fsrs_review_log_activity_ref_reviewed_at ON fsrs_review_log(activity_type, reference_id, reviewed_at DESC)`,
+		`CREATE INDEX idx_fsrs_review_log_topic_reviewed_at ON fsrs_review_log(topic_id, reviewed_at DESC)`,
+		`CREATE INDEX idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func rebuildWrittenQuestionsForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`DROP INDEX IF EXISTS idx_written_questions_topic_created_at`,
+		`CREATE TABLE written_questions_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			source_heading TEXT,
+			source_page_start INTEGER DEFAULT 0,
+			source_page_end INTEGER DEFAULT 0,
+			llm_model TEXT,
+			prompt_version TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO written_questions_new (
+			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
+			llm_model, prompt_version, created_at
+		)
+		SELECT
+			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
+			llm_model, prompt_version, created_at
+		FROM written_questions`,
+		`DROP TABLE written_questions`,
+		`ALTER TABLE written_questions_new RENAME TO written_questions`,
+		`CREATE INDEX idx_written_questions_topic_created_at ON written_questions(topic_id, created_at DESC)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func rebuildAssessmentFSRSForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`DROP INDEX IF EXISTS idx_assessment_fsrs_topic_due_at`,
+		`CREATE TABLE assessment_fsrs_new (
+			activity_type TEXT NOT NULL,
+			reference_id TEXT NOT NULL,
+			topic_id TEXT NOT NULL,
+			state_json TEXT NOT NULL,
+			due_at INTEGER,
+			last_reviewed_at INTEGER,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (activity_type, reference_id),
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO assessment_fsrs_new (
+			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at, created_at, updated_at
+		)
+		SELECT
+			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at, created_at, updated_at
+		FROM assessment_fsrs`,
+		`DROP TABLE assessment_fsrs`,
+		`ALTER TABLE assessment_fsrs_new RENAME TO assessment_fsrs`,
+		`CREATE INDEX idx_assessment_fsrs_topic_due_at ON assessment_fsrs(topic_id, due_at)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetTopicContent retrieves all parent sections for a topic
@@ -1324,6 +1698,75 @@ func GetTopicCurrentPageCursor(topicID string) (int, error) {
 	}
 
 	return cursor, nil
+}
+
+// GetTotalChunkTokens returns estimated total tokens for one topic.
+// It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
+func GetTotalChunkTokens(topicID string) (int, error) {
+	return getTotalChunkTokens(topicID, 0, 0)
+}
+
+// GetTotalChunkTokensForPageRange returns estimated total tokens for one topic/page window.
+// It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
+func GetTotalChunkTokensForPageRange(topicID string, startPage int, endPage int) (int, error) {
+	return getTotalChunkTokens(topicID, startPage, endPage)
+}
+
+func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
+
+	filterByPage := startPage > 0 && endPage > 0
+	if filterByPage && startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	query := `
+		SELECT COALESCE(token_count, 0), COALESCE(chunk_text, '')
+		FROM chunks
+		WHERE topic_id = ?
+	`
+	args := []interface{}{topicID}
+	if filterByPage {
+		query += ` AND page_num BETWEEN ? AND ?`
+		args = append(args, startPage, endPage)
+	}
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	total := 0
+	for rows.Next() {
+		var tokenCount int
+		var chunkText string
+		if err := rows.Scan(&tokenCount, &chunkText); err != nil {
+			return 0, err
+		}
+
+		if tokenCount > 0 {
+			total += tokenCount
+			continue
+		}
+
+		fallback := len(chunkText) / 4
+		if fallback <= 0 && strings.TrimSpace(chunkText) != "" {
+			fallback = 1
+		}
+		total += fallback
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	return total, nil
 }
 
 // GetChunkTextsForTopicPageRange returns chunk_text rows ordered by chunk id for one topic/page window.
