@@ -1321,7 +1321,6 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 				b.WriteString("- ")
 				b.WriteString(truncatedSnippet)
 				b.WriteString("\n")
-				bufferEmpty = false
 			}
 			break
 		}
