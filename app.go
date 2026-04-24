@@ -1298,9 +1298,9 @@ func scaledFlashcardCount(totalChunkTokens int) int {
 func buildQuizPrompt(topicID string, sections []map[string]interface{}, totalChunkTokens int, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString(fmt.Sprintf("Generate exactly %d multiple-choice questions for topic: ", targetCount))
+	fmt.Fprintf(&b, "Generate exactly %d multiple-choice questions for topic: ", targetCount)
 	b.WriteString(topicID)
-	b.WriteString(fmt.Sprintf("\nMaterial density estimate: %d chunk tokens.", totalChunkTokens))
+	fmt.Fprintf(&b, "\nMaterial density estimate: %d chunk tokens.", totalChunkTokens)
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
 	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
 	b.WriteString("Cover different concepts and question types. AVOID repetition.\n")
@@ -1326,10 +1326,10 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}, totalChu
 func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string, totalChunkTokens int, targetCount int) (string, error) {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString(fmt.Sprintf("Generate exactly %d multiple-choice questions for this completed reading session.\n", targetCount))
+	fmt.Fprintf(&b, "Generate exactly %d multiple-choice questions for this completed reading session.\n", targetCount)
 	b.WriteString("Topic ID: ")
 	b.WriteString(topicID)
-	b.WriteString(fmt.Sprintf("\nMaterial density estimate: %d chunk tokens.", totalChunkTokens))
+	fmt.Fprintf(&b, "\nMaterial density estimate: %d chunk tokens.", totalChunkTokens)
 	b.WriteString("\nLocked completion window: pages ")
 	fmt.Fprintf(&b, "%d-%d", startPage, targetPage)
 	b.WriteString("\nAssessment context window: pages ")
@@ -1339,7 +1339,7 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	}
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
 	b.WriteString("Rules:\n")
-	b.WriteString(fmt.Sprintf("- Return exactly %d questions.\n", targetCount))
+	fmt.Fprintf(&b, "- Return exactly %d questions.\n", targetCount)
 	b.WriteString("- correct_answer must match one option exactly.\n")
 	b.WriteString("- Keep all questions grounded in the context below.\n")
 	b.WriteString("- source_page_start/source_page_end must be within the context window.\n")
@@ -1410,9 +1410,9 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 func buildFlashcardPrompt(topicID string, sections []map[string]interface{}, totalChunkTokens int, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
-	b.WriteString(fmt.Sprintf("Generate exactly %d flashcards for topic: ", targetCount))
+	fmt.Fprintf(&b, "Generate exactly %d flashcards for topic: ", targetCount)
 	b.WriteString(topicID)
-	b.WriteString(fmt.Sprintf("\nMaterial density estimate: %d chunk tokens.", totalChunkTokens))
+	fmt.Fprintf(&b, "\nMaterial density estimate: %d chunk tokens.", totalChunkTokens)
 	b.WriteString("\nJSON format: {\"cards\":[{\"prompt\":string,\"answer\":string}]}\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
 	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")

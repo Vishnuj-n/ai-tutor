@@ -541,32 +541,12 @@ async function confirmSyllabusDraft() {
   const titleChanged = trimmedTitle !== String(originalDraftTitle.value || '').trim()
   const chaptersChanged = !chaptersEqual(sanitized, originalDraftChapters.value)
 
-  if (!titleChanged && !chaptersChanged) {
-    closeSyllabusModal()
-    showToast('No changes detected.')
-    return
-  }
-
   draftError.value = ''
   isConfirmingDraft.value = true
   ingestionStatusMessage.value = 'Starting notebook ingestion. Progress will appear below.'
   uploadProgress.value = 0
 
   try {
-    if (!chaptersChanged && titleChanged) {
-      const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
-      if (titleResult?.error) {
-        throw new Error(titleResult.error)
-      }
-      const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
-      if (notebook) {
-        notebook.title = trimmedTitle
-      }
-      showToast('Notebook title updated successfully.')
-      closeSyllabusModal()
-      return
-    }
-
     if (titleChanged) {
       const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
       if (titleResult?.error) {
