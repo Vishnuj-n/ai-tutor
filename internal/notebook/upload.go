@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,8 +30,9 @@ type Service struct {
 }
 
 const (
-	ChunkWordWindow  = 180
-	ChunkWordOverlap = 40
+	DefaultSemanticChunkTargetWords = 150
+	semanticChunkLowerBoundWords    = 100
+	semanticChunkUpperBoundWords    = 200
 )
 
 // Option customizes Service dependencies for testing and advanced setups.
@@ -489,41 +491,149 @@ func splitMarkdownSections(content string) []ExtractedSection {
 	return sections
 }
 
-func SplitIntoWordChunks(text string, chunkSize, overlap int) []string {
-	if chunkSize <= 0 {
-		chunkSize = ChunkWordWindow
-	}
-	if overlap < 0 {
-		overlap = 0
-	}
-	if overlap >= chunkSize {
-		overlap = chunkSize / 2
+type wordSpan struct {
+	start int
+	end   int
+	text  string
+}
+
+// SplitPageIntoSemanticChunks splits page-local text near semantic boundaries around targetWords.
+// It never crosses page boundaries because callers provide one page body at a time.
+func SplitPageIntoSemanticChunks(text string, targetWords int) []string {
+	if targetWords <= 0 {
+		targetWords = DefaultSemanticChunkTargetWords
 	}
 
-	words := strings.Fields(text)
-	if len(words) == 0 {
+	spans := tokenizeWordSpans(text)
+	if len(spans) == 0 {
 		return nil
 	}
 
-	stride := chunkSize - overlap
 	chunks := make([]string, 0)
-
-	for start := 0; start < len(words); start += stride {
-		end := start + chunkSize
-		if end > len(words) {
-			end = len(words)
+	for start := 0; start < len(spans); {
+		if len(spans)-start <= targetWords {
+			chunk := embeddings.NormalizeWhitespace(text[spans[start].start:spans[len(spans)-1].end])
+			if chunk != "" {
+				chunks = append(chunks, chunk)
+			}
+			break
 		}
 
-		chunk := strings.Join(words[start:end], " ")
-		chunk = embeddings.NormalizeWhitespace(chunk)
+		lower := start + semanticChunkLowerBoundWords
+		if lower <= start {
+			lower = start + 1
+		}
+		if lower > len(spans) {
+			lower = len(spans)
+		}
+
+		upper := start + semanticChunkUpperBoundWords
+		if upper > len(spans) {
+			upper = len(spans)
+		}
+		if upper < lower {
+			upper = lower
+		}
+
+		bestEnd := -1
+		bestDistance := math.MaxInt32
+		for end := lower; end <= upper; end++ {
+			if !isPreferredBoundary(text, spans, end) {
+				continue
+			}
+			distance := absInt((end - start) - targetWords)
+			if distance < bestDistance {
+				bestDistance = distance
+				bestEnd = end
+			}
+		}
+
+		if bestEnd < 0 {
+			bestEnd = start + targetWords
+			if bestEnd > len(spans) {
+				bestEnd = len(spans)
+			}
+		}
+
+		chunk := embeddings.NormalizeWhitespace(text[spans[start].start:spans[bestEnd-1].end])
 		if chunk != "" {
 			chunks = append(chunks, chunk)
 		}
 
-		if end == len(words) {
-			break
-		}
+		start = bestEnd
 	}
 
 	return chunks
+}
+
+func tokenizeWordSpans(text string) []wordSpan {
+	spans := make([]wordSpan, 0)
+	i := 0
+	for i < len(text) {
+		for i < len(text) && isWhitespaceByte(text[i]) {
+			i++
+		}
+		if i >= len(text) {
+			break
+		}
+		start := i
+		for i < len(text) && !isWhitespaceByte(text[i]) {
+			i++
+		}
+		end := i
+		spans = append(spans, wordSpan{
+			start: start,
+			end:   end,
+			text:  text[start:end],
+		})
+	}
+	return spans
+}
+
+func isWhitespaceByte(b byte) bool {
+	return b == ' ' || b == '\n' || b == '\r' || b == '\t' || b == '\f' || b == '\v'
+}
+
+func isPreferredBoundary(text string, spans []wordSpan, end int) bool {
+	if end <= 0 || end > len(spans) {
+		return false
+	}
+	if end == len(spans) {
+		return true
+	}
+
+	prev := spans[end-1]
+	next := spans[end]
+	if hasTerminalPeriod(prev.text) {
+		return true
+	}
+	gap := text[prev.end:next.start]
+	return strings.Contains(gap, "\n")
+}
+
+func hasTerminalPeriod(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	i := len(token) - 1
+	for i >= 0 {
+		switch token[i] {
+		case '"', '\'', ')', ']', '}':
+			i--
+			continue
+		}
+		break
+	}
+	if i < 0 {
+		return false
+	}
+	return token[i] == '.'
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

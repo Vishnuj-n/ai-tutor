@@ -107,6 +107,39 @@ func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
 	return questions, nil
 }
 
+func appendQuestionsForTopicRepo(topicID string, questions []models.QuizQuestion) error {
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	for _, q := range questions {
+		optionsJSON, marshalErr := json.Marshal(q.Options)
+		if marshalErr != nil {
+			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+			return err
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO questions (
+				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+				source_page_start, source_page_end, llm_model, prompt_version
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
+			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
+			return err
+		}
+	}
+
+	err = tx.Commit()
+	return err
+}
+
 func getQuestionByIDRepo(questionID string) (*models.QuizQuestion, error) {
 	var q models.QuizQuestion
 	var optionsJSON string

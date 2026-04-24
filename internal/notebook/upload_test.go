@@ -8,83 +8,72 @@ import (
 	"testing"
 )
 
-func TestSplitIntoWordChunks(t *testing.T) {
-	text10 := "one two three four five six seven eight nine ten"
-	text9 := "one two three four five six seven eight nine"
-	text8 := "one two three four five six seven eight"
-
+func TestSplitPageIntoSemanticChunks(t *testing.T) {
 	tests := []struct {
 		name      string
 		text      string
-		chunkSize int
-		overlap   int
-		want      []string
+		target    int
+		wantCount int
+		assert    func(t *testing.T, got []string)
 	}{
 		{
-			name:      "exact fit single chunk",
-			text:      text10,
-			chunkSize: 10,
-			overlap:   2,
-			want:      []string{"one two three four five six seven eight nine ten"},
-		},
-		{
-			name:      "overlap stride math",
-			text:      text10,
-			chunkSize: 4,
-			overlap:   1,
-			want: []string{
-				"one two three four",
-				"four five six seven",
-				"seven eight nine ten",
+			name:      "splits near period around 150 words",
+			text:      buildSentenceBlob(12, 14),
+			target:    150,
+			wantCount: 2,
+			assert: func(t *testing.T, got []string) {
+				t.Helper()
+				if !strings.HasSuffix(got[0], ".") {
+					t.Fatalf("expected first chunk to end at sentence boundary, got=%q", got[0])
+				}
 			},
 		},
 		{
-			name:      "trailing short chunk",
-			text:      text9,
-			chunkSize: 4,
-			overlap:   0,
-			want: []string{
-				"one two three four",
-				"five six seven eight",
-				"nine",
+			name:      "prefers newline boundary in range",
+			text:      buildWords(120) + "\n" + buildWordsRange(121, 220),
+			target:    150,
+			wantCount: 2,
+			assert: func(t *testing.T, got []string) {
+				t.Helper()
+				if got[0] != buildWords(120) {
+					t.Fatalf("expected newline split at 120 words, got first=%q", got[0])
+				}
 			},
 		},
 		{
-			name:      "negative overlap normalizes to zero",
-			text:      text9,
-			chunkSize: 4,
-			overlap:   -3,
-			want: []string{
-				"one two three four",
-				"five six seven eight",
-				"nine",
+			name:      "falls back to target when no period or newline",
+			text:      buildWords(320),
+			target:    150,
+			wantCount: 2,
+			assert: func(t *testing.T, got []string) {
+				t.Helper()
+				if len(strings.Fields(got[0])) != 150 {
+					t.Fatalf("expected fallback first chunk size 150, got=%d", len(strings.Fields(got[0])))
+				}
 			},
 		},
 		{
-			name:      "overlap at or above chunk size normalizes",
-			text:      text8,
-			chunkSize: 4,
-			overlap:   4,
-			want: []string{
-				"one two three four",
-				"three four five six",
-				"five six seven eight",
-			},
+			name:      "short text stays single chunk",
+			text:      buildWords(40),
+			target:    150,
+			wantCount: 1,
 		},
 		{
 			name:      "whitespace only returns nil",
 			text:      " \n\t ",
-			chunkSize: 5,
-			overlap:   1,
-			want:      nil,
+			target:    150,
+			wantCount: 0,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SplitIntoWordChunks(tc.text, tc.chunkSize, tc.overlap)
-			if !equalStringSlices(got, tc.want) {
-				t.Fatalf("unexpected chunks:\n got=%#v\nwant=%#v", got, tc.want)
+			got := SplitPageIntoSemanticChunks(tc.text, tc.target)
+			if len(got) != tc.wantCount {
+				t.Fatalf("unexpected chunk count: got=%d want=%d chunks=%#v", len(got), tc.wantCount, got)
+			}
+			if tc.assert != nil {
+				tc.assert(t, got)
 			}
 		})
 	}
@@ -191,14 +180,31 @@ func writeTempFile(t *testing.T, dir, fileName string, body []byte) string {
 	return path
 }
 
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+func buildWords(n int) string {
+	return buildWordsRange(1, n)
+}
+
+func buildWordsRange(start, end int) string {
+	out := make([]string, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		out = append(out, fmt.Sprintf("w%d", i))
 	}
-	for i := range a {
-		if strings.TrimSpace(a[i]) != strings.TrimSpace(b[i]) {
-			return false
+	return strings.Join(out, " ")
+}
+
+func buildSentenceBlob(sentences, wordsPerSentence int) string {
+	if sentences <= 0 || wordsPerSentence <= 0 {
+		return ""
+	}
+	parts := make([]string, 0, sentences)
+	word := 1
+	for i := 0; i < sentences; i++ {
+		line := make([]string, 0, wordsPerSentence)
+		for j := 0; j < wordsPerSentence; j++ {
+			line = append(line, fmt.Sprintf("w%d", word))
+			word++
 		}
+		parts = append(parts, strings.Join(line, " ")+".")
 	}
-	return true
+	return strings.Join(parts, " ")
 }
