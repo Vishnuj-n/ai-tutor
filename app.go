@@ -1258,7 +1258,7 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	fmt.Fprintf(&b, "%d-%d", startPage, targetPage)
 	b.WriteString("\nAssessment context window: pages ")
 	fmt.Fprintf(&b, "%d-%d", startPage, contextEndPage)
-	b.WriteString(fmt.Sprintf("\nGenerate questions only from pages %d-%d. Page %d is buffer/supporting context only.", startPage, targetPage, contextEndPage))
+	fmt.Fprintf(&b, "\nGenerate questions only from pages %d-%d. Page %d is buffer/supporting context only.", startPage, targetPage, contextEndPage)
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Return exactly 5 questions.\n")
@@ -1300,7 +1300,6 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 				}
 				b.WriteString(truncatedSnippet)
 				b.WriteString("\n")
-				currentTokens = availableContextTokens // enforce token limit
 			}
 			break
 		}
@@ -1622,13 +1621,6 @@ func semanticSnippetByTokens(content string, maxTokens int) (string, error) {
 	}
 
 	return truncated, nil
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func mapReviewRating(rating string) (int, bool) {

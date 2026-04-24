@@ -460,7 +460,9 @@ func ensureFSRSSchema() error {
 		if beginErr != nil {
 			return beginErr
 		}
-		defer tx.Rollback()
+		defer func() {
+			_ = tx.Rollback()
+		}()
 
 		stmts := []string{
 			`DROP TABLE IF EXISTS fsrs_cards`,
@@ -1120,7 +1122,9 @@ func EnsureTopicsBatch(items []TopicBatchItem) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO topics (id, title, status)
@@ -1212,7 +1216,9 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	for _, item := range items {
 		topicID := strings.TrimSpace(item.TopicID)
@@ -1635,7 +1641,9 @@ func DeleteTopic(topicID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	// Delete dependent tables in order to respect foreign key constraints
 
@@ -1863,7 +1871,9 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	stmt, err := tx.Prepare(`
 		UPDATE chunks SET embedding_ref = ? WHERE id = ?
@@ -2072,7 +2082,9 @@ func AppendQuestionsAndAdvanceCursor(topicID string, questions []models.QuizQues
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	// Append questions first
 	for _, q := range questions {
