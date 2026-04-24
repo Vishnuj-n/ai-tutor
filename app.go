@@ -1297,8 +1297,8 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 				b.WriteString("- ")
 				truncatedSnippet, err := semanticSnippetByTokens(text, remainingTokens)
 				if err != nil {
-					// Fallback to character-based truncation on error
-					truncatedSnippet = semanticSnippet(text, remainingTokens*4)
+					// Skip passage if token truncation fails to enforce strict token limits
+					break
 				}
 				b.WriteString(truncatedSnippet)
 				b.WriteString("\n")
@@ -1310,8 +1310,8 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 		// Use semantic snippet but truncate by tokens instead of characters
 		snippet, err := semanticSnippetByTokens(text, passageTokens)
 		if err != nil {
-			// Fallback to character-based truncation on error
-			snippet = semanticSnippet(text, passageTokens*4)
+			// Skip passage if token truncation fails to enforce strict token limits
+			break
 		}
 		b.WriteString(snippet)
 		b.WriteString("\n")
@@ -1606,13 +1606,14 @@ func semanticSnippetByTokens(content string, maxTokens int) (string, error) {
 	if best > len(truncated)/2 {
 		candidate := strings.TrimSpace(truncated[:best+1])
 		if candidate != "" {
-			// Verify candidate still fits within token budget
-			candidateTokens, err := embeddings.CountTokens(candidate)
+			candidateWithEllipsis := candidate + "..."
+			// Verify candidate with ellipsis still fits within token budget
+			candidateTokens, err := embeddings.CountTokens(candidateWithEllipsis)
 			if err != nil {
 				return "", fmt.Errorf("failed to count candidate tokens: %w", err)
 			}
 			if candidateTokens <= maxTokens {
-				return candidate + "...", nil
+				return candidateWithEllipsis, nil
 			}
 		}
 	}

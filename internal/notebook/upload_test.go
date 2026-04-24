@@ -115,18 +115,20 @@ func TestExtractDocumentMarkdownNormalization(t *testing.T) {
 		t.Fatalf("ExtractDocument returned error: %v", err)
 	}
 
-	// Markdown is now split by headings into sections
-	if doc.PageCount != 2 {
-		t.Fatalf("expected page count 2, got %d", doc.PageCount)
+	// Markdown is now treated as a single section with full content
+	if doc.PageCount != 1 {
+		t.Fatalf("expected page count 1, got %d", doc.PageCount)
 	}
-	if len(doc.Sections) != 2 {
-		t.Fatalf("expected two sections, got %d", len(doc.Sections))
+	if len(doc.Sections) != 1 {
+		t.Fatalf("expected one section, got %d", len(doc.Sections))
 	}
-	if doc.Sections[0].Heading != "Intro" || doc.Sections[0].Text != "Alpha   beta" {
-		t.Fatalf("unexpected first section: %#v", doc.Sections[0])
+	if doc.Sections[0].Heading != "Document" {
+		t.Fatalf("expected heading Document, got %q", doc.Sections[0].Heading)
 	}
-	if doc.Sections[1].Heading != "Deep Dive" || doc.Sections[1].Text != "gamma\t delta" {
-		t.Fatalf("unexpected second section: %#v", doc.Sections[1])
+	// Verify the full markdown content is preserved
+	expectedText := "# Intro\n\n Alpha   beta \n\n## Deep Dive\n gamma\t delta \n"
+	if doc.Sections[0].Text != expectedText {
+		t.Fatalf("unexpected text: %q", doc.Sections[0].Text)
 	}
 }
 
