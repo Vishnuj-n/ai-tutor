@@ -273,7 +273,7 @@ function handleIngestionProgress(payload) {
     ingestionStatusMessage.value = payload.message
   }
 
-  const terminalStates = new Set(['indexed', 'partial_indexed', 'failed', 'chunked'])
+  const terminalStates = new Set(['failed', 'chunked'])
   if (typeof payload.status === 'string' && terminalStates.has(payload.status)) {
     void loadNotebooks()
   }
@@ -369,11 +369,7 @@ async function uploadFile(file) {
       throw new Error(result.error)
     }
 
-    if (result?.status === 'indexed') {
-      ingestionStatusMessage.value = 'Vector indexing complete'
-    } else if (result?.status === 'partial_indexed') {
-      ingestionStatusMessage.value = 'Vector indexing completed with partial failures'
-    } else if (result?.status === 'chunked') {
+    if (result?.status === 'chunked') {
       ingestionStatusMessage.value = 'Chunking complete'
     } else {
       ingestionStatusMessage.value = 'Uploaded. Drafting syllabus for review...'

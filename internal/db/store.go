@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -459,9 +460,7 @@ func ensureFSRSSchema() error {
 		if beginErr != nil {
 			return beginErr
 		}
-		defer func() {
-			_ = tx.Rollback()
-		}()
+		defer tx.Rollback()
 
 		stmts := []string{
 			`DROP TABLE IF EXISTS fsrs_cards`,
@@ -592,6 +591,54 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 	}
 
 	return chunks, nil
+}
+
+// GetChunksForTopics retrieves chunks for multiple topics in a single batch query
+func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
+	if len(topicIDs) == 0 {
+		return make(map[string][]models.Chunk), nil
+	}
+
+	// Build IN clause placeholders
+	placeholders := make([]string, len(topicIDs))
+	args := make([]interface{}, len(topicIDs))
+	for i, topicID := range topicIDs {
+		placeholders[i] = "?"
+		args[i] = topicID
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
+		FROM chunks
+		WHERE topic_id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	// Group chunks by topic_id
+	result := make(map[string][]models.Chunk)
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(
+			&chunk.ID,
+			&chunk.TopicID,
+			&chunk.ParentID,
+			&chunk.Text,
+			&chunk.ImportanceScore,
+			&chunk.WeaknessScore,
+		); err != nil {
+			return nil, err
+		}
+		result[chunk.TopicID] = append(result[chunk.TopicID], chunk)
+	}
+
+	return result, nil
 }
 
 // GetParentSection retrieves a parent section by ID
@@ -970,12 +1017,12 @@ func CreateParentSection(id, topicID, heading string, orderIndex int, content st
 }
 
 // CreateChunk inserts a chunk row.
-func CreateChunk(id, topicID, parentID, text string, tokenCount int) error {
+func CreateChunk(id, topicID, parentID, text string, tokenCount int, pageNum int) error {
 	return insertChunkRow(conn, topicID, NotebookChunkInput{
 		ID:         id,
 		ParentID:   parentID,
 		Text:       text,
-		PageNum:    0,
+		PageNum:    pageNum,
 		TokenCount: tokenCount,
 	})
 }
@@ -1057,7 +1104,57 @@ func EnsureTopic(topicID, title string) error {
 	return err
 }
 
+// TopicBatchItem represents a topic to be created/updated in batch
+type TopicBatchItem struct {
+	TopicID string
+	Title   string
+}
+
+// EnsureTopicsBatch creates or updates multiple topics in a single transaction
+func EnsureTopicsBatch(items []TopicBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO topics (id, title, status)
+		VALUES (?, ?, 'reading')
+		ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = 'reading'
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = stmt.Close()
+	}()
+
+	for _, item := range items {
+		if item.TopicID == "" {
+			err = fmt.Errorf("topic id is required for all batch items")
+			return err
+		}
+		title := item.Title
+		if title == "" {
+			title = item.TopicID
+		}
+
+		_, err = stmt.Exec(item.TopicID, title)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // UpdateTopicPageBounds stores deterministic chapter bounds for a topic.
+// Initializes current_page_cursor to startPage if it is 0 (uninitialized).
 func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -1073,12 +1170,113 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		startPage, endPage = endPage, startPage
 	}
 
+	// Determine if cursor needs initialization
+	var currentCursor int
+	if err := conn.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Initialize cursor to startPage if uninitialized (0)
+	if currentCursor == 0 {
+		_, err := conn.Exec(`
+			UPDATE topics
+			SET start_page = ?, end_page = ?, current_page_cursor = ?
+			WHERE id = ?
+		`, startPage, endPage, startPage, topicID)
+		return err
+	}
+
+	// Cursor already initialized; just update bounds
 	_, err := conn.Exec(`
 		UPDATE topics
 		SET start_page = ?, end_page = ?
 		WHERE id = ?
 	`, startPage, endPage, topicID)
 	return err
+}
+
+// TopicPageBoundsBatchItem represents topic page bounds to be updated in batch
+type TopicPageBoundsBatchItem struct {
+	TopicID   string
+	StartPage int
+	EndPage   int
+}
+
+// UpdateTopicPageBoundsBatch updates page bounds for multiple topics in a single transaction
+func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, item := range items {
+		topicID := strings.TrimSpace(item.TopicID)
+		if topicID == "" {
+			err = fmt.Errorf("topic id is required for all batch items")
+			return err
+		}
+
+		startPage := item.StartPage
+		endPage := item.EndPage
+		if startPage < 0 {
+			startPage = 0
+		}
+		if endPage < 0 {
+			endPage = 0
+		}
+		if startPage > endPage {
+			startPage, endPage = endPage, startPage
+		}
+
+		// Check current cursor
+		var currentCursor int
+		if cursorErr := tx.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
+			return cursorErr
+		}
+
+		// Initialize cursor if uninitialized (0)
+		if currentCursor == 0 {
+			res, err := tx.Exec(`
+				UPDATE topics
+				SET start_page = ?, end_page = ?, current_page_cursor = ?
+				WHERE id = ?
+			`, startPage, endPage, startPage, topicID)
+			if err != nil {
+				return err
+			}
+			rowsAffected, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rowsAffected == 0 {
+				return fmt.Errorf("no rows updated for topicID %s", topicID)
+			}
+		} else {
+			// Cursor already initialized; just update bounds
+			res, err := tx.Exec(`
+				UPDATE topics
+				SET start_page = ?, end_page = ?
+				WHERE id = ?
+			`, startPage, endPage, topicID)
+			if err != nil {
+				return err
+			}
+			rowsAffected, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rowsAffected == 0 {
+				return fmt.Errorf("no rows updated for topicID %s", topicID)
+			}
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetTopicPageBounds returns persisted chapter bounds for a topic.
@@ -1102,9 +1300,133 @@ func GetTopicPageBounds(topicID string) (int, int, error) {
 	return startPage, endPage, nil
 }
 
+// GetTopicCurrentPageCursor returns the current page cursor for a topic.
+func GetTopicCurrentPageCursor(topicID string) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
+
+	var cursor int
+	err := conn.QueryRow(`
+		SELECT COALESCE(current_page_cursor, 0)
+		FROM topics
+		WHERE id = ?
+	`, topicID).Scan(&cursor)
+	if err != nil {
+		return 0, err
+	}
+
+	return cursor, nil
+}
+
+// GetChunkTextsForTopicPageRange returns chunk_text rows ordered by chunk id for one topic/page window.
+func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	rows, err := conn.Query(`
+		SELECT chunk_text
+		FROM chunks
+		WHERE topic_id = ?
+		  AND page_num BETWEEN ? AND ?
+		ORDER BY page_num ASC, id ASC
+	`, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chunkTexts []string
+	for rows.Next() {
+		var chunkText string
+		if err := rows.Scan(&chunkText); err != nil {
+			return nil, err
+		}
+		chunkTexts = append(chunkTexts, chunkText)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return chunkTexts, nil
+}
+
+// GetParentPassagesForTopicPageRange retrieves chunks with their parent passage context for a topic page range
+func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	rows, err := conn.Query(`
+		SELECT c.chunk_text, COALESCE(p.heading, ''), COALESCE(p.content_text, '')
+		FROM chunks c
+		LEFT JOIN parents p ON c.parent_id = p.id AND p.topic_id = c.topic_id
+		WHERE c.topic_id = ?
+		  AND c.page_num BETWEEN ? AND ?
+		ORDER BY c.page_num ASC, c.id ASC
+	`, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var parentPassages []string
+	for rows.Next() {
+		var chunkText, parentHeading, parentContent string
+		if err := rows.Scan(&chunkText, &parentHeading, &parentContent); err != nil {
+			return nil, err
+		}
+
+		// Build parent passage context
+		var passage strings.Builder
+		if parentHeading != "" {
+			passage.WriteString("Section: ")
+			passage.WriteString(parentHeading)
+			passage.WriteString("\n")
+		}
+		if parentContent != "" {
+			passage.WriteString("Context: ")
+			passage.WriteString(parentContent)
+			passage.WriteString("\n")
+		}
+		passage.WriteString("Content: ")
+		passage.WriteString(chunkText)
+
+		parentPassages = append(parentPassages, passage.String())
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return parentPassages, nil
+}
+
 // GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
 // Key format is normalized lower-case heading text with single spaces.
 func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
+	// ... (rest of the code remains the same)
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
@@ -1301,6 +1623,80 @@ func DeleteNotebook(notebookID string) error {
 	return deleteNotebookRepo(notebookID)
 }
 
+// DeleteTopic removes a topic and all associated data
+func DeleteTopic(topicID string) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+
+	// Begin transaction for atomic deletion
+	tx, err := conn.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Delete dependent tables in order to respect foreign key constraints
+
+	// Delete user_answers (via questions)
+	if _, err = tx.Exec("DELETE FROM user_answers WHERE question_id IN (SELECT id FROM questions WHERE topic_id = ?)", topicID); err != nil {
+		return fmt.Errorf("failed to delete user_answers: %w", err)
+	}
+
+	// Delete notebook_chunks (via chunks)
+	if _, err = tx.Exec("DELETE FROM notebook_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE topic_id = ?)", topicID); err != nil {
+		return fmt.Errorf("failed to delete notebook_chunks: %w", err)
+	}
+
+	// Delete fsrs_review_log
+	if _, err = tx.Exec("DELETE FROM fsrs_review_log WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete fsrs_review_log: %w", err)
+	}
+
+	// Delete fsrs_cards
+	if _, err = tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete fsrs_cards: %w", err)
+	}
+
+	// Delete questions
+	if _, err = tx.Exec("DELETE FROM questions WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete questions: %w", err)
+	}
+
+	// Delete topic_progress
+	if _, err = tx.Exec("DELETE FROM topic_progress WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete topic_progress: %w", err)
+	}
+
+	// Delete chunks
+	if _, err = tx.Exec("DELETE FROM chunks WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete chunks: %w", err)
+	}
+
+	// Delete parents
+	if _, err = tx.Exec("DELETE FROM parents WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete parents: %w", err)
+	}
+
+	// Update notebooks that reference this topic to null
+	if _, err = tx.Exec("UPDATE notebooks SET topic_id = NULL WHERE topic_id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to update notebooks: %w", err)
+	}
+
+	// Finally delete the topic
+	if _, err = tx.Exec("DELETE FROM topics WHERE id = ?", topicID); err != nil {
+		return fmt.Errorf("failed to delete topic: %w", err)
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // Vector Search and Storage Functions
 
 // createVectorTable creates the vec0 virtual table with the discovered embedding dimension.
@@ -1451,6 +1847,56 @@ func UpdateChunkEmbedding(chunkID string, hash string) error {
 	return err
 }
 
+// ChunkEmbeddingBatchItem represents a chunk embedding update to be processed in batch
+type ChunkEmbeddingBatchItem struct {
+	ChunkID string
+	Hash    string
+}
+
+// UpdateChunkEmbeddingsBatch updates embedding metadata for multiple chunks in a single transaction
+func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		UPDATE chunks SET embedding_ref = ? WHERE id = ?
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = stmt.Close()
+	}()
+
+	for _, item := range items {
+		if item.ChunkID == "" {
+			err = fmt.Errorf("chunk id is required for all batch items")
+			return err
+		}
+
+		res, err := stmt.Exec(item.Hash, item.ChunkID)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no rows inserted for chunk_id %s", item.ChunkID)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // GetChunkEmbeddingRef returns the stored embedding_ref hash for a topic-scoped chunk.
 func GetChunkEmbeddingRef(topicID, chunkID string) (string, error) {
 	var hash string
@@ -1517,6 +1963,30 @@ func ReplaceQuestionsForTopic(topicID string, questions []models.QuizQuestion) e
 	return replaceQuestionsForTopicRepo(topicID, normalized)
 }
 
+// AppendQuestionsForTopic appends generated quiz questions without deleting existing rows.
+func AppendQuestionsForTopic(topicID string, questions []models.QuizQuestion) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if len(questions) == 0 {
+		return fmt.Errorf("at least one question is required")
+	}
+
+	normalized := make([]models.QuizQuestion, 0, len(questions))
+	for _, q := range questions {
+		q.TopicID = strings.TrimSpace(q.TopicID)
+		if q.TopicID == "" {
+			q.TopicID = topicID
+		} else if q.TopicID != topicID {
+			return fmt.Errorf("question topic id must match topic id")
+		}
+		normalized = append(normalized, q)
+	}
+
+	return appendQuestionsForTopicRepo(topicID, normalized)
+}
+
 // GetQuestionsForTopic returns generated quiz questions for a topic.
 func GetQuestionsForTopic(topicID string) ([]models.QuizQuestion, error) {
 	topicID = strings.TrimSpace(topicID)
@@ -1547,4 +2017,108 @@ func SaveUserAnswer(score models.QuizScore) error {
 		return fmt.Errorf("user answer is required")
 	}
 	return saveUserAnswerRepo(score)
+}
+
+// UpdateTopicReadingCursor persists the current page cursor and optionally marks topic as learned.
+func UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+
+	status := "reading"
+	if markLearned {
+		status = "learned"
+	}
+
+	result, err := conn.Exec(`
+		UPDATE topics
+		SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, cursor, status, topicID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("topic not found: %s", topicID)
+	}
+
+	return nil
+}
+
+// AppendQuestionsAndAdvanceCursor atomically appends questions and updates the reading cursor in a single transaction
+func AppendQuestionsAndAdvanceCursor(topicID string, questions []models.QuizQuestion, nextCursor int, markLearned bool) error {
+	if len(questions) == 0 {
+		return fmt.Errorf("at least one question is required")
+	}
+
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if nextCursor < 0 {
+		nextCursor = 0
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Append questions first
+	for _, q := range questions {
+		if q.TopicID != topicID {
+			err = fmt.Errorf("question topic_id %s does not match target topic %s", q.TopicID, topicID)
+			return err
+		}
+		optionsJSON, marshalErr := json.Marshal(q.Options)
+		if marshalErr != nil {
+			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+			return err
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO questions (
+				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+				source_page_start, source_page_end, llm_model, prompt_version
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
+			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
+			return err
+		}
+	}
+
+	// Update cursor
+	status := "reading"
+	if markLearned {
+		status = "learned"
+	}
+
+	result, err := tx.Exec(`
+		UPDATE topics
+		SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nextCursor, status, topicID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("topic not found: %s", topicID)
+	}
+
+	return tx.Commit()
 }

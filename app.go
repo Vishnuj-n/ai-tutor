@@ -158,15 +158,30 @@ func (a *App) startup(ctx context.Context) {
 		topicIDs = []string{"os-scheduling"}
 	}
 
-	for _, topicID := range topicIDs {
-		chunks, err := db.GetChunksForTopic(topicID)
-		if err != nil {
-			utils.Warnf("could not load chunks for topic %s: %v", topicID, err)
-			continue
+	// Batch load all chunks in a single query
+	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
+	if err != nil {
+		utils.Warnf("could not load chunks for topics: %v", err)
+		// Fall back to individual queries on batch failure
+		for _, topicID := range topicIDs {
+			chunks, err := db.GetChunksForTopic(topicID)
+			if err != nil {
+				utils.Warnf("could not load chunks for topic %s: %v", topicID, err)
+				continue
+			}
+			utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
+			for _, chunk := range chunks {
+				embedStore.AddChunk(chunk)
+			}
 		}
-		utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
-		for _, chunk := range chunks {
-			embedStore.AddChunk(chunk)
+	} else {
+		// Process batch results
+		for _, topicID := range topicIDs {
+			chunks := chunksByTopic[topicID]
+			utils.Infof("Loaded %d chunks for topic %s", len(chunks), topicID)
+			for _, chunk := range chunks {
+				embedStore.AddChunk(chunk)
+			}
 		}
 	}
 
@@ -631,6 +646,163 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	}
 }
 
+// CompleteReadingSession generates and stores incremental assessment questions for a locked page window.
+func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage int) map[string]interface{} {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return map[string]interface{}{"error": "topic ID is required"}
+	}
+	if targetPage <= 0 {
+		return map[string]interface{}{"error": "target page must be positive"}
+	}
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
+	}
+
+	topicStartPage, topicEndPage, err := db.GetTopicPageBounds(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch topic page bounds: " + err.Error()}
+	}
+	if topicEndPage <= 0 {
+		return map[string]interface{}{"error": "topic has no page bounds configured"}
+	}
+
+	if startPage <= 0 {
+		if topicStartPage > 0 {
+			startPage = topicStartPage
+		} else {
+			startPage = 1
+		}
+	}
+	if topicStartPage > 0 && startPage < topicStartPage {
+		startPage = topicStartPage
+	}
+	if targetPage > topicEndPage {
+		targetPage = topicEndPage
+	}
+	if targetPage < startPage {
+		return map[string]interface{}{"error": "invalid completion window: target page must be >= start page"}
+	}
+
+	contextEndPage := targetPage + 1
+	if contextEndPage > topicEndPage {
+		contextEndPage = topicEndPage
+	}
+
+	parentPassages, err := db.GetParentPassagesForTopicPageRange(topicID, startPage, contextEndPage)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch completion passages: " + err.Error()}
+	}
+	if len(parentPassages) == 0 {
+		return map[string]interface{}{"error": "no passage content found for completion window"}
+	}
+
+	raw, err := a.fastLLMProvider.GenerateAnswer(buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages))
+	if err != nil {
+		return map[string]interface{}{"error": "completion quiz generation failed: " + err.Error()}
+	}
+
+	parsed, err := parseQuizLLMResponse(raw)
+	if err != nil {
+		return map[string]interface{}{"error": "completion quiz parsing failed: " + err.Error()}
+	}
+
+	const expectedQuestionCount = 5
+	modelName := providerModelName(a.fastLLMProvider)
+	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
+	for _, q := range parsed.Questions {
+		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" {
+			continue
+		}
+
+		correctAnswerCanonical := strings.TrimSpace(strings.ToLower(q.CorrectAnswer))
+		var matchedOption string
+		for _, opt := range q.Options {
+			optCanonical := strings.TrimSpace(strings.ToLower(opt))
+			if optCanonical == correctAnswerCanonical {
+				matchedOption = strings.TrimSpace(opt)
+				break
+			}
+		}
+		if matchedOption == "" {
+			continue
+		}
+
+		sourcePageStart := q.SourcePageStart
+		sourcePageEnd := q.SourcePageEnd
+		if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
+			sourcePageStart = startPage
+			sourcePageEnd = contextEndPage
+		}
+		if sourcePageStart < startPage {
+			sourcePageStart = startPage
+		}
+		if sourcePageEnd > contextEndPage {
+			sourcePageEnd = contextEndPage
+		}
+		if sourcePageEnd < sourcePageStart {
+			sourcePageEnd = sourcePageStart
+		}
+
+		questions = append(questions, models.QuizQuestion{
+			ID:              uuid.NewString(),
+			TopicID:         topicID,
+			Prompt:          strings.TrimSpace(q.Prompt),
+			Options:         q.Options,
+			CorrectAnswer:   matchedOption,
+			Explanation:     strings.TrimSpace(q.Explanation),
+			Hint:            strings.TrimSpace(q.Hint),
+			SourceHeading:   strings.TrimSpace(q.SourceHeading),
+			SourceSnippet:   strings.TrimSpace(q.SourceSnippet),
+			SourcePageStart: sourcePageStart,
+			SourcePageEnd:   sourcePageEnd,
+			LLMModel:        modelName,
+			PromptVersion:   "reader-complete-v1",
+		})
+	}
+
+	if len(questions) != expectedQuestionCount {
+		return map[string]interface{}{
+			"error": fmt.Sprintf("completion quiz produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
+		}
+	}
+
+	// Validate cursor before appending questions to prevent replayed/backwards advances
+	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
+	}
+	if startPage != currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
+	}
+	if targetPage <= currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
+	}
+
+	nextCursor := targetPage + 1
+	markLearned := targetPage >= topicEndPage
+	if err := db.AppendQuestionsAndAdvanceCursor(topicID, questions, nextCursor, markLearned); err != nil {
+		return map[string]interface{}{"error": "failed to append completion questions and update cursor: " + err.Error()}
+	}
+
+	status := "reading"
+	if markLearned {
+		status = "learned"
+	}
+
+	return map[string]interface{}{
+		"ok":                  true,
+		"topic_id":            topicID,
+		"source_page_start":   startPage,
+		"source_page_end":     contextEndPage,
+		"target_page":         targetPage,
+		"questions_generated": len(questions),
+		"prompt_version":      "reader-complete-v1",
+		"current_page_cursor": nextCursor,
+		"topic_status":        status,
+	}
+}
+
 // GenerateFlashcards creates flashcards for a topic or returns the existing set.
 // Enforces exactly 8 flashcards per generation to keep decks consistent and predictable.
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
@@ -1074,6 +1246,70 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	return b.String()
 }
 
+func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string) string {
+	var b strings.Builder
+	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
+	b.WriteString("Generate exactly 5 multiple-choice questions for this completed reading session.\n")
+	b.WriteString("Topic ID: ")
+	b.WriteString(topicID)
+	b.WriteString("\nLocked completion window: pages ")
+	fmt.Fprintf(&b, "%d-%d", startPage, targetPage)
+	b.WriteString("\nAssessment context window: pages ")
+	fmt.Fprintf(&b, "%d-%d", startPage, contextEndPage)
+	b.WriteString(fmt.Sprintf("\nGenerate questions only from pages %d-%d. Page %d is buffer/supporting context only.", startPage, targetPage, contextEndPage))
+	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Return exactly 5 questions.\n")
+	b.WriteString("- correct_answer must match one option exactly.\n")
+	b.WriteString("- Keep all questions grounded in the context below.\n")
+	b.WriteString("- source_page_start/source_page_end must be within the context window.\n")
+	b.WriteString("- Cover definitions, application, and one misconception.\n")
+	b.WriteString("\nContext chunks (ordered):\n")
+
+	// Reserve tokens for system prompt and instructions (estimated 300 tokens)
+	const systemPromptTokens = 300
+	// Reserve tokens for JSON structure and questions (estimated 800 tokens)
+	const outputStructureTokens = 800
+
+	// Get model token budget - use conservative 4k limit for compatibility
+	const maxModelTokens = 4096
+	availableContextTokens := maxModelTokens - systemPromptTokens - outputStructureTokens
+
+	// Accumulate passages within token budget
+	currentTokens := 0
+	for _, text := range parentPassages {
+		// Count tokens for this passage
+		passageTokens, err := embeddings.CountTokens(text)
+		if err != nil {
+			// Fallback to character-based estimate if tokenizer fails
+			passageTokens = len(text) / 4 // rough estimate
+		}
+
+		// Check if adding this passage would exceed budget
+		if currentTokens+passageTokens > availableContextTokens {
+			// Add truncated snippet if we have remaining tokens
+			remainingTokens := availableContextTokens - currentTokens
+			if remainingTokens > 0 {
+				b.WriteString("- ")
+				truncatedSnippet := semanticSnippetByTokens(text, remainingTokens)
+				b.WriteString(truncatedSnippet)
+				b.WriteString("\n")
+				currentTokens = availableContextTokens // enforce token limit
+			}
+			break
+		}
+
+		b.WriteString("- ")
+		// Use semantic snippet but truncate by tokens instead of characters
+		snippet := semanticSnippetByTokens(text, passageTokens)
+		b.WriteString(snippet)
+		b.WriteString("\n")
+
+		currentTokens += passageTokens
+	}
+	return b.String()
+}
+
 func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
@@ -1312,6 +1548,133 @@ func semanticSnippet(content string, limit int) string {
 		cutRunes = cutRunes[:limit-3]
 	}
 	return string(cutRunes) + "..."
+}
+
+// semanticSnippetByTokens truncates text to fit within a token budget using the tokenizer
+func semanticSnippetByTokens(content string, maxTokens int) string {
+	trimmed := strings.TrimSpace(content)
+	if maxTokens <= 0 || trimmed == "" {
+		return ""
+	}
+
+	// Check if content already fits within token budget
+	tokens, err := embeddings.CountTokens(trimmed)
+	if err != nil {
+		// Fallback to character-based estimate if tokenizer fails
+		estimatedTokens := len(trimmed) / 4
+		if estimatedTokens <= maxTokens {
+			return trimmed
+		}
+		// Rough character-based truncation as fallback
+		charLimit := maxTokens * 4
+		return semanticSnippet(trimmed, charLimit)
+	}
+
+	if tokens <= maxTokens {
+		return trimmed
+	}
+
+	// Use tokenizer to truncate to token limit
+	truncated, err := embeddings.TruncateToTokens(trimmed, maxTokens)
+	if err != nil {
+		// Fallback to character-based truncation if tokenizer truncate fails
+		charLimit := maxTokens * 4
+		return semanticSnippet(trimmed, charLimit)
+	}
+
+	// Re-verify token count after truncation to ensure strict bounds
+	truncatedTokens, err := embeddings.CountTokens(truncated)
+	if err != nil {
+		// Fallback to character-based truncation if token counting fails
+		charLimit := maxTokens * 4
+		return semanticSnippet(trimmed, charLimit)
+	}
+
+	// If truncated still exceeds maxTokens, truncate more conservatively
+	if truncatedTokens > maxTokens {
+		conservativeLimit := maxTokens - 10
+		if conservativeLimit > 0 {
+			conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
+			if err == nil {
+				// Verify the conservative truncation
+				conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
+				if verifyErr == nil && conservativeTokens <= maxTokens {
+					truncated = conservative
+					truncatedTokens = conservativeTokens
+				} else {
+					// If still exceeds, use even more conservative limit
+					veryConservativeLimit := maxTokens - 20
+					if veryConservativeLimit > 0 {
+						veryConservative, veryErr := embeddings.TruncateToTokens(trimmed, veryConservativeLimit)
+						if veryErr == nil {
+							veryTokens, veryVerifyErr := embeddings.CountTokens(veryConservative)
+							if veryVerifyErr == nil && veryTokens <= maxTokens {
+								truncated = veryConservative
+								truncatedTokens = veryTokens
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Apply semantic boundary logic to the token-truncated text
+	// Prefer sentence boundaries to avoid abrupt truncation
+	best := strings.LastIndex(truncated, ". ")
+	if idx := strings.LastIndex(truncated, "\n"); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(truncated, "? "); idx > best {
+		best = idx
+	}
+	if idx := strings.LastIndex(truncated, "! "); idx > best {
+		best = idx
+	}
+
+	// Only use boundary if we keep at least half the content
+	if best > len(truncated)/2 {
+		candidate := strings.TrimSpace(truncated[:best+1])
+		if candidate != "" {
+			// Verify candidate still fits within token budget
+			candidateTokens, err := embeddings.CountTokens(candidate)
+			if err == nil && candidateTokens <= maxTokens {
+				return candidate + "..."
+			}
+		}
+	}
+
+	// Final verification: ensure truncated text fits within token budget
+	if truncatedTokens <= maxTokens {
+		return truncated
+	}
+
+	// Final fallback: truncate more conservatively with verification
+	conservativeLimit := maxTokens - 10 // leave buffer
+	if conservativeLimit > 0 {
+		conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
+		if err == nil {
+			// Verify conservative truncation before returning
+			conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
+			if verifyErr == nil && conservativeTokens <= maxTokens {
+				return conservative + "..."
+			}
+		}
+	}
+
+	// Last resort: character-based fallback with verification
+	charLimit := maxTokens * 3 // more conservative character estimate
+	result := semanticSnippet(trimmed, charLimit)
+	// Verify final result
+	if finalTokens, verifyErr := embeddings.CountTokens(result); verifyErr == nil && finalTokens <= maxTokens {
+		return result
+	}
+	// If even the fallback exceeds, truncate more aggressively
+	if finalTokens, verifyErr := embeddings.CountTokens(result); verifyErr == nil && finalTokens > maxTokens {
+		charLimit = maxTokens * 2 // even more conservative
+		return semanticSnippet(trimmed, charLimit)
+	}
+	return result
 }
 
 func minInt(a, b int) int {

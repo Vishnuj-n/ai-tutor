@@ -2,8 +2,12 @@ package db
 
 import (
 	"ai-tutor/internal/models"
+	"fmt"
+	"os"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing.T) {
@@ -90,7 +94,7 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 	if err := CreateParentSection(parentDelID, autoTopicID, "Delete Heading", 1, "delete parent body"); err != nil {
 		t.Fatalf("CreateParentSection delete failed: %v", err)
 	}
-	if err := CreateChunk(chunkDelID, autoTopicID, parentDelID, "delete chunk body", 3); err != nil {
+	if err := CreateChunk(chunkDelID, autoTopicID, parentDelID, "delete chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk delete failed: %v", err)
 	}
 	if err := LinkChunksToNotebook(notebookID, []string{chunkDelID}); err != nil {
@@ -102,7 +106,7 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 	if err := CreateParentSection(parentKeepID, keepTopicID, "Keep Heading", 1, "keep parent body"); err != nil {
 		t.Fatalf("CreateParentSection keep failed: %v", err)
 	}
-	if err := CreateChunk(chunkKeepID, keepTopicID, parentKeepID, "keep chunk body", 3); err != nil {
+	if err := CreateChunk(chunkKeepID, keepTopicID, parentKeepID, "keep chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk keep failed: %v", err)
 	}
 	if err := LinkChunksToNotebook(keepNotebookID, []string{chunkKeepID}); err != nil {
@@ -155,7 +159,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	if err := CreateParentSection(parentA, topicA, "A", 1, "topic a parent"); err != nil {
 		t.Fatalf("CreateParentSection topicA failed: %v", err)
 	}
-	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3); err != nil {
+	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk topicA failed: %v", err)
 	}
 
@@ -164,7 +168,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	if err := CreateParentSection(parentB, topicB, "B", 1, "topic b parent"); err != nil {
 		t.Fatalf("CreateParentSection topicB failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 3); err != nil {
+	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 3, 2); err != nil {
 		t.Fatalf("CreateChunk topicB failed: %v", err)
 	}
 
@@ -219,10 +223,10 @@ func TestGetNotebookTopicTreeDeduplicatesTopicRowsPerNotebook(t *testing.T) {
 
 	chunkA := "chunk-tree-dedupe-a"
 	chunkB := "chunk-tree-dedupe-b"
-	if err := CreateChunk(chunkA, topicID, parentID, "chunk a", 2); err != nil {
+	if err := CreateChunk(chunkA, topicID, parentID, "chunk a", 2, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicID, parentID, "chunk b", 2); err != nil {
+	if err := CreateChunk(chunkB, topicID, parentID, "chunk b", 2, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
@@ -260,7 +264,7 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 	if err := CreateParentSection(parentA, topicA, "A", 1, "topic a parent"); err != nil {
 		t.Fatalf("CreateParentSection topicA failed: %v", err)
 	}
-	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3); err != nil {
+	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
 
@@ -269,7 +273,7 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 	if err := CreateParentSection(parentB, topicB, "B", 1, "topic b parent"); err != nil {
 		t.Fatalf("CreateParentSection topicB failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 8); err != nil {
+	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 8, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
@@ -534,6 +538,228 @@ func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
 
 	// Verify questions were inserted with correct TopicID
 	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 2)
+}
+
+func TestAppendQuestionsForTopicPreservesExistingQuestions(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "quiz-append-topic"
+	if err := EnsureTopic(topicID, "Quiz Append Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	seed := []models.QuizQuestion{{
+		ID:            "append-seed",
+		TopicID:       topicID,
+		Prompt:        "Seed?",
+		Options:       []string{"A", "B"},
+		CorrectAnswer: "A",
+	}}
+	if err := ReplaceQuestionsForTopic(topicID, seed); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	next := []models.QuizQuestion{{
+		ID:              "append-next",
+		TopicID:         "",
+		Prompt:          "Next?",
+		Options:         []string{"C", "D"},
+		CorrectAnswer:   "C",
+		SourcePageStart: 2,
+		SourcePageEnd:   3,
+		PromptVersion:   "reader-complete-v1",
+	}}
+	if err := AppendQuestionsForTopic(topicID, next); err != nil {
+		t.Fatalf("AppendQuestionsForTopic failed: %v", err)
+	}
+
+	questions, err := GetQuestionsForTopic(topicID)
+	if err != nil {
+		t.Fatalf("GetQuestionsForTopic failed: %v", err)
+	}
+	if len(questions) != 2 {
+		t.Fatalf("expected existing and appended questions, got %#v", questions)
+	}
+}
+
+func TestGetChunkTextsForTopicPageRangeIncludesBufferPage(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "completion-context-topic"
+	notebookID := "completion-context-notebook"
+	if err := EnsureTopic(topicID, "Completion Context"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateNotebook(notebookID, "Completion Context", "/tmp/context.txt", "txt", "", 4); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	parentID := "completion-context-parent"
+	groups := []NotebookTopicIngestionGroup{{
+		TopicID: topicID,
+		Parents: []NotebookParentInput{{
+			ID: parentID, Heading: "Context", Content: "context body", OrderIndex: 1,
+		}},
+		Chunks: []NotebookChunkInput{
+			{ID: "completion-context-c1", ParentID: parentID, Text: "page one", TokenCount: 2, PageNum: 1},
+			{ID: "completion-context-c2", ParentID: parentID, Text: "page two", TokenCount: 2, PageNum: 2},
+			{ID: "completion-context-c3", ParentID: parentID, Text: "page three buffer", TokenCount: 3, PageNum: 3},
+			{ID: "completion-context-c4", ParentID: parentID, Text: "page four", TokenCount: 2, PageNum: 4},
+		},
+	}}
+	if err := IngestNotebookContentByTopic(notebookID, groups); err != nil {
+		t.Fatalf("IngestNotebookContentByTopic failed: %v", err)
+	}
+
+	texts, err := GetChunkTextsForTopicPageRange(topicID, 1, 3)
+	if err != nil {
+		t.Fatalf("GetChunkTextsForTopicPageRange failed: %v", err)
+	}
+	want := []string{"page one", "page two", "page three buffer"}
+	if !equalStringSlices(texts, want) {
+		t.Fatalf("unexpected context texts: got=%#v want=%#v", texts, want)
+	}
+}
+
+func TestUpdateTopicReadingCursorMarksLearnedAtEnd(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "cursor-topic"
+	if err := EnsureTopic(topicID, "Cursor Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := UpdateTopicPageBounds(topicID, 1, 4); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+
+	if err := UpdateTopicReadingCursor(topicID, 3, false); err != nil {
+		t.Fatalf("UpdateTopicReadingCursor reading failed: %v", err)
+	}
+	var cursor int
+	var status string
+	if err := conn.QueryRow(`SELECT current_page_cursor, status FROM topics WHERE id = ?`, topicID).Scan(&cursor, &status); err != nil {
+		t.Fatalf("failed to read topic cursor: %v", err)
+	}
+	if cursor != 3 || status != "reading" {
+		t.Fatalf("unexpected reading cursor/status: cursor=%d status=%s", cursor, status)
+	}
+
+	if err := UpdateTopicReadingCursor(topicID, 5, true); err != nil {
+		t.Fatalf("UpdateTopicReadingCursor learned failed: %v", err)
+	}
+	if err := conn.QueryRow(`SELECT current_page_cursor, status FROM topics WHERE id = ?`, topicID).Scan(&cursor, &status); err != nil {
+		t.Fatalf("failed to read learned cursor: %v", err)
+	}
+	if cursor != 5 || status != "learned" {
+		t.Fatalf("unexpected learned cursor/status: cursor=%d status=%s", cursor, status)
+	}
+}
+
+func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
+	initDBForTest(t, true, 3)
+	if !distanceFunctionAvailable(t) {
+		t.Skip("sqlite-vec distance() function is unavailable in this runtime")
+	}
+
+	topicID := "perf-vector-topic"
+	parentID := "perf-vector-parent"
+	if err := EnsureTopic(topicID, "Perf Vector Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateParentSection(parentID, topicID, "Perf", 1, "perf parent"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+	for i := 1; i <= 120; i++ {
+		chunkID := fmt.Sprintf("perf-vector-c%03d", i)
+		if err := insertChunkRow(conn, topicID, NotebookChunkInput{
+			ID: chunkID, ParentID: parentID, Text: fmt.Sprintf("chunk %d", i), TokenCount: 2, PageNum: (i % 12) + 1,
+		}); err != nil {
+			t.Fatalf("insertChunkRow failed: %v", err)
+		}
+		if err := UpsertChunkVector(chunkID, []float32{float32(i % 3), float32((i + 1) % 3), 1}); err != nil {
+			t.Fatalf("UpsertChunkVector failed: %v", err)
+		}
+	}
+
+	durations := make([]time.Duration, 0, 160)
+	query := []float32{1, 0, 1}
+	for i := 0; i < 160; i++ {
+		started := time.Now()
+		if _, err := SearchVectorsForTopic(topicID, query, 5, 3, 8); err != nil {
+			t.Fatalf("SearchVectorsForTopic failed: %v", err)
+		}
+		durations = append(durations, time.Since(started))
+	}
+
+	// Skip test when PERF_RUN is not set, evaluate performance when it is set
+	if os.Getenv("PERF_RUN") == "" {
+		t.Skip("performance test disabled - run with PERF_RUN=1 to enable")
+	}
+
+	if p95Duration(durations) >= 50*time.Millisecond {
+		t.Fatalf("context-locked vector retrieval p95: %s exceeds threshold: 50ms", p95Duration(durations))
+	}
+}
+
+func TestMacroQuizAssemblyFromStoredQuestionsP95Under100ms(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "perf-quiz-topic"
+	if err := EnsureTopic(topicID, "Perf Quiz Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	questions := make([]models.QuizQuestion, 0, 80)
+	for i := 0; i < 80; i++ {
+		questions = append(questions, models.QuizQuestion{
+			ID:            fmt.Sprintf("perf-quiz-q%03d", i),
+			TopicID:       topicID,
+			Prompt:        fmt.Sprintf("Question %d?", i),
+			Options:       []string{"A", "B", "C", "D"},
+			CorrectAnswer: "A",
+			PromptVersion: "reader-complete-v1",
+		})
+	}
+	if err := AppendQuestionsForTopic(topicID, questions); err != nil {
+		t.Fatalf("AppendQuestionsForTopic failed: %v", err)
+	}
+
+	durations := make([]time.Duration, 0, 200)
+	for i := 0; i < 200; i++ {
+		started := time.Now()
+		got, err := GetQuestionsForTopic(topicID)
+		if err != nil {
+			t.Fatalf("GetQuestionsForTopic failed: %v", err)
+		}
+		if len(got) != len(questions) {
+			t.Fatalf("expected %d questions, got %d", len(questions), len(got))
+		}
+		durations = append(durations, time.Since(started))
+	}
+
+	// Skip test when PERF_RUN is not set, evaluate performance when it is set
+	if os.Getenv("PERF_RUN") == "" {
+		t.Skip("performance test disabled - run with PERF_RUN=1 to enable")
+	}
+
+	if p95Duration(durations) >= 100*time.Millisecond {
+		t.Fatalf("macro quiz assembly p95: %s exceeds threshold: 100ms", p95Duration(durations))
+	}
+}
+
+func p95Duration(durations []time.Duration) time.Duration {
+	if len(durations) == 0 {
+		return 0
+	}
+	sorted := append([]time.Duration(nil), durations...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	idx := int(float64(len(sorted))*0.95) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }
 
 func TestInsertFSRSReviewLogSuccessfulInsertion(t *testing.T) {
