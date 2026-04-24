@@ -205,8 +205,9 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 	if err != nil {
 		return nil, false, err
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -251,6 +252,7 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 		if err = tx.Commit(); err != nil {
 			return nil, false, err
 		}
+		committed = true
 		return cards, true, nil
 	}
 
@@ -281,6 +283,7 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 	if err = tx.Commit(); err != nil {
 		return nil, false, err
 	}
+	committed = true
 
 	return cardsIfNotExist, false, nil
 }

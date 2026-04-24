@@ -1188,35 +1188,9 @@ Student answer: %s`, prompt, userAnswer)
 	}
 }
 
-func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
+// buildContextString builds a context string from sections with truncation limits
+func buildContextString(sections []map[string]interface{}, maxSections, maxContentPerSection, maxTotalContent int) string {
 	var b strings.Builder
-	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
-	b.WriteString(topicID)
-	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
-	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
-	b.WriteString("Cover different concepts and question types. AVOID repetition.\n")
-	b.WriteString("Required mix:\n")
-	b.WriteString("  - 1–2 definitional/recall questions\n")
-	b.WriteString("  - 2–3 application/analysis questions (test understanding, not just memory)\n")
-	b.WriteString("  - 1 misconception/tricky question (common student errors)\n")
-	b.WriteString("\n=== DISTRACTORS ===\n")
-	b.WriteString("- Make wrong options plausible and specific (not obviously wrong).\n")
-	b.WriteString("- Common misconceptions as distractors are encouraged.\n")
-	b.WriteString("\n=== RULES ===\n")
-	b.WriteString("- correct_answer must match one option exactly.\n")
-	b.WriteString("- Keep each option short (< 15 words).\n")
-	b.WriteString("- Explanations grounded in source text (quote when helpful).\n")
-	b.WriteString("- Each question must require understanding, not just recall.\n")
-	b.WriteString("\nSource sections:\n")
-
-	// Limit to top 5 sections with truncation to avoid exceeding token limits
-	const (
-		maxSections          = 5
-		maxContentPerSection = 500
-		maxTotalContent      = 2500
-	)
-
 	totalContentLength := 0
 	sectionCount := 0
 
@@ -1242,6 +1216,34 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 		totalContentLength += len(content)
 		sectionCount++
 	}
+
+	return b.String()
+}
+
+func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
+	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
+	b.WriteString(topicID)
+	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
+	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
+	b.WriteString("Cover different concepts and question types. AVOID repetition.\n")
+	b.WriteString("Required mix:\n")
+	b.WriteString("  - 1–2 definitional/recall questions\n")
+	b.WriteString("  - 2–3 application/analysis questions (test understanding, not just memory)\n")
+	b.WriteString("  - 1 misconception/tricky question (common student errors)\n")
+	b.WriteString("\n=== DISTRACTORS ===\n")
+	b.WriteString("- Make wrong options plausible and specific (not obviously wrong).\n")
+	b.WriteString("- Common misconceptions as distractors are encouraged.\n")
+	b.WriteString("\n=== RULES ===\n")
+	b.WriteString("- correct_answer must match one option exactly.\n")
+	b.WriteString("- Keep each option short (< 15 words).\n")
+	b.WriteString("- Explanations grounded in source text (quote when helpful).\n")
+	b.WriteString("- Each question must require understanding, not just recall.\n")
+	b.WriteString("\nSource sections:\n")
+
+	context := buildContextString(sections, 5, 500, 2500)
+	b.WriteString(context)
 
 	return b.String()
 }
@@ -1291,7 +1293,11 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 			remainingTokens := availableContextTokens - currentTokens
 			if remainingTokens > 0 {
 				b.WriteString("- ")
-				truncatedSnippet := semanticSnippetByTokens(text, remainingTokens)
+				truncatedSnippet, err := semanticSnippetByTokens(text, remainingTokens)
+				if err != nil {
+					// Fallback to character-based truncation on error
+					truncatedSnippet = semanticSnippet(text, remainingTokens*4)
+				}
 				b.WriteString(truncatedSnippet)
 				b.WriteString("\n")
 				currentTokens = availableContextTokens // enforce token limit
@@ -1301,7 +1307,11 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 
 		b.WriteString("- ")
 		// Use semantic snippet but truncate by tokens instead of characters
-		snippet := semanticSnippetByTokens(text, passageTokens)
+		snippet, err := semanticSnippetByTokens(text, passageTokens)
+		if err != nil {
+			// Fallback to character-based truncation on error
+			snippet = semanticSnippet(text, passageTokens*4)
+		}
 		b.WriteString(snippet)
 		b.WriteString("\n")
 
@@ -1333,46 +1343,8 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 	b.WriteString("- If a formula or number needed, include it.\n")
 	b.WriteString("\nSource sections:\n")
 
-	const (
-		maxSections          = 5
-		maxContentPerSection = 500
-		maxTotalContent      = 2500
-	)
-
-	totalContentLength := 0
-	sectionCount := 0
-	for _, section := range sections {
-		if sectionCount >= maxSections {
-			break
-		}
-
-		remainingBudget := maxTotalContent - totalContentLength
-		if remainingBudget <= 0 {
-			break
-		}
-
-		heading, _ := section["heading"].(string)
-		content, _ := section["content"].(string)
-		if strings.TrimSpace(content) == "" {
-			continue
-		}
-
-		allowedRunes := minInt(maxContentPerSection, remainingBudget)
-		if allowedRunes <= 0 {
-			break
-		}
-
-		content = semanticSnippet(content, allowedRunes)
-
-		b.WriteString("[Heading] ")
-		b.WriteString(heading)
-		b.WriteString("\n")
-		b.WriteString(content)
-		b.WriteString("\n---\n")
-
-		totalContentLength += len([]rune(content))
-		sectionCount++
-	}
+	context := buildContextString(sections, 5, 500, 2500)
+	b.WriteString(context)
 
 	return b.String()
 }
@@ -1551,43 +1523,32 @@ func semanticSnippet(content string, limit int) string {
 }
 
 // semanticSnippetByTokens truncates text to fit within a token budget using the tokenizer
-func semanticSnippetByTokens(content string, maxTokens int) string {
+func semanticSnippetByTokens(content string, maxTokens int) (string, error) {
 	trimmed := strings.TrimSpace(content)
 	if maxTokens <= 0 || trimmed == "" {
-		return ""
+		return "", nil
 	}
 
 	// Check if content already fits within token budget
 	tokens, err := embeddings.CountTokens(trimmed)
 	if err != nil {
-		// Fallback to character-based estimate if tokenizer fails
-		estimatedTokens := len(trimmed) / 4
-		if estimatedTokens <= maxTokens {
-			return trimmed
-		}
-		// Rough character-based truncation as fallback
-		charLimit := maxTokens * 4
-		return semanticSnippet(trimmed, charLimit)
+		return "", fmt.Errorf("failed to count tokens: %w", err)
 	}
 
 	if tokens <= maxTokens {
-		return trimmed
+		return trimmed, nil
 	}
 
 	// Use tokenizer to truncate to token limit
 	truncated, err := embeddings.TruncateToTokens(trimmed, maxTokens)
 	if err != nil {
-		// Fallback to character-based truncation if tokenizer truncate fails
-		charLimit := maxTokens * 4
-		return semanticSnippet(trimmed, charLimit)
+		return "", fmt.Errorf("failed to truncate to tokens: %w", err)
 	}
 
 	// Re-verify token count after truncation to ensure strict bounds
 	truncatedTokens, err := embeddings.CountTokens(truncated)
 	if err != nil {
-		// Fallback to character-based truncation if token counting fails
-		charLimit := maxTokens * 4
-		return semanticSnippet(trimmed, charLimit)
+		return "", fmt.Errorf("failed to count truncated tokens: %w", err)
 	}
 
 	// If truncated still exceeds maxTokens, truncate more conservatively
@@ -1595,24 +1556,32 @@ func semanticSnippetByTokens(content string, maxTokens int) string {
 		conservativeLimit := maxTokens - 10
 		if conservativeLimit > 0 {
 			conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
-			if err == nil {
-				// Verify the conservative truncation
-				conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
-				if verifyErr == nil && conservativeTokens <= maxTokens {
-					truncated = conservative
-					truncatedTokens = conservativeTokens
-				} else {
-					// If still exceeds, use even more conservative limit
-					veryConservativeLimit := maxTokens - 20
-					if veryConservativeLimit > 0 {
-						veryConservative, veryErr := embeddings.TruncateToTokens(trimmed, veryConservativeLimit)
-						if veryErr == nil {
-							veryTokens, veryVerifyErr := embeddings.CountTokens(veryConservative)
-							if veryVerifyErr == nil && veryTokens <= maxTokens {
-								truncated = veryConservative
-								truncatedTokens = veryTokens
-							}
-						}
+			if err != nil {
+				return "", fmt.Errorf("failed to truncate conservatively: %w", err)
+			}
+			// Verify the conservative truncation
+			conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
+			if verifyErr != nil {
+				return "", fmt.Errorf("failed to count conservative tokens: %w", verifyErr)
+			}
+			if conservativeTokens <= maxTokens {
+				truncated = conservative
+				truncatedTokens = conservativeTokens
+			} else {
+				// If still exceeds, use even more conservative limit
+				veryConservativeLimit := maxTokens - 20
+				if veryConservativeLimit > 0 {
+					veryConservative, veryErr := embeddings.TruncateToTokens(trimmed, veryConservativeLimit)
+					if veryErr != nil {
+						return "", fmt.Errorf("failed to truncate very conservatively: %w", veryErr)
+					}
+					veryTokens, veryVerifyErr := embeddings.CountTokens(veryConservative)
+					if veryVerifyErr != nil {
+						return "", fmt.Errorf("failed to count very conservative tokens: %w", veryVerifyErr)
+					}
+					if veryTokens <= maxTokens {
+						truncated = veryConservative
+						truncatedTokens = veryTokens
 					}
 				}
 			}
@@ -1638,43 +1607,21 @@ func semanticSnippetByTokens(content string, maxTokens int) string {
 		if candidate != "" {
 			// Verify candidate still fits within token budget
 			candidateTokens, err := embeddings.CountTokens(candidate)
-			if err == nil && candidateTokens <= maxTokens {
-				return candidate + "..."
+			if err != nil {
+				return "", fmt.Errorf("failed to count candidate tokens: %w", err)
+			}
+			if candidateTokens <= maxTokens {
+				return candidate + "...", nil
 			}
 		}
 	}
 
 	// Final verification: ensure truncated text fits within token budget
 	if truncatedTokens <= maxTokens {
-		return truncated
+		return truncated, nil
 	}
 
-	// Final fallback: truncate more conservatively with verification
-	conservativeLimit := maxTokens - 10 // leave buffer
-	if conservativeLimit > 0 {
-		conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
-		if err == nil {
-			// Verify conservative truncation before returning
-			conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
-			if verifyErr == nil && conservativeTokens <= maxTokens {
-				return conservative + "..."
-			}
-		}
-	}
-
-	// Last resort: character-based fallback with verification
-	charLimit := maxTokens * 3 // more conservative character estimate
-	result := semanticSnippet(trimmed, charLimit)
-	// Verify final result
-	if finalTokens, verifyErr := embeddings.CountTokens(result); verifyErr == nil && finalTokens <= maxTokens {
-		return result
-	}
-	// If even the fallback exceeds, truncate more aggressively
-	if finalTokens, verifyErr := embeddings.CountTokens(result); verifyErr == nil && finalTokens > maxTokens {
-		charLimit = maxTokens * 2 // even more conservative
-		return semanticSnippet(trimmed, charLimit)
-	}
-	return result
+	return truncated, nil
 }
 
 func minInt(a, b int) int {

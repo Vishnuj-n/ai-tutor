@@ -291,15 +291,17 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		if err != nil {
 			return nil, fmt.Errorf("failed to read markdown file: %w", err)
 		}
-		sections := splitMarkdownSections(string(raw))
-		if len(sections) == 0 {
+		content := string(raw)
+		if strings.TrimSpace(content) == "" {
 			return nil, fmt.Errorf("document has no readable content")
 		}
 		doc.PageCount = 1
-		doc.Sections = sections
-		for _, section := range sections {
-			doc.WordCount += len(strings.Fields(section.Text))
-		}
+		doc.WordCount = len(strings.Fields(content))
+		doc.Sections = []ExtractedSection{{
+			Heading: "Document",
+			Text:    content,
+			PageNum: 1,
+		}}
 
 	case "pdf":
 		if err := s.extractPDF(filePath, doc); err != nil {
@@ -442,53 +444,6 @@ func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) er
 	}
 
 	return nil
-}
-
-func splitMarkdownSections(content string) []ExtractedSection {
-	lines := strings.Split(content, "\n")
-	sections := make([]ExtractedSection, 0)
-	currentHeading := "Document"
-	var body []string
-
-	flush := func() {
-		joined := embeddings.NormalizeWhitespace(strings.Join(body, "\n"))
-		if joined != "" {
-			sections = append(sections, ExtractedSection{
-				Heading: currentHeading,
-				Text:    joined,
-				PageNum: 1,
-			})
-		}
-		body = body[:0]
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			flush()
-			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
-			if heading == "" {
-				heading = "Section"
-			}
-			currentHeading = heading
-			continue
-		}
-		body = append(body, line)
-	}
-	flush()
-
-	if len(sections) == 0 {
-		normalized := embeddings.NormalizeWhitespace(content)
-		if normalized != "" {
-			sections = append(sections, ExtractedSection{
-				Heading: "Document",
-				Text:    normalized,
-				PageNum: 1,
-			})
-		}
-	}
-
-	return sections
 }
 
 type wordSpan struct {
