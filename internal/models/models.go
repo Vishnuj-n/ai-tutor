@@ -149,6 +149,18 @@ type QuizScore struct {
 	SourceHeading string `json:"source_heading,omitempty"`
 }
 
+// WrittenQuestion is a persisted examiner prompt with lineage metadata.
+type WrittenQuestion struct {
+	ID              string `json:"id"`
+	TopicID         string `json:"topic_id"`
+	Prompt          string `json:"prompt"`
+	SourceHeading   string `json:"source_heading,omitempty"`
+	SourcePageStart int    `json:"source_page_start,omitempty"`
+	SourcePageEnd   int    `json:"source_page_end,omitempty"`
+	LLMModel        string `json:"llm_model,omitempty"`
+	PromptVersion   string `json:"prompt_version,omitempty"`
+}
+
 // Flashcard is a persisted review card scoped to one topic.
 type Flashcard struct {
 	ID        string `json:"id"`

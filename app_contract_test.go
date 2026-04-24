@@ -765,8 +765,12 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 }
 
 func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
+	initTestDB(t)
 	app := NewApp()
 	app.ctx = context.Background()
+	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
 
 	mockLLM := &mockLLMProvider{
 		answer: `{"prompt":"What is the primary purpose of scheduling in OS?"}`,
@@ -800,9 +804,15 @@ func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
 	if !ok || questionID == "" {
 		t.Fatalf("expected non-empty questionID, got: %v", result["questionID"])
 	}
-
-	if !strings.Contains(questionID, "os-scheduling:") {
-		t.Fatalf("expected questionID to contain topic prefix, got: %v", questionID)
+	writtenQuestion, err := db.GetWrittenQuestionByID(questionID)
+	if err != nil {
+		t.Fatalf("GetWrittenQuestionByID failed: %v", err)
+	}
+	if writtenQuestion == nil {
+		t.Fatalf("expected persisted written question for id=%s", questionID)
+	}
+	if writtenQuestion.TopicID != "os-scheduling" {
+		t.Fatalf("expected persisted topicID os-scheduling, got: %s", writtenQuestion.TopicID)
 	}
 }
 
@@ -887,9 +897,13 @@ func TestGenerateShortAnswerPrompt_RAGProcessQueryError(t *testing.T) {
 }
 
 func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
+	initTestDB(t)
 	app := NewApp()
 	app.ctx = context.Background()
 	app.fastLLMProvider = &mockLLMProvider{}
+	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -911,9 +925,13 @@ func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
 }
 
 func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
+	initTestDB(t)
 	app := NewApp()
 	app.ctx = context.Background()
 	app.fastLLMProvider = &mockLLMProvider{}
+	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -934,9 +952,13 @@ func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
 }
 
 func TestGenerateShortAnswerPrompt_MalformedJSON(t *testing.T) {
+	initTestDB(t)
 	app := NewApp()
 	app.ctx = context.Background()
 	app.fastLLMProvider = &mockLLMProvider{}
+	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
 
 	mockRAG := &mockRAGPipeline{
 		result: &rag.Response{
@@ -954,6 +976,91 @@ func TestGenerateShortAnswerPrompt_MalformedJSON(t *testing.T) {
 	prompt, ok := result["prompt"].(string)
 	if !ok || prompt != `{"prompt":}` {
 		t.Fatalf("expected fallback prompt from malformed JSON, got: %v", result["prompt"])
+	}
+}
+
+func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
+	initTestDB(t)
+	app := NewApp()
+	app.ctx = context.Background()
+	app.fastLLMProvider = &mockLLMProvider{
+		answer: `{"score":8,"feedback":"Strong answer with a small omission."}`,
+	}
+
+	topicID := "written-score-topic"
+	if err := db.EnsureTopic(topicID, "Written Score Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.CreateWrittenQuestion(models.WrittenQuestion{
+		ID:              "written-q-1",
+		TopicID:         topicID,
+		Prompt:          "Explain why round robin improves fairness.",
+		SourceHeading:   "CPU Scheduling",
+		SourcePageStart: 2,
+		SourcePageEnd:   3,
+	}); err != nil {
+		t.Fatalf("CreateWrittenQuestion failed: %v", err)
+	}
+
+	result := app.ScoreShortAnswer("written-q-1", "It gives each process a time slice.")
+	if errMsg, ok := result["error"]; ok {
+		t.Fatalf("expected success, got error: %v", errMsg)
+	}
+	if got := result["fsrsRating"]; got != "Good" {
+		t.Fatalf("expected fsrsRating Good, got %#v", got)
+	}
+	if got := result["next_review_at"]; got == "" {
+		t.Fatalf("expected next_review_at, got %#v", got)
+	}
+
+	state, err := db.GetAssessmentFSRSState("written_question", "written-q-1")
+	if err != nil {
+		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
+	}
+	if state == nil {
+		t.Fatalf("expected persisted assessment fsrs state")
+	}
+	if state.State.ScheduledDays <= 0 {
+		t.Fatalf("expected scheduled days > 0, got %d", state.State.ScheduledDays)
+	}
+}
+
+func TestScoreAnswerReturnsSharedAssessmentFSRSFields(t *testing.T) {
+	initTestDB(t)
+	app := &App{}
+
+	topicID := "quiz-fsrs-topic"
+	if err := db.EnsureTopic(topicID, "Quiz FSRS Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{{
+		ID:            "quiz-fsrs-q1",
+		TopicID:       topicID,
+		Prompt:        "What does FIFO mean?",
+		Options:       []string{"First In First Out", "Fast Input Fast Output"},
+		CorrectAnswer: "First In First Out",
+		Explanation:   "FIFO means first in, first out.",
+	}}); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+
+	result := app.ScoreAnswer("quiz-fsrs-q1", "First In First Out")
+	if errMsg, ok := result["error"]; ok {
+		t.Fatalf("expected success, got error: %v", errMsg)
+	}
+	if got := result["fsrsRating"]; got != "Good" {
+		t.Fatalf("expected fsrsRating Good, got %#v", got)
+	}
+	if got := result["scheduled_days"]; got == nil {
+		t.Fatalf("expected scheduled_days in response")
+	}
+
+	state, err := db.GetAssessmentFSRSState("quiz_question", "quiz-fsrs-q1")
+	if err != nil {
+		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
+	}
+	if state == nil {
+		t.Fatalf("expected persisted quiz assessment fsrs state")
 	}
 }
 

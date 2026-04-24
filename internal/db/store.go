@@ -541,6 +541,7 @@ func ensureAssessmentSchema() error {
 			llm_model TEXT,
 			prompt_version TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS assessment_fsrs (
@@ -561,6 +562,39 @@ func ensureAssessmentSchema() error {
 
 	for _, stmt := range stmts {
 		if _, err := conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	rows, err := conn.Query("PRAGMA table_info(written_questions)")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	hasUpdatedAt := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+			return scanErr
+		}
+		if name == "updated_at" {
+			hasUpdatedAt = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasUpdatedAt {
+		if _, err := conn.Exec("ALTER TABLE written_questions ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"); err != nil {
 			return err
 		}
 	}
@@ -816,15 +850,16 @@ func rebuildWrittenQuestionsForCascade() (err error) {
 			llm_model TEXT,
 			prompt_version TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 		)`,
 		`INSERT INTO written_questions_new (
 			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
-			llm_model, prompt_version, created_at
+			llm_model, prompt_version, created_at, updated_at
 		)
 		SELECT
 			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
-			llm_model, prompt_version, created_at
+			llm_model, prompt_version, created_at, COALESCE(updated_at, created_at)
 		FROM written_questions`,
 		`DROP TABLE written_questions`,
 		`ALTER TABLE written_questions_new RENAME TO written_questions`,
@@ -1156,6 +1191,47 @@ func QueryLearningTopics(limit int) ([]models.TopicSummary, error) {
 			return nil, err
 		}
 		topics = append(topics, topic)
+	}
+	return topics, nil
+}
+
+// QueryUpcomingReadingTopics returns ordered unread/in-progress topics with configured bounds.
+func QueryUpcomingReadingTopics(limit int) ([]models.ReadingTopicCursor, error) {
+	if limit <= 0 {
+		return []models.ReadingTopicCursor{}, nil
+	}
+
+	rows, err := conn.Query(`
+		SELECT
+			id,
+			title,
+			COALESCE(start_page, 0),
+			COALESCE(end_page, 0),
+			COALESCE(current_page_cursor, 0)
+		FROM topics
+		WHERE status IN ('unseen', 'reading')
+		  AND COALESCE(end_page, 0) > 0
+		  AND COALESCE(current_page_cursor, 0) < COALESCE(end_page, 0)
+		ORDER BY updated_at ASC, created_at ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	topics := make([]models.ReadingTopicCursor, 0, limit)
+	for rows.Next() {
+		var topic models.ReadingTopicCursor
+		if err := rows.Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor); err != nil {
+			return nil, err
+		}
+		topics = append(topics, topic)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return topics, nil
 }
@@ -1548,29 +1624,52 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		startPage, endPage = endPage, startPage
 	}
 
-	// Determine if cursor needs initialization
-	var currentCursor int
-	if err := conn.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); err != nil && err != sql.ErrNoRows {
+	tx, err := conn.Begin()
+	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	// Determine if cursor needs initialization
+	var previousEnd int
+	var currentCursor int
+	if err := tx.QueryRow(`
+		SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
+		FROM topics WHERE id = ?
+	`, topicID).Scan(new(int), &previousEnd, &currentCursor); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	shrunk := previousEnd > 0 && endPage > 0 && endPage < previousEnd
 
 	// Initialize cursor to startPage if uninitialized (0)
 	if currentCursor == 0 {
-		_, err := conn.Exec(`
+		if _, err := tx.Exec(`
 			UPDATE topics
 			SET start_page = ?, end_page = ?, current_page_cursor = ?
 			WHERE id = ?
-		`, startPage, endPage, startPage, topicID)
-		return err
+		`, startPage, endPage, startPage, topicID); err != nil {
+			return err
+		}
+	} else {
+		// Cursor already initialized; just update bounds
+		if _, err := tx.Exec(`
+			UPDATE topics
+			SET start_page = ?, end_page = ?
+			WHERE id = ?
+		`, startPage, endPage, topicID); err != nil {
+			return err
+		}
 	}
 
-	// Cursor already initialized; just update bounds
-	_, err := conn.Exec(`
-		UPDATE topics
-		SET start_page = ?, end_page = ?
-		WHERE id = ?
-	`, startPage, endPage, topicID)
-	return err
+	if shrunk {
+		if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // TopicPageBoundsBatchItem represents topic page bounds to be updated in batch
@@ -1614,10 +1713,15 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 		}
 
 		// Check current cursor
+		var previousEnd int
 		var currentCursor int
-		if cursorErr := tx.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
+		if cursorErr := tx.QueryRow(`
+			SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
+			FROM topics WHERE id = ?
+		`, topicID).Scan(new(int), &previousEnd, &currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
 			return cursorErr
 		}
+		shrunk := previousEnd > 0 && endPage > 0 && endPage < previousEnd
 
 		// Initialize cursor if uninitialized (0)
 		if currentCursor == 0 {
@@ -1654,9 +1758,98 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 				return fmt.Errorf("no rows updated for topicID %s", topicID)
 			}
 		}
+		if shrunk {
+			if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
+				return err
+			}
+		}
 	}
 
 	return tx.Commit()
+}
+
+func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage int, endPage int) error {
+	if _, err := tx.Exec(`
+		DELETE FROM user_answers
+		WHERE question_id IN (
+			SELECT id
+			FROM questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range user answers: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM fsrs_review_log
+		WHERE activity_type = 'quiz_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range quiz review logs: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM assessment_fsrs
+		WHERE activity_type = 'quiz_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range quiz fsrs state: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM questions
+		WHERE topic_id = ?
+		  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range questions: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM fsrs_review_log
+		WHERE activity_type = 'written_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM written_questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range written review logs: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM assessment_fsrs
+		WHERE activity_type = 'written_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM written_questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range written fsrs state: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM written_questions
+		WHERE topic_id = ?
+		  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range written questions: %w", err)
+	}
+
+	return nil
 }
 
 // GetTopicPageBounds returns persisted chapter bounds for a topic.
@@ -1875,7 +2068,9 @@ func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage i
 // GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
 // Key format is normalized lower-case heading text with single spaces.
 func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
-	// ... (rest of the code remains the same)
+	if conn == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
@@ -2456,6 +2651,53 @@ func GetQuestionByID(questionID string) (*models.QuizQuestion, error) {
 		return nil, fmt.Errorf("question id is required")
 	}
 	return getQuestionByIDRepo(questionID)
+}
+
+// CreateWrittenQuestion stores one persisted written assessment prompt.
+func CreateWrittenQuestion(question models.WrittenQuestion) error {
+	question.ID = strings.TrimSpace(question.ID)
+	question.TopicID = strings.TrimSpace(question.TopicID)
+	question.Prompt = strings.TrimSpace(question.Prompt)
+	if question.ID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	if question.TopicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if question.Prompt == "" {
+		return fmt.Errorf("prompt is required")
+	}
+	return createWrittenQuestionRepo(question)
+}
+
+// GetWrittenQuestionByID fetches one persisted written assessment prompt.
+func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) {
+	questionID = strings.TrimSpace(questionID)
+	if questionID == "" {
+		return nil, fmt.Errorf("question id is required")
+	}
+	return getWrittenQuestionByIDRepo(questionID)
+}
+
+// GetAssessmentFSRSState returns shared assessment FSRS state for one quiz/written reference.
+func GetAssessmentFSRSState(activityType, referenceID string) (*assessmentFSRSRecord, error) {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	if activityType == "" || referenceID == "" {
+		return nil, fmt.Errorf("activity type and reference id are required")
+	}
+	return getAssessmentFSRSStateRepo(activityType, referenceID)
+}
+
+// UpsertAssessmentFSRSReview saves shared assessment FSRS state and corresponding review log.
+func UpsertAssessmentFSRSReview(activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	topicID = strings.TrimSpace(topicID)
+	if activityType == "" || referenceID == "" || topicID == "" {
+		return fmt.Errorf("activity type, reference id, and topic id are required")
+	}
+	return upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, state, dueAt, reviewedAt, reviewLog)
 }
 
 // SaveUserAnswer stores a scored quiz response.

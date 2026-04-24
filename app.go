@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -48,6 +49,11 @@ type App struct {
 	notebookUploadDir string
 	aiReady           bool
 	aiInitError       string
+	prebuildMu        sync.Mutex
+	prebuildStarted   bool
+	prebuildQueue     chan string
+	prebuildInFlight  map[string]bool
+	prebuildDirty     map[string]bool
 }
 
 // NewApp creates a new App application struct
@@ -207,7 +213,112 @@ func (a *App) startup(ctx context.Context) {
 	a.notebookService = notebook.NewService(notebookDir)
 	utils.Infof("Notebook service initialized at %s", notebookDir)
 
+	a.startPrebuildWorker()
+	a.requestPrebuildRefresh()
+
 	utils.Infof("App initialized successfully")
+}
+
+func (a *App) startPrebuildWorker() {
+	a.prebuildMu.Lock()
+	defer a.prebuildMu.Unlock()
+	if a.prebuildStarted {
+		return
+	}
+	a.prebuildQueue = make(chan string, 16)
+	a.prebuildInFlight = make(map[string]bool)
+	a.prebuildDirty = make(map[string]bool)
+	a.prebuildStarted = true
+
+	go func() {
+		for topicID := range a.prebuildQueue {
+			if topicID == "" {
+				continue
+			}
+
+			if quizResult := a.GenerateQuiz(topicID); quizResult != nil {
+				if errMsg, ok := quizResult["error"].(string); ok && errMsg != "" {
+					utils.Warnf("prebuild quiz failed for topic %s: %s", topicID, errMsg)
+				}
+			}
+			if flashcardResult := a.GenerateFlashcards(topicID); flashcardResult != nil {
+				if errMsg, ok := flashcardResult["error"].(string); ok && errMsg != "" {
+					utils.Warnf("prebuild flashcards failed for topic %s: %s", topicID, errMsg)
+				}
+			}
+
+			a.finishPrebuildTopic(topicID)
+		}
+	}()
+}
+
+func (a *App) requestPrebuildRefresh() {
+	a.startPrebuildWorker()
+
+	topics, err := db.QueryUpcomingReadingTopics(3)
+	if err != nil {
+		utils.Warnf("prebuild refresh failed to query upcoming topics: %v", err)
+		return
+	}
+	if len(topics) <= 1 {
+		return
+	}
+
+	seen := make(map[string]bool)
+	queued := 0
+	for _, topic := range topics[1:] {
+		if topic.ID == "" || seen[topic.ID] {
+			continue
+		}
+		seen[topic.ID] = true
+		a.queuePrebuildTopic(topic.ID)
+		queued++
+		if queued >= 2 {
+			break
+		}
+	}
+}
+
+func (a *App) queuePrebuildTopic(topicID string) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return
+	}
+
+	a.prebuildMu.Lock()
+	if a.prebuildInFlight == nil {
+		a.prebuildInFlight = make(map[string]bool)
+	}
+	if a.prebuildDirty == nil {
+		a.prebuildDirty = make(map[string]bool)
+	}
+	if a.prebuildInFlight[topicID] {
+		a.prebuildDirty[topicID] = true
+		a.prebuildMu.Unlock()
+		return
+	}
+	a.prebuildInFlight[topicID] = true
+	queue := a.prebuildQueue
+	a.prebuildMu.Unlock()
+
+	if queue == nil {
+		return
+	}
+	queue <- topicID
+}
+
+func (a *App) finishPrebuildTopic(topicID string) {
+	a.prebuildMu.Lock()
+	shouldRequeue := a.prebuildDirty[topicID]
+	a.prebuildInFlight[topicID] = false
+	if shouldRequeue {
+		a.prebuildDirty[topicID] = false
+	}
+	a.prebuildMu.Unlock()
+
+	if shouldRequeue {
+		a.queuePrebuildTopic(topicID)
+	}
 }
 
 // Greet returns a greeting for the given name
@@ -436,6 +547,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 
 	insightsAvailable := false
+	a.requestPrebuildRefresh()
 
 	return map[string]interface{}{
 		"date":               plan.Date,
@@ -480,6 +592,8 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 			"error": err.Error(),
 		}
 	}
+
+	a.requestPrebuildRefresh()
 
 	return map[string]interface{}{
 		"ok":                  true,
@@ -803,6 +917,8 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		status = "learned"
 	}
 
+	a.requestPrebuildRefresh()
+
 	return map[string]interface{}{
 		"ok":                  true,
 		"topic_id":            topicID,
@@ -1027,7 +1143,7 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 	}
 }
 
-// ScoreAnswer validates an answer and stores score metadata.
+// ScoreAnswer validates an answer, stores score metadata, and updates shared assessment FSRS.
 func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} {
 	questionID = strings.TrimSpace(questionID)
 	userAnswer = strings.TrimSpace(userAnswer)
@@ -1074,6 +1190,16 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		return map[string]interface{}{"error": "failed to save score: " + err.Error()}
 	}
 
+	ratingLabel := "again"
+	if correct {
+		ratingLabel = "good"
+	}
+
+	fsrsResult, err := applyAssessmentReview(question.TopicID, "quiz_question", question.ID, ratingLabel)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to update quiz FSRS: " + err.Error()}
+	}
+
 	return map[string]interface{}{
 		"question_id":    score.QuestionID,
 		"correct":        score.Correct,
@@ -1083,10 +1209,16 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		"hint":           score.Hint,
 		"user_answer":    score.UserAnswer,
 		"source_heading": score.SourceHeading,
+		"fsrs_rating":    fsrsResult["fsrs_rating"],
+		"fsrsRating":     fsrsResult["fsrsRating"],
+		"scheduled_days": fsrsResult["scheduled_days"],
+		"next_review_at": fsrsResult["next_review_at"],
+		"review_log_id":  fsrsResult["review_log_id"],
+		"reviewLogID":    fsrsResult["reviewLogID"],
 	}
 }
 
-// GenerateShortAnswerPrompt creates one grounded short-answer question from topic content.
+// GenerateShortAnswerPrompt creates, persists, and returns one grounded short-answer question.
 func (a *App) GenerateShortAnswerPrompt(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -1122,30 +1254,49 @@ Rules:
 		return map[string]interface{}{"error": "short-answer prompt generation returned empty prompt"}
 	}
 
-	questionID := fmt.Sprintf("%s:%s", topicID, uuid.NewString())
+	sourceHeading, sourcePageStart, sourcePageEnd := resolveWrittenQuestionLineage(topicID, result.CitedSections)
+	question := models.WrittenQuestion{
+		ID:              uuid.NewString(),
+		TopicID:         topicID,
+		Prompt:          questionPrompt,
+		SourceHeading:   sourceHeading,
+		SourcePageStart: sourcePageStart,
+		SourcePageEnd:   sourcePageEnd,
+		LLMModel:        providerModelName(a.fastLLMProvider),
+		PromptVersion:   "written-v1-persisted",
+	}
+	if err := db.CreateWrittenQuestion(question); err != nil {
+		return map[string]interface{}{"error": "failed to persist short-answer prompt: " + err.Error()}
+	}
+
 	return map[string]interface{}{
-		"questionID": questionID,
-		"prompt":     questionPrompt,
-		"topicID":    topicID,
+		"questionID":        question.ID,
+		"prompt":            question.Prompt,
+		"topicID":           topicID,
+		"source_heading":    question.SourceHeading,
+		"source_page_start": question.SourcePageStart,
+		"source_page_end":   question.SourcePageEnd,
 	}
 }
 
-// ScoreShortAnswer scores one short-answer response, validates the score range, and logs a generic FSRS review event.
-func (a *App) ScoreShortAnswer(questionID, prompt, userAnswer string) map[string]interface{} {
+// ScoreShortAnswer scores one persisted short-answer prompt and updates shared assessment FSRS.
+func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {
 	questionID = strings.TrimSpace(questionID)
-	prompt = strings.TrimSpace(prompt)
 	userAnswer = strings.TrimSpace(userAnswer)
 
-	if questionID == "" || prompt == "" || userAnswer == "" {
-		return map[string]interface{}{"error": "question ID, prompt, and user answer are required"}
+	if questionID == "" || userAnswer == "" {
+		return map[string]interface{}{"error": "question ID and user answer are required"}
 	}
 	if a.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
-	topicID, ok := topicIDFromShortAnswerQuestionID(questionID)
-	if !ok {
-		return map[string]interface{}{"error": "invalid question ID format"}
+	question, err := db.GetWrittenQuestionByID(questionID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch written question: " + err.Error()}
+	}
+	if question == nil {
+		return map[string]interface{}{"error": "written question not found"}
 	}
 
 	scorePrompt := fmt.Sprintf(`You are grading a student's short answer.
@@ -1153,14 +1304,14 @@ Return STRICT JSON only in this shape: {"score":number,"feedback":"..."}.
 
 Scoring rubric:
 - Score must be an integer from 1 to 10.
-- 1-4 = major misunderstandings or mostly incorrect.
-- 5-7 = partially correct with gaps.
-- 8-9 = correct with minor omissions.
-- 10 = fully correct, precise, and concise.
+- 1-3 = major misunderstandings or mostly incorrect.
+- 4-5 = partially correct with clear gaps.
+- 6-8 = mostly correct with some omissions.
+- 9-10 = strong, precise, and concise.
 - Feedback must be concise (max 2 sentences), specific, and actionable.
 
 Question: %s
-Student answer: %s`, prompt, userAnswer)
+Student answer: %s`, question.Prompt, userAnswer)
 
 	raw, err := a.fastLLMProvider.GenerateAnswer(scorePrompt)
 	if err != nil {
@@ -1180,51 +1331,131 @@ Student answer: %s`, prompt, userAnswer)
 		score = 10
 	}
 
-	ratingLabel, ratingCode := shortAnswerScoreToFSRSRating(score)
-
-	stateBefore := map[string]string{
-		"prompt":      prompt,
-		"user_answer": userAnswer,
-	}
-	stateBeforeJSON, err := json.Marshal(stateBefore)
+	ratingLabel, _ := shortAnswerScoreToFSRSRating(score)
+	fsrsResult, err := applyAssessmentReview(question.TopicID, "written_question", question.ID, ratingLabel)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to encode short-answer review state: " + err.Error()}
+		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
 	}
 
-	stateAfter := map[string]interface{}{
-		"score_out_of_10": score,
-		"feedback":        strings.TrimSpace(parsed.Feedback),
-		"rating":          ratingLabel,
+	return map[string]interface{}{
+		"questionID":        question.ID,
+		"prompt":            question.Prompt,
+		"score":             score,
+		"feedback":          strings.TrimSpace(parsed.Feedback),
+		"fsrs_rating":       fsrsResult["fsrs_rating"],
+		"fsrsRating":        fsrsResult["fsrsRating"],
+		"scheduled_days":    fsrsResult["scheduled_days"],
+		"next_review_at":    fsrsResult["next_review_at"],
+		"review_log_id":     fsrsResult["review_log_id"],
+		"reviewLogID":       fsrsResult["reviewLogID"],
+		"source_page_start": question.SourcePageStart,
+		"source_page_end":   question.SourcePageEnd,
 	}
-	stateAfterJSON, err := json.Marshal(stateAfter)
+}
+
+func resolveWrittenQuestionLineage(topicID string, citedSections []string) (string, int, int) {
+	headingPageRanges, err := db.GetTopicHeadingPageRanges(topicID)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to encode short-answer review result: " + err.Error()}
+		utils.Warnf("could not resolve written-question lineage ranges for topic %s: %v", topicID, err)
+		return "", 0, 0
+	}
+
+	sourceHeading := ""
+	sourcePageStart := 0
+	sourcePageEnd := 0
+	for _, heading := range citedSections {
+		normalized := normalizeHeadingKey(heading)
+		pageRange, ok := headingPageRanges[normalized]
+		if !ok {
+			continue
+		}
+		if sourceHeading == "" {
+			sourceHeading = strings.TrimSpace(heading)
+		}
+		if sourcePageStart == 0 || pageRange[0] < sourcePageStart {
+			sourcePageStart = pageRange[0]
+		}
+		if pageRange[1] > sourcePageEnd {
+			sourcePageEnd = pageRange[1]
+		}
+	}
+	if sourcePageStart > 0 && sourcePageEnd == 0 {
+		sourcePageEnd = sourcePageStart
+	}
+	return sourceHeading, sourcePageStart, sourcePageEnd
+}
+
+func applyAssessmentReview(topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error) {
+	ratingCode, ok := mapReviewRating(strings.ToLower(strings.TrimSpace(ratingLabel)))
+	if !ok {
+		return nil, fmt.Errorf("invalid assessment rating: %s", ratingLabel)
+	}
+
+	current, err := db.GetAssessmentFSRSState(activityType, referenceID)
+	if err != nil {
+		return nil, err
+	}
+
+	state := models.FlashcardState{}
+	stateBeforeJSON := "{}"
+	if current != nil {
+		state = current.State
+		beforeBytes, err := json.Marshal(state)
+		if err != nil {
+			return nil, err
+		}
+		stateBeforeJSON = string(beforeBytes)
+
+		elapsedDays := 0
+		if current.DueAt > 0 {
+			elapsedSeconds := time.Now().Unix() - current.DueAt
+			if elapsedSeconds > 0 {
+				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+			}
+		}
+		state.ElapsedDays = elapsedDays
+	}
+
+	nextState := scheduler.NextFSRSState(state, ratingCode)
+	now := time.Now().Unix()
+	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
+	if nextState.ScheduledDays == 0 {
+		dueAt = now
+	}
+
+	stateAfterBytes, err := json.Marshal(nextState)
+	if err != nil {
+		return nil, err
 	}
 
 	reviewLog := models.FSRSReviewLog{
 		ID:              uuid.NewString(),
 		TopicID:         topicID,
-		ActivityType:    "short_answer",
-		ReferenceID:     questionID,
-		ReviewedAt:      time.Now().Unix(),
+		ActivityType:    activityType,
+		ReferenceID:     referenceID,
+		ReviewedAt:      now,
 		Rating:          ratingCode,
-		ScheduledDays:   0,
-		StateBeforeJSON: string(stateBeforeJSON),
-		StateAfterJSON:  string(stateAfterJSON),
+		ScheduledDays:   nextState.ScheduledDays,
+		StateBeforeJSON: stateBeforeJSON,
+		StateAfterJSON:  string(stateAfterBytes),
+	}
+	if err := db.UpsertAssessmentFSRSReview(activityType, referenceID, topicID, nextState, dueAt, now, reviewLog); err != nil {
+		return nil, err
 	}
 
-	if err := db.InsertFSRSReviewLog(reviewLog); err != nil {
-		return map[string]interface{}{"error": "failed to log short-answer review: " + err.Error()}
+	ratingDisplay := strings.ToLower(strings.TrimSpace(ratingLabel))
+	if ratingDisplay == "" {
+		ratingDisplay = "again"
 	}
-
+	ratingTitle := strings.ToUpper(ratingDisplay[:1]) + ratingDisplay[1:]
 	return map[string]interface{}{
-		"questionID":  questionID,
-		"prompt":      prompt,
-		"score":       score,
-		"feedback":    strings.TrimSpace(parsed.Feedback),
-		"fsrsRating":  ratingLabel,
-		"reviewLogID": reviewLog.ID,
-	}
+		"fsrs_rating":    ratingTitle,
+		"fsrsRating":     ratingTitle,
+		"scheduled_days": nextState.ScheduledDays,
+		"next_review_at": time.Unix(dueAt, 0).Format(time.RFC3339),
+		"review_log_id":  reviewLog.ID,
+		"reviewLogID":    reviewLog.ID,
+	}, nil
 }
 
 // buildContextString builds a context string from sections with truncation limits
@@ -1742,11 +1973,11 @@ func topicIDFromShortAnswerQuestionID(questionID string) (string, bool) {
 
 func shortAnswerScoreToFSRSRating(score int) (string, int) {
 	switch {
-	case score <= 4:
+	case score <= 3:
 		return "again", scheduler.Again
-	case score <= 7:
+	case score <= 5:
 		return "hard", scheduler.Hard
-	case score <= 9:
+	case score <= 8:
 		return "good", scheduler.Good
 	default:
 		return "easy", scheduler.Easy
