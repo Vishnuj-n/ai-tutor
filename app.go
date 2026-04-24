@@ -697,7 +697,11 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{"error": "no passage content found for completion window"}
 	}
 
-	raw, err := a.fastLLMProvider.GenerateAnswer(buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages))
+	prompt, err := buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages)
+	if err != nil {
+		return map[string]interface{}{"error": "completion quiz prompt generation failed: " + err.Error()}
+	}
+	raw, err := a.fastLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{"error": "completion quiz generation failed: " + err.Error()}
 	}
@@ -1258,7 +1262,7 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	return b.String()
 }
 
-func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string) string {
+func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string) (string, error) {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
 	b.WriteString("Generate exactly 5 multiple-choice questions for this completed reading session.\n")
@@ -1305,16 +1309,16 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 			// Add truncated snippet if we have remaining tokens
 			remainingTokens := availableContextTokens - currentTokens
 			if remainingTokens > 0 {
-				b.WriteString("- ")
 				truncatedSnippet, err := semanticSnippetByTokens(text, remainingTokens)
 				if err != nil {
 					// If no token-safe context was added yet, return empty string to indicate failure
 					if bufferEmpty {
-						return ""
+						return "", err
 					}
 					// Otherwise skip passage and continue
 					break
 				}
+				b.WriteString("- ")
 				b.WriteString(truncatedSnippet)
 				b.WriteString("\n")
 				bufferEmpty = false
@@ -1322,24 +1326,24 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 			break
 		}
 
-		b.WriteString("- ")
 		// Use semantic snippet but truncate by tokens instead of characters
 		snippet, err := semanticSnippetByTokens(text, passageTokens)
 		if err != nil {
 			// If no token-safe context was added yet, return empty string to indicate failure
 			if bufferEmpty {
-				return ""
+				return "", err
 			}
 			// Otherwise skip passage and continue
 			break
 		}
+		b.WriteString("- ")
 		b.WriteString(snippet)
 		b.WriteString("\n")
 		bufferEmpty = false
 
 		currentTokens += passageTokens
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) string {
