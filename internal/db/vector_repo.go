@@ -70,31 +70,41 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to prepare stmtGetRowID: %w", err)
 	}
-	defer stmtGetRowID.Close()
+	defer func() {
+		_ = stmtGetRowID.Close()
+	}()
 
 	stmtCheckExists, err := tx.Prepare(`SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare stmtCheckExists: %w", err)
 	}
-	defer stmtCheckExists.Close()
+	defer func() {
+		_ = stmtCheckExists.Close()
+	}()
 
 	stmtUpdateVector, err := tx.Prepare(`UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare stmtUpdateVector: %w", err)
 	}
-	defer stmtUpdateVector.Close()
+	defer func() {
+		_ = stmtUpdateVector.Close()
+	}()
 
 	stmtInsertVector, err := tx.Prepare(`INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare stmtInsertVector: %w", err)
 	}
-	defer stmtInsertVector.Close()
+	defer func() {
+		_ = stmtInsertVector.Close()
+	}()
 
 	stmtUpdateRef, err := tx.Prepare(`UPDATE chunks SET embedding_ref = ? WHERE id = ?`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare stmtUpdateRef: %w", err)
 	}
-	defer stmtUpdateRef.Close()
+	defer func() {
+		_ = stmtUpdateRef.Close()
+	}()
 
 	for _, item := range items {
 		if len(item.Vector) != int(embeddingDimension) {

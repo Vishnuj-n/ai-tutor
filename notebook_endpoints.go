@@ -19,7 +19,6 @@ import (
 
 const ingestionEventName = "ingestion-progress"
 const topicExtractionMaxChars = 30000
-const topicExtractionMaxSections = 30
 
 type ingestionProgressPayload struct {
 	NotebookID   string `json:"notebook_id"`
