@@ -60,11 +60,41 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 		return err
 	}
 
+	// Always rollback on exit. If tx.Commit() was already called, this safely returns sql.ErrTxDone.
 	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
+		_ = tx.Rollback()
 	}()
+
+	// Prepare statements to prevent re-compilation in the loop
+	stmtGetRowID, err := tx.Prepare(`SELECT rowid FROM chunks WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare stmtGetRowID: %w", err)
+	}
+	defer stmtGetRowID.Close()
+
+	stmtCheckExists, err := tx.Prepare(`SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare stmtCheckExists: %w", err)
+	}
+	defer stmtCheckExists.Close()
+
+	stmtUpdateVector, err := tx.Prepare(`UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare stmtUpdateVector: %w", err)
+	}
+	defer stmtUpdateVector.Close()
+
+	stmtInsertVector, err := tx.Prepare(`INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare stmtInsertVector: %w", err)
+	}
+	defer stmtInsertVector.Close()
+
+	stmtUpdateRef, err := tx.Prepare(`UPDATE chunks SET embedding_ref = ? WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare stmtUpdateRef: %w", err)
+	}
+	defer stmtUpdateRef.Close()
 
 	for _, item := range items {
 		if len(item.Vector) != int(embeddingDimension) {
@@ -77,38 +107,28 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 		}
 
 		var rowID int64
-		if scanErr := tx.QueryRow(`
-			SELECT rowid FROM chunks WHERE id = ?
-		`, item.ChunkID).Scan(&rowID); scanErr != nil {
+		if scanErr := stmtGetRowID.QueryRow(item.ChunkID).Scan(&rowID); scanErr != nil {
 			return fmt.Errorf("failed to resolve chunk rowid for %s: %w", item.ChunkID, scanErr)
 		}
 
 		var exists int
-		countErr := tx.QueryRow(`
-			SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?
-		`, rowID).Scan(&exists)
+		countErr := stmtCheckExists.QueryRow(rowID).Scan(&exists)
 		if countErr != nil && countErr != sql.ErrNoRows {
 			return countErr
 		}
 
 		if exists > 0 {
-			if _, execErr := tx.Exec(`
-				UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?
-			`, vectorJSON, rowID); execErr != nil {
+			if _, execErr := stmtUpdateVector.Exec(vectorJSON, rowID); execErr != nil {
 				return execErr
 			}
 		} else {
-			if _, execErr := tx.Exec(`
-				INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)
-			`, rowID, vectorJSON); execErr != nil {
+			if _, execErr := stmtInsertVector.Exec(rowID, vectorJSON); execErr != nil {
 				return execErr
 			}
 		}
 
 		if item.EmbeddingRef != "" {
-			if _, execErr := tx.Exec(`
-				UPDATE chunks SET embedding_ref = ? WHERE id = ?
-			`, item.EmbeddingRef, item.ChunkID); execErr != nil {
+			if _, execErr := stmtUpdateRef.Exec(item.EmbeddingRef, item.ChunkID); execErr != nil {
 				return execErr
 			}
 		}
