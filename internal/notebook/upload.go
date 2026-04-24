@@ -291,14 +291,33 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		if err != nil {
 			return nil, fmt.Errorf("failed to read markdown file: %w", err)
 		}
-		sections := splitMarkdownSections(string(raw))
-		if len(sections) == 0 {
+		content := string(raw)
+		if strings.TrimSpace(content) == "" {
 			return nil, fmt.Errorf("document has no readable content")
 		}
-		doc.PageCount = 1
-		doc.Sections = sections
-		for _, section := range sections {
-			doc.WordCount += len(strings.Fields(section.Text))
+		// Split markdown by headings to create sections
+		sections := splitMarkdownByHeadings(content)
+		if len(sections) == 0 {
+			// Fallback to single section if no headings found
+			doc.PageCount = 1
+			doc.WordCount = len(strings.Fields(content))
+			doc.Sections = []ExtractedSection{{
+				Heading: "Document",
+				Text:    content,
+				PageNum: 1,
+			}}
+		} else {
+			doc.PageCount = len(sections)
+			doc.WordCount = 0
+			doc.Sections = make([]ExtractedSection, len(sections))
+			for i, sec := range sections {
+				doc.Sections[i] = ExtractedSection{
+					Heading: sec.Heading,
+					Text:    sec.Text,
+					PageNum: i + 1,
+				}
+				doc.WordCount += len(strings.Fields(sec.Text))
+			}
 		}
 
 	case "pdf":
@@ -442,53 +461,6 @@ func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) er
 	}
 
 	return nil
-}
-
-func splitMarkdownSections(content string) []ExtractedSection {
-	lines := strings.Split(content, "\n")
-	sections := make([]ExtractedSection, 0)
-	currentHeading := "Document"
-	var body []string
-
-	flush := func() {
-		joined := embeddings.NormalizeWhitespace(strings.Join(body, "\n"))
-		if joined != "" {
-			sections = append(sections, ExtractedSection{
-				Heading: currentHeading,
-				Text:    joined,
-				PageNum: 1,
-			})
-		}
-		body = body[:0]
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			flush()
-			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
-			if heading == "" {
-				heading = "Section"
-			}
-			currentHeading = heading
-			continue
-		}
-		body = append(body, line)
-	}
-	flush()
-
-	if len(sections) == 0 {
-		normalized := embeddings.NormalizeWhitespace(content)
-		if normalized != "" {
-			sections = append(sections, ExtractedSection{
-				Heading: "Document",
-				Text:    normalized,
-				PageNum: 1,
-			})
-		}
-	}
-
-	return sections
 }
 
 type wordSpan struct {
@@ -636,4 +608,48 @@ func absInt(v int) int {
 		return -v
 	}
 	return v
+}
+
+type markdownSection struct {
+	Heading string
+	Text    string
+}
+
+// splitMarkdownByHeadings splits markdown content by headings (#, ##, ###, etc.)
+func splitMarkdownByHeadings(content string) []markdownSection {
+	lines := strings.Split(content, "\n")
+	sections := make([]markdownSection, 0)
+	var currentHeading string
+	var currentText strings.Builder
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Check if line is a heading (starts with #)
+		if strings.HasPrefix(trimmed, "#") {
+			// Save previous section if it has content
+			if currentHeading != "" || currentText.Len() > 0 {
+				sections = append(sections, markdownSection{
+					Heading: currentHeading,
+					Text:    strings.TrimSpace(currentText.String()),
+				})
+			}
+			// Start new section
+			currentHeading = strings.TrimLeft(trimmed, "# ")
+			currentHeading = strings.TrimSpace(currentHeading)
+			currentText.Reset()
+		} else {
+			currentText.WriteString(line)
+			currentText.WriteString("\n")
+		}
+	}
+
+	// Add final section
+	if currentHeading != "" || currentText.Len() > 0 {
+		sections = append(sections, markdownSection{
+			Heading: currentHeading,
+			Text:    strings.TrimSpace(currentText.String()),
+		})
+	}
+
+	return sections
 }

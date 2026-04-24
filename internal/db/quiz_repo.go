@@ -10,13 +10,35 @@ import (
 	"github.com/google/uuid"
 )
 
+// insertQuestionsInTx inserts questions within a transaction
+func insertQuestionsInTx(tx *sql.Tx, topicID string, questions []models.QuizQuestion) error {
+	for _, q := range questions {
+		optionsJSON, marshalErr := json.Marshal(q.Options)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+		}
+
+		if _, err := tx.Exec(`
+			INSERT INTO questions (
+				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+				source_page_start, source_page_end, llm_model, prompt_version
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
+			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
+			return fmt.Errorf("insert question %s failed: %w", q.ID, err)
+		}
+	}
+	return nil
+}
+
 func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestion) error {
 	tx, err := conn.Begin()
 	if err != nil {
 		return err
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -34,26 +56,15 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 		return err
 	}
 
-	for _, q := range questions {
-		optionsJSON, marshalErr := json.Marshal(q.Options)
-		if marshalErr != nil {
-			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
-			return err
-		}
-
-		if _, err = tx.Exec(`
-			INSERT INTO questions (
-				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
-				source_page_start, source_page_end, llm_model, prompt_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
-			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
-			return err
-		}
+	if err = insertQuestionsInTx(tx, topicID, questions); err != nil {
+		return err
 	}
 
-	err = tx.Commit()
-	return err
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
@@ -112,32 +123,22 @@ func appendQuestionsForTopicRepo(topicID string, questions []models.QuizQuestion
 	if err != nil {
 		return err
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
 
-	for _, q := range questions {
-		optionsJSON, marshalErr := json.Marshal(q.Options)
-		if marshalErr != nil {
-			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
-			return err
-		}
-
-		if _, err = tx.Exec(`
-			INSERT INTO questions (
-				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
-				source_page_start, source_page_end, llm_model, prompt_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
-			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
-			return err
-		}
+	if err = insertQuestionsInTx(tx, topicID, questions); err != nil {
+		return err
 	}
 
-	err = tx.Commit()
-	return err
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func getQuestionByIDRepo(questionID string) (*models.QuizQuestion, error) {
