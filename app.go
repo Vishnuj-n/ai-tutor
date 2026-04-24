@@ -732,13 +732,13 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		sourcePageEnd := q.SourcePageEnd
 		if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
 			sourcePageStart = startPage
-			sourcePageEnd = targetPage
+			sourcePageEnd = contextEndPage
 		}
 		if sourcePageStart < startPage {
 			sourcePageStart = startPage
 		}
-		if sourcePageEnd > targetPage {
-			sourcePageEnd = targetPage
+		if sourcePageEnd > contextEndPage {
+			sourcePageEnd = contextEndPage
 		}
 		if sourcePageEnd < sourcePageStart {
 			sourcePageEnd = sourcePageStart

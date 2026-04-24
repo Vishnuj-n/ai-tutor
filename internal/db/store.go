@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -12,8 +11,6 @@ import (
 
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
-
-	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 var conn *sql.DB
@@ -100,38 +97,6 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	return nil
-}
-
-func loadExtension(db *sql.DB, extensionPath string) error {
-	sqlConn, err := db.Conn(context.Background())
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = sqlConn.Close()
-	}()
-
-	return sqlConn.Raw(func(driverConn interface{}) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		if !ok {
-			return fmt.Errorf("unexpected sqlite driver connection type %T", driverConn)
-		}
-
-		entryPoints := []string{"sqlite3_vec_init", "sqlite3_extension_init", ""}
-		var lastErr error
-		for _, entry := range entryPoints {
-			if loadErr := sqliteConn.LoadExtension(extensionPath, entry); loadErr == nil {
-				return nil
-			} else {
-				lastErr = loadErr
-			}
-		}
-
-		if lastErr == nil {
-			lastErr = fmt.Errorf("unknown extension load failure")
-		}
-		return fmt.Errorf("could not load extension with known entry points: %w", lastErr)
-	})
 }
 
 // InitWithVectorDimension initializes the database and creates the vec0 virtual table.
@@ -495,11 +460,7 @@ func ensureFSRSSchema() error {
 		if beginErr != nil {
 			return beginErr
 		}
-		defer func() {
-			if err != nil {
-				_ = tx.Rollback()
-			}
-		}()
+		defer tx.Rollback()
 
 		stmts := []string{
 			`DROP TABLE IF EXISTS fsrs_cards`,
@@ -1056,12 +1017,12 @@ func CreateParentSection(id, topicID, heading string, orderIndex int, content st
 }
 
 // CreateChunk inserts a chunk row.
-func CreateChunk(id, topicID, parentID, text string, tokenCount int) error {
+func CreateChunk(id, topicID, parentID, text string, tokenCount int, pageNum int) error {
 	return insertChunkRow(conn, topicID, NotebookChunkInput{
 		ID:         id,
 		ParentID:   parentID,
 		Text:       text,
-		PageNum:    0,
+		PageNum:    pageNum,
 		TokenCount: tokenCount,
 	})
 }
@@ -1159,11 +1120,7 @@ func EnsureTopicsBatch(items []TopicBatchItem) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO topics (id, title, status)
@@ -1197,6 +1154,7 @@ func EnsureTopicsBatch(items []TopicBatchItem) error {
 }
 
 // UpdateTopicPageBounds stores deterministic chapter bounds for a topic.
+// Initializes current_page_cursor to startPage if it is 0 (uninitialized).
 func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -1212,6 +1170,23 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		startPage, endPage = endPage, startPage
 	}
 
+	// Determine if cursor needs initialization
+	var currentCursor int
+	if err := conn.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Initialize cursor to startPage if uninitialized (0)
+	if currentCursor == 0 {
+		_, err := conn.Exec(`
+			UPDATE topics
+			SET start_page = ?, end_page = ?, current_page_cursor = ?
+			WHERE id = ?
+		`, startPage, endPage, startPage, topicID)
+		return err
+	}
+
+	// Cursor already initialized; just update bounds
 	_, err := conn.Exec(`
 		UPDATE topics
 		SET start_page = ?, end_page = ?
@@ -1237,23 +1212,7 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	stmt, err := tx.Prepare(`
-		UPDATE topics
-		SET start_page = ?, end_page = ?
-		WHERE id = ?
-	`)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = stmt.Close()
-	}()
+	defer tx.Rollback()
 
 	for _, item := range items {
 		topicID := strings.TrimSpace(item.TopicID)
@@ -1274,16 +1233,46 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 			startPage, endPage = endPage, startPage
 		}
 
-		res, err := stmt.Exec(startPage, endPage, topicID)
-		if err != nil {
-			return err
+		// Check current cursor
+		var currentCursor int
+		if cursorErr := tx.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
+			return cursorErr
 		}
-		rowsAffected, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rowsAffected == 0 {
-			return fmt.Errorf("no rows updated for topicID %s", topicID)
+
+		// Initialize cursor if uninitialized (0)
+		if currentCursor == 0 {
+			res, err := tx.Exec(`
+				UPDATE topics
+				SET start_page = ?, end_page = ?, current_page_cursor = ?
+				WHERE id = ?
+			`, startPage, endPage, startPage, topicID)
+			if err != nil {
+				return err
+			}
+			rowsAffected, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rowsAffected == 0 {
+				return fmt.Errorf("no rows updated for topicID %s", topicID)
+			}
+		} else {
+			// Cursor already initialized; just update bounds
+			res, err := tx.Exec(`
+				UPDATE topics
+				SET start_page = ?, end_page = ?
+				WHERE id = ?
+			`, startPage, endPage, topicID)
+			if err != nil {
+				return err
+			}
+			rowsAffected, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rowsAffected == 0 {
+				return fmt.Errorf("no rows updated for topicID %s", topicID)
+			}
 		}
 	}
 
@@ -1646,13 +1635,7 @@ func DeleteTopic(topicID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-
-	// Rollback on error
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
 	// Delete dependent tables in order to respect foreign key constraints
 
@@ -1880,11 +1863,7 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
 		UPDATE chunks SET embedding_ref = ? WHERE id = ?
@@ -2093,11 +2072,7 @@ func AppendQuestionsAndAdvanceCursor(topicID string, questions []models.QuizQues
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
 	// Append questions first
 	for _, q := range questions {
