@@ -250,13 +250,13 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 	chunkThermo := "chunk-thermo"
 	chunkNewton := "chunk-newton"
 	chunkRenaissance := "chunk-renaissance"
-	if err := db.CreateChunk(chunkThermo, "topic-thermo", parentThermo, "thermo chunk", 2); err != nil {
+	if err := db.CreateChunk(chunkThermo, "topic-thermo", parentThermo, "thermo chunk", 2, 1); err != nil {
 		t.Fatalf("CreateChunk thermo failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkNewton, "topic-newton", parentNewton, "newton chunk", 2); err != nil {
+	if err := db.CreateChunk(chunkNewton, "topic-newton", parentNewton, "newton chunk", 2, 2); err != nil {
 		t.Fatalf("CreateChunk newton failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkRenaissance, "topic-renaissance", parentRenaissance, "renaissance chunk", 2); err != nil {
+	if err := db.CreateChunk(chunkRenaissance, "topic-renaissance", parentRenaissance, "renaissance chunk", 2, 3); err != nil {
 		t.Fatalf("CreateChunk renaissance failed: %v", err)
 	}
 
@@ -1002,7 +1002,7 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 	}
 
 	chunkID := "chunk-reader"
-	if err := db.CreateChunk(chunkID, topicID, parentID, "chunk content", 2); err != nil {
+	if err := db.CreateChunk(chunkID, topicID, parentID, "chunk content", 2, 1); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}
 

@@ -94,7 +94,7 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 	if err := CreateParentSection(parentDelID, autoTopicID, "Delete Heading", 1, "delete parent body"); err != nil {
 		t.Fatalf("CreateParentSection delete failed: %v", err)
 	}
-	if err := CreateChunk(chunkDelID, autoTopicID, parentDelID, "delete chunk body", 3); err != nil {
+	if err := CreateChunk(chunkDelID, autoTopicID, parentDelID, "delete chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk delete failed: %v", err)
 	}
 	if err := LinkChunksToNotebook(notebookID, []string{chunkDelID}); err != nil {
@@ -106,7 +106,7 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 	if err := CreateParentSection(parentKeepID, keepTopicID, "Keep Heading", 1, "keep parent body"); err != nil {
 		t.Fatalf("CreateParentSection keep failed: %v", err)
 	}
-	if err := CreateChunk(chunkKeepID, keepTopicID, parentKeepID, "keep chunk body", 3); err != nil {
+	if err := CreateChunk(chunkKeepID, keepTopicID, parentKeepID, "keep chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk keep failed: %v", err)
 	}
 	if err := LinkChunksToNotebook(keepNotebookID, []string{chunkKeepID}); err != nil {
@@ -159,7 +159,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	if err := CreateParentSection(parentA, topicA, "A", 1, "topic a parent"); err != nil {
 		t.Fatalf("CreateParentSection topicA failed: %v", err)
 	}
-	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3); err != nil {
+	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk topicA failed: %v", err)
 	}
 
@@ -168,7 +168,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	if err := CreateParentSection(parentB, topicB, "B", 1, "topic b parent"); err != nil {
 		t.Fatalf("CreateParentSection topicB failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 3); err != nil {
+	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 3, 2); err != nil {
 		t.Fatalf("CreateChunk topicB failed: %v", err)
 	}
 
@@ -223,10 +223,10 @@ func TestGetNotebookTopicTreeDeduplicatesTopicRowsPerNotebook(t *testing.T) {
 
 	chunkA := "chunk-tree-dedupe-a"
 	chunkB := "chunk-tree-dedupe-b"
-	if err := CreateChunk(chunkA, topicID, parentID, "chunk a", 2); err != nil {
+	if err := CreateChunk(chunkA, topicID, parentID, "chunk a", 2, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicID, parentID, "chunk b", 2); err != nil {
+	if err := CreateChunk(chunkB, topicID, parentID, "chunk b", 2, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
@@ -264,7 +264,7 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 	if err := CreateParentSection(parentA, topicA, "A", 1, "topic a parent"); err != nil {
 		t.Fatalf("CreateParentSection topicA failed: %v", err)
 	}
-	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3); err != nil {
+	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
 
@@ -273,7 +273,7 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 	if err := CreateParentSection(parentB, topicB, "B", 1, "topic b parent"); err != nil {
 		t.Fatalf("CreateParentSection topicB failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 8); err != nil {
+	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 8, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
