@@ -1216,6 +1216,115 @@ func TestTopicDeletionCascadesToAssessmentTables(t *testing.T) {
 	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE reference_id = ?`, "written-1", 0)
 }
 
+func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "shrink-topic"
+	if err := EnsureTopic(topicID, "Shrink Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := UpdateTopicPageBounds(topicID, 1, 10); err != nil {
+		t.Fatalf("initial UpdateTopicPageBounds failed: %v", err)
+	}
+
+	if err := ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{
+		{
+			ID:              "q-in-range",
+			TopicID:         topicID,
+			Prompt:          "In range?",
+			Options:         []string{"A", "B"},
+			CorrectAnswer:   "A",
+			SourcePageStart: 2,
+			SourcePageEnd:   3,
+		},
+		{
+			ID:              "q-out-range",
+			TopicID:         topicID,
+			Prompt:          "Out of range?",
+			Options:         []string{"A", "B"},
+			CorrectAnswer:   "A",
+			SourcePageStart: 8,
+			SourcePageEnd:   9,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
+	}
+	if err := SaveUserAnswer(models.QuizScore{QuestionID: "q-out-range", Correct: false, Score: 0, UserAnswer: "B"}); err != nil {
+		t.Fatalf("SaveUserAnswer failed: %v", err)
+	}
+	if _, err := conn.Exec(`
+		INSERT INTO assessment_fsrs (activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at)
+		VALUES ('quiz_question', 'q-out-range', ?, '{}', 100, 50)
+	`, topicID); err != nil {
+		t.Fatalf("insert quiz assessment_fsrs failed: %v", err)
+	}
+	if err := InsertFSRSReviewLog(models.FSRSReviewLog{
+		ID:              "log-q-out-range",
+		TopicID:         topicID,
+		ActivityType:    "quiz_question",
+		ReferenceID:     "q-out-range",
+		ReviewedAt:      123,
+		Rating:          1,
+		ScheduledDays:   0,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}); err != nil {
+		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
+	}
+
+	if err := CreateWrittenQuestion(models.WrittenQuestion{
+		ID:              "written-in-range",
+		TopicID:         topicID,
+		Prompt:          "Explain in range",
+		SourcePageStart: 3,
+		SourcePageEnd:   4,
+	}); err != nil {
+		t.Fatalf("CreateWrittenQuestion in range failed: %v", err)
+	}
+	if err := CreateWrittenQuestion(models.WrittenQuestion{
+		ID:              "written-out-range",
+		TopicID:         topicID,
+		Prompt:          "Explain out of range",
+		SourcePageStart: 9,
+		SourcePageEnd:   10,
+	}); err != nil {
+		t.Fatalf("CreateWrittenQuestion out of range failed: %v", err)
+	}
+	if _, err := conn.Exec(`
+		INSERT INTO assessment_fsrs (activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at)
+		VALUES ('written_question', 'written-out-range', ?, '{}', 100, 50)
+	`, topicID); err != nil {
+		t.Fatalf("insert written assessment_fsrs failed: %v", err)
+	}
+	if err := InsertFSRSReviewLog(models.FSRSReviewLog{
+		ID:              "log-written-out-range",
+		TopicID:         topicID,
+		ActivityType:    "written_question",
+		ReferenceID:     "written-out-range",
+		ReviewedAt:      123,
+		Rating:          1,
+		ScheduledDays:   0,
+		StateBeforeJSON: `{}`,
+		StateAfterJSON:  `{}`,
+	}); err != nil {
+		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
+	}
+
+	if err := UpdateTopicPageBounds(topicID, 1, 5); err != nil {
+		t.Fatalf("shrink UpdateTopicPageBounds failed: %v", err)
+	}
+
+	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE id = ?`, "q-in-range", 1)
+	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE id = ?`, "q-out-range", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM user_answers WHERE question_id = ?`, "q-out-range", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE activity_type = 'quiz_question' AND reference_id = ?`, "q-out-range", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-q-out-range", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-in-range", 1)
+	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-out-range", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE activity_type = 'written_question' AND reference_id = ?`, "written-out-range", 0)
+	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-written-out-range", 0)
+}
+
 func TestGetTotalChunkTokensFallsBackWhenTokenCountMissing(t *testing.T) {
 	initDBForTest(t, false, 0)
 
