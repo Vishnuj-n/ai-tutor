@@ -142,6 +142,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 			StartPage: 1,
 			EndPage:   maxPage(doc.PageCount),
 		}}
+		fallbackUsed = true
 	}
 
 	_ = db.UpdateNotebookStatus(notebookID, "draft_ready")
