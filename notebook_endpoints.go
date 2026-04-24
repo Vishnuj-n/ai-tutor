@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -190,7 +189,13 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	topicIDs := make([]string, 0, len(normalized))
 
 	for i, ch := range normalized {
-		topicID := fmt.Sprintf("nb-%s-ch-%02d-%s", notebookID, i+1, slugify(ch.Title))
+		// Simple sanitization for topic ID: lowercase, replace spaces with hyphens, limit length
+		sanitized := strings.ToLower(strings.TrimSpace(ch.Title))
+		sanitized = strings.Join(strings.Fields(sanitized), "-")
+		if len(sanitized) > 20 {
+			sanitized = sanitized[:20]
+		}
+		topicID := fmt.Sprintf("nb-%s-ch-%02d-%s", notebookID, i+1, sanitized)
 		topicIDs = append(topicIDs, topicID)
 
 		topicItems = append(topicItems, db.TopicBatchItem{
@@ -290,111 +295,6 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	}
 }
 
-func (a *App) extractChapterTitles(doc *notebook.ExtractedDocument) []string {
-	if doc == nil || len(doc.Sections) == 0 {
-		return []string{"General"}
-	}
-
-	input := make([]string, 0, len(doc.Sections))
-	for i, section := range doc.Sections {
-		if i >= topicExtractionMaxSections {
-			break
-		}
-		if strings.TrimSpace(section.Text) == "" {
-			continue
-		}
-		input = append(input, section.Text)
-		if len(strings.Join(input, "\n")) > topicExtractionMaxChars {
-			break
-		}
-	}
-	joined := strings.Join(input, "\n")
-	if len(joined) > topicExtractionMaxChars {
-		joined = joined[:topicExtractionMaxChars]
-	}
-	if strings.TrimSpace(joined) == "" {
-		return []string{"General"}
-	}
-
-	if a.heavyLLMProvider == nil {
-		return fallbackChapterTitles(doc)
-	}
-
-	prompt := "Extract all chapter or major topic headings from this PDF text sample in original order. Include every distinct chapter/topic you can infer from the material. Return strict JSON only as {\"chapters\":[\"Title 1\",\"Title 2\"]}. No markdown, no prose, no keys besides chapters.\\n\\n" + joined
-	response, err := a.heavyLLMProvider.GenerateAnswer(prompt)
-	if err != nil {
-		return fallbackChapterTitles(doc)
-	}
-
-	chapters := parseChapterTitles(response)
-	if len(chapters) == 0 {
-		return fallbackChapterTitles(doc)
-	}
-	return chapters
-}
-
-func parseChapterTitles(raw string) []string {
-	clean := strings.TrimSpace(raw)
-	start := strings.Index(clean, "{")
-	end := strings.LastIndex(clean, "}")
-	if start >= 0 && end > start {
-		clean = clean[start : end+1]
-	}
-
-	var payload struct {
-		Chapters []string `json:"chapters"`
-	}
-	if err := json.Unmarshal([]byte(clean), &payload); err != nil {
-		return nil
-	}
-
-	seen := map[string]struct{}{}
-	result := make([]string, 0, len(payload.Chapters))
-	for _, title := range payload.Chapters {
-		t := strings.TrimSpace(title)
-		if t == "" {
-			continue
-		}
-		key := strings.ToLower(t)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		result = append(result, t)
-		if len(result) == 50 {
-			break
-		}
-	}
-	return result
-}
-
-func fallbackChapterTitles(doc *notebook.ExtractedDocument) []string {
-	if doc == nil {
-		return []string{"General"}
-	}
-	seen := map[string]struct{}{}
-	result := make([]string, 0, 6)
-	for _, section := range doc.Sections {
-		title := strings.TrimSpace(section.Heading)
-		if title == "" || strings.HasPrefix(strings.ToLower(title), "page ") {
-			continue
-		}
-		key := strings.ToLower(title)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		result = append(result, title)
-		if len(result) >= 6 {
-			break
-		}
-	}
-	if len(result) == 0 {
-		return []string{"General"}
-	}
-	return result
-}
-
 func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.ExtractedDocument) ([]models.SyllabusChapterDraft, bool) {
 	if doc == nil || len(doc.Sections) == 0 {
 		return nil, false
@@ -423,35 +323,8 @@ func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.Ext
 		return normalizeSyllabusChapters(bookmarkLikeDraft, doc.PageCount), fallbackUsed
 	}
 
-	titles := a.extractChapterTitles(doc)
-	if len(titles) == 0 {
-		return nil, false
-	}
-
-	fallback := make([]models.SyllabusChapterDraft, 0, len(titles))
-	pageCount := maxPage(doc.PageCount)
-	pagesPer := pageCount / len(titles)
-	if pagesPer <= 0 {
-		pagesPer = 1
-	}
-	start := 1
-	for i, title := range titles {
-		end := start + pagesPer - 1
-		if i == len(titles)-1 || end > pageCount {
-			end = pageCount
-		}
-		fallback = append(fallback, models.SyllabusChapterDraft{
-			Title:     strings.TrimSpace(title),
-			StartPage: start,
-			EndPage:   end,
-		})
-		start = end + 1
-		if start > pageCount {
-			break
-		}
-	}
-
-	return normalizeSyllabusChapters(fallback, doc.PageCount), true
+	// No LLM response and no bookmarks - cannot draft syllabus
+	return nil, false
 }
 
 func parseSyllabusDraft(raw string, pageCount int) []models.SyllabusChapterDraft {
@@ -895,32 +768,6 @@ func firstN(text string, n int) string {
 		return text
 	}
 	return text[:n]
-}
-
-var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
-
-func slugify(s string) string {
-	lower := strings.ToLower(strings.TrimSpace(s))
-	lower = nonWord.ReplaceAllString(lower, "-")
-	lower = strings.Trim(lower, "-")
-	if lower == "" {
-		return "topic"
-	}
-	parts := strings.Split(lower, "-")
-	uniq := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		uniq = append(uniq, p)
-		if len(uniq) == 8 {
-			break
-		}
-	}
-	if len(uniq) == 0 {
-		return "topic"
-	}
-	return strings.Join(uniq, "-")
 }
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
