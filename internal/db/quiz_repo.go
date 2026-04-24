@@ -25,7 +25,7 @@ func insertQuestionsInTx(tx *sql.Tx, topicID string, questions []models.QuizQues
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
 			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
-			return err
+			return fmt.Errorf("insert question %s failed: %w", q.ID, err)
 		}
 	}
 	return nil

@@ -295,13 +295,30 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		if strings.TrimSpace(content) == "" {
 			return nil, fmt.Errorf("document has no readable content")
 		}
-		doc.PageCount = 1
-		doc.WordCount = len(strings.Fields(content))
-		doc.Sections = []ExtractedSection{{
-			Heading: "Document",
-			Text:    content,
-			PageNum: 1,
-		}}
+		// Split markdown by headings to create sections
+		sections := splitMarkdownByHeadings(content)
+		if len(sections) == 0 {
+			// Fallback to single section if no headings found
+			doc.PageCount = 1
+			doc.WordCount = len(strings.Fields(content))
+			doc.Sections = []ExtractedSection{{
+				Heading: "Document",
+				Text:    content,
+				PageNum: 1,
+			}}
+		} else {
+			doc.PageCount = len(sections)
+			doc.WordCount = 0
+			doc.Sections = make([]ExtractedSection, len(sections))
+			for i, sec := range sections {
+				doc.Sections[i] = ExtractedSection{
+					Heading: sec.Heading,
+					Text:    sec.Text,
+					PageNum: i + 1,
+				}
+				doc.WordCount += len(strings.Fields(sec.Text))
+			}
+		}
 
 	case "pdf":
 		if err := s.extractPDF(filePath, doc); err != nil {
@@ -591,4 +608,48 @@ func absInt(v int) int {
 		return -v
 	}
 	return v
+}
+
+type markdownSection struct {
+	Heading string
+	Text    string
+}
+
+// splitMarkdownByHeadings splits markdown content by headings (#, ##, ###, etc.)
+func splitMarkdownByHeadings(content string) []markdownSection {
+	lines := strings.Split(content, "\n")
+	sections := make([]markdownSection, 0)
+	var currentHeading string
+	var currentText strings.Builder
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Check if line is a heading (starts with #)
+		if strings.HasPrefix(trimmed, "#") {
+			// Save previous section if it has content
+			if currentHeading != "" || currentText.Len() > 0 {
+				sections = append(sections, markdownSection{
+					Heading: currentHeading,
+					Text:    strings.TrimSpace(currentText.String()),
+				})
+			}
+			// Start new section
+			currentHeading = strings.TrimLeft(trimmed, "# ")
+			currentHeading = strings.TrimSpace(currentHeading)
+			currentText.Reset()
+		} else {
+			currentText.WriteString(line)
+			currentText.WriteString("\n")
+		}
+	}
+
+	// Add final section
+	if currentHeading != "" || currentText.Len() > 0 {
+		sections = append(sections, markdownSection{
+			Heading: currentHeading,
+			Text:    strings.TrimSpace(currentText.String()),
+		})
+	}
+
+	return sections
 }

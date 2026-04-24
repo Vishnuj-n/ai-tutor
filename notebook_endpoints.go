@@ -188,9 +188,29 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	topicIDs := make([]string, 0, len(normalized))
 
 	for i, ch := range normalized {
-		// Simple sanitization for topic ID: lowercase, replace spaces with hyphens, limit length
+		// Sanitize topic ID: lowercase, replace non-alphanumerics with hyphens, collapse duplicates
 		sanitized := strings.ToLower(strings.TrimSpace(ch.Title))
-		sanitized = strings.Join(strings.Fields(sanitized), "-")
+		// Replace any character not in [a-z0-9] with hyphen
+		var result []rune
+		for _, r := range sanitized {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				result = append(result, r)
+			} else {
+				result = append(result, '-')
+			}
+		}
+		sanitized = string(result)
+		// Collapse duplicate hyphens
+		for strings.Contains(sanitized, "--") {
+			sanitized = strings.ReplaceAll(sanitized, "--", "-")
+		}
+		// Trim leading/trailing hyphens
+		sanitized = strings.Trim(sanitized, "-")
+		// Fallback if empty
+		if sanitized == "" {
+			sanitized = "topic"
+		}
+		// Limit length
 		if len(sanitized) > 20 {
 			sanitized = sanitized[:20]
 		}
@@ -322,8 +342,8 @@ func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.Ext
 		return normalizeSyllabusChapters(bookmarkLikeDraft, doc.PageCount), fallbackUsed
 	}
 
-	// No LLM response and no bookmarks - cannot draft syllabus
-	return nil, false
+	// No LLM response and no bookmarks - indicate fallback needed
+	return nil, true
 }
 
 func parseSyllabusDraft(raw string, pageCount int) []models.SyllabusChapterDraft {
