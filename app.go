@@ -1205,7 +1205,17 @@ func buildContextString(sections []map[string]interface{}, maxSections, maxConte
 			continue
 		}
 
-		content = semanticSnippet(content, maxContentPerSection)
+		// Clamp per-section limit to remaining budget
+		remaining := maxTotalContent - totalContentLength
+		sectionLimit := maxContentPerSection
+		if remaining < sectionLimit {
+			sectionLimit = remaining
+		}
+		if sectionLimit <= 0 {
+			break
+		}
+
+		content = semanticSnippet(content, sectionLimit)
 
 		b.WriteString("[Heading] ")
 		b.WriteString(heading)
@@ -1281,6 +1291,7 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 
 	// Accumulate passages within token budget
 	currentTokens := 0
+	bufferEmpty := true
 	for _, text := range parentPassages {
 		// Count tokens for this passage
 		passageTokens, err := embeddings.CountTokens(text)
@@ -1297,11 +1308,16 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 				b.WriteString("- ")
 				truncatedSnippet, err := semanticSnippetByTokens(text, remainingTokens)
 				if err != nil {
-					// Skip passage if token truncation fails to enforce strict token limits
+					// If no token-safe context was added yet, return empty string to indicate failure
+					if bufferEmpty {
+						return ""
+					}
+					// Otherwise skip passage and continue
 					break
 				}
 				b.WriteString(truncatedSnippet)
 				b.WriteString("\n")
+				bufferEmpty = false
 			}
 			break
 		}
@@ -1310,11 +1326,16 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 		// Use semantic snippet but truncate by tokens instead of characters
 		snippet, err := semanticSnippetByTokens(text, passageTokens)
 		if err != nil {
-			// Skip passage if token truncation fails to enforce strict token limits
+			// If no token-safe context was added yet, return empty string to indicate failure
+			if bufferEmpty {
+				return ""
+			}
+			// Otherwise skip passage and continue
 			break
 		}
 		b.WriteString(snippet)
 		b.WriteString("\n")
+		bufferEmpty = false
 
 		currentTokens += passageTokens
 	}
