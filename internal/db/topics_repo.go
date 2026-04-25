@@ -51,7 +51,7 @@ func EnsureTopicsBatch(items []TopicBatchItem) error {
 	stmt, err := tx.Prepare(`
 		INSERT INTO topics (id, title, status)
 		VALUES (?, ?, 'reading')
-		ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = 'reading'
+		ON CONFLICT(id) DO UPDATE SET title = excluded.title
 	`)
 	if err != nil {
 		return err
@@ -61,16 +61,17 @@ func EnsureTopicsBatch(items []TopicBatchItem) error {
 	}()
 
 	for _, item := range items {
-		if item.TopicID == "" {
+		id := strings.TrimSpace(item.TopicID)
+		if id == "" {
 			err = fmt.Errorf("topic id is required for all batch items")
 			return err
 		}
 		title := item.Title
 		if title == "" {
-			title = item.TopicID
+			title = id
 		}
 
-		_, err = stmt.Exec(item.TopicID, title)
+		_, err = stmt.Exec(id, title)
 		if err != nil {
 			return err
 		}
@@ -123,6 +124,9 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	var newCursor int
 	if currentCursor == 0 {
 		newCursor = startPage - 1
+		if newCursor < 0 {
+			newCursor = 0
+		}
 	} else {
 		// Clamp cursor to new bounds
 		if currentCursor < startPage {
@@ -220,6 +224,9 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 		var newCursor int
 		if currentCursor == 0 {
 			newCursor = startPage - 1
+			if newCursor < 0 {
+				newCursor = 0
+			}
 		} else {
 			// Clamp cursor to new bounds
 			if currentCursor < startPage {
@@ -265,7 +272,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 			SELECT id
 			FROM questions
 			WHERE topic_id = ?
-			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
 		)
 	`, topicID, startPage, endPage); err != nil {
 		return fmt.Errorf("delete out-of-range user answers: %w", err)
@@ -278,7 +285,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 			SELECT id
 			FROM questions
 			WHERE topic_id = ?
-			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
 		)
 	`, topicID, startPage, endPage); err != nil {
 		return fmt.Errorf("delete out-of-range quiz review logs: %w", err)
@@ -291,7 +298,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 			SELECT id
 			FROM questions
 			WHERE topic_id = ?
-			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
 		)
 	`, topicID, startPage, endPage); err != nil {
 		return fmt.Errorf("delete out-of-range quiz fsrs state: %w", err)
@@ -300,7 +307,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 	if _, err := tx.Exec(`
 		DELETE FROM questions
 		WHERE topic_id = ?
-		  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
 	`, topicID, startPage, endPage); err != nil {
 		return fmt.Errorf("delete out-of-range questions: %w", err)
 	}
@@ -312,7 +319,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 			SELECT id
 			FROM written_questions
 			WHERE topic_id = ?
-			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
 		)
 	`, topicID, startPage, endPage); err != nil {
 		return fmt.Errorf("delete out-of-range written review logs: %w", err)
@@ -325,7 +332,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 			SELECT id
 			FROM written_questions
 			WHERE topic_id = ?
-			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
 		)
 	`, topicID, startPage, endPage); err != nil {
 		return fmt.Errorf("delete out-of-range written fsrs state: %w", err)
@@ -334,7 +341,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 	if _, err := tx.Exec(`
 		DELETE FROM written_questions
 		WHERE topic_id = ?
-		  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
 	`, topicID, startPage, endPage); err != nil {
 		return fmt.Errorf("delete out-of-range written questions: %w", err)
 	}

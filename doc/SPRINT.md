@@ -33,24 +33,28 @@
 * **Incremental Assessment Generation:** Generate 5 questions. Save them with exact page lineage and prompt version metadata.
 * **Acceptance Gates:** Context-locked vector retrieval must test at p95 < 50ms. Macro-quiz assembly from stored questions must test at p95 < 100ms.
 
-## Sprint 14: FSRS Integration & Smart Scaling
+
+### **Sprint 14: FSRS Integration & Smart Scaling (Current)**
 **Goal:** Tie generated assessments to memory algorithms and automate background generation.
 
-* **FSRS Hookup:** Connect the FSRS scoring algorithm to the quiz and Socratic examiner outputs. Track success/failure on individual generated questions.
-* **Density Scaling:** Replace hardcoded assessment counts. Pass the total chunk length to the FAST_LLM and instruct it to scale the number of flashcards and quiz questions to match the material density.
-* **Background Queue:** Implement a Go routine worker. Identify the next two reading tasks in the schedule. Pre-build the quizzes and flashcards for these upcoming sessions while the user reads the current text.
+* **[COMPLETED] FSRS Hookup:** Connect the FSRS scoring algorithm to the quiz and Socratic examiner outputs. Track success/failure on individual generated questions.
+* **[COMPLETED] Density Scaling:** Replace hardcoded assessment counts. Pass total chunk length to `FAST_LLM` and scale flashcard/quiz counts to match material density.
+* **[IN PROGRESS] Phase 3: Background Worker:**
+    * Implement `BuildUpcomingReadingTasks` in the scheduler to find the "next 2" unbuilt topics.
+    * Create the `startPrebuildWorker` loop in `app.go` with the `select` channel listener.
+    * Implement the "Ignore + Dirty Recheck" safety logic to handle concurrent generation.
 
-## Sprint 15: Task Management & Dashboard Routing
-**Goal:** Finalize the user dashboard experience.
+### **Sprint 15: Task Management & Dashboard Routing**
+**Goal:** Finalize the user dashboard experience and state-locking.
 
 * **Persistent Checklist:** Build a task checklist in the left sidebar. Allow users to tick off items to log completed work.
-* **State Routing:** Wire the dashboard buttons to control application state. Clicking a reading task mounts `Reader.vue`, loads the topic, and physically locks the context to the assigned pages.
-* **Completion State:** Clear the dashboard state when the user completes the daily queue.
+* **State Routing:** Wire dashboard buttons to control application state. Clicking a task mounts `Reader.vue`, loads the topic, and physically locks the context to the assigned pages.
+* **Completion State:** Clear the dashboard state and trigger a "Victory" animation when the daily queue is finished.
 
-## Sprint 16: Concurrency & Tools Sidebar
+### **Sprint 16: Concurrency & Tools Sidebar**
 **Goal:** Optimize speed and add specific learning utilities.
 
 * **Concurrent Ingestion:** Rewrite the PDF indexing pipeline to use Go routines. Process chapter chunking and ONNX embedding concurrently.
-* **Acronym Generator:** Add an acronym tool to the sidebar. Pass the locked active page context to the FAST_LLM and request mnemonic devices. 
-* **Mindmap Generator:** Add a mindmap tool that reads the locked page context and outputs structured JSON for a frontend rendering library.
-* **Documentation Rewrite:** Update `/doc` files to document the dual-LLM routing, the context-locked schema, and the two-step vector retrieval.
+* **Acronym & Mindmap Generators:** Add specialized tools to the sidebar that read the locked active page context to generate mnemonics or structured JSON for visualization.
+* **Documentation Rewrite:** Finalize `/doc` files covering the dual-LLM routing, the context-locked schema, and the two-step vector retrieval for the final project submission.
+

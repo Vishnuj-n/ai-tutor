@@ -78,6 +78,8 @@ func Init(dbPath, vec0DllPath string) error {
 	// Nuclear strategy: Initialize schema with a single transaction
 	tx, err := conn.Begin()
 	if err != nil {
+		conn.Close()
+		conn = nil
 		return fmt.Errorf("failed to begin schema transaction: %w", err)
 	}
 	defer func() {
@@ -85,10 +87,14 @@ func Init(dbPath, vec0DllPath string) error {
 	}()
 
 	if err := InitSchema(tx); err != nil {
+		conn.Close()
+		conn = nil
 		return fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
+		conn.Close()
+		conn = nil
 		return fmt.Errorf("failed to commit schema transaction: %w", err)
 	}
 

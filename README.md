@@ -139,3 +139,26 @@ wails build -tags sqlite_extension
 - Keep the system simple and implementation-ready
 - Avoid unnecessary abstraction and premature optimization
 - Do not use LangChain, agent orchestration, or chatbot-style memory
+
+
+## Sprint 14: FSRS Integration & Smart Scaling
+**Goal:** Tie generated assessments to memory algorithms and automate background generation.
+
+* **FSRS Hookup:** Connect the FSRS scoring algorithm to the quiz and Socratic examiner outputs. Track success/failure on individual generated questions.
+* **Density Scaling:** Replace hardcoded assessment counts. Pass the total chunk length to the FAST_LLM and instruct it to scale the number of flashcards and quiz questions to match the material density.
+* **Background Queue:** Implement a Go routine worker. Identify the next two reading tasks in the schedule. Pre-build the quizzes and flashcards for these upcoming sessions while the user reads the current text.
+
+## Sprint 15: Task Management & Dashboard Routing
+**Goal:** Finalize the user dashboard experience.
+
+* **Persistent Checklist:** Build a task checklist in the left sidebar. Allow users to tick off items to log completed work.
+* **State Routing:** Wire the dashboard buttons to control application state. Clicking a reading task mounts `Reader.vue`, loads the topic, and physically locks the context to the assigned pages.
+* **Completion State:** Clear the dashboard state when the user completes the daily queue.
+
+## Sprint 16: Concurrency & Tools Sidebar
+**Goal:** Optimize speed and add specific learning utilities.
+
+* **Concurrent Ingestion:** Rewrite the PDF indexing pipeline to use Go routines. Process chapter chunking and ONNX embedding concurrently.
+* **Acronym Generator:** Add an acronym tool to the sidebar. Pass the locked active page context to the FAST_LLM and request mnemonic devices. 
+* **Mindmap Generator:** Add a mindmap tool that reads the locked page context and outputs structured JSON for a frontend rendering library.
+* **Documentation Rewrite:** Update `/doc` files to document the dual-LLM routing, the context-locked schema, and the two-step vector retrieval.
