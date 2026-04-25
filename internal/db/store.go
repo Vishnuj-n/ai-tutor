@@ -44,7 +44,7 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	var err error
-	conn, err = sql.Open("sqlite3", dbPath)
+	conn, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
 	if err != nil {
 		return err
 	}
@@ -53,9 +53,6 @@ func Init(dbPath, vec0DllPath string) error {
 
 	if err := conn.Ping(); err != nil {
 		return err
-	}
-	if _, err := conn.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		return fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
 	// Load sqlite-vec extension if available
@@ -1685,10 +1682,10 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
 		(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
 
-	// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
+	// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
 	var newCursor int
 	if currentCursor == 0 {
-		newCursor = startPage
+		newCursor = startPage - 1
 	} else {
 		// Clamp cursor to new bounds
 		if currentCursor < startPage {
@@ -1782,10 +1779,10 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 		shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
 			(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
 
-		// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
+		// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
 		var newCursor int
 		if currentCursor == 0 {
-			newCursor = startPage
+			newCursor = startPage - 1
 		} else {
 			// Clamp cursor to new bounds
 			if currentCursor < startPage {

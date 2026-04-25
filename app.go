@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1191,15 +1192,22 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "failed to persist flashcards: " + err.Error()}
 	}
 	if wasExisting {
+		// Extract card IDs for batch query
+		cardIDs := make([]string, len(cards))
+		for i, card := range cards {
+			cardIDs[i] = card.ID
+		}
+
+		// Batch fetch all states at once
+		batchStates, getErr := db.GetFlashcardStatesByIDs(cardIDs)
+		if getErr != nil {
+			return map[string]interface{}{"error": "failed to load existing flashcard states: " + getErr.Error()}
+		}
+
+		// Convert batch states to the expected map format
 		states = make(map[string]models.FlashcardState, len(cards))
-		for _, card := range cards {
-			_, state, getErr := db.GetFlashcardByID(card.ID)
-			if getErr != nil {
-				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
-			}
-			if state != nil {
-				states[card.ID] = *state
-			}
+		for cardID, state := range batchStates {
+			states[cardID] = state
 		}
 	}
 
@@ -1716,24 +1724,34 @@ func buildContextString(sections []map[string]interface{}, maxSections, maxConte
 }
 
 // Quiz generation configuration thresholds and counts
-const (
-	// Token thresholds for scaling
-	QuizTokenThresholdLow    = 600
-	QuizTokenThresholdMedium = 1500
-	QuizTokenThresholdHigh   = 3000
+var (
+	// Token thresholds for scaling - can be overridden by environment variables
+	QuizTokenThresholdLow    = getEnvInt("QUIZ_TOKEN_THRESHOLD_LOW", 600)
+	QuizTokenThresholdMedium = getEnvInt("QUIZ_TOKEN_THRESHOLD_MEDIUM", 1500)
+	QuizTokenThresholdHigh   = getEnvInt("QUIZ_TOKEN_THRESHOLD_HIGH", 3000)
 
-	// Question counts for each threshold level
-	QuizQuestionCountLow    = 3
-	QuizQuestionCountMedium = 5
-	QuizQuestionCountHigh   = 7
-	QuizQuestionCountMax    = 10
+	// Question counts for each threshold level - can be overridden by environment variables
+	QuizQuestionCountLow    = getEnvInt("QUIZ_QUESTION_COUNT_LOW", 3)
+	QuizQuestionCountMedium = getEnvInt("QUIZ_QUESTION_COUNT_MEDIUM", 5)
+	QuizQuestionCountHigh   = getEnvInt("QUIZ_QUESTION_COUNT_HIGH", 7)
+	QuizQuestionCountMax    = getEnvInt("QUIZ_QUESTION_COUNT_MAX", 10)
 
-	// Flashcard counts for each threshold level
-	FlashcardCountLow    = 5
-	FlashcardCountMedium = 8
-	FlashcardCountHigh   = 12
-	FlashcardCountMax    = 16
+	// Flashcard counts for each threshold level - can be overridden by environment variables
+	FlashcardCountLow    = getEnvInt("FLASHCARD_COUNT_LOW", 5)
+	FlashcardCountMedium = getEnvInt("FLASHCARD_COUNT_MEDIUM", 8)
+	FlashcardCountHigh   = getEnvInt("FLASHCARD_COUNT_HIGH", 12)
+	FlashcardCountMax    = getEnvInt("FLASHCARD_COUNT_MAX", 16)
 )
+
+// getEnvInt reads an integer from environment variable with fallback to default
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
 
 func scaledQuizQuestionCount(totalChunkTokens int) int {
 	switch {
