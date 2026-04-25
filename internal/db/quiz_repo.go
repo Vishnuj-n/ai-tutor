@@ -210,34 +210,35 @@ func saveUserAnswerRepoTx(tx *sql.Tx, score models.QuizScore) error {
 	return err
 }
 
-func saveWrittenAnswerRepo(answer models.WrittenAnswer) error {
-	_, err := conn.Exec(`
-		INSERT INTO user_answers (id, question_id, user_answer, is_correct, score, feedback, hint)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	_, err := tx.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`,
 		uuid.NewString(),
 		answer.QuestionID,
 		answer.UserAnswer,
-		0, // written answers don't have a simple correct/incorrect, use 0 for is_correct
 		answer.Score,
 		answer.Feedback,
-		"", // written answers don't have hints
+		answer.SourceHeading,
 	)
 	return err
 }
 
-func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
-	_, err := tx.Exec(`
-		INSERT INTO user_answers (id, question_id, user_answer, is_correct, score, feedback, hint)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+func saveWrittenAnswerRepo(answer models.WrittenAnswer) error {
+	if conn == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	_, err := conn.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`,
 		uuid.NewString(),
 		answer.QuestionID,
 		answer.UserAnswer,
-		0, // written answers don't have a simple correct/incorrect, use 0 for is_correct
 		answer.Score,
 		answer.Feedback,
-		"", // written answers don't have hints
+		answer.SourceHeading,
 	)
 	return err
 }
