@@ -843,6 +843,18 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
+	// Early cursor validation to prevent burning LLM tokens and latency on requests that will be rejected
+	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
+	}
+	if startPage != currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
+	}
+	if targetPage <= currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
+	}
+
 	topicStartPage, topicEndPage, err := db.GetTopicPageBounds(topicID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to fetch topic page bounds: " + err.Error()}
@@ -866,18 +878,6 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 	}
 	if targetPage < startPage {
 		return map[string]interface{}{"error": "invalid completion window: target page must be >= start page"}
-	}
-
-	// Validate cursor before expensive operations to prevent wasting tokens/latency on rejected windows
-	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
-	}
-	if startPage != currentCursor {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
-	}
-	if targetPage <= currentCursor {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
 	}
 
 	contextEndPage := targetPage + 1
@@ -1415,11 +1415,41 @@ Student answer: %s`, question.Prompt, userAnswer)
 		score = 10
 	}
 
+	// Begin transaction for both SaveWrittenAnswer and applyAssessmentReview
+	dbConn := db.GetConnection()
+	tx, err := dbConn.Begin()
+	if err != nil {
+		return map[string]interface{}{"error": "failed to begin transaction: " + err.Error()}
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Save the written answer
+	writtenAnswer := models.WrittenAnswer{
+		QuestionID:    question.ID,
+		Score:         score,
+		Feedback:      strings.TrimSpace(parsed.Feedback),
+		UserAnswer:    userAnswer,
+		SourceHeading: question.SourceHeading,
+	}
+	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
+		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
+	}
+
 	ratingLabel, _ := shortAnswerScoreToFSRSRating(score)
-	fsrsResult, err := applyAssessmentReview(question.TopicID, "written_question", question.ID, ratingLabel)
+	fsrsResult, err := applyAssessmentReviewTx(tx, question.TopicID, "written_question", question.ID, ratingLabel)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
+	}
+	committed = true
 
 	return map[string]interface{}{
 		"questionID":        question.ID,
@@ -1925,13 +1955,27 @@ func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse,
 func providerModelName(provider llmProviderInterface) string {
 	typed, ok := provider.(interface{ ModelName() string })
 	if !ok {
-		return ""
+		return "unknown-model"
 	}
-	return strings.TrimSpace(typed.ModelName())
+	modelName := strings.TrimSpace(typed.ModelName())
+	if modelName == "" {
+		return "unknown-model"
+	}
+	return modelName
 }
 
 func normalizeHeadingKey(heading string) string {
-	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(heading)), " "))
+	if heading == "" {
+		return ""
+	}
+
+	// Remove non-alphanumeric characters except spaces, then normalize whitespace
+	cleaned := strings.FieldsFunc(strings.TrimSpace(heading), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ')
+	})
+
+	normalized := strings.ToLower(strings.Join(cleaned, " "))
+	return normalized
 }
 
 func normalizeQuizAnswer(answer string, options []string) string {

@@ -149,6 +149,15 @@ type QuizScore struct {
 	SourceHeading string `json:"source_heading,omitempty"`
 }
 
+// WrittenAnswer is returned after scoring a user's written response.
+type WrittenAnswer struct {
+	QuestionID    string `json:"question_id"`
+	Score         int    `json:"score"`
+	Feedback      string `json:"feedback"`
+	UserAnswer    string `json:"user_answer"`
+	SourceHeading string `json:"source_heading,omitempty"`
+}
+
 // WrittenQuestion is a persisted examiner prompt with lineage metadata.
 type WrittenQuestion struct {
 	ID              string `json:"id"`
