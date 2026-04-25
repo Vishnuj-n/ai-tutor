@@ -1343,6 +1343,11 @@ func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) 
 		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
 	}
 
+	// Initialize cursor to match startPage
+	if err := db.UpdateTopicReadingCursor(topicID, 1, false); err != nil {
+		t.Fatalf("UpdateTopicReadingCursor failed: %v", err)
+	}
+
 	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3)}}
 	resp := app.CompleteReadingSession(topicID, 1, 2)
 	if _, hasErr := resp["error"]; hasErr {
