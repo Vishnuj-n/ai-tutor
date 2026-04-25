@@ -1,0 +1,452 @@
+package db
+
+import (
+	"fmt"
+	"strings"
+
+	"ai-tutor/internal/models"
+)
+
+// GetTopicContent retrieves all parent sections for a topic
+func GetTopicContent(topicID string) (map[string]interface{}, error) {
+	var title string
+	err := conn.QueryRow("SELECT title FROM topics WHERE id = ?", topicID).Scan(&title)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := conn.Query(`
+		SELECT id, heading, content_text, order_index
+		FROM parents
+		WHERE topic_id = ?
+		ORDER BY order_index
+	`, topicID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var sections []map[string]interface{}
+	for rows.Next() {
+		var id, heading, content string
+		var order int
+		if err := rows.Scan(&id, &heading, &content, &order); err != nil {
+			return nil, err
+		}
+		sections = append(sections, map[string]interface{}{
+			"id":      id,
+			"heading": heading,
+			"content": content,
+			"order":   order,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"title":    title,
+		"sections": sections,
+	}, nil
+}
+
+// GetChunksForTopic retrieves all chunks for a topic.
+func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
+	rows, err := conn.Query(`
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
+		FROM chunks
+		WHERE topic_id = ?
+	`, topicID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chunks []models.Chunk
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(
+			&chunk.ID,
+			&chunk.TopicID,
+			&chunk.ParentID,
+			&chunk.Text,
+			&chunk.ImportanceScore,
+			&chunk.WeaknessScore,
+		); err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return chunks, nil
+}
+
+// GetChunksForTopics retrieves chunks for multiple topics in a single batch query
+func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
+	if len(topicIDs) == 0 {
+		return make(map[string][]models.Chunk), nil
+	}
+
+	// Build IN clause placeholders
+	placeholders := make([]string, len(topicIDs))
+	args := make([]interface{}, len(topicIDs))
+	for i, topicID := range topicIDs {
+		placeholders[i] = "?"
+		args[i] = topicID
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
+		FROM chunks
+		WHERE topic_id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	// Group chunks by topic_id
+	result := make(map[string][]models.Chunk)
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(
+			&chunk.ID,
+			&chunk.TopicID,
+			&chunk.ParentID,
+			&chunk.Text,
+			&chunk.ImportanceScore,
+			&chunk.WeaknessScore,
+		); err != nil {
+			return nil, err
+		}
+		result[chunk.TopicID] = append(result[chunk.TopicID], chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// GetParentSection retrieves a parent section by ID
+func GetParentSection(parentID string) (map[string]string, error) {
+	var id, heading, content string
+	err := conn.QueryRow(`
+		SELECT id, heading, content_text
+		FROM parents
+		WHERE id = ?
+	`, parentID).Scan(&id, &heading, &content)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]string{
+		"id":      id,
+		"heading": heading,
+		"content": content,
+	}, nil
+}
+
+// GetTotalChunkTokens returns estimated total tokens for one topic.
+// It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
+func GetTotalChunkTokens(topicID string) (int, error) {
+	return getTotalChunkTokens(topicID, 0, 0)
+}
+
+// GetTotalChunkTokensForPageRange returns estimated total tokens for one topic/page window.
+// It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
+func GetTotalChunkTokensForPageRange(topicID string, startPage int, endPage int) (int, error) {
+	return getTotalChunkTokens(topicID, startPage, endPage)
+}
+
+func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
+
+	// Validate page bounds
+	var filterByPage bool
+	if startPage == 0 && endPage == 0 {
+		// No page filter - entire topic
+		filterByPage = false
+	} else if startPage <= 0 || endPage <= 0 {
+		// Mixed positive/negative bounds are invalid
+		return 0, fmt.Errorf("invalid page bounds: both startPage and endPage must be positive or both must be zero")
+	} else {
+		// Both bounds are positive - filter by page range
+		filterByPage = true
+		if startPage > endPage {
+			startPage, endPage = endPage, startPage
+		}
+	}
+
+	query := `
+		SELECT COALESCE(token_count, 0), COALESCE(chunk_text, '')
+		FROM chunks
+		WHERE topic_id = ?
+	`
+	args := []interface{}{topicID}
+	if filterByPage {
+		query += ` AND page_num BETWEEN ? AND ?`
+		args = append(args, startPage, endPage)
+	}
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	total := 0
+	for rows.Next() {
+		var tokenCount int
+		var chunkText string
+		if err := rows.Scan(&tokenCount, &chunkText); err != nil {
+			return 0, err
+		}
+
+		if tokenCount > 0 {
+			total += tokenCount
+			continue
+		}
+
+		fallback := len(chunkText) / 4
+		if fallback <= 0 && strings.TrimSpace(chunkText) != "" {
+			fallback = 1
+		}
+		total += fallback
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	return total, nil
+}
+
+// GetChunkTextsForTopicPageRange returns chunk_text rows ordered by chunk id for one topic/page window.
+func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	rows, err := conn.Query(`
+		SELECT chunk_text
+		FROM chunks
+		WHERE topic_id = ?
+		  AND page_num BETWEEN ? AND ?
+		ORDER BY page_num ASC, id ASC
+	`, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chunkTexts []string
+	for rows.Next() {
+		var chunkText string
+		if err := rows.Scan(&chunkText); err != nil {
+			return nil, err
+		}
+		chunkTexts = append(chunkTexts, chunkText)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return chunkTexts, nil
+}
+
+// GetParentPassagesForTopicPageRange retrieves chunks with their parent passage context for a topic page range
+func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	rows, err := conn.Query(`
+		SELECT c.chunk_text, COALESCE(p.heading, ''), COALESCE(p.content_text, '')
+		FROM chunks c
+		LEFT JOIN parents p ON c.parent_id = p.id AND p.topic_id = c.topic_id
+		WHERE c.topic_id = ?
+		  AND c.page_num BETWEEN ? AND ?
+		ORDER BY c.page_num ASC, c.id ASC
+	`, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var parentPassages []string
+	for rows.Next() {
+		var chunkText, parentHeading, parentContent string
+		if err := rows.Scan(&chunkText, &parentHeading, &parentContent); err != nil {
+			return nil, err
+		}
+
+		// Build parent passage context
+		var passage strings.Builder
+		if parentHeading != "" {
+			passage.WriteString("Section: ")
+			passage.WriteString(parentHeading)
+			passage.WriteString("\n")
+		}
+		if parentContent != "" {
+			passage.WriteString("Context: ")
+			passage.WriteString(parentContent)
+			passage.WriteString("\n")
+		}
+		passage.WriteString("Content: ")
+		passage.WriteString(chunkText)
+
+		parentPassages = append(parentPassages, passage.String())
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return parentPassages, nil
+}
+
+// GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
+// Key format is normalized lower-case heading text with single spaces.
+func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+
+	rows, err := conn.Query(`
+		SELECT
+			COALESCE(NULLIF(TRIM(p.heading), ''), ''),
+			COALESCE(MIN(NULLIF(c.page_num, 0)), 0) AS start_page,
+			COALESCE(MAX(NULLIF(c.page_num, 0)), 0) AS end_page
+		FROM parents p
+		LEFT JOIN chunks c ON c.parent_id = p.id AND c.topic_id = p.topic_id
+		WHERE p.topic_id = ?
+		GROUP BY p.id, p.heading
+	`, topicID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	ranges := make(map[string][][2]int)
+	for rows.Next() {
+		var heading string
+		var startPage int
+		var endPage int
+		if err := rows.Scan(&heading, &startPage, &endPage); err != nil {
+			return nil, err
+		}
+
+		key := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(heading)), " "))
+		if key == "" {
+			continue
+		}
+
+		if startPage > 0 && endPage <= 0 {
+			endPage = startPage
+		}
+		if endPage > 0 && startPage <= 0 {
+			startPage = endPage
+		}
+		if startPage <= 0 || endPage <= 0 {
+			continue
+		}
+		if startPage > endPage {
+			startPage, endPage = endPage, startPage
+		}
+
+		newSpan := [2]int{startPage, endPage}
+		existingSpans, ok := ranges[key]
+		if !ok {
+			ranges[key] = [][2]int{newSpan}
+			continue
+		}
+
+		// Try to merge with existing overlapping or adjacent spans
+		merged := false
+		for i, existing := range existingSpans {
+			// Check if overlapping or adjacent (end of one >= start of other - 1)
+			if endPage >= existing[0]-1 && startPage <= existing[1]+1 {
+				mergedStart := startPage
+				if existing[0] < mergedStart {
+					mergedStart = existing[0]
+				}
+				mergedEnd := endPage
+				if existing[1] > mergedEnd {
+					mergedEnd = existing[1]
+				}
+				existingSpans[i] = [2]int{mergedStart, mergedEnd}
+				merged = true
+				break
+			}
+		}
+
+		if !merged {
+			existingSpans = append(existingSpans, newSpan)
+		}
+		ranges[key] = existingSpans
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Convert slice of spans back to single [2]int by taking overall min/max
+	// for backward compatibility with existing callers
+	result := make(map[string][2]int)
+	for key, spans := range ranges {
+		if len(spans) == 0 {
+			continue
+		}
+		if len(spans) > 1 {
+			return nil, fmt.Errorf("disjoint page ranges found for heading %q: %v", key, spans)
+		}
+		result[key] = spans[0]
+	}
+
+	return result, nil
+}
