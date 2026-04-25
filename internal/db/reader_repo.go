@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"ai-tutor/internal/embeddings"
@@ -230,9 +231,15 @@ func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error
 
 		count, err := embeddings.CountTokens(chunkText)
 		if err != nil {
-			return 0, fmt.Errorf("failed to count tokens for chunk: %w", err)
+			// Fall back to estimation if tokenizer unavailable
+			fallback := len(chunkText) / 4
+			if fallback <= 0 && strings.TrimSpace(chunkText) != "" {
+				fallback = 1
+			}
+			total += fallback
+		} else {
+			total += count
 		}
-		total += count
 	}
 
 	if err := rows.Err(); err != nil {
@@ -407,31 +414,30 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 			continue
 		}
 
-		// Try to merge with existing overlapping or adjacent spans
-		mergedSpans := [][2]int{newSpan}
-		for _, existing := range existingSpans {
-			merged := false
-			for i, mergedSpan := range mergedSpans {
-				// Check if overlapping or adjacent (end of one >= start of other - 1)
-				if existing[0] <= mergedSpan[1]+1 && existing[1] >= mergedSpan[0]-1 {
-					mergedStart := mergedSpan[0]
-					if existing[0] < mergedStart {
-						mergedStart = existing[0]
-					}
-					mergedEnd := mergedSpan[1]
-					if existing[1] > mergedEnd {
-						mergedEnd = existing[1]
-					}
-					mergedSpans[i] = [2]int{mergedStart, mergedEnd}
-					merged = true
-					break
+		// Collect all spans and sort by start position for proper merging
+		allSpans := append(existingSpans, newSpan)
+		// Sort by start position
+		sort.Slice(allSpans, func(i, j int) bool {
+			return allSpans[i][0] < allSpans[j][0]
+		})
+
+		// Single linear coalescing pass
+		coalesced := [][2]int{allSpans[0]}
+		for i := 1; i < len(allSpans); i++ {
+			current := allSpans[i]
+			last := coalesced[len(coalesced)-1]
+			// Check if overlapping or adjacent (end of last >= start of current - 1)
+			if last[1] >= current[0]-1 {
+				// Merge: extend end if needed
+				if current[1] > last[1] {
+					coalesced[len(coalesced)-1][1] = current[1]
 				}
-			}
-			if !merged {
-				mergedSpans = append(mergedSpans, existing)
+			} else {
+				// No overlap/adjacency, add as new span
+				coalesced = append(coalesced, current)
 			}
 		}
-		ranges[key] = mergedSpans
+		ranges[key] = coalesced
 	}
 
 	if err := rows.Err(); err != nil {
