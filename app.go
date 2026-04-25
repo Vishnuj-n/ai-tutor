@@ -244,6 +244,13 @@ func (a *App) startPrebuildWorker() {
 				continue
 			}
 
+			// Guard clause: wait for FAST_LLM provider to be initialized
+			if a.fastLLMProvider == nil {
+				utils.Debugf("prebuild worker skipping topic %s: FAST_LLM provider not initialized", topicID)
+				a.finishPrebuildTopic(topicID)
+				continue
+			}
+
 			if quizResult := a.GenerateQuiz(topicID); quizResult != nil {
 				if errMsg, ok := quizResult["error"].(string); ok && errMsg != "" {
 					utils.Warnf("prebuild quiz failed for topic %s: %s", topicID, errMsg)
