@@ -108,20 +108,31 @@ func UpdateNotebookStatus(notebookID string, status string) error {
 
 // UpdateNotebookTopic updates the notebook topic link used by UI-level notebook metadata.
 func UpdateNotebookTopic(notebookID string, topicID string) error {
-	if strings.TrimSpace(topicID) == "" {
+	validatedNotebookID, err := validateID(notebookID, "notebook id")
+	if err != nil {
+		return err
+	}
+
+	cleanedTopicID := strings.TrimSpace(topicID)
+	if cleanedTopicID == "" {
 		_, err := conn.Exec(`
 			UPDATE notebooks
 			SET topic_id = NULL
 			WHERE id = ?
-		`, notebookID)
+		`, validatedNotebookID)
 		return err
 	}
 
-	_, err := conn.Exec(`
+	validatedTopicID, err := validateID(cleanedTopicID, "topic id")
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(`
 		UPDATE notebooks
 		SET topic_id = ?
 		WHERE id = ?
-	`, topicID, notebookID)
+	`, validatedTopicID, validatedNotebookID)
 	return err
 }
 
@@ -223,6 +234,9 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return notebooks, nil
 }

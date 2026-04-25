@@ -43,6 +43,10 @@ func GetTopicContent(topicID string) (map[string]interface{}, error) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return map[string]interface{}{
 		"title":    title,
 		"sections": sections,
@@ -77,6 +81,10 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 			return nil, err
 		}
 		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return chunks, nil
@@ -125,6 +133,10 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 			return nil, err
 		}
 		result[chunk.TopicID] = append(result[chunk.TopicID], chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return result, nil
@@ -430,17 +442,10 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 		if len(spans) == 0 {
 			continue
 		}
-		minStart := spans[0][0]
-		maxEnd := spans[0][1]
-		for _, span := range spans {
-			if span[0] < minStart {
-				minStart = span[0]
-			}
-			if span[1] > maxEnd {
-				maxEnd = span[1]
-			}
+		if len(spans) > 1 {
+			return nil, fmt.Errorf("disjoint page ranges found for heading %q: %v", key, spans)
 		}
-		result[key] = [2]int{minStart, maxEnd}
+		result[key] = spans[0]
 	}
 
 	return result, nil
