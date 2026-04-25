@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 func ingestNotebookContentByTopicRepo(notebookID string, groups []NotebookTopicIngestionGroup) error {
@@ -89,8 +90,9 @@ func deleteNotebookRepo(notebookID string) error {
 	}()
 
 	parentIDs := make(map[string]struct{})
+	chunkIDs := make([]string, 0)
 	parentRows, err := tx.Query(`
-		SELECT DISTINCT c.parent_id
+		SELECT DISTINCT c.parent_id, c.id
 		FROM chunks c
 		JOIN notebook_chunks nc ON nc.chunk_id = c.id
 		WHERE nc.notebook_id = ?
@@ -101,11 +103,13 @@ func deleteNotebookRepo(notebookID string) error {
 
 	for parentRows.Next() {
 		var parentID string
-		if scanErr := parentRows.Scan(&parentID); scanErr != nil {
+		var chunkID string
+		if scanErr := parentRows.Scan(&parentID, &chunkID); scanErr != nil {
 			_ = parentRows.Close()
 			return scanErr
 		}
 		parentIDs[parentID] = struct{}{}
+		chunkIDs = append(chunkIDs, chunkID)
 	}
 	if rowsErr := parentRows.Err(); rowsErr != nil {
 		_ = parentRows.Close()
@@ -134,20 +138,24 @@ func deleteNotebookRepo(notebookID string) error {
 		}
 	}
 
-	if _, delChunkErr := tx.Exec(`
-		DELETE FROM chunks
-		WHERE id IN (
-			SELECT chunk_id
-			FROM notebook_chunks
-			WHERE notebook_id = ?
-		)
-	`, notebookID); delChunkErr != nil {
-		return delChunkErr
-	}
-
 	_, err = tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID)
 	if err != nil {
 		return err
+	}
+
+	// Bulk delete chunks using IN clause for better performance
+	if len(chunkIDs) > 0 {
+		placeholders := make([]string, len(chunkIDs))
+		args := make([]interface{}, len(chunkIDs))
+		for i, chunkID := range chunkIDs {
+			placeholders[i] = "?"
+			args[i] = chunkID
+		}
+
+		query := fmt.Sprintf(`DELETE FROM chunks WHERE id IN (%s)`, strings.Join(placeholders, ","))
+		if _, delChunkErr := tx.Exec(query, args...); delChunkErr != nil {
+			return delChunkErr
+		}
 	}
 
 	_, err = tx.Exec("DELETE FROM notebooks WHERE id = ?", notebookID)

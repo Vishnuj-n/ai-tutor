@@ -28,6 +28,11 @@ func Close() error {
 	return err
 }
 
+// GetConnection returns the underlying database connection for transaction management.
+func GetConnection() *sql.DB {
+	return conn
+}
+
 // Init initializes the SQLite database and creates tables
 // vec0DllPath should be the absolute path to vec0.dll (sqlite-vec extension)
 func Init(dbPath, vec0DllPath string) error {
@@ -39,7 +44,7 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	var err error
-	conn, err = sql.Open("sqlite3", dbPath)
+	conn, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
 	if err != nil {
 		return err
 	}
@@ -93,6 +98,12 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	if err := ensureFSRSSchema(); err != nil {
+		return err
+	}
+	if err := ensureAssessmentSchema(); err != nil {
+		return err
+	}
+	if err := ensureCascadeForeignKeys(); err != nil {
 		return err
 	}
 
@@ -173,7 +184,7 @@ func createTables() error {
 		llm_model TEXT,
 		prompt_version TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (topic_id) REFERENCES topics(id)
+		FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 	);
 
 	CREATE TABLE IF NOT EXISTS user_settings (
@@ -191,7 +202,18 @@ func createTables() error {
 		feedback TEXT,
 		hint TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (question_id) REFERENCES questions(id)
+		FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS written_user_answers (
+		id TEXT PRIMARY KEY,
+		written_question_id TEXT NOT NULL,
+		user_answer TEXT NOT NULL,
+		score INTEGER NOT NULL,
+		feedback TEXT,
+		source_heading TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (written_question_id) REFERENCES written_questions(id) ON DELETE CASCADE
 	);
 
 	CREATE TABLE IF NOT EXISTS notebooks (
@@ -477,7 +499,7 @@ func ensureFSRSSchema() error {
 					suspended BOOLEAN DEFAULT 0,
 					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (topic_id) REFERENCES topics(id)
+					FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 				)`,
 			`CREATE TABLE fsrs_review_log (
 					id TEXT PRIMARY KEY,
@@ -490,7 +512,7 @@ func ensureFSRSSchema() error {
 					state_before_json TEXT NOT NULL,
 					state_after_json TEXT NOT NULL,
 					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (topic_id) REFERENCES topics(id)
+					FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 				)`,
 		}
 
@@ -518,6 +540,406 @@ func ensureFSRSSchema() error {
 	}
 
 	return nil
+}
+
+func ensureAssessmentSchema() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS written_questions (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			source_heading TEXT,
+			source_page_start INTEGER DEFAULT 0,
+			source_page_end INTEGER DEFAULT 0,
+			llm_model TEXT,
+			prompt_version TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS assessment_fsrs (
+			activity_type TEXT NOT NULL,
+			reference_id TEXT NOT NULL,
+			topic_id TEXT NOT NULL,
+			state_json TEXT NOT NULL,
+			due_at INTEGER,
+			last_reviewed_at INTEGER,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (activity_type, reference_id),
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_written_questions_topic_created_at ON written_questions(topic_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_assessment_fsrs_topic_due_at ON assessment_fsrs(topic_id, due_at)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	rows, err := conn.Query("PRAGMA table_info(written_questions)")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	hasUpdatedAt := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); scanErr != nil {
+			return scanErr
+		}
+		if name == "updated_at" {
+			hasUpdatedAt = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasUpdatedAt {
+		if _, err := conn.Exec("ALTER TABLE written_questions ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ensureCascadeForeignKeys() error {
+	if needsCascadeRebuild("questions", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) ||
+		needsCascadeRebuild("user_answers", []string{"foreign key (question_id) references questions(id) on delete cascade"}) {
+		if err := rebuildQuestionsAndUserAnswersForCascade(); err != nil {
+			return err
+		}
+	}
+
+	if needsCascadeRebuild("fsrs_cards", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) ||
+		needsCascadeRebuild("fsrs_review_log", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) {
+		if err := rebuildFSRSTablesForCascade(); err != nil {
+			return err
+		}
+	}
+
+	if needsCascadeRebuild("written_questions", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) {
+		if err := rebuildWrittenQuestionsForCascade(); err != nil {
+			return err
+		}
+	}
+
+	if needsCascadeRebuild("assessment_fsrs", []string{"foreign key (topic_id) references topics(id) on delete cascade"}) {
+		if err := rebuildAssessmentFSRSForCascade(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func needsCascadeRebuild(tableName string, requiredSnippets []string) bool {
+	createSQL, err := tableCreateSQL(tableName)
+	if err != nil || createSQL == "" {
+		return false
+	}
+
+	normalized := strings.ToLower(strings.Join(strings.Fields(createSQL), " "))
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(normalized, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+func tableCreateSQL(tableName string) (string, error) {
+	var createSQL sql.NullString
+	err := conn.QueryRow(`
+		SELECT sql
+		FROM sqlite_master
+		WHERE type = 'table' AND name = ?
+	`, tableName).Scan(&createSQL)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return createSQL.String, nil
+}
+
+func rebuildQuestionsAndUserAnswersForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`CREATE TABLE questions_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			options_json TEXT NOT NULL,
+			correct_answer TEXT NOT NULL,
+			explanation TEXT,
+			hint TEXT,
+			source_heading TEXT,
+			source_snippet TEXT,
+			source_page_start INTEGER DEFAULT 0,
+			source_page_end INTEGER DEFAULT 0,
+			llm_model TEXT,
+			prompt_version TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO questions_new (
+			id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+			source_page_start, source_page_end, llm_model, prompt_version, created_at
+		)
+		SELECT
+			id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+			source_page_start, source_page_end, llm_model, prompt_version, created_at
+		FROM questions`,
+		`CREATE TABLE user_answers_new (
+			id TEXT PRIMARY KEY,
+			question_id TEXT NOT NULL,
+			user_answer TEXT NOT NULL,
+			is_correct INTEGER NOT NULL,
+			score INTEGER NOT NULL,
+			feedback TEXT,
+			hint TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO user_answers_new (id, question_id, user_answer, is_correct, score, feedback, hint, created_at)
+		SELECT id, question_id, user_answer, is_correct, score, feedback, hint, created_at
+		FROM user_answers`,
+		`DROP TABLE user_answers`,
+		`DROP TABLE questions`,
+		`ALTER TABLE questions_new RENAME TO questions`,
+		`ALTER TABLE user_answers_new RENAME TO user_answers`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func rebuildFSRSTablesForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`DROP INDEX IF EXISTS idx_fsrs_cards_topic_prompt`,
+		`DROP INDEX IF EXISTS idx_fsrs_review_log_activity_ref_reviewed_at`,
+		`DROP INDEX IF EXISTS idx_fsrs_review_log_topic_reviewed_at`,
+		`DROP INDEX IF EXISTS idx_fsrs_cards_suspended_due_at`,
+		`CREATE TABLE fsrs_cards_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			answer TEXT NOT NULL,
+			state_json TEXT,
+			due_at INTEGER,
+			suspended BOOLEAN DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO fsrs_cards_new (id, topic_id, prompt, answer, state_json, due_at, suspended, created_at, updated_at)
+		SELECT id, topic_id, prompt, answer, state_json, due_at, suspended, created_at, updated_at
+		FROM fsrs_cards`,
+		`CREATE TABLE fsrs_review_log_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			activity_type TEXT NOT NULL,
+			reference_id TEXT NOT NULL,
+			reviewed_at INTEGER NOT NULL,
+			rating INTEGER NOT NULL,
+			scheduled_days INTEGER NOT NULL,
+			state_before_json TEXT NOT NULL,
+			state_after_json TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO fsrs_review_log_new (
+			id, topic_id, activity_type, reference_id, reviewed_at, rating,
+			scheduled_days, state_before_json, state_after_json, created_at
+		)
+		SELECT
+			id, topic_id, activity_type, reference_id, reviewed_at, rating,
+			scheduled_days, state_before_json, state_after_json, created_at
+		FROM fsrs_review_log`,
+		`DROP TABLE fsrs_review_log`,
+		`DROP TABLE fsrs_cards`,
+		`ALTER TABLE fsrs_cards_new RENAME TO fsrs_cards`,
+		`ALTER TABLE fsrs_review_log_new RENAME TO fsrs_review_log`,
+		`CREATE UNIQUE INDEX idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt)`,
+		`CREATE INDEX idx_fsrs_review_log_activity_ref_reviewed_at ON fsrs_review_log(activity_type, reference_id, reviewed_at DESC)`,
+		`CREATE INDEX idx_fsrs_review_log_topic_reviewed_at ON fsrs_review_log(topic_id, reviewed_at DESC)`,
+		`CREATE INDEX idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func rebuildWrittenQuestionsForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`DROP INDEX IF EXISTS idx_written_questions_topic_created_at`,
+		`CREATE TABLE written_questions_new (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			source_heading TEXT,
+			source_page_start INTEGER DEFAULT 0,
+			source_page_end INTEGER DEFAULT 0,
+			llm_model TEXT,
+			prompt_version TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO written_questions_new (
+			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
+			llm_model, prompt_version, created_at, updated_at
+		)
+		SELECT
+			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
+			llm_model, prompt_version, created_at, COALESCE(updated_at, created_at)
+		FROM written_questions`,
+		`DROP TABLE written_questions`,
+		`ALTER TABLE written_questions_new RENAME TO written_questions`,
+		`CREATE INDEX idx_written_questions_topic_created_at ON written_questions(topic_id, created_at DESC)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func rebuildAssessmentFSRSForCascade() (err error) {
+	if _, err = conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		if _, pragmaErr := conn.Exec(`PRAGMA foreign_keys = ON`); err == nil && pragmaErr != nil {
+			err = pragmaErr
+		}
+	}()
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`DROP INDEX IF EXISTS idx_assessment_fsrs_topic_due_at`,
+		`CREATE TABLE assessment_fsrs_new (
+			activity_type TEXT NOT NULL,
+			reference_id TEXT NOT NULL,
+			topic_id TEXT NOT NULL,
+			state_json TEXT NOT NULL,
+			due_at INTEGER,
+			last_reviewed_at INTEGER,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (activity_type, reference_id),
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO assessment_fsrs_new (
+			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at, created_at, updated_at
+		)
+		SELECT
+			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at, created_at, updated_at
+		FROM assessment_fsrs`,
+		`DROP TABLE assessment_fsrs`,
+		`ALTER TABLE assessment_fsrs_new RENAME TO assessment_fsrs`,
+		`CREATE INDEX idx_assessment_fsrs_topic_due_at ON assessment_fsrs(topic_id, due_at)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetTopicContent retrieves all parent sections for a topic
@@ -786,6 +1208,47 @@ func QueryLearningTopics(limit int) ([]models.TopicSummary, error) {
 	return topics, nil
 }
 
+// QueryUpcomingReadingTopics returns ordered unread/in-progress topics with configured bounds.
+func QueryUpcomingReadingTopics(limit int) ([]models.ReadingTopicCursor, error) {
+	if limit <= 0 {
+		return []models.ReadingTopicCursor{}, nil
+	}
+
+	rows, err := conn.Query(`
+		SELECT
+			id,
+			title,
+			COALESCE(start_page, 0),
+			COALESCE(end_page, 0),
+			COALESCE(current_page_cursor, 0)
+		FROM topics
+		WHERE status IN ('unseen', 'reading')
+		  AND COALESCE(end_page, 0) > 0
+		  AND COALESCE(current_page_cursor, 0) < COALESCE(end_page, 0)
+		ORDER BY updated_at ASC, created_at ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	topics := make([]models.ReadingTopicCursor, 0, limit)
+	for rows.Next() {
+		var topic models.ReadingTopicCursor
+		if err := rows.Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor); err != nil {
+			return nil, err
+		}
+		topics = append(topics, topic)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return topics, nil
+}
+
 // CountLearnedTopics returns the count of fully learned topics
 func CountLearnedTopics() (int, error) {
 	var count int
@@ -846,6 +1309,28 @@ func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState,
 		return nil, nil, fmt.Errorf("flashcard id is required")
 	}
 	return getFlashcardByIDRepo(cardID)
+}
+
+// GetFlashcardStatesByIDs returns a map of flashcard states keyed by card ID for the given card IDs
+func GetFlashcardStatesByIDs(cardIDs []string) (map[string]models.FlashcardState, error) {
+	if len(cardIDs) == 0 {
+		return make(map[string]models.FlashcardState), nil
+	}
+
+	// Trim and validate card IDs
+	trimmedIDs := make([]string, 0, len(cardIDs))
+	for _, id := range cardIDs {
+		trimmedID := strings.TrimSpace(id)
+		if trimmedID != "" {
+			trimmedIDs = append(trimmedIDs, trimmedID)
+		}
+	}
+
+	if len(trimmedIDs) == 0 {
+		return make(map[string]models.FlashcardState), nil
+	}
+
+	return getFlashcardStatesByIDsRepo(trimmedIDs)
 }
 
 // UpdateFlashcardReview updates scheduling state after a review grade.
@@ -1174,29 +1659,69 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		startPage, endPage = endPage, startPage
 	}
 
-	// Determine if cursor needs initialization
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	// Determine if cursor needs initialization and detect shrinkage
+	var previousStart int
+	var previousEnd int
 	var currentCursor int
-	if err := conn.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); err != nil && err != sql.ErrNoRows {
+	if err := tx.QueryRow(`
+		SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
+		FROM topics WHERE id = ?
+	`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); err != nil && err != sql.ErrNoRows {
 		return err
 	}
 
-	// Initialize cursor to startPage if uninitialized (0)
+	// Check if bounds shrunk (start moved forward OR end moved backward)
+	shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
+		(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
+
+	// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
+	var newCursor int
 	if currentCursor == 0 {
-		_, err := conn.Exec(`
-			UPDATE topics
-			SET start_page = ?, end_page = ?, current_page_cursor = ?
-			WHERE id = ?
-		`, startPage, endPage, startPage, topicID)
+		newCursor = startPage - 1
+	} else {
+		// Clamp cursor to new bounds
+		if currentCursor < startPage {
+			newCursor = startPage
+		} else if currentCursor > endPage {
+			newCursor = endPage
+		} else {
+			newCursor = currentCursor
+		}
+	}
+
+	// Update bounds and cursor
+	result, err := tx.Exec(`
+		UPDATE topics
+		SET start_page = ?, end_page = ?, current_page_cursor = ?
+		WHERE id = ?
+	`, startPage, endPage, newCursor, topicID)
+	if err != nil {
 		return err
 	}
 
-	// Cursor already initialized; just update bounds
-	_, err := conn.Exec(`
-		UPDATE topics
-		SET start_page = ?, end_page = ?
-		WHERE id = ?
-	`, startPage, endPage, topicID)
-	return err
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if shrunk {
+		if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // TopicPageBoundsBatchItem represents topic page bounds to be updated in batch
@@ -1239,50 +1764,145 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 			startPage, endPage = endPage, startPage
 		}
 
-		// Check current cursor
+		// Check current cursor and detect shrinkage
+		var previousStart int
+		var previousEnd int
 		var currentCursor int
-		if cursorErr := tx.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, topicID).Scan(&currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
+		if cursorErr := tx.QueryRow(`
+			SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
+			FROM topics WHERE id = ?
+		`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
 			return cursorErr
 		}
 
-		// Initialize cursor if uninitialized (0)
+		// Check if bounds shrunk (start moved forward OR end moved backward)
+		shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
+			(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
+
+		// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
+		var newCursor int
 		if currentCursor == 0 {
-			res, err := tx.Exec(`
-				UPDATE topics
-				SET start_page = ?, end_page = ?, current_page_cursor = ?
-				WHERE id = ?
-			`, startPage, endPage, startPage, topicID)
-			if err != nil {
-				return err
-			}
-			rowsAffected, err := res.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if rowsAffected == 0 {
-				return fmt.Errorf("no rows updated for topicID %s", topicID)
-			}
+			newCursor = startPage - 1
 		} else {
-			// Cursor already initialized; just update bounds
-			res, err := tx.Exec(`
-				UPDATE topics
-				SET start_page = ?, end_page = ?
-				WHERE id = ?
-			`, startPage, endPage, topicID)
-			if err != nil {
-				return err
+			// Clamp cursor to new bounds
+			if currentCursor < startPage {
+				newCursor = startPage
+			} else if currentCursor > endPage {
+				newCursor = endPage
+			} else {
+				newCursor = currentCursor
 			}
-			rowsAffected, err := res.RowsAffected()
-			if err != nil {
+		}
+
+		// Update bounds and cursor
+		res, err := tx.Exec(`
+			UPDATE topics
+			SET start_page = ?, end_page = ?, current_page_cursor = ?
+			WHERE id = ?
+		`, startPage, endPage, newCursor, topicID)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no rows updated for topicID %s", topicID)
+		}
+
+		if shrunk {
+			if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
 				return err
-			}
-			if rowsAffected == 0 {
-				return fmt.Errorf("no rows updated for topicID %s", topicID)
 			}
 		}
 	}
 
 	return tx.Commit()
+}
+
+func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage int, endPage int) error {
+	if _, err := tx.Exec(`
+		DELETE FROM user_answers
+		WHERE question_id IN (
+			SELECT id
+			FROM questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range user answers: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM fsrs_review_log
+		WHERE activity_type = 'quiz_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range quiz review logs: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM assessment_fsrs
+		WHERE activity_type = 'quiz_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range quiz fsrs state: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM questions
+		WHERE topic_id = ?
+		  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range questions: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM fsrs_review_log
+		WHERE activity_type = 'written_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM written_questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range written review logs: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM assessment_fsrs
+		WHERE activity_type = 'written_question'
+		  AND reference_id IN (
+			SELECT id
+			FROM written_questions
+			WHERE topic_id = ?
+			  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+		)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range written fsrs state: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM written_questions
+		WHERE topic_id = ?
+		  AND (COALESCE(source_page_start, 0) < ? OR COALESCE(source_page_end, 0) > ?)
+	`, topicID, startPage, endPage); err != nil {
+		return fmt.Errorf("delete out-of-range written questions: %w", err)
+	}
+
+	return nil
 }
 
 // GetTopicPageBounds returns persisted chapter bounds for a topic.
@@ -1324,6 +1944,86 @@ func GetTopicCurrentPageCursor(topicID string) (int, error) {
 	}
 
 	return cursor, nil
+}
+
+// GetTotalChunkTokens returns estimated total tokens for one topic.
+// It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
+func GetTotalChunkTokens(topicID string) (int, error) {
+	return getTotalChunkTokens(topicID, 0, 0)
+}
+
+// GetTotalChunkTokensForPageRange returns estimated total tokens for one topic/page window.
+// It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
+func GetTotalChunkTokensForPageRange(topicID string, startPage int, endPage int) (int, error) {
+	return getTotalChunkTokens(topicID, startPage, endPage)
+}
+
+func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
+
+	// Validate page bounds
+	var filterByPage bool
+	if startPage == 0 && endPage == 0 {
+		// No page filter - entire topic
+		filterByPage = false
+	} else if startPage <= 0 || endPage <= 0 {
+		// Mixed positive/negative bounds are invalid
+		return 0, fmt.Errorf("invalid page bounds: both startPage and endPage must be positive or both must be zero")
+	} else {
+		// Both bounds are positive - filter by page range
+		filterByPage = true
+		if startPage > endPage {
+			startPage, endPage = endPage, startPage
+		}
+	}
+
+	query := `
+		SELECT COALESCE(token_count, 0), COALESCE(chunk_text, '')
+		FROM chunks
+		WHERE topic_id = ?
+	`
+	args := []interface{}{topicID}
+	if filterByPage {
+		query += ` AND page_num BETWEEN ? AND ?`
+		args = append(args, startPage, endPage)
+	}
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	total := 0
+	for rows.Next() {
+		var tokenCount int
+		var chunkText string
+		if err := rows.Scan(&tokenCount, &chunkText); err != nil {
+			return 0, err
+		}
+
+		if tokenCount > 0 {
+			total += tokenCount
+			continue
+		}
+
+		fallback := len(chunkText) / 4
+		if fallback <= 0 && strings.TrimSpace(chunkText) != "" {
+			fallback = 1
+		}
+		total += fallback
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	return total, nil
 }
 
 // GetChunkTextsForTopicPageRange returns chunk_text rows ordered by chunk id for one topic/page window.
@@ -1432,7 +2132,9 @@ func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage i
 // GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
 // Key format is normalized lower-case heading text with single spaces.
 func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
-	// ... (rest of the code remains the same)
+	if conn == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
@@ -2015,6 +2717,74 @@ func GetQuestionByID(questionID string) (*models.QuizQuestion, error) {
 	return getQuestionByIDRepo(questionID)
 }
 
+// CreateWrittenQuestion stores one persisted written assessment prompt.
+func CreateWrittenQuestion(question models.WrittenQuestion) error {
+	question.ID = strings.TrimSpace(question.ID)
+	question.TopicID = strings.TrimSpace(question.TopicID)
+	question.Prompt = strings.TrimSpace(question.Prompt)
+	if question.ID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	if question.TopicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if question.Prompt == "" {
+		return fmt.Errorf("prompt is required")
+	}
+	return createWrittenQuestionRepo(question)
+}
+
+// GetWrittenQuestionByID fetches one persisted written assessment prompt.
+func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) {
+	questionID = strings.TrimSpace(questionID)
+	if questionID == "" {
+		return nil, fmt.Errorf("question id is required")
+	}
+	return getWrittenQuestionByIDRepo(questionID)
+}
+
+// GetAssessmentFSRSState returns shared assessment FSRS state for one quiz/written reference.
+func GetAssessmentFSRSState(activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	if activityType == "" || referenceID == "" {
+		return nil, fmt.Errorf("activity type and reference id are required")
+	}
+	return getAssessmentFSRSStateRepo(activityType, referenceID)
+}
+
+// GetAssessmentFSRSStateTx returns shared assessment FSRS state for one quiz/written reference within a transaction.
+func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	if activityType == "" || referenceID == "" {
+		return nil, fmt.Errorf("activity type and reference id are required")
+	}
+	return getAssessmentFSRSStateRepoTx(tx, activityType, referenceID)
+}
+
+// UpsertAssessmentFSRSReview saves shared assessment FSRS state and corresponding review log.
+func UpsertAssessmentFSRSReview(activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	topicID = strings.TrimSpace(topicID)
+	if activityType == "" || referenceID == "" || topicID == "" {
+		return fmt.Errorf("activity type, reference id, and topic id are required")
+	}
+	return upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, state, dueAt, reviewedAt, reviewLog)
+}
+
+// UpsertAssessmentFSRSReviewTx saves shared assessment FSRS state and corresponding review log within a transaction.
+func UpsertAssessmentFSRSReviewTx(tx *sql.Tx, activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	topicID = strings.TrimSpace(topicID)
+	if activityType == "" || referenceID == "" || topicID == "" {
+		return fmt.Errorf("activity type, reference id, and topic id are required")
+	}
+	return upsertAssessmentFSRSReviewRepoTx(tx, activityType, referenceID, topicID, state, dueAt, reviewedAt, reviewLog)
+}
+
 // SaveUserAnswer stores a scored quiz response.
 func SaveUserAnswer(score models.QuizScore) error {
 	score.QuestionID = strings.TrimSpace(score.QuestionID)
@@ -2027,6 +2797,48 @@ func SaveUserAnswer(score models.QuizScore) error {
 		return fmt.Errorf("user answer is required")
 	}
 	return saveUserAnswerRepo(score)
+}
+
+// SaveUserAnswerTx stores a scored quiz response within a transaction.
+func SaveUserAnswerTx(tx *sql.Tx, score models.QuizScore) error {
+	score.QuestionID = strings.TrimSpace(score.QuestionID)
+	if score.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(score.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveUserAnswerRepoTx(tx, score)
+}
+
+// SaveWrittenAnswer stores a scored written response.
+func SaveWrittenAnswer(answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveWrittenAnswerRepo(answer)
+}
+
+// SaveWrittenAnswerTx stores a scored written response within a transaction.
+func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveWrittenAnswerRepoTx(tx, answer)
 }
 
 // UpdateTopicReadingCursor persists the current page cursor and optionally marks topic as learned.

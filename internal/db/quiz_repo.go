@@ -51,6 +51,23 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 		return err
 	}
 
+	// Clean up assessment entries for the questions being deleted
+	if _, err = tx.Exec(`
+		DELETE FROM assessment_fsrs
+		WHERE activity_type = 'quiz_question' 
+		AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
+	`, topicID); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(`
+		DELETE FROM fsrs_review_log
+		WHERE activity_type = 'quiz_question' 
+		AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
+	`, topicID); err != nil {
+		return err
+	}
+
 	// Now safe to delete the questions
 	if _, err = tx.Exec(`DELETE FROM questions WHERE topic_id = ?`, topicID); err != nil {
 		return err
@@ -190,6 +207,55 @@ func saveUserAnswerRepo(score models.QuizScore) error {
 		score.Score,
 		score.Feedback,
 		score.Hint,
+	)
+	return err
+}
+
+func saveUserAnswerRepoTx(tx *sql.Tx, score models.QuizScore) error {
+	_, err := tx.Exec(`
+		INSERT INTO user_answers (id, question_id, user_answer, is_correct, score, feedback, hint)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		score.QuestionID,
+		score.UserAnswer,
+		boolToInt(score.Correct),
+		score.Score,
+		score.Feedback,
+		score.Hint,
+	)
+	return err
+}
+
+func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	_, err := tx.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		answer.QuestionID,
+		answer.UserAnswer,
+		answer.Score,
+		answer.Feedback,
+		answer.SourceHeading,
+	)
+	return err
+}
+
+func saveWrittenAnswerRepo(answer models.WrittenAnswer) error {
+	if conn == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	_, err := conn.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		answer.QuestionID,
+		answer.UserAnswer,
+		answer.Score,
+		answer.Feedback,
+		answer.SourceHeading,
 	)
 	return err
 }
