@@ -7,7 +7,8 @@ import (
 
 // withTx is a transaction helper that handles Begin, Rollback (on error or panic), and Commit.
 // It uses recover() for panic guarding to ensure proper rollback if a panic occurs during
-// the transaction (e.g., from an LLM call or math error in a background goroutine).
+// the transaction in the same goroutine (e.g., from a nil pointer dereference or index out of bounds).
+// Panics from spawned/background goroutines must recover themselves; this defer will not catch them.
 // nolint:unused // Infrastructure helper for future transaction consolidation
 func withTx(fn func(*sql.Tx) error) error {
 	tx, err := conn.Begin()
@@ -18,16 +19,11 @@ func withTx(fn func(*sql.Tx) error) error {
 	// Track whether commit succeeded
 	committed := false
 	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	// Panic recovery - ensure rollback even on panic
-	defer func() {
 		if r := recover(); r != nil {
 			_ = tx.Rollback()
 			panic(r) // Re-panic after rollback
+		} else if !committed {
+			_ = tx.Rollback()
 		}
 	}()
 
