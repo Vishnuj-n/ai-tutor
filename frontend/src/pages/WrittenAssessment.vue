@@ -100,6 +100,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { formatRating, formatNextReview } from '@/utils/formatting'
 import {
   generateShortAnswerPrompt,
   getNotebookTopicTree,
@@ -263,15 +264,6 @@ function getPreferredTopicID() {
   return ''
 }
 
-function formatRating(raw) {
-  const value = String(raw || '').toLowerCase()
-  if (value === 'again') return 'Again'
-  if (value === 'hard') return 'Hard'
-  if (value === 'good') return 'Good'
-  if (value === 'easy') return 'Easy'
-  return 'Unrated'
-}
-
 function ratingClass(raw) {
   const value = String(raw || '').toLowerCase()
   if (value === 'again') return 'bad'
@@ -279,19 +271,6 @@ function ratingClass(raw) {
   if (value === 'good') return 'good'
   if (value === 'easy') return 'great'
   return ''
-}
-
-function formatNextReview(raw) {
-  const value = String(raw || '').trim()
-  if (!value) return 'Not scheduled'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
 }
 </script>
 

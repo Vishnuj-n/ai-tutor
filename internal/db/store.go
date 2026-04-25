@@ -28,6 +28,11 @@ func Close() error {
 	return err
 }
 
+// GetConnection returns the underlying database connection for transaction management.
+func GetConnection() *sql.DB {
+	return conn
+}
+
 // Init initializes the SQLite database and creates tables
 // vec0DllPath should be the absolute path to vec0.dll (sqlite-vec extension)
 func Init(dbPath, vec0DllPath string) error {
@@ -1632,35 +1637,43 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		_ = tx.Rollback()
 	}()
 
-	// Determine if cursor needs initialization
+	// Determine if cursor needs initialization and detect shrinkage
+	var previousStart int
 	var previousEnd int
 	var currentCursor int
 	if err := tx.QueryRow(`
 		SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
 		FROM topics WHERE id = ?
-	`, topicID).Scan(new(int), &previousEnd, &currentCursor); err != nil && err != sql.ErrNoRows {
+	`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	shrunk := previousEnd > 0 && endPage > 0 && endPage < previousEnd
 
-	// Initialize cursor to startPage if uninitialized (0)
+	// Check if bounds shrunk (start moved forward OR end moved backward)
+	shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
+		(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
+
+	// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
+	var newCursor int
 	if currentCursor == 0 {
-		if _, err := tx.Exec(`
-			UPDATE topics
-			SET start_page = ?, end_page = ?, current_page_cursor = ?
-			WHERE id = ?
-		`, startPage, endPage, startPage, topicID); err != nil {
-			return err
-		}
+		newCursor = startPage
 	} else {
-		// Cursor already initialized; just update bounds
-		if _, err := tx.Exec(`
-			UPDATE topics
-			SET start_page = ?, end_page = ?
-			WHERE id = ?
-		`, startPage, endPage, topicID); err != nil {
-			return err
+		// Clamp cursor to new bounds
+		if currentCursor < startPage {
+			newCursor = startPage
+		} else if currentCursor > endPage {
+			newCursor = endPage
+		} else {
+			newCursor = currentCursor
 		}
+	}
+
+	// Update bounds and cursor
+	if _, err := tx.Exec(`
+		UPDATE topics
+		SET start_page = ?, end_page = ?, current_page_cursor = ?
+		WHERE id = ?
+	`, startPage, endPage, newCursor, topicID); err != nil {
+		return err
 	}
 
 	if shrunk {
@@ -2689,6 +2702,16 @@ func GetAssessmentFSRSState(activityType, referenceID string) (*assessmentFSRSRe
 	return getAssessmentFSRSStateRepo(activityType, referenceID)
 }
 
+// GetAssessmentFSRSStateTx returns shared assessment FSRS state for one quiz/written reference within a transaction.
+func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID string) (*assessmentFSRSRecord, error) {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	if activityType == "" || referenceID == "" {
+		return nil, fmt.Errorf("activity type and reference id are required")
+	}
+	return getAssessmentFSRSStateRepoTx(tx, activityType, referenceID)
+}
+
 // UpsertAssessmentFSRSReview saves shared assessment FSRS state and corresponding review log.
 func UpsertAssessmentFSRSReview(activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
 	activityType = strings.TrimSpace(activityType)
@@ -2698,6 +2721,17 @@ func UpsertAssessmentFSRSReview(activityType, referenceID, topicID string, state
 		return fmt.Errorf("activity type, reference id, and topic id are required")
 	}
 	return upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, state, dueAt, reviewedAt, reviewLog)
+}
+
+// UpsertAssessmentFSRSReviewTx saves shared assessment FSRS state and corresponding review log within a transaction.
+func UpsertAssessmentFSRSReviewTx(tx *sql.Tx, activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+	activityType = strings.TrimSpace(activityType)
+	referenceID = strings.TrimSpace(referenceID)
+	topicID = strings.TrimSpace(topicID)
+	if activityType == "" || referenceID == "" || topicID == "" {
+		return fmt.Errorf("activity type, reference id, and topic id are required")
+	}
+	return upsertAssessmentFSRSReviewRepoTx(tx, activityType, referenceID, topicID, state, dueAt, reviewedAt, reviewLog)
 }
 
 // SaveUserAnswer stores a scored quiz response.
@@ -2712,6 +2746,20 @@ func SaveUserAnswer(score models.QuizScore) error {
 		return fmt.Errorf("user answer is required")
 	}
 	return saveUserAnswerRepo(score)
+}
+
+// SaveUserAnswerTx stores a scored quiz response within a transaction.
+func SaveUserAnswerTx(tx *sql.Tx, score models.QuizScore) error {
+	score.QuestionID = strings.TrimSpace(score.QuestionID)
+	if score.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(score.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveUserAnswerRepoTx(tx, score)
 }
 
 // UpdateTopicReadingCursor persists the current page cursor and optionally marks topic as learned.

@@ -194,6 +194,22 @@ func saveUserAnswerRepo(score models.QuizScore) error {
 	return err
 }
 
+func saveUserAnswerRepoTx(tx *sql.Tx, score models.QuizScore) error {
+	_, err := tx.Exec(`
+		INSERT INTO user_answers (id, question_id, user_answer, is_correct, score, feedback, hint)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		score.QuestionID,
+		score.UserAnswer,
+		boolToInt(score.Correct),
+		score.Score,
+		score.Feedback,
+		score.Hint,
+	)
+	return err
+}
+
 func boolToInt(v bool) int {
 	if v {
 		return 1

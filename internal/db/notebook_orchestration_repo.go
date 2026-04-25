@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 func ingestNotebookContentByTopicRepo(notebookID string, groups []NotebookTopicIngestionGroup) error {
@@ -142,8 +143,17 @@ func deleteNotebookRepo(notebookID string) error {
 		return err
 	}
 
-	for _, chunkID := range chunkIDs {
-		if _, delChunkErr := tx.Exec(`DELETE FROM chunks WHERE id = ?`, chunkID); delChunkErr != nil {
+	// Bulk delete chunks using IN clause for better performance
+	if len(chunkIDs) > 0 {
+		placeholders := make([]string, len(chunkIDs))
+		args := make([]interface{}, len(chunkIDs))
+		for i, chunkID := range chunkIDs {
+			placeholders[i] = "?"
+			args[i] = chunkID
+		}
+
+		query := fmt.Sprintf(`DELETE FROM chunks WHERE id IN (%s)`, strings.Join(placeholders, ","))
+		if _, delChunkErr := tx.Exec(query, args...); delChunkErr != nil {
 			return delChunkErr
 		}
 	}
