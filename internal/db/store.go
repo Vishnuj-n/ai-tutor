@@ -1725,52 +1725,53 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 			startPage, endPage = endPage, startPage
 		}
 
-		// Check current cursor
+		// Check current cursor and detect shrinkage
+		var previousStart int
 		var previousEnd int
 		var currentCursor int
 		if cursorErr := tx.QueryRow(`
 			SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
 			FROM topics WHERE id = ?
-		`, topicID).Scan(new(int), &previousEnd, &currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
+		`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
 			return cursorErr
 		}
-		shrunk := previousEnd > 0 && endPage > 0 && endPage < previousEnd
 
-		// Initialize cursor if uninitialized (0)
+		// Check if bounds shrunk (start moved forward OR end moved backward)
+		shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
+			(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
+
+		// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
+		var newCursor int
 		if currentCursor == 0 {
-			res, err := tx.Exec(`
-				UPDATE topics
-				SET start_page = ?, end_page = ?, current_page_cursor = ?
-				WHERE id = ?
-			`, startPage, endPage, startPage, topicID)
-			if err != nil {
-				return err
-			}
-			rowsAffected, err := res.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if rowsAffected == 0 {
-				return fmt.Errorf("no rows updated for topicID %s", topicID)
-			}
+			newCursor = startPage
 		} else {
-			// Cursor already initialized; just update bounds
-			res, err := tx.Exec(`
-				UPDATE topics
-				SET start_page = ?, end_page = ?
-				WHERE id = ?
-			`, startPage, endPage, topicID)
-			if err != nil {
-				return err
-			}
-			rowsAffected, err := res.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if rowsAffected == 0 {
-				return fmt.Errorf("no rows updated for topicID %s", topicID)
+			// Clamp cursor to new bounds
+			if currentCursor < startPage {
+				newCursor = startPage
+			} else if currentCursor > endPage {
+				newCursor = endPage
+			} else {
+				newCursor = currentCursor
 			}
 		}
+
+		// Update bounds and cursor
+		res, err := tx.Exec(`
+			UPDATE topics
+			SET start_page = ?, end_page = ?, current_page_cursor = ?
+			WHERE id = ?
+		`, startPage, endPage, newCursor, topicID)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no rows updated for topicID %s", topicID)
+		}
+
 		if shrunk {
 			if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
 				return err
@@ -2760,6 +2761,34 @@ func SaveUserAnswerTx(tx *sql.Tx, score models.QuizScore) error {
 		return fmt.Errorf("user answer is required")
 	}
 	return saveUserAnswerRepoTx(tx, score)
+}
+
+// SaveWrittenAnswer stores a scored written response.
+func SaveWrittenAnswer(answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveWrittenAnswerRepo(answer)
+}
+
+// SaveWrittenAnswerTx stores a scored written response within a transaction.
+func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveWrittenAnswerRepoTx(tx, answer)
 }
 
 // UpdateTopicReadingCursor persists the current page cursor and optionally marks topic as learned.
