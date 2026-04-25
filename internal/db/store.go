@@ -208,6 +208,17 @@ func createTables() error {
 		FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
 	);
 
+	CREATE TABLE IF NOT EXISTS written_user_answers (
+		id TEXT PRIMARY KEY,
+		written_question_id TEXT NOT NULL,
+		user_answer TEXT NOT NULL,
+		score INTEGER NOT NULL,
+		feedback TEXT,
+		source_heading TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (written_question_id) REFERENCES written_questions(id) ON DELETE CASCADE
+	);
+
 	CREATE TABLE IF NOT EXISTS notebooks (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
@@ -1668,12 +1679,21 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	}
 
 	// Update bounds and cursor
-	if _, err := tx.Exec(`
+	result, err := tx.Exec(`
 		UPDATE topics
 		SET start_page = ?, end_page = ?, current_page_cursor = ?
 		WHERE id = ?
-	`, startPage, endPage, newCursor, topicID); err != nil {
+	`, startPage, endPage, newCursor, topicID)
+	if err != nil {
 		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
 	}
 
 	if shrunk {
@@ -1925,9 +1945,20 @@ func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error
 		return 0, fmt.Errorf("topic id is required")
 	}
 
-	filterByPage := startPage > 0 && endPage > 0
-	if filterByPage && startPage > endPage {
-		startPage, endPage = endPage, startPage
+	// Validate page bounds
+	var filterByPage bool
+	if startPage == 0 && endPage == 0 {
+		// No page filter - entire topic
+		filterByPage = false
+	} else if startPage <= 0 || endPage <= 0 {
+		// Mixed positive/negative bounds are invalid
+		return 0, fmt.Errorf("invalid page bounds: both startPage and endPage must be positive or both must be zero")
+	} else {
+		// Both bounds are positive - filter by page range
+		filterByPage = true
+		if startPage > endPage {
+			startPage, endPage = endPage, startPage
+		}
 	}
 
 	query := `
