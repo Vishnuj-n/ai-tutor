@@ -98,12 +98,24 @@ func CreateChunk(id, topicID, parentID, text string, tokenCount int, pageNum int
 
 // UpdateNotebookStatus updates the notebook ingestion status.
 func UpdateNotebookStatus(notebookID string, status string) error {
-	_, err := conn.Exec(`
+	result, err := conn.Exec(`
 		UPDATE notebooks
 		SET status = ?
 		WHERE id = ?
 	`, status, notebookID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }
 
 // UpdateNotebookTopic updates the notebook topic link used by UI-level notebook metadata.
@@ -115,12 +127,24 @@ func UpdateNotebookTopic(notebookID string, topicID string) error {
 
 	cleanedTopicID := strings.TrimSpace(topicID)
 	if cleanedTopicID == "" {
-		_, err := conn.Exec(`
+		result, err := conn.Exec(`
 			UPDATE notebooks
 			SET topic_id = NULL
 			WHERE id = ?
 		`, validatedNotebookID)
-		return err
+		if err != nil {
+			return err
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return sql.ErrNoRows
+		}
+
+		return nil
 	}
 
 	validatedTopicID, err := validateID(cleanedTopicID, "topic id")
@@ -128,12 +152,24 @@ func UpdateNotebookTopic(notebookID string, topicID string) error {
 		return err
 	}
 
-	_, err = conn.Exec(`
+	result, err := conn.Exec(`
 		UPDATE notebooks
 		SET topic_id = ?
 		WHERE id = ?
 	`, validatedTopicID, validatedNotebookID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }
 
 // UpdateNotebookTitle updates notebook display title.
@@ -261,6 +297,11 @@ func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 
 // LinkChunksToNotebook associates chunks with a notebook
 func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
+	validatedNotebookID, err := validateID(notebookID, "notebook id")
+	if err != nil {
+		return err
+	}
+
 	tx, err := conn.Begin()
 	if err != nil {
 		return err
@@ -270,11 +311,16 @@ func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
 	}()
 
 	for _, chunkID := range chunkIDs {
-		id := "nb-chunk-" + notebookID + "-" + chunkID // simple composite ID
-		_, err := tx.Exec(`
+		validatedChunkID, err := validateID(chunkID, "chunk id")
+		if err != nil {
+			return err
+		}
+
+		id := "nb-chunk-" + validatedNotebookID + "-" + validatedChunkID // simple composite ID
+		_, err = tx.Exec(`
 			INSERT INTO notebook_chunks (id, notebook_id, chunk_id)
 			VALUES (?, ?, ?)
-		`, id, notebookID, chunkID)
+		`, id, validatedNotebookID, validatedChunkID)
 		if err != nil {
 			return err
 		}
@@ -285,12 +331,24 @@ func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
 
 // UpdateNotebookChunkCount updates the chunk count for a notebook
 func UpdateNotebookChunkCount(notebookID string, count int) error {
-	_, err := conn.Exec(`
+	result, err := conn.Exec(`
 		UPDATE notebooks
 		SET chunk_count = ?
 		WHERE id = ?
 	`, count, notebookID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }
 
 // DeleteNotebook removes a notebook and its chunk links

@@ -317,6 +317,9 @@ func GetOrCreateFlashcardsForTopic(topicID string, cardsIfNotExist []models.Flas
 
 func normalizeValidateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) ([]models.Flashcard, error) {
 	normalizedCards := make([]models.Flashcard, 0, len(cards))
+	seenIDs := make(map[string]bool)
+	seenTopicPrompts := make(map[string]bool)
+
 	for _, card := range cards {
 		card.ID = strings.TrimSpace(card.ID)
 		card.TopicID = strings.TrimSpace(card.TopicID)
@@ -336,6 +339,20 @@ func normalizeValidateFlashcards(topicID string, cards []models.Flashcard, state
 		if _, ok := states[card.ID]; !ok {
 			return nil, fmt.Errorf("flashcard state is required for %s", card.ID)
 		}
+
+		// Check for duplicate IDs
+		if seenIDs[card.ID] {
+			return nil, fmt.Errorf("duplicate flashcard id found: %s", card.ID)
+		}
+		seenIDs[card.ID] = true
+
+		// Check for duplicate (topic_id, prompt) pairs
+		topicPromptKey := card.TopicID + "|" + card.Prompt
+		if seenTopicPrompts[topicPromptKey] {
+			return nil, fmt.Errorf("duplicate (topic_id, prompt) pair found: topic_id=%s, prompt=%s", card.TopicID, card.Prompt)
+		}
+		seenTopicPrompts[topicPromptKey] = true
+
 		normalizedCards = append(normalizedCards, card)
 	}
 
