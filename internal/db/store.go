@@ -78,7 +78,9 @@ func Init(dbPath, vec0DllPath string) error {
 	// Nuclear strategy: Initialize schema with a single transaction
 	tx, err := conn.Begin()
 	if err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("Warning: failed to close database connection after begin error: %v", closeErr)
+		}
 		conn = nil
 		return fmt.Errorf("failed to begin schema transaction: %w", err)
 	}
@@ -87,13 +89,17 @@ func Init(dbPath, vec0DllPath string) error {
 	}()
 
 	if err := InitSchema(tx); err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("Warning: failed to close database connection after schema error: %v", closeErr)
+		}
 		conn = nil
 		return fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("Warning: failed to close database connection after commit error: %v", closeErr)
+		}
 		conn = nil
 		return fmt.Errorf("failed to commit schema transaction: %w", err)
 	}
