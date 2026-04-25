@@ -1314,6 +1314,28 @@ func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState,
 	return getFlashcardByIDRepo(cardID)
 }
 
+// GetFlashcardStatesByIDs returns a map of flashcard states keyed by card ID for the given card IDs
+func GetFlashcardStatesByIDs(cardIDs []string) (map[string]models.FlashcardState, error) {
+	if len(cardIDs) == 0 {
+		return make(map[string]models.FlashcardState), nil
+	}
+
+	// Trim and validate card IDs
+	trimmedIDs := make([]string, 0, len(cardIDs))
+	for _, id := range cardIDs {
+		trimmedID := strings.TrimSpace(id)
+		if trimmedID != "" {
+			trimmedIDs = append(trimmedIDs, trimmedID)
+		}
+	}
+
+	if len(trimmedIDs) == 0 {
+		return make(map[string]models.FlashcardState), nil
+	}
+
+	return getFlashcardStatesByIDsRepo(trimmedIDs)
+}
+
 // UpdateFlashcardReview updates scheduling state after a review grade.
 func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	cardID = strings.TrimSpace(cardID)
@@ -2725,7 +2747,7 @@ func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) 
 }
 
 // GetAssessmentFSRSState returns shared assessment FSRS state for one quiz/written reference.
-func GetAssessmentFSRSState(activityType, referenceID string) (AssessmentFSRSState, error) {
+func GetAssessmentFSRSState(activityType, referenceID string) (*AssessmentFSRSRecord, error) {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	if activityType == "" || referenceID == "" {
@@ -2735,7 +2757,7 @@ func GetAssessmentFSRSState(activityType, referenceID string) (AssessmentFSRSSta
 }
 
 // GetAssessmentFSRSStateTx returns shared assessment FSRS state for one quiz/written reference within a transaction.
-func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID string) (AssessmentFSRSState, error) {
+func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID string) (*AssessmentFSRSRecord, error) {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	if activityType == "" || referenceID == "" {
