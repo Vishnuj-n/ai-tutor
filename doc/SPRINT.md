@@ -34,7 +34,7 @@
 * **Acceptance Gates:** Context-locked vector retrieval must test at p95 < 50ms. Macro-quiz assembly from stored questions must test at p95 < 100ms.
 
 
-### **Sprint 14: FSRS Integration & Smart Scaling (Current)**
+### **Sprint 14: FSRS Integration & Smart Scaling (2026-04-01 — 2026-04-14)**
 **Goal:** Tie generated assessments to memory algorithms and automate background generation.
 
 * **[COMPLETED] FSRS Hookup:** Connect the FSRS scoring algorithm to the quiz and Socratic examiner outputs. Track success/failure on individual generated questions.

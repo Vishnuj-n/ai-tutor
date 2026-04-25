@@ -51,6 +51,10 @@ func Init(dbPath, vec0DllPath string) error {
 	conn.SetMaxIdleConns(1)
 
 	if err := conn.Ping(); err != nil {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("Warning: failed to close database connection after ping error: %v", closeErr)
+		}
+		conn = nil
 		return err
 	}
 
