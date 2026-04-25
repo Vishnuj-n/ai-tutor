@@ -153,7 +153,9 @@ func getFlashcardStatesByIDsRepo(cardIDs []string) (map[string]models.FlashcardS
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	states := make(map[string]models.FlashcardState)
 	for rows.Next() {
