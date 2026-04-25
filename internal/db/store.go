@@ -2694,7 +2694,7 @@ func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) 
 }
 
 // GetAssessmentFSRSState returns shared assessment FSRS state for one quiz/written reference.
-func GetAssessmentFSRSState(activityType, referenceID string) (*assessmentFSRSRecord, error) {
+func GetAssessmentFSRSState(activityType, referenceID string) (AssessmentFSRSState, error) {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	if activityType == "" || referenceID == "" {
@@ -2704,7 +2704,7 @@ func GetAssessmentFSRSState(activityType, referenceID string) (*assessmentFSRSRe
 }
 
 // GetAssessmentFSRSStateTx returns shared assessment FSRS state for one quiz/written reference within a transaction.
-func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID string) (*assessmentFSRSRecord, error) {
+func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID string) (AssessmentFSRSState, error) {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	if activityType == "" || referenceID == "" {

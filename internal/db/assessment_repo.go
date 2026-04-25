@@ -9,11 +9,47 @@ import (
 	"ai-tutor/internal/models"
 )
 
+// AssessmentFSRSState represents the shared FSRS state for an assessment
+type AssessmentFSRSState interface {
+	GetTopicID() string
+	GetState() models.FlashcardState
+	GetDueAt() int64
+	GetLastReviewedAt() int64
+}
+
 type assessmentFSRSRecord struct {
 	TopicID        string
 	State          models.FlashcardState
 	DueAt          int64
 	LastReviewedAt int64
+}
+
+func (r *assessmentFSRSRecord) GetTopicID() string {
+	if r == nil {
+		return ""
+	}
+	return r.TopicID
+}
+
+func (r *assessmentFSRSRecord) GetState() models.FlashcardState {
+	if r == nil {
+		return models.FlashcardState{}
+	}
+	return r.State
+}
+
+func (r *assessmentFSRSRecord) GetDueAt() int64 {
+	if r == nil {
+		return 0
+	}
+	return r.DueAt
+}
+
+func (r *assessmentFSRSRecord) GetLastReviewedAt() int64 {
+	if r == nil {
+		return 0
+	}
+	return r.LastReviewedAt
 }
 
 func createWrittenQuestionRepo(question models.WrittenQuestion) error {
