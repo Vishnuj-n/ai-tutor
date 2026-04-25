@@ -12,13 +12,22 @@ import (
 func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int) error {
 	var topicValue interface{}
 	if topicID != "" {
-		topicValue = topicID
+		validatedTopicID, err := validateID(topicID, "topic id")
+		if err != nil {
+			return err
+		}
+		topicValue = validatedTopicID
 	}
 
-	_, err := conn.Exec(`
+	validatedID, err := validateID(id, "notebook id")
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(`
 		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, status, page_count)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, id, title, filePath, fileType, topicValue, "uploaded", pageCount)
+	`, validatedID, title, filePath, fileType, topicValue, "uploaded", pageCount)
 	return err
 }
 
@@ -238,9 +247,17 @@ func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 
 // LinkChunksToNotebook associates chunks with a notebook
 func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
 	for _, chunkID := range chunkIDs {
 		id := "nb-chunk-" + notebookID + "-" + chunkID // simple composite ID
-		_, err := conn.Exec(`
+		_, err := tx.Exec(`
 			INSERT INTO notebook_chunks (id, notebook_id, chunk_id)
 			VALUES (?, ?, ?)
 		`, id, notebookID, chunkID)
@@ -248,7 +265,8 @@ func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
 			return err
 		}
 	}
-	return nil
+
+	return tx.Commit()
 }
 
 // UpdateNotebookChunkCount updates the chunk count for a notebook
