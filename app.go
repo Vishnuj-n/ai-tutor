@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -48,11 +51,22 @@ type App struct {
 	notebookUploadDir string
 	aiReady           bool
 	aiInitError       string
+	prebuildMu        sync.Mutex
+	prebuildStarted   bool
+	prebuildQueue     chan string
+	prebuildInFlight  map[string]bool
+	prebuildDirty     map[string]bool
+	quizGenMu         sync.Mutex
+	quizGenInFlight   map[string]bool
+	quizGenDone       map[string]chan struct{} // notification channels for quiz generation completion
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		quizGenInFlight: make(map[string]bool),
+		quizGenDone:     make(map[string]chan struct{}),
+	}
 }
 
 // startup is called when the app starts. The context is saved
@@ -207,7 +221,120 @@ func (a *App) startup(ctx context.Context) {
 	a.notebookService = notebook.NewService(notebookDir)
 	utils.Infof("Notebook service initialized at %s", notebookDir)
 
+	a.startPrebuildWorker()
+	a.requestPrebuildRefresh()
+
 	utils.Infof("App initialized successfully")
+}
+
+func (a *App) startPrebuildWorker() {
+	a.prebuildMu.Lock()
+	defer a.prebuildMu.Unlock()
+	if a.prebuildStarted {
+		return
+	}
+	a.prebuildQueue = make(chan string, 16)
+	a.prebuildInFlight = make(map[string]bool)
+	a.prebuildDirty = make(map[string]bool)
+	a.prebuildStarted = true
+
+	go func() {
+		for topicID := range a.prebuildQueue {
+			if topicID == "" {
+				continue
+			}
+
+			// Guard clause: wait for FAST_LLM provider to be initialized
+			if a.fastLLMProvider == nil {
+				utils.Debugf("prebuild worker skipping topic %s: FAST_LLM provider not initialized", topicID)
+				a.finishPrebuildTopic(topicID)
+				continue
+			}
+
+			if quizResult := a.GenerateQuiz(topicID); quizResult != nil {
+				if errMsg, ok := quizResult["error"].(string); ok && errMsg != "" {
+					utils.Warnf("prebuild quiz failed for topic %s: %s", topicID, errMsg)
+				}
+			}
+			if flashcardResult := a.GenerateFlashcards(topicID); flashcardResult != nil {
+				if errMsg, ok := flashcardResult["error"].(string); ok && errMsg != "" {
+					utils.Warnf("prebuild flashcards failed for topic %s: %s", topicID, errMsg)
+				}
+			}
+
+			a.finishPrebuildTopic(topicID)
+		}
+	}()
+}
+
+func (a *App) requestPrebuildRefresh() {
+	a.startPrebuildWorker()
+
+	topics, err := db.QueryUpcomingReadingTopics(3)
+	if err != nil {
+		utils.Warnf("prebuild refresh failed to query upcoming topics: %v", err)
+		return
+	}
+	if len(topics) <= 1 {
+		return
+	}
+
+	seen := make(map[string]bool)
+	queued := 0
+	for _, topic := range topics[1:] {
+		if topic.ID == "" || seen[topic.ID] {
+			continue
+		}
+		seen[topic.ID] = true
+		a.queuePrebuildTopic(topic.ID)
+		queued++
+		if queued >= 2 {
+			break
+		}
+	}
+}
+
+func (a *App) queuePrebuildTopic(topicID string) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return
+	}
+
+	a.prebuildMu.Lock()
+	if a.prebuildInFlight == nil {
+		a.prebuildInFlight = make(map[string]bool)
+	}
+	if a.prebuildDirty == nil {
+		a.prebuildDirty = make(map[string]bool)
+	}
+	if a.prebuildInFlight[topicID] {
+		a.prebuildDirty[topicID] = true
+		a.prebuildMu.Unlock()
+		return
+	}
+	queue := a.prebuildQueue
+	if queue == nil {
+		a.prebuildMu.Unlock()
+		return
+	}
+
+	a.prebuildInFlight[topicID] = true
+	a.prebuildMu.Unlock()
+	queue <- topicID
+}
+
+func (a *App) finishPrebuildTopic(topicID string) {
+	a.prebuildMu.Lock()
+	shouldRequeue := a.prebuildDirty[topicID]
+	a.prebuildInFlight[topicID] = false
+	if shouldRequeue {
+		a.prebuildDirty[topicID] = false
+	}
+	a.prebuildMu.Unlock()
+
+	if shouldRequeue {
+		a.queuePrebuildTopic(topicID)
+	}
 }
 
 // Greet returns a greeting for the given name
@@ -436,6 +563,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 
 	insightsAvailable := false
+	a.requestPrebuildRefresh()
 
 	return map[string]interface{}{
 		"date":               plan.Date,
@@ -481,6 +609,8 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 		}
 	}
 
+	a.requestPrebuildRefresh()
+
 	return map[string]interface{}{
 		"ok":                  true,
 		"daily_study_minutes": minutes,
@@ -521,28 +651,105 @@ type shortAnswerScoreLLMResponse struct {
 	Feedback string `json:"feedback"`
 }
 
-// GenerateQuiz creates topic-scoped multiple-choice questions and stores them.
-// Enforces exactly 5 questions per generation to keep quizzes consistent.
+// GenerateQuiz creates and stores a complete quiz for a topic.
 func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
 
-	if a.fastLLMProvider == nil {
-		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
-	}
+	return a.GetOrCreateQuestionsForTopic(topicID)
+}
 
+// GetOrCreateQuestionsForTopic atomically gets existing questions or generates new ones
+func (a *App) GetOrCreateQuestionsForTopic(topicID string) map[string]interface{} {
+	// First check if questions already exist
 	existingQuestions, err := db.GetQuestionsForTopic(topicID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
 	}
-	if len(existingQuestions) == 5 {
+	if len(existingQuestions) > 0 {
 		return map[string]interface{}{
 			"topic_id":  topicID,
 			"questions": existingQuestions,
 			"existing":  true,
 		}
+	}
+
+	// Use coordination to prevent concurrent generation
+	a.quizGenMu.Lock()
+	if a.quizGenInFlight == nil {
+		a.quizGenInFlight = make(map[string]bool)
+	}
+
+	// Double-check after acquiring lock
+	existingQuestions, err = db.GetQuestionsForTopic(topicID)
+	if err != nil {
+		a.quizGenMu.Unlock()
+		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
+	}
+	if len(existingQuestions) > 0 {
+		a.quizGenMu.Unlock()
+		return map[string]interface{}{
+			"topic_id":  topicID,
+			"questions": existingQuestions,
+			"existing":  true,
+		}
+	}
+
+	// Check if already in flight
+	if a.quizGenInFlight[topicID] {
+		// Create notification channel if it doesn't exist
+		if _, exists := a.quizGenDone[topicID]; !exists {
+			a.quizGenDone[topicID] = make(chan struct{})
+		}
+		doneChan := a.quizGenDone[topicID]
+		a.quizGenMu.Unlock()
+
+		// Wait for generation to complete using select with timeout
+		select {
+		case <-doneChan:
+			// Generation completed, fetch the results
+			existingQuestions, err = db.GetQuestionsForTopic(topicID)
+			if err == nil && len(existingQuestions) > 0 {
+				return map[string]interface{}{
+					"topic_id":  topicID,
+					"questions": existingQuestions,
+					"existing":  true,
+				}
+			}
+			return map[string]interface{}{"error": "quiz generation completed but no questions found"}
+		case <-time.After(5 * time.Second):
+			return map[string]interface{}{"error": "quiz generation timed out"}
+		}
+	}
+
+	// Mark as in flight and create notification channel
+	a.quizGenInFlight[topicID] = true
+	if _, exists := a.quizGenDone[topicID]; !exists {
+		a.quizGenDone[topicID] = make(chan struct{})
+	}
+	doneChan := a.quizGenDone[topicID]
+	a.quizGenMu.Unlock()
+
+	// Generate questions (this is the critical section)
+	defer func() {
+		// Notify waiting goroutines that generation is complete
+		close(doneChan)
+
+		a.quizGenMu.Lock()
+		delete(a.quizGenInFlight, topicID)
+		delete(a.quizGenDone, topicID)
+		a.quizGenMu.Unlock()
+	}()
+
+	return a.generateQuestionsForTopic(topicID)
+}
+
+// generateQuestionsForTopic performs the actual quiz generation
+func (a *App) generateQuestionsForTopic(topicID string) map[string]interface{} {
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
 	content, err := db.GetTopicContent(topicID)
@@ -555,7 +762,13 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "topic has no sections for quiz generation"}
 	}
 
-	prompt := buildQuizPrompt(topicID, sections)
+	totalChunkTokens, err := db.GetTotalChunkTokens(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to calculate quiz density: " + err.Error()}
+	}
+	expectedQuestionCount := scaledQuizQuestionCount(totalChunkTokens)
+
+	prompt := buildQuizPrompt(topicID, sections, totalChunkTokens, expectedQuestionCount)
 	raw, err := a.fastLLMProvider.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{"error": "quiz generation failed: " + err.Error()}
@@ -572,8 +785,6 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 		headingPageRanges = map[string][2]int{}
 	}
 	modelName := providerModelName(a.fastLLMProvider)
-
-	const expectedQuestionCount = 5
 
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
 	for _, q := range parsed.Questions {
@@ -592,7 +803,6 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			}
 		}
 		if matchedOption == "" {
-			// Skip question if CorrectAnswer doesn't match any option
 			continue
 		}
 
@@ -625,15 +835,90 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			SourcePageStart: sourcePageStart,
 			SourcePageEnd:   sourcePageEnd,
 			LLMModel:        modelName,
-			PromptVersion:   "quiz-v1",
+			PromptVersion:   "quiz-v2-density",
 		})
 	}
 
-	// Enforce exactly the expected number of questions
-	if len(questions) != expectedQuestionCount {
-		return map[string]interface{}{
-			"error": fmt.Sprintf("quiz generation produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
+	// Enforce expected number of questions with tolerance
+	maxRetries := 2
+	retryCount := 0
+
+	for retryCount <= maxRetries {
+		diff := len(questions) - expectedQuestionCount
+		if diff < -1 || diff > 1 {
+			if retryCount < maxRetries {
+				retryCount++
+				// Regenerate questions by calling LLM again
+				raw, err := a.fastLLMProvider.GenerateAnswer(prompt)
+				if err != nil {
+					return map[string]interface{}{"error": "quiz generation retry failed: " + err.Error()}
+				}
+
+				parsed, err := parseQuizLLMResponse(raw)
+				if err != nil {
+					return map[string]interface{}{"error": "quiz generation retry parsing failed: " + err.Error()}
+				}
+
+				// Rebuild questions from new parsed response
+				questions = make([]models.QuizQuestion, 0, len(parsed.Questions))
+				for _, q := range parsed.Questions {
+					if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" {
+						continue
+					}
+
+					// Validate CorrectAnswer matches one of the Options (case-insensitive, whitespace-normalized)
+					correctAnswerCanonical := strings.TrimSpace(strings.ToLower(q.CorrectAnswer))
+					var matchedOption string
+					for _, opt := range q.Options {
+						optCanonical := strings.TrimSpace(strings.ToLower(opt))
+						if optCanonical == correctAnswerCanonical {
+							matchedOption = strings.TrimSpace(opt)
+							break
+						}
+					}
+					if matchedOption == "" {
+						continue
+					}
+
+					sourcePageStart := q.SourcePageStart
+					sourcePageEnd := q.SourcePageEnd
+					if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
+						rangeByHeading, ok := headingPageRanges[normalizeHeadingKey(q.SourceHeading)]
+						if ok {
+							sourcePageStart = rangeByHeading[0]
+							sourcePageEnd = rangeByHeading[1]
+						}
+					}
+					if sourcePageStart > 0 && sourcePageEnd <= 0 {
+						sourcePageEnd = sourcePageStart
+					}
+					if sourcePageEnd > 0 && sourcePageStart <= 0 {
+						sourcePageStart = sourcePageEnd
+					}
+
+					questions = append(questions, models.QuizQuestion{
+						ID:              uuid.NewString(),
+						TopicID:         topicID,
+						Prompt:          strings.TrimSpace(q.Prompt),
+						Options:         q.Options,
+						CorrectAnswer:   matchedOption,
+						Explanation:     strings.TrimSpace(q.Explanation),
+						Hint:            strings.TrimSpace(q.Hint),
+						SourceHeading:   strings.TrimSpace(q.SourceHeading),
+						SourceSnippet:   strings.TrimSpace(q.SourceSnippet),
+						SourcePageStart: sourcePageStart,
+						SourcePageEnd:   sourcePageEnd,
+						LLMModel:        modelName,
+						PromptVersion:   "quiz-v2-density",
+					})
+				}
+				continue
+			}
+			return map[string]interface{}{
+				"error": fmt.Sprintf("quiz generation produced %d valid questions after %d retries; expected %d (±1 tolerance)", len(questions), retryCount, expectedQuestionCount),
+			}
 		}
+		break
 	}
 
 	if err := db.ReplaceQuestionsForTopic(topicID, questions); err != nil {
@@ -657,6 +942,18 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 	}
 	if a.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
+	}
+
+	// Early cursor validation to prevent burning LLM tokens and latency on requests that will be rejected
+	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
+	}
+	if startPage != currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
+	}
+	if targetPage <= currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
 	}
 
 	topicStartPage, topicEndPage, err := db.GetTopicPageBounds(topicID)
@@ -697,7 +994,13 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{"error": "no passage content found for completion window"}
 	}
 
-	prompt, err := buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages)
+	totalChunkTokens, err := db.GetTotalChunkTokensForPageRange(topicID, startPage, contextEndPage)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to calculate completion quiz density: " + err.Error()}
+	}
+	expectedQuestionCount := scaledQuizQuestionCount(totalChunkTokens)
+
+	prompt, err := buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages, totalChunkTokens, expectedQuestionCount)
 	if err != nil {
 		return map[string]interface{}{"error": "completion quiz prompt generation failed: " + err.Error()}
 	}
@@ -711,7 +1014,6 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{"error": "completion quiz parsing failed: " + err.Error()}
 	}
 
-	const expectedQuestionCount = 5
 	modelName := providerModelName(a.fastLLMProvider)
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
 	for _, q := range parsed.Questions {
@@ -761,7 +1063,7 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 			SourcePageStart: sourcePageStart,
 			SourcePageEnd:   sourcePageEnd,
 			LLMModel:        modelName,
-			PromptVersion:   "reader-complete-v1",
+			PromptVersion:   "reader-complete-v2-density",
 		})
 	}
 
@@ -769,18 +1071,6 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{
 			"error": fmt.Sprintf("completion quiz produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
 		}
-	}
-
-	// Validate cursor before appending questions to prevent replayed/backwards advances
-	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
-	}
-	if startPage != currentCursor {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
-	}
-	if targetPage <= currentCursor {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
 	}
 
 	nextCursor := targetPage + 1
@@ -794,6 +1084,8 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		status = "learned"
 	}
 
+	a.requestPrebuildRefresh()
+
 	return map[string]interface{}{
 		"ok":                  true,
 		"topic_id":            topicID,
@@ -801,14 +1093,14 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		"source_page_end":     contextEndPage,
 		"target_page":         targetPage,
 		"questions_generated": len(questions),
-		"prompt_version":      "reader-complete-v1",
+		"prompt_version":      "reader-complete-v2-density",
 		"current_page_cursor": nextCursor,
 		"topic_status":        status,
 	}
 }
 
 // GenerateFlashcards creates flashcards for a topic or returns the existing set.
-// Enforces exactly 8 flashcards per generation to keep decks consistent and predictable.
+// Existing generated sets are returned as-is to protect user progress.
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -817,6 +1109,31 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 
 	if a.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
+	}
+
+	existingCards, err := db.GetFlashcardsForTopic(topicID, false, 0)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to load existing flashcards: " + err.Error()}
+	}
+	if len(existingCards) > 0 {
+		// Extract card IDs for batch query
+		cardIDs := make([]string, len(existingCards))
+		for i, card := range existingCards {
+			cardIDs[i] = card.ID
+		}
+
+		// Batch fetch all states at once
+		states, getErr := db.GetFlashcardStatesByIDs(cardIDs)
+		if getErr != nil {
+			return map[string]interface{}{"error": "failed to load existing flashcard states: " + getErr.Error()}
+		}
+
+		return map[string]interface{}{
+			"topic_id": topicID,
+			"cards":    existingCards,
+			"states":   states,
+			"existing": true,
+		}
 	}
 
 	content, err := db.GetTopicContent(topicID)
@@ -829,8 +1146,14 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "topic has no sections for flashcard generation"}
 	}
 
+	totalChunkTokens, err := db.GetTotalChunkTokens(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to calculate flashcard density: " + err.Error()}
+	}
+	expectedFlashcardCount := scaledFlashcardCount(totalChunkTokens)
+
 	// Generate flashcard candidates from LLM
-	raw, err := a.fastLLMProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections))
+	raw, err := a.fastLLMProvider.GenerateAnswer(buildFlashcardPrompt(topicID, sections, totalChunkTokens, expectedFlashcardCount))
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard generation failed: " + err.Error()}
 	}
@@ -839,8 +1162,6 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard generation parsing failed: " + err.Error()}
 	}
-
-	const expectedFlashcardCount = 8
 
 	// Filter valid cards
 	now := time.Now().Unix()
@@ -865,30 +1186,35 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		states[id] = models.FlashcardState{}
 	}
 
-	// Enforce exactly 8 cards
+	// Enforce exactly the scaled card count.
 	if len(cards) != expectedFlashcardCount {
 		return map[string]interface{}{
 			"error": fmt.Sprintf("flashcard generation produced %d valid cards; expected exactly %d", len(cards), expectedFlashcardCount),
 		}
 	}
 
-	// Use atomic get-or-create to prevent race condition:
-	// If cards already exist for this topic, return them
-	// Otherwise, insert the generated cards transactionally
+	// Use atomic get-or-create to protect against concurrent first-generation requests.
 	cards, wasExisting, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to persist flashcards: " + err.Error()}
 	}
 	if wasExisting {
+		// Extract card IDs for batch query
+		cardIDs := make([]string, len(cards))
+		for i, card := range cards {
+			cardIDs[i] = card.ID
+		}
+
+		// Batch fetch all states at once
+		batchStates, getErr := db.GetFlashcardStatesByIDs(cardIDs)
+		if getErr != nil {
+			return map[string]interface{}{"error": "failed to load existing flashcard states: " + getErr.Error()}
+		}
+
+		// Convert batch states to the expected map format
 		states = make(map[string]models.FlashcardState, len(cards))
-		for _, card := range cards {
-			_, state, getErr := db.GetFlashcardByID(card.ID)
-			if getErr != nil {
-				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
-			}
-			if state != nil {
-				states[card.ID] = *state
-			}
+		for cardID, state := range batchStates {
+			states[cardID] = state
 		}
 	}
 
@@ -992,7 +1318,7 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 	}
 }
 
-// ScoreAnswer validates an answer and stores score metadata.
+// ScoreAnswer validates an answer, stores score metadata, and updates shared assessment FSRS.
 func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} {
 	questionID = strings.TrimSpace(questionID)
 	userAnswer = strings.TrimSpace(userAnswer)
@@ -1035,9 +1361,37 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		score.Feedback = "That answer is not correct."
 	}
 
-	if err := db.SaveUserAnswer(score); err != nil {
+	// Begin transaction for both SaveUserAnswer and applyAssessmentReview
+	dbConn := db.GetConnection()
+	tx, err := dbConn.Begin()
+	if err != nil {
+		return map[string]interface{}{"error": "failed to begin transaction: " + err.Error()}
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err := db.SaveUserAnswerTx(tx, score); err != nil {
 		return map[string]interface{}{"error": "failed to save score: " + err.Error()}
 	}
+
+	ratingLabel := "again"
+	if correct {
+		ratingLabel = "good"
+	}
+
+	fsrsResult, err := applyAssessmentReviewTx(tx, question.TopicID, "quiz_question", question.ID, ratingLabel)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to update quiz FSRS: " + err.Error()}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
+	}
+	committed = true
 
 	return map[string]interface{}{
 		"question_id":    score.QuestionID,
@@ -1048,10 +1402,14 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		"hint":           score.Hint,
 		"user_answer":    score.UserAnswer,
 		"source_heading": score.SourceHeading,
+		"fsrsRating":     fsrsResult["fsrs_rating"],
+		"scheduled_days": fsrsResult["scheduled_days"],
+		"next_review_at": fsrsResult["next_review_at"],
+		"review_log_id":  fsrsResult["review_log_id"],
 	}
 }
 
-// GenerateShortAnswerPrompt creates one grounded short-answer question from topic content.
+// GenerateShortAnswerPrompt creates, persists, and returns one grounded short-answer question.
 func (a *App) GenerateShortAnswerPrompt(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -1087,30 +1445,49 @@ Rules:
 		return map[string]interface{}{"error": "short-answer prompt generation returned empty prompt"}
 	}
 
-	questionID := fmt.Sprintf("%s:%s", topicID, uuid.NewString())
+	sourceHeading, sourcePageStart, sourcePageEnd := resolveWrittenQuestionLineage(topicID, result.CitedSections)
+	question := models.WrittenQuestion{
+		ID:              uuid.NewString(),
+		TopicID:         topicID,
+		Prompt:          questionPrompt,
+		SourceHeading:   sourceHeading,
+		SourcePageStart: sourcePageStart,
+		SourcePageEnd:   sourcePageEnd,
+		LLMModel:        providerModelName(a.fastLLMProvider),
+		PromptVersion:   "written-v1-persisted",
+	}
+	if err := db.CreateWrittenQuestion(question); err != nil {
+		return map[string]interface{}{"error": "failed to persist short-answer prompt: " + err.Error()}
+	}
+
 	return map[string]interface{}{
-		"questionID": questionID,
-		"prompt":     questionPrompt,
-		"topicID":    topicID,
+		"questionID":        question.ID,
+		"prompt":            question.Prompt,
+		"topicID":           topicID,
+		"source_heading":    question.SourceHeading,
+		"source_page_start": question.SourcePageStart,
+		"source_page_end":   question.SourcePageEnd,
 	}
 }
 
-// ScoreShortAnswer scores one short-answer response, validates the score range, and logs a generic FSRS review event.
-func (a *App) ScoreShortAnswer(questionID, prompt, userAnswer string) map[string]interface{} {
+// ScoreShortAnswer scores one persisted short-answer prompt and updates shared assessment FSRS.
+func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {
 	questionID = strings.TrimSpace(questionID)
-	prompt = strings.TrimSpace(prompt)
 	userAnswer = strings.TrimSpace(userAnswer)
 
-	if questionID == "" || prompt == "" || userAnswer == "" {
-		return map[string]interface{}{"error": "question ID, prompt, and user answer are required"}
+	if questionID == "" || userAnswer == "" {
+		return map[string]interface{}{"error": "question ID and user answer are required"}
 	}
 	if a.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
-	topicID, ok := topicIDFromShortAnswerQuestionID(questionID)
-	if !ok {
-		return map[string]interface{}{"error": "invalid question ID format"}
+	question, err := db.GetWrittenQuestionByID(questionID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch written question: " + err.Error()}
+	}
+	if question == nil {
+		return map[string]interface{}{"error": "written question not found"}
 	}
 
 	scorePrompt := fmt.Sprintf(`You are grading a student's short answer.
@@ -1118,14 +1495,14 @@ Return STRICT JSON only in this shape: {"score":number,"feedback":"..."}.
 
 Scoring rubric:
 - Score must be an integer from 1 to 10.
-- 1-4 = major misunderstandings or mostly incorrect.
-- 5-7 = partially correct with gaps.
-- 8-9 = correct with minor omissions.
-- 10 = fully correct, precise, and concise.
+- 1-3 = major misunderstandings or mostly incorrect.
+- 4-5 = partially correct with clear gaps.
+- 6-8 = mostly correct with some omissions.
+- 9-10 = strong, precise, and concise.
 - Feedback must be concise (max 2 sentences), specific, and actionable.
 
 Question: %s
-Student answer: %s`, prompt, userAnswer)
+Student answer: %s`, question.Prompt, userAnswer)
 
 	raw, err := a.fastLLMProvider.GenerateAnswer(scorePrompt)
 	if err != nil {
@@ -1145,51 +1522,170 @@ Student answer: %s`, prompt, userAnswer)
 		score = 10
 	}
 
-	ratingLabel, ratingCode := shortAnswerScoreToFSRSRating(score)
-
-	stateBefore := map[string]string{
-		"prompt":      prompt,
-		"user_answer": userAnswer,
-	}
-	stateBeforeJSON, err := json.Marshal(stateBefore)
+	// Begin transaction for both SaveWrittenAnswer and applyAssessmentReview
+	dbConn := db.GetConnection()
+	tx, err := dbConn.Begin()
 	if err != nil {
-		return map[string]interface{}{"error": "failed to encode short-answer review state: " + err.Error()}
+		return map[string]interface{}{"error": "failed to begin transaction: " + err.Error()}
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Save the written answer
+	writtenAnswer := models.WrittenAnswer{
+		QuestionID:    question.ID,
+		Score:         score,
+		Feedback:      strings.TrimSpace(parsed.Feedback),
+		UserAnswer:    userAnswer,
+		SourceHeading: question.SourceHeading,
+	}
+	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
+		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
 	}
 
-	stateAfter := map[string]interface{}{
-		"score_out_of_10": score,
-		"feedback":        strings.TrimSpace(parsed.Feedback),
-		"rating":          ratingLabel,
-	}
-	stateAfterJSON, err := json.Marshal(stateAfter)
+	ratingLabel, _ := shortAnswerScoreToFSRSRating(score)
+	fsrsResult, err := applyAssessmentReviewTx(tx, question.TopicID, "written_question", question.ID, ratingLabel)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to encode short-answer review result: " + err.Error()}
+		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
+	}
+	committed = true
+
+	return map[string]interface{}{
+		"question_id":       question.ID,
+		"prompt":            question.Prompt,
+		"score":             score,
+		"feedback":          strings.TrimSpace(parsed.Feedback),
+		"fsrsRating":        fsrsResult["fsrs_rating"],
+		"scheduled_days":    fsrsResult["scheduled_days"],
+		"next_review_at":    fsrsResult["next_review_at"],
+		"review_log_id":     fsrsResult["review_log_id"],
+		"source_page_start": question.SourcePageStart,
+		"source_page_end":   question.SourcePageEnd,
+		"source_heading":    question.SourceHeading,
+	}
+}
+
+func resolveWrittenQuestionLineage(topicID string, citedSections []string) (string, int, int) {
+	headingPageRanges, err := db.GetTopicHeadingPageRanges(topicID)
+	if err != nil {
+		utils.Warnf("could not resolve written-question lineage ranges for topic %s: %v", topicID, err)
+		return "", 0, 0
+	}
+
+	sourceHeading := ""
+	sourcePageStart := 0
+	sourcePageEnd := 0
+	for _, heading := range citedSections {
+		normalized := normalizeHeadingKey(heading)
+		pageRange, ok := headingPageRanges[normalized]
+		if !ok {
+			continue
+		}
+		if sourceHeading == "" {
+			sourceHeading = strings.TrimSpace(heading)
+		}
+		if sourcePageStart == 0 || pageRange[0] < sourcePageStart {
+			sourcePageStart = pageRange[0]
+		}
+		if pageRange[1] > sourcePageEnd {
+			sourcePageEnd = pageRange[1]
+		}
+	}
+	if sourcePageStart > 0 && sourcePageEnd == 0 {
+		sourcePageEnd = sourcePageStart
+	}
+	return sourceHeading, sourcePageStart, sourcePageEnd
+}
+
+func applyAssessmentReviewCore(
+	topicID, activityType, referenceID, ratingLabel string,
+	getStateFunc func(string, string) (*db.AssessmentFSRSRecord, error),
+	upsertFunc func(string, string, string, models.FlashcardState, int64, int64, models.FSRSReviewLog) error,
+) (map[string]interface{}, error) {
+	ratingCode, ok := mapReviewRating(strings.ToLower(strings.TrimSpace(ratingLabel)))
+	if !ok {
+		return nil, fmt.Errorf("invalid assessment rating: %s", ratingLabel)
+	}
+
+	current, err := getStateFunc(activityType, referenceID)
+	if err != nil {
+		return nil, err
+	}
+
+	state := models.FlashcardState{}
+	stateBeforeJSON := "{}"
+	if current != nil {
+		state = current.GetState()
+		beforeBytes, err := json.Marshal(state)
+		if err != nil {
+			return nil, err
+		}
+		stateBeforeJSON = string(beforeBytes)
+
+		elapsedDays := 0
+		if current.GetDueAt() > 0 {
+			elapsedSeconds := time.Now().Unix() - current.GetDueAt()
+			if elapsedSeconds > 0 {
+				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+			}
+		}
+		state.ElapsedDays = elapsedDays
+	}
+
+	nextState := scheduler.NextFSRSState(state, ratingCode)
+	now := time.Now().Unix()
+	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
+	if nextState.ScheduledDays == 0 {
+		dueAt = now
+	}
+
+	stateAfterBytes, err := json.Marshal(nextState)
+	if err != nil {
+		return nil, err
 	}
 
 	reviewLog := models.FSRSReviewLog{
 		ID:              uuid.NewString(),
 		TopicID:         topicID,
-		ActivityType:    "short_answer",
-		ReferenceID:     questionID,
-		ReviewedAt:      time.Now().Unix(),
+		ActivityType:    activityType,
+		ReferenceID:     referenceID,
+		ReviewedAt:      now,
 		Rating:          ratingCode,
-		ScheduledDays:   0,
-		StateBeforeJSON: string(stateBeforeJSON),
-		StateAfterJSON:  string(stateAfterJSON),
+		ScheduledDays:   nextState.ScheduledDays,
+		StateBeforeJSON: stateBeforeJSON,
+		StateAfterJSON:  string(stateAfterBytes),
+	}
+	if err := upsertFunc(activityType, referenceID, topicID, nextState, dueAt, now, reviewLog); err != nil {
+		return nil, err
 	}
 
-	if err := db.InsertFSRSReviewLog(reviewLog); err != nil {
-		return map[string]interface{}{"error": "failed to log short-answer review: " + err.Error()}
-	}
-
+	ratingDisplay := strings.ToLower(strings.TrimSpace(ratingLabel))
+	ratingTitle := strings.ToUpper(ratingDisplay[:1]) + ratingDisplay[1:]
 	return map[string]interface{}{
-		"questionID":  questionID,
-		"prompt":      prompt,
-		"score":       score,
-		"feedback":    strings.TrimSpace(parsed.Feedback),
-		"fsrsRating":  ratingLabel,
-		"reviewLogID": reviewLog.ID,
-	}
+		"fsrs_rating":    ratingTitle,
+		"scheduled_days": nextState.ScheduledDays,
+		"next_review_at": time.Unix(dueAt, 0).Format(time.RFC3339),
+		"review_log_id":  reviewLog.ID,
+	}, nil
+}
+
+func applyAssessmentReviewTx(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error) {
+	return applyAssessmentReviewCore(topicID, activityType, referenceID, ratingLabel,
+		func(actType, refID string) (*db.AssessmentFSRSRecord, error) {
+			return db.GetAssessmentFSRSStateTx(tx, actType, refID)
+		},
+		func(actType, refID, tID string, state models.FlashcardState, dueAt, now int64, log models.FSRSReviewLog) error {
+			return db.UpsertAssessmentFSRSReviewTx(tx, actType, refID, tID, state, dueAt, now, log)
+		},
+	)
 }
 
 // buildContextString builds a context string from sections with truncation limits
@@ -1234,18 +1730,74 @@ func buildContextString(sections []map[string]interface{}, maxSections, maxConte
 	return b.String()
 }
 
-func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
+// Quiz generation configuration thresholds and counts
+var (
+	// Token thresholds for scaling - can be overridden by environment variables
+	QuizTokenThresholdLow    = getEnvInt("QUIZ_TOKEN_THRESHOLD_LOW", 600)
+	QuizTokenThresholdMedium = getEnvInt("QUIZ_TOKEN_THRESHOLD_MEDIUM", 1500)
+	QuizTokenThresholdHigh   = getEnvInt("QUIZ_TOKEN_THRESHOLD_HIGH", 3000)
+
+	// Question counts for each threshold level - can be overridden by environment variables
+	QuizQuestionCountLow    = getEnvInt("QUIZ_QUESTION_COUNT_LOW", 3)
+	QuizQuestionCountMedium = getEnvInt("QUIZ_QUESTION_COUNT_MEDIUM", 5)
+	QuizQuestionCountHigh   = getEnvInt("QUIZ_QUESTION_COUNT_HIGH", 7)
+	QuizQuestionCountMax    = getEnvInt("QUIZ_QUESTION_COUNT_MAX", 10)
+
+	// Flashcard counts for each threshold level - can be overridden by environment variables
+	FlashcardCountLow    = getEnvInt("FLASHCARD_COUNT_LOW", 5)
+	FlashcardCountMedium = getEnvInt("FLASHCARD_COUNT_MEDIUM", 8)
+	FlashcardCountHigh   = getEnvInt("FLASHCARD_COUNT_HIGH", 12)
+	FlashcardCountMax    = getEnvInt("FLASHCARD_COUNT_MAX", 16)
+)
+
+// getEnvInt reads an integer from environment variable with fallback to default
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func scaledQuizQuestionCount(totalChunkTokens int) int {
+	switch {
+	case totalChunkTokens <= QuizTokenThresholdLow:
+		return QuizQuestionCountLow
+	case totalChunkTokens <= QuizTokenThresholdMedium:
+		return QuizQuestionCountMedium
+	case totalChunkTokens <= QuizTokenThresholdHigh:
+		return QuizQuestionCountHigh
+	default:
+		return QuizQuestionCountMax
+	}
+}
+
+func scaledFlashcardCount(totalChunkTokens int) int {
+	switch {
+	case totalChunkTokens <= QuizTokenThresholdLow:
+		return FlashcardCountLow
+	case totalChunkTokens <= QuizTokenThresholdMedium:
+		return FlashcardCountMedium
+	case totalChunkTokens <= QuizTokenThresholdHigh:
+		return FlashcardCountHigh
+	default:
+		return FlashcardCountMax
+	}
+}
+
+func buildQuizPrompt(topicID string, sections []map[string]interface{}, totalChunkTokens int, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 5 multiple-choice questions for topic: ")
+	fmt.Fprintf(&b, "Generate exactly %d multiple-choice questions for topic: ", targetCount)
 	b.WriteString(topicID)
+	fmt.Fprintf(&b, "\nMaterial density estimate: %d chunk tokens.", totalChunkTokens)
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string}]}\n")
 	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
 	b.WriteString("Cover different concepts and question types. AVOID repetition.\n")
-	b.WriteString("Required mix:\n")
-	b.WriteString("  - 1–2 definitional/recall questions\n")
-	b.WriteString("  - 2–3 application/analysis questions (test understanding, not just memory)\n")
-	b.WriteString("  - 1 misconception/tricky question (common student errors)\n")
+	b.WriteString("Scale the mix to the requested count.\n")
+	b.WriteString("- Include recall, application/analysis, and one misconception/tricky question when count allows.\n")
+	b.WriteString("- For very small sets, maximize concept coverage instead of forcing rigid proportions.\n")
 	b.WriteString("\n=== DISTRACTORS ===\n")
 	b.WriteString("- Make wrong options plausible and specific (not obviously wrong).\n")
 	b.WriteString("- Common misconceptions as distractors are encouraged.\n")
@@ -1262,12 +1814,13 @@ func buildQuizPrompt(topicID string, sections []map[string]interface{}) string {
 	return b.String()
 }
 
-func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string) (string, error) {
+func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage int, contextEndPage int, parentPassages []string, totalChunkTokens int, targetCount int) (string, error) {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 5 multiple-choice questions for this completed reading session.\n")
+	fmt.Fprintf(&b, "Generate exactly %d multiple-choice questions for this completed reading session.\n", targetCount)
 	b.WriteString("Topic ID: ")
 	b.WriteString(topicID)
+	fmt.Fprintf(&b, "\nMaterial density estimate: %d chunk tokens.", totalChunkTokens)
 	b.WriteString("\nLocked completion window: pages ")
 	fmt.Fprintf(&b, "%d-%d", startPage, targetPage)
 	b.WriteString("\nAssessment context window: pages ")
@@ -1277,11 +1830,11 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	}
 	b.WriteString("\nJSON format: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string,\"explanation\":string,\"hint\":string,\"source_heading\":string,\"source_snippet\":string,\"source_page_start\":number,\"source_page_end\":number}]}\n")
 	b.WriteString("Rules:\n")
-	b.WriteString("- Return exactly 5 questions.\n")
+	fmt.Fprintf(&b, "- Return exactly %d questions.\n", targetCount)
 	b.WriteString("- correct_answer must match one option exactly.\n")
 	b.WriteString("- Keep all questions grounded in the context below.\n")
 	b.WriteString("- source_page_start/source_page_end must be within the context window.\n")
-	b.WriteString("- Cover definitions, application, and one misconception.\n")
+	b.WriteString("- Scale the mix to the requested count and cover definitions, application, and one misconception when count allows.\n")
 	b.WriteString("\nContext chunks (ordered):\n")
 
 	// Reserve tokens for system prompt and instructions (estimated 300 tokens)
@@ -1345,11 +1898,12 @@ func buildReaderCompletionQuizPrompt(topicID string, startPage int, targetPage i
 	return b.String(), nil
 }
 
-func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) string {
+func buildFlashcardPrompt(topicID string, sections []map[string]interface{}, totalChunkTokens int, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
-	b.WriteString("Generate exactly 8 flashcards for topic: ")
+	fmt.Fprintf(&b, "Generate exactly %d flashcards for topic: ", targetCount)
 	b.WriteString(topicID)
+	fmt.Fprintf(&b, "\nMaterial density estimate: %d chunk tokens.", totalChunkTokens)
 	b.WriteString("\nJSON format: {\"cards\":[{\"prompt\":string,\"answer\":string}]}\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
 	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")
@@ -1359,9 +1913,8 @@ func buildFlashcardPrompt(topicID string, sections []map[string]interface{}) str
 	b.WriteString("- Make prompts specific and testable (not vague).\n")
 	b.WriteString("- Example bad: 'What is X?' → Example good: 'What is the purpose of X in context Y?'\n")
 	b.WriteString("\n=== DIFFICULTY DISTRIBUTION (CRITICAL) ===\n")
-	b.WriteString("- 3 cards: Basic (definitions, key terms, simple facts)\n")
-	b.WriteString("- 3 cards: Intermediate (relationships, processes, mechanisms)\n")
-	b.WriteString("- 2 cards: Challenging (applications, synthesis, edge cases)\n")
+	b.WriteString("- Scale difficulty to the requested count.\n")
+	b.WriteString("- Include basic, intermediate, and challenging cards with broader coverage as count increases.\n")
 	b.WriteString("\n=== ANSWER QUALITY ===\n")
 	b.WriteString("- Answers must be short (1–2 sentences max, grounded in source).\n")
 	b.WriteString("- Include terminology but keep accessible.\n")
@@ -1475,13 +2028,27 @@ func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse,
 func providerModelName(provider llmProviderInterface) string {
 	typed, ok := provider.(interface{ ModelName() string })
 	if !ok {
-		return ""
+		return "unknown-model"
 	}
-	return strings.TrimSpace(typed.ModelName())
+	modelName := strings.TrimSpace(typed.ModelName())
+	if modelName == "" {
+		return "unknown-model"
+	}
+	return modelName
 }
 
 func normalizeHeadingKey(heading string) string {
-	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(heading)), " "))
+	if heading == "" {
+		return ""
+	}
+
+	// Remove non-alphanumeric characters except spaces, then normalize whitespace
+	cleaned := strings.FieldsFunc(strings.TrimSpace(heading), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != ' '
+	})
+
+	normalized := strings.ToLower(strings.Join(cleaned, " "))
+	return normalized
 }
 
 func normalizeQuizAnswer(answer string, options []string) string {
@@ -1666,25 +2233,13 @@ func mapReviewRating(rating string) (int, bool) {
 	}
 }
 
-func topicIDFromShortAnswerQuestionID(questionID string) (string, bool) {
-	parts := strings.SplitN(questionID, ":", 2)
-	if len(parts) != 2 {
-		return "", false
-	}
-	topicID := strings.TrimSpace(parts[0])
-	if topicID == "" {
-		return "", false
-	}
-	return topicID, true
-}
-
 func shortAnswerScoreToFSRSRating(score int) (string, int) {
 	switch {
-	case score <= 4:
+	case score <= 3:
 		return "again", scheduler.Again
-	case score <= 7:
+	case score <= 5:
 		return "hard", scheduler.Hard
-	case score <= 9:
+	case score <= 8:
 		return "good", scheduler.Good
 	default:
 		return "easy", scheduler.Easy

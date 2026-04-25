@@ -306,6 +306,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	})
 
 	_ = db.UpdateNotebookStatus(notebookID, status)
+	a.requestPrebuildRefresh()
 	return map[string]interface{}{
 		"success":     true,
 		"status":      status,

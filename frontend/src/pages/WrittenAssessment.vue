@@ -8,7 +8,11 @@
         <span>Notebook</span>
         <select v-model="selectedNotebookID" @change="onNotebookChange">
           <option disabled value="">Select a notebook</option>
-          <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
+          <option
+            v-for="notebook in notebookTree"
+            :key="notebook.notebook_id"
+            :value="notebook.notebook_id"
+          >
             {{ notebook.title }}
           </option>
         </select>
@@ -69,6 +73,7 @@
       <section v-if="scoreResult" class="feedback" :class="ratingClass(scoreResult.fsrsRating)">
         <h3>Score {{ scoreResult.score }}/10 · {{ formatRating(scoreResult.fsrsRating) }}</h3>
         <p>{{ scoreResult.feedback }}</p>
+        <p class="meta-line">Next Review: {{ formatNextReview(scoreResult.nextReviewAt) }}</p>
 
         <div class="actions">
           <button class="ghost" :disabled="isGenerating" @click="onClear">Clear</button>
@@ -81,7 +86,9 @@
 
     <article v-else-if="!isGenerating" class="panel">
       <h2>Ready to practice</h2>
-      <p v-if="notebookTree.length === 0">Upload a notebook to start generating written assessments.</p>
+      <p v-if="notebookTree.length === 0">
+        Upload a notebook to start generating written assessments.
+      </p>
       <p v-else-if="selectedNotebook && availableTopics.length === 0">
         This notebook has no topics yet. Wait for extraction to finish or choose another notebook.
       </p>
@@ -93,7 +100,12 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { generateShortAnswerPrompt, getNotebookTopicTree, scoreShortAnswer } from '../services/appApi'
+import { formatRating, formatNextReview } from '@/utils/formatting'
+import {
+  generateShortAnswerPrompt,
+  getNotebookTopicTree,
+  scoreShortAnswer,
+} from '../services/appApi'
 
 const route = useRoute()
 
@@ -107,12 +119,15 @@ const errorMessage = ref('')
 const isGenerating = ref(false)
 const isScoring = ref(false)
 
-const selectedNotebook = computed(() =>
-  notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
+const selectedNotebook = computed(
+  () =>
+    notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
 )
 const availableTopics = computed(() => selectedNotebook.value?.topics || [])
 const canGenerate = computed(() => selectedTopicID.value !== '')
-const canSubmitAnswer = computed(() => userAnswer.value.trim().length > 0 && questionState.value !== null)
+const canSubmitAnswer = computed(
+  () => userAnswer.value.trim().length > 0 && questionState.value !== null
+)
 
 watch(selectedTopicID, () => {
   resetAssessmentState()
@@ -184,19 +199,16 @@ async function onSubmitAnswer() {
   isScoring.value = true
   errorMessage.value = ''
   try {
-    const result = await scoreShortAnswer(
-      questionState.value.questionID,
-      questionState.value.prompt,
-      userAnswer.value.trim()
-    )
+    const result = await scoreShortAnswer(questionState.value.questionID, userAnswer.value.trim())
     if (result?.error) {
       errorMessage.value = result.error
       return
     }
     scoreResult.value = {
       score: Number(result.score || 0),
-      fsrsRating: String(result.fsrsRating || ''),
+      fsrsRating: String(result.fsrsRating || result.fsrs_rating || ''),
       feedback: String(result.feedback || ''),
+      nextReviewAt: String(result.next_review_at || ''),
     }
   } catch (err) {
     errorMessage.value = err?.message || 'Failed to score short answer'
@@ -250,15 +262,6 @@ function getPreferredTopicID() {
     return route.query.topic
   }
   return ''
-}
-
-function formatRating(raw) {
-  const value = String(raw || '').toLowerCase()
-  if (value === 'again') return 'Again'
-  if (value === 'hard') return 'Hard'
-  if (value === 'good') return 'Good'
-  if (value === 'easy') return 'Easy'
-  return 'Unrated'
 }
 
 function ratingClass(raw) {
@@ -416,6 +419,11 @@ p {
 
 .feedback h3 {
   margin: 0;
+}
+
+.meta-line {
+  color: #2f334a;
+  font-weight: 600;
 }
 
 .feedback.bad {

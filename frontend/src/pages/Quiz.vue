@@ -8,7 +8,11 @@
         <span>Notebook</span>
         <select v-model="selectedNotebookID" @change="onNotebookChange">
           <option disabled value="">Select a notebook</option>
-          <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
+          <option
+            v-for="notebook in notebookTree"
+            :key="notebook.notebook_id"
+            :value="notebook.notebook_id"
+          >
             {{ notebook.title }}
           </option>
         </select>
@@ -52,11 +56,17 @@
         </label>
       </fieldset>
 
-      <div v-if="feedbackVisible && scoreResult" class="feedback" :class="scoreResult.correct ? 'good' : 'bad'">
+      <div
+        v-if="feedbackVisible && scoreResult"
+        class="feedback"
+        :class="scoreResult.correct ? 'good' : 'bad'"
+      >
         <h3>{{ scoreResult.correct ? 'Correct' : 'Not quite' }} · Score {{ scoreResult.score }}</h3>
         <p>{{ scoreResult.feedback }}</p>
         <p class="hint">Hint: {{ scoreResult.hint }}</p>
         <p v-if="!scoreResult.correct" class="expected">Expected: {{ scoreResult.expected }}</p>
+        <p class="meta">Rating: {{ formatRating(scoreResult.fsrsRating) }}</p>
+        <p class="meta">Next Review: {{ formatNextReview(scoreResult.nextReviewAt) }}</p>
       </div>
 
       <footer class="actions">
@@ -95,6 +105,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { generateQuiz, getNotebookTopicTree, scoreAnswer } from '../services/appApi'
+import { formatRating, formatNextReview } from '@/utils/formatting'
 
 const route = useRoute()
 
@@ -111,8 +122,9 @@ const isGenerating = ref(false)
 const isScoring = ref(false)
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
-const selectedNotebook = computed(() =>
-  notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
+const selectedNotebook = computed(
+  () =>
+    notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
 )
 const availableTopics = computed(() => selectedNotebook.value?.topics || [])
 const canGenerateQuiz = computed(() => selectedTopicID.value !== '')
@@ -178,7 +190,11 @@ async function onSubmitAnswer() {
       errorMessage.value = result.error
       return
     }
-    scoreResult.value = result
+    scoreResult.value = {
+      ...result,
+      fsrsRating: String(result.fsrsRating || result.fsrs_rating || ''),
+      nextReviewAt: String(result.next_review_at || ''),
+    }
     feedbackVisible.value = true
   } catch (err) {
     errorMessage.value = err?.message || 'Failed to score answer'
@@ -237,6 +253,7 @@ function onNext() {
     feedbackVisible.value = false
   }
 }
+
 </script>
 
 <style scoped>
@@ -386,6 +403,11 @@ p {
 .hint,
 .expected {
   color: #2f334a;
+}
+
+.meta {
+  color: #2f334a;
+  font-weight: 600;
 }
 
 .actions {
