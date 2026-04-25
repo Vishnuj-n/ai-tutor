@@ -51,6 +51,23 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 		return err
 	}
 
+	// Clean up assessment entries for the questions being deleted
+	if _, err = tx.Exec(`
+		DELETE FROM assessment_fsrs
+		WHERE activity_type = 'quiz_question' 
+		AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
+	`, topicID); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(`
+		DELETE FROM fsrs_review_log
+		WHERE activity_type = 'quiz_question' 
+		AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
+	`, topicID); err != nil {
+		return err
+	}
+
 	// Now safe to delete the questions
 	if _, err = tx.Exec(`DELETE FROM questions WHERE topic_id = ?`, topicID); err != nil {
 		return err
