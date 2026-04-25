@@ -57,12 +57,14 @@ type App struct {
 	prebuildDirty     map[string]bool
 	quizGenMu         sync.Mutex
 	quizGenInFlight   map[string]bool
+	quizGenDone       map[string]chan struct{} // notification channels for quiz generation completion
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
 		quizGenInFlight: make(map[string]bool),
+		quizGenDone:     make(map[string]chan struct{}),
 	}
 }
 
@@ -689,11 +691,17 @@ func (a *App) GetOrCreateQuestionsForTopic(topicID string) map[string]interface{
 
 	// Check if already in flight
 	if a.quizGenInFlight[topicID] {
+		// Create notification channel if it doesn't exist
+		if _, exists := a.quizGenDone[topicID]; !exists {
+			a.quizGenDone[topicID] = make(chan struct{})
+		}
+		doneChan := a.quizGenDone[topicID]
 		a.quizGenMu.Unlock()
 
-		// Wait for generation to complete and return result
-		for i := 0; i < 50; i++ { // Max 5 seconds wait
-			time.Sleep(100 * time.Millisecond)
+		// Wait for generation to complete using select with timeout
+		select {
+		case <-doneChan:
+			// Generation completed, fetch the results
 			existingQuestions, err = db.GetQuestionsForTopic(topicID)
 			if err == nil && len(existingQuestions) > 0 {
 				return map[string]interface{}{
@@ -702,19 +710,28 @@ func (a *App) GetOrCreateQuestionsForTopic(topicID string) map[string]interface{
 					"existing":  true,
 				}
 			}
+			return map[string]interface{}{"error": "quiz generation completed but no questions found"}
+		case <-time.After(5 * time.Second):
+			return map[string]interface{}{"error": "quiz generation timed out"}
 		}
-
-		return map[string]interface{}{"error": "quiz generation timed out"}
 	}
 
-	// Mark as in flight
+	// Mark as in flight and create notification channel
 	a.quizGenInFlight[topicID] = true
+	if _, exists := a.quizGenDone[topicID]; !exists {
+		a.quizGenDone[topicID] = make(chan struct{})
+	}
+	doneChan := a.quizGenDone[topicID]
 	a.quizGenMu.Unlock()
 
 	// Generate questions (this is the critical section)
 	defer func() {
+		// Notify waiting goroutines that generation is complete
+		close(doneChan)
+
 		a.quizGenMu.Lock()
 		delete(a.quizGenInFlight, topicID)
+		delete(a.quizGenDone, topicID)
 		a.quizGenMu.Unlock()
 	}()
 
@@ -823,7 +840,70 @@ func (a *App) generateQuestionsForTopic(topicID string) map[string]interface{} {
 		if diff < -1 || diff > 1 {
 			if retryCount < maxRetries {
 				retryCount++
-				// Regenerate questions (simplified retry - in practice might need to call generation function again)
+				// Regenerate questions by calling LLM again
+				raw, err := a.fastLLMProvider.GenerateAnswer(prompt)
+				if err != nil {
+					return map[string]interface{}{"error": "quiz generation retry failed: " + err.Error()}
+				}
+
+				parsed, err := parseQuizLLMResponse(raw)
+				if err != nil {
+					return map[string]interface{}{"error": "quiz generation retry parsing failed: " + err.Error()}
+				}
+
+				// Rebuild questions from new parsed response
+				questions = make([]models.QuizQuestion, 0, len(parsed.Questions))
+				for _, q := range parsed.Questions {
+					if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" {
+						continue
+					}
+
+					// Validate CorrectAnswer matches one of the Options (case-insensitive, whitespace-normalized)
+					correctAnswerCanonical := strings.TrimSpace(strings.ToLower(q.CorrectAnswer))
+					var matchedOption string
+					for _, opt := range q.Options {
+						optCanonical := strings.TrimSpace(strings.ToLower(opt))
+						if optCanonical == correctAnswerCanonical {
+							matchedOption = strings.TrimSpace(opt)
+							break
+						}
+					}
+					if matchedOption == "" {
+						continue
+					}
+
+					sourcePageStart := q.SourcePageStart
+					sourcePageEnd := q.SourcePageEnd
+					if sourcePageStart <= 0 || sourcePageEnd <= 0 || sourcePageEnd < sourcePageStart {
+						rangeByHeading, ok := headingPageRanges[normalizeHeadingKey(q.SourceHeading)]
+						if ok {
+							sourcePageStart = rangeByHeading[0]
+							sourcePageEnd = rangeByHeading[1]
+						}
+					}
+					if sourcePageStart > 0 && sourcePageEnd <= 0 {
+						sourcePageEnd = sourcePageStart
+					}
+					if sourcePageEnd > 0 && sourcePageStart <= 0 {
+						sourcePageStart = sourcePageEnd
+					}
+
+					questions = append(questions, models.QuizQuestion{
+						ID:              uuid.NewString(),
+						TopicID:         topicID,
+						Prompt:          strings.TrimSpace(q.Prompt),
+						Options:         q.Options,
+						CorrectAnswer:   matchedOption,
+						Explanation:     strings.TrimSpace(q.Explanation),
+						Hint:            strings.TrimSpace(q.Hint),
+						SourceHeading:   strings.TrimSpace(q.SourceHeading),
+						SourceSnippet:   strings.TrimSpace(q.SourceSnippet),
+						SourcePageStart: sourcePageStart,
+						SourcePageEnd:   sourcePageEnd,
+						LLMModel:        modelName,
+						PromptVersion:   "quiz-v2-density",
+					})
+				}
 				continue
 			}
 			return map[string]interface{}{
@@ -1028,15 +1108,16 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "failed to load existing flashcards: " + err.Error()}
 	}
 	if len(existingCards) > 0 {
-		states := make(map[string]models.FlashcardState, len(existingCards))
-		for _, card := range existingCards {
-			_, state, getErr := db.GetFlashcardByID(card.ID)
-			if getErr != nil {
-				return map[string]interface{}{"error": "failed to load existing flashcard state: " + getErr.Error()}
-			}
-			if state != nil {
-				states[card.ID] = *state
-			}
+		// Extract card IDs for batch query
+		cardIDs := make([]string, len(existingCards))
+		for i, card := range existingCards {
+			cardIDs[i] = card.ID
+		}
+
+		// Batch fetch all states at once
+		states, getErr := db.GetFlashcardStatesByIDs(cardIDs)
+		if getErr != nil {
+			return map[string]interface{}{"error": "failed to load existing flashcard states: " + getErr.Error()}
 		}
 
 		return map[string]interface{}{
@@ -1307,11 +1388,9 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		"user_answer":    score.UserAnswer,
 		"source_heading": score.SourceHeading,
 		"fsrs_rating":    fsrsResult["fsrs_rating"],
-		"fsrsRating":     fsrsResult["fsrsRating"],
 		"scheduled_days": fsrsResult["scheduled_days"],
 		"next_review_at": fsrsResult["next_review_at"],
 		"review_log_id":  fsrsResult["review_log_id"],
-		"reviewLogID":    fsrsResult["reviewLogID"],
 	}
 }
 
@@ -1465,18 +1544,17 @@ Student answer: %s`, question.Prompt, userAnswer)
 	committed = true
 
 	return map[string]interface{}{
-		"questionID":        question.ID,
+		"question_id":       question.ID,
 		"prompt":            question.Prompt,
 		"score":             score,
 		"feedback":          strings.TrimSpace(parsed.Feedback),
 		"fsrs_rating":       fsrsResult["fsrs_rating"],
-		"fsrsRating":        fsrsResult["fsrsRating"],
 		"scheduled_days":    fsrsResult["scheduled_days"],
 		"next_review_at":    fsrsResult["next_review_at"],
 		"review_log_id":     fsrsResult["review_log_id"],
-		"reviewLogID":       fsrsResult["reviewLogID"],
 		"source_page_start": question.SourcePageStart,
 		"source_page_end":   question.SourcePageEnd,
+		"source_heading":    question.SourceHeading,
 	}
 }
 
@@ -1514,7 +1592,7 @@ func resolveWrittenQuestionLineage(topicID string, citedSections []string) (stri
 
 func applyAssessmentReviewCore(
 	topicID, activityType, referenceID, ratingLabel string,
-	getStateFunc func(string, string) (db.AssessmentFSRSState, error),
+	getStateFunc func(string, string) (*db.AssessmentFSRSRecord, error),
 	upsertFunc func(string, string, string, models.FlashcardState, int64, int64, models.FSRSReviewLog) error,
 ) (map[string]interface{}, error) {
 	ratingCode, ok := mapReviewRating(strings.ToLower(strings.TrimSpace(ratingLabel)))
@@ -1575,23 +1653,18 @@ func applyAssessmentReviewCore(
 	}
 
 	ratingDisplay := strings.ToLower(strings.TrimSpace(ratingLabel))
-	if ratingDisplay == "" {
-		ratingDisplay = "again"
-	}
 	ratingTitle := strings.ToUpper(ratingDisplay[:1]) + ratingDisplay[1:]
 	return map[string]interface{}{
 		"fsrs_rating":    ratingTitle,
-		"fsrsRating":     ratingTitle,
 		"scheduled_days": nextState.ScheduledDays,
 		"next_review_at": time.Unix(dueAt, 0).Format(time.RFC3339),
 		"review_log_id":  reviewLog.ID,
-		"reviewLogID":    reviewLog.ID,
 	}, nil
 }
 
 func applyAssessmentReviewTx(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error) {
 	return applyAssessmentReviewCore(topicID, activityType, referenceID, ratingLabel,
-		func(actType, refID string) (db.AssessmentFSRSState, error) {
+		func(actType, refID string) (*db.AssessmentFSRSRecord, error) {
 			return db.GetAssessmentFSRSStateTx(tx, actType, refID)
 		},
 		func(actType, refID, tID string, state models.FlashcardState, dueAt, now int64, log models.FSRSReviewLog) error {
@@ -1642,29 +1715,49 @@ func buildContextString(sections []map[string]interface{}, maxSections, maxConte
 	return b.String()
 }
 
+// Quiz generation configuration thresholds and counts
+const (
+	// Token thresholds for scaling
+	QuizTokenThresholdLow    = 600
+	QuizTokenThresholdMedium = 1500
+	QuizTokenThresholdHigh   = 3000
+
+	// Question counts for each threshold level
+	QuizQuestionCountLow    = 3
+	QuizQuestionCountMedium = 5
+	QuizQuestionCountHigh   = 7
+	QuizQuestionCountMax    = 10
+
+	// Flashcard counts for each threshold level
+	FlashcardCountLow    = 5
+	FlashcardCountMedium = 8
+	FlashcardCountHigh   = 12
+	FlashcardCountMax    = 16
+)
+
 func scaledQuizQuestionCount(totalChunkTokens int) int {
 	switch {
-	case totalChunkTokens <= 600:
-		return 3
-	case totalChunkTokens <= 1500:
-		return 5
-	case totalChunkTokens <= 3000:
-		return 7
+	case totalChunkTokens <= QuizTokenThresholdLow:
+		return QuizQuestionCountLow
+	case totalChunkTokens <= QuizTokenThresholdMedium:
+		return QuizQuestionCountMedium
+	case totalChunkTokens <= QuizTokenThresholdHigh:
+		return QuizQuestionCountHigh
 	default:
-		return 10
+		return QuizQuestionCountMax
 	}
 }
 
 func scaledFlashcardCount(totalChunkTokens int) int {
 	switch {
-	case totalChunkTokens <= 600:
-		return 5
-	case totalChunkTokens <= 1500:
-		return 8
-	case totalChunkTokens <= 3000:
-		return 12
+	case totalChunkTokens <= QuizTokenThresholdLow:
+		return FlashcardCountLow
+	case totalChunkTokens <= QuizTokenThresholdMedium:
+		return FlashcardCountMedium
+	case totalChunkTokens <= QuizTokenThresholdHigh:
+		return FlashcardCountHigh
 	default:
-		return 16
+		return FlashcardCountMax
 	}
 }
 

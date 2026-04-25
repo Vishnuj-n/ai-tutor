@@ -9,43 +9,36 @@ import (
 	"ai-tutor/internal/models"
 )
 
-// AssessmentFSRSState represents the shared FSRS state for an assessment
-type AssessmentFSRSState interface {
-	GetTopicID() string
-	GetState() models.FlashcardState
-	GetDueAt() int64
-	GetLastReviewedAt() int64
-}
-
-type assessmentFSRSRecord struct {
+// AssessmentFSRSRecord represents the shared FSRS state for an assessment
+type AssessmentFSRSRecord struct {
 	TopicID        string
 	State          models.FlashcardState
 	DueAt          int64
 	LastReviewedAt int64
 }
 
-func (r *assessmentFSRSRecord) GetTopicID() string {
+func (r *AssessmentFSRSRecord) GetTopicID() string {
 	if r == nil {
 		return ""
 	}
 	return r.TopicID
 }
 
-func (r *assessmentFSRSRecord) GetState() models.FlashcardState {
+func (r *AssessmentFSRSRecord) GetState() models.FlashcardState {
 	if r == nil {
 		return models.FlashcardState{}
 	}
 	return r.State
 }
 
-func (r *assessmentFSRSRecord) GetDueAt() int64 {
+func (r *AssessmentFSRSRecord) GetDueAt() int64 {
 	if r == nil {
 		return 0
 	}
 	return r.DueAt
 }
 
-func (r *assessmentFSRSRecord) GetLastReviewedAt() int64 {
+func (r *AssessmentFSRSRecord) GetLastReviewedAt() int64 {
 	if r == nil {
 		return 0
 	}
@@ -87,15 +80,18 @@ func getWrittenQuestionByIDRepo(questionID string) (*models.WrittenQuestion, err
 	return &question, nil
 }
 
-func getAssessmentFSRSStateRepo(activityType, referenceID string) (*assessmentFSRSRecord, error) {
-	if conn == nil {
-		return nil, fmt.Errorf("database not initialized")
-	}
+// querier interface allows both *sql.DB and *sql.Tx to be used with the helper function
+type querier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// getAssessmentFSRSStateFromQuerier extracts FSRS state using any querier (DB or transaction)
+func getAssessmentFSRSStateFromQuerier(q querier, activityType, referenceID string) (*AssessmentFSRSRecord, error) {
 	var topicID string
 	var stateJSON string
 	var dueAt sql.NullInt64
 	var lastReviewedAt sql.NullInt64
-	err := conn.QueryRow(`
+	err := q.QueryRow(`
 		SELECT topic_id, state_json, due_at, last_reviewed_at
 		FROM assessment_fsrs
 		WHERE activity_type = ? AND reference_id = ?
@@ -114,13 +110,20 @@ func getAssessmentFSRSStateRepo(activityType, referenceID string) (*assessmentFS
 		}
 	}
 
-	record := &assessmentFSRSRecord{
+	record := &AssessmentFSRSRecord{
 		TopicID:        topicID,
 		State:          state,
 		DueAt:          dueAt.Int64,
 		LastReviewedAt: lastReviewedAt.Int64,
 	}
 	return record, nil
+}
+
+func getAssessmentFSRSStateRepo(activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	return getAssessmentFSRSStateFromQuerier(conn, activityType, referenceID)
 }
 
 func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
@@ -143,7 +146,8 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID string, s
 		}
 	}()
 
-	if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, topicID).Scan(&topicID); err != nil {
+	var existingID string
+	if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, topicID).Scan(&existingID); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("topic not found: %s", topicID)
 		}
@@ -181,40 +185,11 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID string, s
 	return nil
 }
 
-func getAssessmentFSRSStateRepoTx(tx *sql.Tx, activityType, referenceID string) (*assessmentFSRSRecord, error) {
+func getAssessmentFSRSStateRepoTx(tx *sql.Tx, activityType, referenceID string) (*AssessmentFSRSRecord, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("transaction not initialized")
 	}
-	var topicID string
-	var stateJSON string
-	var dueAt sql.NullInt64
-	var lastReviewedAt sql.NullInt64
-	err := tx.QueryRow(`
-		SELECT topic_id, state_json, due_at, last_reviewed_at
-		FROM assessment_fsrs
-		WHERE activity_type = ? AND reference_id = ?
-	`, activityType, referenceID).Scan(&topicID, &stateJSON, &dueAt, &lastReviewedAt)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var state models.FlashcardState
-	if strings.TrimSpace(stateJSON) != "" {
-		if err := json.Unmarshal([]byte(stateJSON), &state); err != nil {
-			return nil, fmt.Errorf("decode assessment fsrs state: %w", err)
-		}
-	}
-
-	record := &assessmentFSRSRecord{
-		TopicID:        topicID,
-		State:          state,
-		DueAt:          dueAt.Int64,
-		LastReviewedAt: lastReviewedAt.Int64,
-	}
-	return record, nil
+	return getAssessmentFSRSStateFromQuerier(tx, activityType, referenceID)
 }
 
 func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
@@ -226,7 +201,8 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 		return fmt.Errorf("encode assessment fsrs state: %w", err)
 	}
 
-	if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, topicID).Scan(&topicID); err != nil {
+	var existingID string
+	if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, topicID).Scan(&existingID); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("topic not found: %s", topicID)
 		}

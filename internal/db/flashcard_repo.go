@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"ai-tutor/internal/models"
 )
@@ -126,6 +127,58 @@ func getFlashcardByIDRepo(cardID string) (*models.Flashcard, *models.FlashcardSt
 	}
 
 	return &card, &state, nil
+}
+
+// getFlashcardStatesByIDsRepo returns a map of flashcard states keyed by card ID for the given card IDs
+func getFlashcardStatesByIDsRepo(cardIDs []string) (map[string]models.FlashcardState, error) {
+	if len(cardIDs) == 0 {
+		return make(map[string]models.FlashcardState), nil
+	}
+
+	// Create placeholders for the IN clause
+	placeholders := make([]string, len(cardIDs))
+	args := make([]interface{}, len(cardIDs))
+	for i, id := range cardIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, state_json
+		FROM fsrs_cards
+		WHERE id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	states := make(map[string]models.FlashcardState)
+	for rows.Next() {
+		var cardID string
+		var stateJSON sql.NullString
+
+		if err := rows.Scan(&cardID, &stateJSON); err != nil {
+			return nil, err
+		}
+
+		state := models.FlashcardState{}
+		if stateJSON.Valid && stateJSON.String != "" {
+			if unmarshalErr := json.Unmarshal([]byte(stateJSON.String), &state); unmarshalErr != nil {
+				return nil, fmt.Errorf("failed to decode flashcard state for %s: %w", cardID, unmarshalErr)
+			}
+		}
+
+		states[cardID] = state
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return states, nil
 }
 
 func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
