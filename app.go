@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -54,11 +55,15 @@ type App struct {
 	prebuildQueue     chan string
 	prebuildInFlight  map[string]bool
 	prebuildDirty     map[string]bool
+	quizGenMu         sync.Mutex
+	quizGenInFlight   map[string]bool
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		quizGenInFlight: make(map[string]bool),
+	}
 }
 
 // startup is called when the app starts. The context is saved
@@ -635,18 +640,19 @@ type shortAnswerScoreLLMResponse struct {
 	Feedback string `json:"feedback"`
 }
 
-// GenerateQuiz creates topic-scoped multiple-choice questions and stores them.
-// Existing generated sets are returned as-is to protect user progress.
+// GenerateQuiz creates and stores a complete quiz for a topic.
 func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
 
-	if a.fastLLMProvider == nil {
-		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
-	}
+	return a.GetOrCreateQuestionsForTopic(topicID)
+}
 
+// GetOrCreateQuestionsForTopic atomically gets existing questions or generates new ones
+func (a *App) GetOrCreateQuestionsForTopic(topicID string) map[string]interface{} {
+	// First check if questions already exist
 	existingQuestions, err := db.GetQuestionsForTopic(topicID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
@@ -657,6 +663,67 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			"questions": existingQuestions,
 			"existing":  true,
 		}
+	}
+
+	// Use coordination to prevent concurrent generation
+	a.quizGenMu.Lock()
+	if a.quizGenInFlight == nil {
+		a.quizGenInFlight = make(map[string]bool)
+	}
+
+	// Double-check after acquiring lock
+	existingQuestions, err = db.GetQuestionsForTopic(topicID)
+	if err != nil {
+		a.quizGenMu.Unlock()
+		return map[string]interface{}{"error": "failed to load existing quiz questions: " + err.Error()}
+	}
+	if len(existingQuestions) > 0 {
+		a.quizGenMu.Unlock()
+		return map[string]interface{}{
+			"topic_id":  topicID,
+			"questions": existingQuestions,
+			"existing":  true,
+		}
+	}
+
+	// Check if already in flight
+	if a.quizGenInFlight[topicID] {
+		a.quizGenMu.Unlock()
+
+		// Wait for generation to complete and return result
+		for i := 0; i < 50; i++ { // Max 5 seconds wait
+			time.Sleep(100 * time.Millisecond)
+			existingQuestions, err = db.GetQuestionsForTopic(topicID)
+			if err == nil && len(existingQuestions) > 0 {
+				return map[string]interface{}{
+					"topic_id":  topicID,
+					"questions": existingQuestions,
+					"existing":  true,
+				}
+			}
+		}
+
+		return map[string]interface{}{"error": "quiz generation timed out"}
+	}
+
+	// Mark as in flight
+	a.quizGenInFlight[topicID] = true
+	a.quizGenMu.Unlock()
+
+	// Generate questions (this is the critical section)
+	defer func() {
+		a.quizGenMu.Lock()
+		delete(a.quizGenInFlight, topicID)
+		a.quizGenMu.Unlock()
+	}()
+
+	return a.generateQuestionsForTopic(topicID)
+}
+
+// generateQuestionsForTopic performs the actual quiz generation
+func (a *App) generateQuestionsForTopic(topicID string) map[string]interface{} {
+	if a.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
 	content, err := db.GetTopicContent(topicID)
@@ -710,7 +777,6 @@ func (a *App) GenerateQuiz(topicID string) map[string]interface{} {
 			}
 		}
 		if matchedOption == "" {
-			// Skip question if CorrectAnswer doesn't match any option
 			continue
 		}
 
@@ -800,6 +866,18 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 	}
 	if targetPage < startPage {
 		return map[string]interface{}{"error": "invalid completion window: target page must be >= start page"}
+	}
+
+	// Validate cursor before expensive operations to prevent wasting tokens/latency on rejected windows
+	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
+	}
+	if startPage != currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
+	}
+	if targetPage <= currentCursor {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
 	}
 
 	contextEndPage := targetPage + 1
@@ -892,18 +970,6 @@ func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage i
 		return map[string]interface{}{
 			"error": fmt.Sprintf("completion quiz produced %d valid questions; expected exactly %d", len(questions), expectedQuestionCount),
 		}
-	}
-
-	// Validate cursor before appending questions to prevent replayed/backwards advances
-	currentCursor, err := db.GetTopicCurrentPageCursor(topicID)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch current page cursor: " + err.Error()}
-	}
-	if startPage != currentCursor {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: start page %d does not match current cursor %d", startPage, currentCursor)}
-	}
-	if targetPage <= currentCursor {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid completion window: target page %d must be greater than current cursor %d", targetPage, currentCursor)}
 	}
 
 	nextCursor := targetPage + 1
@@ -1186,7 +1252,20 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		score.Feedback = "That answer is not correct."
 	}
 
-	if err := db.SaveUserAnswer(score); err != nil {
+	// Begin transaction for both SaveUserAnswer and applyAssessmentReview
+	dbConn := db.GetConnection()
+	tx, err := dbConn.Begin()
+	if err != nil {
+		return map[string]interface{}{"error": "failed to begin transaction: " + err.Error()}
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err := db.SaveUserAnswerTx(tx, score); err != nil {
 		return map[string]interface{}{"error": "failed to save score: " + err.Error()}
 	}
 
@@ -1195,10 +1274,15 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		ratingLabel = "good"
 	}
 
-	fsrsResult, err := applyAssessmentReview(question.TopicID, "quiz_question", question.ID, ratingLabel)
+	fsrsResult, err := applyAssessmentReviewTx(tx, question.TopicID, "quiz_question", question.ID, ratingLabel)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to update quiz FSRS: " + err.Error()}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
+	}
+	committed = true
 
 	return map[string]interface{}{
 		"question_id":    score.QuestionID,
@@ -1440,6 +1524,79 @@ func applyAssessmentReview(topicID, activityType, referenceID, ratingLabel strin
 		StateAfterJSON:  string(stateAfterBytes),
 	}
 	if err := db.UpsertAssessmentFSRSReview(activityType, referenceID, topicID, nextState, dueAt, now, reviewLog); err != nil {
+		return nil, err
+	}
+
+	ratingDisplay := strings.ToLower(strings.TrimSpace(ratingLabel))
+	if ratingDisplay == "" {
+		ratingDisplay = "again"
+	}
+	ratingTitle := strings.ToUpper(ratingDisplay[:1]) + ratingDisplay[1:]
+	return map[string]interface{}{
+		"fsrs_rating":    ratingTitle,
+		"fsrsRating":     ratingTitle,
+		"scheduled_days": nextState.ScheduledDays,
+		"next_review_at": time.Unix(dueAt, 0).Format(time.RFC3339),
+		"review_log_id":  reviewLog.ID,
+		"reviewLogID":    reviewLog.ID,
+	}, nil
+}
+
+func applyAssessmentReviewTx(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error) {
+	ratingCode, ok := mapReviewRating(strings.ToLower(strings.TrimSpace(ratingLabel)))
+	if !ok {
+		return nil, fmt.Errorf("invalid assessment rating: %s", ratingLabel)
+	}
+
+	current, err := db.GetAssessmentFSRSStateTx(tx, activityType, referenceID)
+	if err != nil {
+		return nil, err
+	}
+
+	state := models.FlashcardState{}
+	stateBeforeJSON := "{}"
+	if current != nil {
+		state = current.State
+		beforeBytes, err := json.Marshal(state)
+		if err != nil {
+			return nil, err
+		}
+		stateBeforeJSON = string(beforeBytes)
+
+		elapsedDays := 0
+		if current.DueAt > 0 {
+			elapsedSeconds := time.Now().Unix() - current.DueAt
+			if elapsedSeconds > 0 {
+				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+			}
+		}
+		state.ElapsedDays = elapsedDays
+	}
+
+	nextState := scheduler.NextFSRSState(state, ratingCode)
+	now := time.Now().Unix()
+	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
+	if nextState.ScheduledDays == 0 {
+		dueAt = now
+	}
+
+	stateAfterBytes, err := json.Marshal(nextState)
+	if err != nil {
+		return nil, err
+	}
+
+	reviewLog := models.FSRSReviewLog{
+		ID:              uuid.NewString(),
+		TopicID:         topicID,
+		ActivityType:    activityType,
+		ReferenceID:     referenceID,
+		ReviewedAt:      now,
+		Rating:          ratingCode,
+		ScheduledDays:   nextState.ScheduledDays,
+		StateBeforeJSON: stateBeforeJSON,
+		StateAfterJSON:  string(stateAfterBytes),
+	}
+	if err := db.UpsertAssessmentFSRSReviewTx(tx, activityType, referenceID, topicID, nextState, dueAt, now, reviewLog); err != nil {
 		return nil, err
 	}
 
@@ -1957,18 +2114,6 @@ func mapReviewRating(rating string) (int, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func topicIDFromShortAnswerQuestionID(questionID string) (string, bool) {
-	parts := strings.SplitN(questionID, ":", 2)
-	if len(parts) != 2 {
-		return "", false
-	}
-	topicID := strings.TrimSpace(parts[0])
-	if topicID == "" {
-		return "", false
-	}
-	return topicID, true
 }
 
 func shortAnswerScoreToFSRSRating(score int) (string, int) {

@@ -144,3 +144,82 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID string, s
 	committed = true
 	return nil
 }
+
+func getAssessmentFSRSStateRepoTx(tx *sql.Tx, activityType, referenceID string) (*assessmentFSRSRecord, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("transaction not initialized")
+	}
+	var topicID string
+	var stateJSON string
+	var dueAt sql.NullInt64
+	var lastReviewedAt sql.NullInt64
+	err := tx.QueryRow(`
+		SELECT topic_id, state_json, due_at, last_reviewed_at
+		FROM assessment_fsrs
+		WHERE activity_type = ? AND reference_id = ?
+	`, activityType, referenceID).Scan(&topicID, &stateJSON, &dueAt, &lastReviewedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var state models.FlashcardState
+	if strings.TrimSpace(stateJSON) != "" {
+		if err := json.Unmarshal([]byte(stateJSON), &state); err != nil {
+			return nil, fmt.Errorf("decode assessment fsrs state: %w", err)
+		}
+	}
+
+	record := &assessmentFSRSRecord{
+		TopicID:        topicID,
+		State:          state,
+		DueAt:          dueAt.Int64,
+		LastReviewedAt: lastReviewedAt.Int64,
+	}
+	return record, nil
+}
+
+func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+	if tx == nil {
+		return fmt.Errorf("transaction not initialized")
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode assessment fsrs state: %w", err)
+	}
+
+	if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, topicID).Scan(&topicID); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("topic not found: %s", topicID)
+		}
+		return err
+	}
+
+	if _, err = tx.Exec(`
+		INSERT INTO assessment_fsrs (
+			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(activity_type, reference_id) DO UPDATE SET
+			topic_id = excluded.topic_id,
+			state_json = excluded.state_json,
+			due_at = excluded.due_at,
+			last_reviewed_at = excluded.last_reviewed_at,
+			updated_at = CURRENT_TIMESTAMP
+	`, activityType, referenceID, topicID, string(stateJSON), dueAt, reviewedAt); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(`
+		INSERT INTO fsrs_review_log (
+			id, topic_id, activity_type, reference_id, reviewed_at, rating,
+			scheduled_days, state_before_json, state_after_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, reviewLog.ID, topicID, reviewLog.ActivityType, reviewLog.ReferenceID, reviewLog.ReviewedAt,
+		reviewLog.Rating, reviewLog.ScheduledDays, reviewLog.StateBeforeJSON, reviewLog.StateAfterJSON); err != nil {
+		return err
+	}
+
+	return nil
+}

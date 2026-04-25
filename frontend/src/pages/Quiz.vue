@@ -105,6 +105,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { generateQuiz, getNotebookTopicTree, scoreAnswer } from '../services/appApi'
+import { formatRating, formatNextReview } from '@/utils/formatting'
 
 const route = useRoute()
 
@@ -189,7 +190,6 @@ async function onSubmitAnswer() {
       errorMessage.value = result.error
       return
     }
-    scoreResult.value = result
     scoreResult.value = {
       ...result,
       fsrsRating: String(result.fsrsRating || result.fsrs_rating || ''),
@@ -254,27 +254,6 @@ function onNext() {
   }
 }
 
-function formatRating(raw) {
-  const value = String(raw || '').toLowerCase()
-  if (value === 'again') return 'Again'
-  if (value === 'hard') return 'Hard'
-  if (value === 'good') return 'Good'
-  if (value === 'easy') return 'Easy'
-  return 'Unrated'
-}
-
-function formatNextReview(raw) {
-  const value = String(raw || '').trim()
-  if (!value) return 'Not scheduled'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
 </script>
 
 <style scoped>

@@ -39,6 +39,12 @@
           <p v-if="ingestionStatusMessage" class="progress-label">{{ ingestionStatusMessage }}</p>
         </div>
 
+        <div v-if="indexingProgress > 0 && indexingProgress < 100" class="progress indexing-progress">
+          <div class="progress-bar" :style="{ width: indexingProgress + '%' }"></div>
+          <span>{{ indexingProgress }}%</span>
+          <p v-if="indexingStatusMessage" class="progress-label">{{ indexingStatusMessage }}</p>
+        </div>
+
         <div v-if="uploadError" class="error-message">
           {{ uploadError }}
         </div>
@@ -208,6 +214,9 @@ const availableTopics = ref([])
 const loading = ref(false)
 const ingestionStatusMessage = ref('')
 const ingestionNotebookID = ref('')
+const indexingProgress = ref(0)
+const indexingStatusMessage = ref('')
+const indexingNotebookID = ref('')
 const showSyllabusModal = ref(false)
 const draftNotebookID = ref('')
 const draftNotebookTitle = ref('')
@@ -257,6 +266,7 @@ function handleIngestionProgress(payload) {
     return
   }
 
+  // Handle ingestion progress (upload/chunking phase)
   if (!ingestionNotebookID.value && payload.notebook_id) {
     ingestionNotebookID.value = payload.notebook_id
   }
@@ -273,9 +283,37 @@ function handleIngestionProgress(payload) {
     ingestionStatusMessage.value = payload.message
   }
 
-  const terminalStates = new Set(['failed', 'chunked'])
+  // Handle indexing progress (RAG indexing phase)
+  if (payload.stage === 'indexing' || payload.message?.toLowerCase().includes('indexing')) {
+    if (!indexingNotebookID.value && payload.notebook_id) {
+      indexingNotebookID.value = payload.notebook_id
+    }
+
+    if (indexingNotebookID.value && payload.notebook_id && payload.notebook_id !== indexingNotebookID.value) {
+      return
+    }
+
+    if (typeof payload.percent === 'number') {
+      indexingProgress.value = payload.percent
+    }
+
+    if (payload.message) {
+      indexingStatusMessage.value = payload.message
+    }
+  }
+
+  const terminalStates = new Set(['failed', 'chunked', 'indexed'])
   if (typeof payload.status === 'string' && terminalStates.has(payload.status)) {
     void loadNotebooks()
+    
+    // Clear indexing progress when indexing is complete
+    if (payload.status === 'indexed' && indexingNotebookID.value) {
+      setTimeout(() => {
+        indexingProgress.value = 0
+        indexingStatusMessage.value = ''
+        indexingNotebookID.value = ''
+      }, 2000)
+    }
   }
 }
 
@@ -543,8 +581,9 @@ async function confirmSyllabusDraft() {
 
   draftError.value = ''
   isConfirmingDraft.value = true
-  ingestionStatusMessage.value = 'Starting notebook ingestion. Progress will appear below.'
-  uploadProgress.value = 0
+  indexingStatusMessage.value = 'Starting notebook indexing for RAG...'
+  indexingProgress.value = 10
+  indexingNotebookID.value = draftNotebookID.value
 
   try {
     if (titleChanged) {
@@ -564,12 +603,16 @@ async function confirmSyllabusDraft() {
     }
     await loadTopics()
     await loadNotebooks()
-    showToast('Notebook confirmed. Indexing is in progress.')
+    indexingStatusMessage.value = 'Indexing in progress...'
+    indexingProgress.value = 50
     closeSyllabusModal()
   } catch (error) {
     draftError.value = `Failed to confirm syllabus: ${error.message}`
     uploadError.value = `Failed to confirm syllabus: ${error.message}`
     showToast(`Failed to confirm syllabus: ${error.message}`)
+    indexingProgress.value = 0
+    indexingStatusMessage.value = ''
+    indexingNotebookID.value = ''
   } finally {
     isConfirmingDraft.value = false
   }
@@ -750,6 +793,18 @@ function formatDate(dateString) {
   text-align: center;
   font-size: 12px;
   color: var(--muted-text);
+}
+
+.indexing-progress {
+  margin-top: 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-container-low);
+}
+
+.indexing-progress .progress-bar {
+  background: linear-gradient(15deg, #2e7d32, #4caf50);
 }
 
 .error-message {
