@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 )
 
@@ -227,11 +228,11 @@ func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error
 			continue
 		}
 
-		fallback := len(chunkText) / 4
-		if fallback <= 0 && strings.TrimSpace(chunkText) != "" {
-			fallback = 1
+		count, err := embeddings.CountTokens(chunkText)
+		if err != nil {
+			return 0, fmt.Errorf("failed to count tokens for chunk: %w", err)
 		}
-		total += fallback
+		total += count
 	}
 
 	if err := rows.Err(); err != nil {
@@ -407,28 +408,30 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 		}
 
 		// Try to merge with existing overlapping or adjacent spans
-		merged := false
-		for i, existing := range existingSpans {
-			// Check if overlapping or adjacent (end of one >= start of other - 1)
-			if endPage >= existing[0]-1 && startPage <= existing[1]+1 {
-				mergedStart := startPage
-				if existing[0] < mergedStart {
-					mergedStart = existing[0]
+		mergedSpans := [][2]int{newSpan}
+		for _, existing := range existingSpans {
+			merged := false
+			for i, mergedSpan := range mergedSpans {
+				// Check if overlapping or adjacent (end of one >= start of other - 1)
+				if existing[0] <= mergedSpan[1]+1 && existing[1] >= mergedSpan[0]-1 {
+					mergedStart := mergedSpan[0]
+					if existing[0] < mergedStart {
+						mergedStart = existing[0]
+					}
+					mergedEnd := mergedSpan[1]
+					if existing[1] > mergedEnd {
+						mergedEnd = existing[1]
+					}
+					mergedSpans[i] = [2]int{mergedStart, mergedEnd}
+					merged = true
+					break
 				}
-				mergedEnd := endPage
-				if existing[1] > mergedEnd {
-					mergedEnd = existing[1]
-				}
-				existingSpans[i] = [2]int{mergedStart, mergedEnd}
-				merged = true
-				break
+			}
+			if !merged {
+				mergedSpans = append(mergedSpans, existing)
 			}
 		}
-
-		if !merged {
-			existingSpans = append(existingSpans, newSpan)
-		}
-		ranges[key] = existingSpans
+		ranges[key] = mergedSpans
 	}
 
 	if err := rows.Err(); err != nil {
