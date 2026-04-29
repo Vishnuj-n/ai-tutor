@@ -52,6 +52,14 @@ type Chunk struct {
 	PageNum         int
 }
 
+// ChunkWithContext is the structured prompt context passed to LLM generation.
+type ChunkWithContext struct {
+	ChunkID  string `json:"chunk_id"`
+	ParentID string `json:"parent_id,omitempty"`
+	PageNum  int    `json:"page_num"`
+	Text     string `json:"text"`
+}
+
 // Notebook represents a user-uploaded document (PDF, text, etc)
 type Notebook struct {
 	ID         string `json:"id"`
@@ -125,6 +133,7 @@ type ReaderTopicBundle struct {
 type QuizQuestion struct {
 	ID              string   `json:"id"`
 	TopicID         string   `json:"topic_id"`
+	SourceChunkID   string   `json:"source_chunk_id,omitempty"`
 	Prompt          string   `json:"prompt"`
 	Options         []string `json:"options"`
 	CorrectAnswer   string   `json:"correct_answer"`
@@ -173,12 +182,13 @@ type WrittenQuestion struct {
 
 // Flashcard is a persisted review card scoped to one topic.
 type Flashcard struct {
-	ID        string `json:"id"`
-	TopicID   string `json:"topic_id"`
-	Prompt    string `json:"prompt"`
-	Answer    string `json:"answer"`
-	DueAt     int64  `json:"due_at,omitempty"`
-	Suspended bool   `json:"suspended"`
+	ID            string `json:"id"`
+	TopicID       string `json:"topic_id"`
+	SourceChunkID string `json:"source_chunk_id,omitempty"`
+	Prompt        string `json:"prompt"`
+	Answer        string `json:"answer"`
+	DueAt         int64  `json:"due_at,omitempty"`
+	Suspended     bool   `json:"suspended"`
 }
 
 // FlashcardState stores the local review scheduler state in fsrs_cards.state_json.

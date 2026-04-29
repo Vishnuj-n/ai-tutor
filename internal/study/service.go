@@ -213,6 +213,7 @@ Student answer: %s`, question.Prompt, userAnswer)
 // ---------- LLM response types (shared across sub-files) ----------
 
 type quizLLMQuestion struct {
+	SourceChunkID   string   `json:"source_chunk_id"`
 	Prompt          string   `json:"prompt"`
 	Options         []string `json:"options"`
 	CorrectAnswer   string   `json:"correct_answer"`
@@ -229,8 +230,9 @@ type quizLLMResponse struct {
 }
 
 type flashcardLLMCard struct {
-	Prompt string `json:"prompt"`
-	Answer string `json:"answer"`
+	SourceChunkID string `json:"source_chunk_id"`
+	Prompt        string `json:"prompt"`
+	Answer        string `json:"answer"`
 }
 
 type flashcardLLMResponse struct {
@@ -534,23 +536,73 @@ func ScaledFlashcardCount(wordCount int) int {
 	}
 }
 
-// buildPageBoundedContext fetches raw chunk text for a notebook page range
-// and returns (contextText, tokenCount, error).
-func buildPageBoundedContext(notebookID string, startPage, endPage int) (string, int, error) {
-	text, err := db.GetChunkTextByNotebookPageRange(notebookID, startPage, endPage)
+// buildPageBoundedContext fetches structured chunk context for a notebook page range
+// and returns (chunks, tokenCount, error).
+func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
+	chunks, err := db.GetChunksWithContextByNotebookPageRange(notebookID, startPage, endPage)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to load page-bounded context: %w", err)
+		return nil, 0, fmt.Errorf("failed to load page-bounded context: %w", err)
 	}
-	if strings.TrimSpace(text) == "" {
+	if len(chunks) == 0 {
 		// Return empty response instead of error for marathon mode compatibility
-		return "", 0, nil
+		return []models.ChunkWithContext{}, 0, nil
 	}
-	tokenCount, err := embeddings.CountTokens(text)
-	if err != nil {
-		// Fall back to word count estimation if tokenizer fails
-		tokenCount = len(strings.Fields(text))
+
+	// Calculate tokens based on actual LLM prompt format, not just raw text
+	tokenCount := calculatePromptTokenCount(chunks)
+
+	return chunks, tokenCount, nil
+}
+
+// calculatePromptTokenCount estimates the actual token count that will be sent to the LLM
+// including prompt overhead and chunk formatting (chunk_id: | page_num: | text: format)
+func calculatePromptTokenCount(chunks []models.ChunkWithContext) int {
+	const maxContextChunks = 120
+	limit := len(chunks)
+	if limit > maxContextChunks {
+		limit = maxContextChunks
 	}
-	return text, tokenCount, nil
+
+	// Base prompt overhead (instructions, format, etc.)
+	baseOverhead := 200 // Estimated tokens for prompt template and instructions
+
+	var contentTokens int
+	for i := 0; i < limit; i++ {
+		chunk := chunks[i]
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+		// Format: "- chunk_id: %s | page_num: %d | text: %s\n"
+		chunkLine := fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
+		// Count tokens for this formatted chunk line
+		if chunkTokens, err := embeddings.CountTokens(chunkLine); err == nil {
+			contentTokens += chunkTokens
+		} else {
+			// Fallback to word count
+			contentTokens += len(strings.Fields(chunkLine))
+		}
+	}
+
+	// Add truncation notice if needed
+	if len(chunks) > maxContextChunks {
+		contentTokens += 10 // Tokens for "[...additional chunks truncated...]"
+	}
+
+	return baseOverhead + contentTokens
+}
+
+func buildContextTextFromChunks(chunks []models.ChunkWithContext) string {
+	var b strings.Builder
+	for _, chunk := range chunks {
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // suppressedUnusedImportForUUID ensures uuid is imported in sub-files via

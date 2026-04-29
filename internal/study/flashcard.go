@@ -7,6 +7,7 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -22,10 +23,11 @@ func (s *StudyService) GenerateMarathonFlashcardsWithTopic(topicID, notebookID s
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextText, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	contextText := buildContextTextFromChunks(contextChunks)
 
 	llm, tier := s.selectLLM(contextText)
 	if llm == nil {
@@ -33,7 +35,7 @@ func (s *StudyService) GenerateMarathonFlashcardsWithTopic(topicID, notebookID s
 	}
 
 	targetCount := ScaledFlashcardCount(tokenCount)
-	prompt := buildMarathonFlashcardPrompt(notebookID, startPage, endPage, contextText, tokenCount, targetCount)
+	prompt := buildMarathonFlashcardPrompt(notebookID, startPage, endPage, contextChunks, tokenCount, targetCount)
 
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
@@ -48,19 +50,38 @@ func (s *StudyService) GenerateMarathonFlashcardsWithTopic(topicID, notebookID s
 
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
 	states := make(map[string]models.FlashcardState, len(parsed.Cards))
+	allowedChunkIDs := make(map[string]struct{}, len(contextChunks))
+	for _, chunk := range contextChunks {
+		allowedChunkIDs[chunk.ChunkID] = struct{}{}
+	}
 	for _, candidate := range parsed.Cards {
+		sourceChunkID := strings.TrimSpace(candidate.SourceChunkID)
 		cardPrompt := strings.TrimSpace(candidate.Prompt)
 		answer := strings.TrimSpace(candidate.Answer)
-		if cardPrompt == "" || answer == "" {
+		if cardPrompt == "" || answer == "" || sourceChunkID == "" {
+			if cardPrompt == "" {
+				utils.Warnf("Skipping flashcard: empty prompt")
+			}
+			if answer == "" {
+				utils.Warnf("Skipping flashcard: empty answer")
+			}
+			if sourceChunkID == "" {
+				utils.Warnf("Skipping flashcard: empty source_chunk_id")
+			}
+			continue
+		}
+		if _, ok := allowedChunkIDs[sourceChunkID]; !ok {
+			utils.Warnf("Skipping flashcard: source_chunk_id '%s' not found in allowed chunks (total allowed: %d)", sourceChunkID, len(allowedChunkIDs))
 			continue
 		}
 		id := uuid.NewString()
 		cards = append(cards, models.Flashcard{
-			ID:      id,
-			TopicID: topicID, // Use the original topicID instead of synthetic one
-			Prompt:  cardPrompt,
-			Answer:  answer,
-			DueAt:   now,
+			ID:            id,
+			TopicID:       topicID, // Use the original topicID instead of synthetic one
+			SourceChunkID: sourceChunkID,
+			Prompt:        cardPrompt,
+			Answer:        answer,
+			DueAt:         now,
 		})
 		states[id] = models.FlashcardState{
 			Stability:     0.0,
@@ -119,10 +140,11 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextText, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	contextText := buildContextTextFromChunks(contextChunks)
 
 	llm, tier := s.selectLLM(contextText)
 	if llm == nil {
@@ -130,7 +152,7 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 	}
 
 	targetCount := ScaledFlashcardCount(tokenCount)
-	prompt := buildMarathonFlashcardPrompt(notebookID, startPage, endPage, contextText, tokenCount, targetCount)
+	prompt := buildMarathonFlashcardPrompt(notebookID, startPage, endPage, contextChunks, tokenCount, targetCount)
 
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
@@ -146,20 +168,39 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
 	states := make(map[string]models.FlashcardState, len(parsed.Cards))
+	allowedChunkIDs := make(map[string]struct{}, len(contextChunks))
+	for _, chunk := range contextChunks {
+		allowedChunkIDs[chunk.ChunkID] = struct{}{}
+	}
 	for _, candidate := range parsed.Cards {
+		sourceChunkID := strings.TrimSpace(candidate.SourceChunkID)
 		cardPrompt := strings.TrimSpace(candidate.Prompt)
 		answer := strings.TrimSpace(candidate.Answer)
-		if cardPrompt == "" || answer == "" {
+		if cardPrompt == "" || answer == "" || sourceChunkID == "" {
+			if cardPrompt == "" {
+				utils.Warnf("Skipping flashcard: empty prompt")
+			}
+			if answer == "" {
+				utils.Warnf("Skipping flashcard: empty answer")
+			}
+			if sourceChunkID == "" {
+				utils.Warnf("Skipping flashcard: empty source_chunk_id")
+			}
+			continue
+		}
+		if _, ok := allowedChunkIDs[sourceChunkID]; !ok {
+			utils.Warnf("Skipping flashcard: source_chunk_id '%s' not found in allowed chunks (total allowed: %d)", sourceChunkID, len(allowedChunkIDs))
 			continue
 		}
 		id := uuid.NewString()
 		cards = append(cards, models.Flashcard{
-			ID:        id,
-			TopicID:   syntheticTopicID,
-			Prompt:    cardPrompt,
-			Answer:    answer,
-			DueAt:     now,
-			Suspended: false,
+			ID:            id,
+			TopicID:       syntheticTopicID,
+			SourceChunkID: sourceChunkID,
+			Prompt:        cardPrompt,
+			Answer:        answer,
+			DueAt:         now,
+			Suspended:     false,
 		})
 		states[id] = models.FlashcardState{}
 	}
@@ -199,13 +240,13 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 	}
 }
 
-func buildMarathonFlashcardPrompt(notebookID string, startPage, endPage int, contextText string, tokenCount, targetCount int) string {
+func buildMarathonFlashcardPrompt(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, tokenCount, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
 	fmt.Fprintf(&b, "Generate exactly %d flashcards covering pages %d-%d of notebook '%s'.\n",
 		targetCount, startPage, endPage, notebookID)
 	fmt.Fprintf(&b, "Content token count: %d\n", tokenCount)
-	b.WriteString(`JSON format: {"cards":[{"prompt":string,"answer":string}]}` + "\n")
+	b.WriteString(`JSON format: {"cards":[{"source_chunk_id":string,"prompt":string,"answer":string}]}` + "\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
 	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")
 	b.WriteString("\n=== PROMPT QUALITY ===\n")
@@ -213,13 +254,23 @@ func buildMarathonFlashcardPrompt(notebookID string, startPage, endPage int, con
 	b.WriteString("- PREFER 'why', 'how', 'what is', 'explain' questions.\n")
 	b.WriteString("\n=== ANSWER QUALITY ===\n")
 	b.WriteString("- Answers must be short (1-2 sentences max, grounded in source).\n")
-	b.WriteString("\n=== SOURCE MATERIAL ===\n")
-	const maxContextRunes = 24000
-	runes := []rune(contextText)
-	if len(runes) > maxContextRunes {
-		runes = runes[:maxContextRunes]
-		contextText = string(runes) + "\n[...content truncated to fit context window...]"
+	b.WriteString("- source_chunk_id must exactly match one chunk_id from the provided chunk list.\n")
+	b.WriteString("\n=== SOURCE CHUNKS ===\n")
+	const maxContextChunks = 120
+	limit := len(contextChunks)
+	if limit > maxContextChunks {
+		limit = maxContextChunks
 	}
-	b.WriteString(contextText)
+	for i := 0; i < limit; i++ {
+		chunk := contextChunks[i]
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
+	}
+	if len(contextChunks) > maxContextChunks {
+		b.WriteString("[...additional chunks truncated...]\n")
+	}
 	return b.String()
 }
