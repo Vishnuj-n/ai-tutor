@@ -50,16 +50,16 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
 	states := make(map[string]models.FlashcardState, len(parsed.Cards))
 	for _, candidate := range parsed.Cards {
-		prompt := strings.TrimSpace(candidate.Prompt)
+		cardPrompt := strings.TrimSpace(candidate.Prompt)
 		answer := strings.TrimSpace(candidate.Answer)
-		if prompt == "" || answer == "" {
+		if cardPrompt == "" || answer == "" {
 			continue
 		}
 		id := uuid.NewString()
 		cards = append(cards, models.Flashcard{
 			ID:        id,
 			TopicID:   syntheticTopicID,
-			Prompt:    prompt,
+			Prompt:    cardPrompt,
 			Answer:    answer,
 			DueAt:     now,
 			Suspended: false,
@@ -70,10 +70,23 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 		return map[string]interface{}{"error": "no valid flashcards generated from page range"}
 	}
 
-	_ = db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: syntheticTopicID, Title: fmt.Sprintf("Marathon %s p%d-%d", notebookID, startPage, endPage)}})
+	err = db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: syntheticTopicID, Title: fmt.Sprintf("Marathon %s p%d-%d", notebookID, startPage, endPage)}})
+	if err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to ensure topic %s (notebookID: %s, pages %d-%d): %s", syntheticTopicID, notebookID, startPage, endPage, err.Error())}
+	}
 	cards, _, err = db.GetOrCreateFlashcardsForTopic(syntheticTopicID, cards, states)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to persist marathon flashcards: " + err.Error()}
+	}
+
+	// Fetch the actual persisted states for the returned cards
+	cardIDs := make([]string, len(cards))
+	for i, card := range cards {
+		cardIDs[i] = card.ID
+	}
+	persistedStates, err := db.GetFlashcardStatesByIDs(cardIDs)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch flashcard states: " + err.Error()}
 	}
 
 	return map[string]interface{}{
@@ -82,7 +95,7 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 		"end_page":          endPage,
 		"topic_id":          syntheticTopicID,
 		"cards":             cards,
-		"states":            states,
+		"states":            persistedStates,
 		"card_count":        len(cards),
 		"llm_tier":          tier,
 		"generated_at_unix": now,

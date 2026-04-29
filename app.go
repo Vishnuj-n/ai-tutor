@@ -343,11 +343,11 @@ func (a *App) GenerateMarathonFlashcards(notebookID string, startPage, endPage i
 	return a.studyService.GenerateMarathonFlashcards(notebookID, startPage, endPage)
 }
 
-func (a *App) GenerateMarathonExam(notebookID string, startPage, endPage int) map[string]interface{} {
+func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage int) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	return a.studyService.GenerateMarathonExam(notebookID, startPage, endPage)
+	return a.studyService.GenerateComprehensiveExam(notebookID, startPage, endPage)
 }
 
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {

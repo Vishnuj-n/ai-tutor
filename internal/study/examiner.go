@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// GenerateMarathonExam generates a short-answer written assessment question
+// GenerateComprehensiveExam generates a short-answer written assessment question
 // from the raw text of a notebook's page range (no RAG / ONNX).
-func (s *StudyService) GenerateMarathonExam(notebookID string, startPage, endPage int) map[string]interface{} {
+func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, endPage int) map[string]interface{} {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return map[string]interface{}{"error": "notebook ID is required"}
@@ -31,7 +31,7 @@ func (s *StudyService) GenerateMarathonExam(notebookID string, startPage, endPag
 		return map[string]interface{}{"error": "no LLM provider available (tier: " + tier + ")"}
 	}
 
-	prompt := buildMarathonExamPrompt(notebookID, startPage, endPage, contextText)
+	prompt := buildComprehensiveExamPrompt(notebookID, startPage, endPage, contextText)
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{"error": "exam generation failed: " + err.Error()}
@@ -45,12 +45,15 @@ func (s *StudyService) GenerateMarathonExam(notebookID string, startPage, endPag
 		return map[string]interface{}{"error": "exam prompt generation returned empty question"}
 	}
 
-	syntheticTopicID := fmt.Sprintf("marathon-%s-p%d-%d", notebookID, startPage, endPage)
+	syntheticTopicID := fmt.Sprintf("comprehensive-%s-p%d-%d", notebookID, startPage, endPage)
 
-	_ = db.EnsureTopicsBatch([]db.TopicBatchItem{{
+	if err := db.EnsureTopicsBatch([]db.TopicBatchItem{{
 		TopicID: syntheticTopicID,
-		Title:   fmt.Sprintf("Marathon %s p%d-%d", notebookID, startPage, endPage),
-	}})
+		Title:   fmt.Sprintf("Comprehensive %s p%d-%d", notebookID, startPage, endPage),
+	}}); err != nil {
+		fmt.Printf("failed to create synthetic topic %s for comprehensive exam in notebook %s: %v\n", syntheticTopicID, notebookID, err)
+		return map[string]interface{}{"error": "failed to create synthetic topic for comprehensive exam: " + err.Error()}
+	}
 
 	question := models.WrittenQuestion{
 		ID:              uuid.NewString(),
@@ -59,26 +62,26 @@ func (s *StudyService) GenerateMarathonExam(notebookID string, startPage, endPag
 		SourcePageStart: startPage,
 		SourcePageEnd:   endPage,
 		LLMModel:        providerModelName(llm),
-		PromptVersion:   "marathon-exam-v1",
+		PromptVersion:   "comprehensive-exam-v1",
 	}
 	if err := db.CreateWrittenQuestion(question); err != nil {
-		return map[string]interface{}{"error": "failed to persist marathon exam question: " + err.Error()}
+		return map[string]interface{}{"error": "failed to persist comprehensive exam question: " + err.Error()}
 	}
 
 	return map[string]interface{}{
-		"questionID":      question.ID,
-		"prompt":          question.Prompt,
-		"topicID":         syntheticTopicID,
-		"notebook_id":     notebookID,
-		"start_page":      startPage,
-		"end_page":        endPage,
-		"llm_tier":        tier,
+		"questionID":        question.ID,
+		"prompt":            question.Prompt,
+		"topicID":           syntheticTopicID,
+		"notebook_id":       notebookID,
+		"start_page":        startPage,
+		"end_page":          endPage,
+		"llm_tier":          tier,
 		"source_page_start": startPage,
 		"source_page_end":   endPage,
 	}
 }
 
-func buildMarathonExamPrompt(notebookID string, startPage, endPage int, contextText string) string {
+func buildComprehensiveExamPrompt(notebookID string, startPage, endPage int, contextText string) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor generating a short-answer assessment question.\n")
 	fmt.Fprintf(&b, "Generate exactly one short-answer question grounded in pages %d-%d of notebook '%s'.\n",
