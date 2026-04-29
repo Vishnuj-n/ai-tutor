@@ -7,6 +7,7 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -23,10 +24,11 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextText, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	contextText := buildContextTextFromChunks(contextChunks)
 
 	llm, tier := s.selectLLM(contextText)
 	if llm == nil {
@@ -34,7 +36,7 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 	}
 
 	targetCount := scaledQuizQuestionCount(tokenCount)
-	prompt := buildMarathonQuizPrompt(notebookID, startPage, endPage, contextText, tokenCount, targetCount)
+	prompt := buildMarathonQuizPrompt(notebookID, startPage, endPage, contextChunks, tokenCount, targetCount)
 
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
@@ -50,8 +52,29 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 	syntheticTopicID := fmt.Sprintf("marathon-%s-p%d-%d", notebookID, startPage, endPage)
 
 	questions := make([]models.QuizQuestion, 0, len(parsed.Questions))
+	allowedChunkIDs := make(map[string]struct{}, len(contextChunks))
+	for _, chunk := range contextChunks {
+		allowedChunkIDs[chunk.ChunkID] = struct{}{}
+	}
 	for _, q := range parsed.Questions {
-		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" {
+		sourceChunkID := strings.TrimSpace(q.SourceChunkID)
+		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) < 2 || strings.TrimSpace(q.CorrectAnswer) == "" || sourceChunkID == "" {
+			if strings.TrimSpace(q.Prompt) == "" {
+				utils.Warnf("Skipping quiz question: empty prompt")
+			}
+			if len(q.Options) < 2 {
+				utils.Warnf("Skipping quiz question: insufficient options (%d)", len(q.Options))
+			}
+			if strings.TrimSpace(q.CorrectAnswer) == "" {
+				utils.Warnf("Skipping quiz question: empty correct_answer")
+			}
+			if sourceChunkID == "" {
+				utils.Warnf("Skipping quiz question: empty source_chunk_id")
+			}
+			continue
+		}
+		if _, ok := allowedChunkIDs[sourceChunkID]; !ok {
+			utils.Warnf("Skipping quiz question: source_chunk_id '%s' not found in allowed chunks (total allowed: %d)", sourceChunkID, len(allowedChunkIDs))
 			continue
 		}
 		matchedOption, ok := resolveCorrectOption(q.CorrectAnswer, q.Options)
@@ -69,6 +92,7 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 		questions = append(questions, models.QuizQuestion{
 			ID:              uuid.NewString(),
 			TopicID:         syntheticTopicID,
+			SourceChunkID:   sourceChunkID,
 			Prompt:          strings.TrimSpace(q.Prompt),
 			Options:         q.Options,
 			CorrectAnswer:   matchedOption,
@@ -107,14 +131,14 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 	}
 }
 
-// buildMarathonQuizPrompt constructs the page-injection prompt for quiz generation.
-func buildMarathonQuizPrompt(notebookID string, startPage, endPage int, contextText string, tokenCount, targetCount int) string {
+// buildMarathonQuizPrompt constructs the chunk-anchored prompt for quiz generation.
+func buildMarathonQuizPrompt(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, tokenCount, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
 	fmt.Fprintf(&b, "Generate exactly %d multiple-choice questions covering pages %d-%d of notebook '%s'.\n",
 		targetCount, startPage, endPage, notebookID)
 	fmt.Fprintf(&b, "Content token count: %d\n", tokenCount)
-	b.WriteString(`JSON format: {"questions":[{"prompt":string,"options":[string,string,string,string],"correct_answer":string,"explanation":string,"hint":string,"source_heading":string,"source_snippet":string,"source_page_start":number,"source_page_end":number}]}` + "\n")
+	b.WriteString(`JSON format: {"questions":[{"source_chunk_id":string,"prompt":string,"options":[string,string,string,string],"correct_answer":string,"explanation":string,"hint":string,"source_heading":string,"source_snippet":string,"source_page_start":number,"source_page_end":number}]}` + "\n")
 	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
 	b.WriteString("Cover different concepts: recall, application/analysis, and one misconception when count allows.\n")
 	b.WriteString("\n=== RULES ===\n")
@@ -122,14 +146,23 @@ func buildMarathonQuizPrompt(notebookID string, startPage, endPage int, contextT
 	b.WriteString("- Keep each option short (< 15 words).\n")
 	b.WriteString("- Explanations grounded in source text.\n")
 	b.WriteString("- Each question must require understanding, not just recall.\n")
-	b.WriteString("\n=== SOURCE MATERIAL ===\n")
-	// Truncate context to avoid exceeding model limits; HEAVY_LLM can take more
-	const maxContextRunes = 24000
-	runes := []rune(contextText)
-	if len(runes) > maxContextRunes {
-		runes = runes[:maxContextRunes]
-		contextText = string(runes) + "\n[...content truncated to fit context window...]"
+	b.WriteString("- source_chunk_id must exactly match one chunk_id from the provided chunk list.\n")
+	b.WriteString("\n=== SOURCE CHUNKS ===\n")
+	const maxContextChunks = 120
+	limit := len(contextChunks)
+	if limit > maxContextChunks {
+		limit = maxContextChunks
 	}
-	b.WriteString(contextText)
+	for i := 0; i < limit; i++ {
+		chunk := contextChunks[i]
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
+	}
+	if len(contextChunks) > maxContextChunks {
+		b.WriteString("[...additional chunks truncated...]\n")
+	}
 	return b.String()
 }

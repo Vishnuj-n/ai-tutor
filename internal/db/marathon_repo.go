@@ -3,6 +3,8 @@ package db
 import (
 	"fmt"
 	"strings"
+
+	"ai-tutor/internal/models"
 )
 
 // GetChunkTextByNotebookPageRange returns the concatenated chunk_text for all chunks
@@ -43,6 +45,43 @@ func GetChunkTextByNotebookPageRange(notebookID string, startPage, endPage int) 
 		return "", fmt.Errorf("row iteration error: %w", err)
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+// GetChunksWithContextByNotebookPageRange returns structured chunks for a notebook page range.
+func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	if startPage <= 0 || endPage <= 0 || endPage < startPage {
+		return nil, fmt.Errorf("invalid page range: start=%d end=%d", startPage, endPage)
+	}
+
+	rows, err := conn.Query(`
+		SELECT c.id, c.parent_id, nc.page_num, c.chunk_text
+		FROM notebook_chunks nc
+		JOIN chunks c ON c.id = nc.chunk_id
+		WHERE nc.notebook_id = ?
+		  AND nc.page_num BETWEEN ? AND ?
+		ORDER BY nc.page_num ASC, nc.chunk_id ASC
+	`, notebookID, startPage, endPage)
+	if err != nil {
+		return nil, fmt.Errorf("page-range structured query failed: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	chunks := make([]models.ChunkWithContext, 0)
+	for rows.Next() {
+		var chunk models.ChunkWithContext
+		if err := rows.Scan(&chunk.ChunkID, &chunk.ParentID, &chunk.PageNum, &chunk.Text); err != nil {
+			return nil, fmt.Errorf("scan structured chunk: %w", err)
+		}
+		chunks = append(chunks, chunk)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+	return chunks, nil
 }
 
 // GetNotebookPageCount returns the maximum page_num stored in notebook_chunks for a notebook.

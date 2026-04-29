@@ -104,9 +104,9 @@ func initTestProvider(t *testing.T) *llm.Provider {
 			prompt := body.Messages[0].Content
 			switch {
 			case strings.Contains(prompt, "flashcard generator"):
-				content = flashcardJSON(extractRequestedCount(prompt, "Generate exactly "))
+				content = flashcardJSON(extractRequestedCount(prompt, "Generate exactly "), extractFirstChunkID(prompt))
 			case strings.Contains(prompt, "quiz generator"):
-				content = questionJSON(extractRequestedCount(prompt, "Generate exactly "))
+				content = questionJSON(extractRequestedCount(prompt, "Generate exactly "), extractFirstChunkID(prompt))
 			}
 		}
 
@@ -1033,7 +1033,7 @@ func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
 		t.Fatalf("expected next_review_at, got %#v", got)
 	}
 
-	state, err := db.GetAssessmentFSRSState("written_question", "written-q-1")
+	state, err := db.GetAssessmentFSRSState("written_question", "written-q-1", "")
 	if err != nil {
 		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
 	}
@@ -1075,7 +1075,7 @@ func TestScoreAnswerReturnsSharedAssessmentFSRSFields(t *testing.T) {
 		t.Fatalf("expected scheduled_days in response")
 	}
 
-	state, err := db.GetAssessmentFSRSState("quiz_question", "quiz-fsrs-q1")
+	state, err := db.GetAssessmentFSRSState("quiz_question", "quiz-fsrs-q1", "")
 	if err != nil {
 		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
 	}
@@ -1114,22 +1114,45 @@ func extractRequestedCount(prompt string, prefix string) int {
 	return count
 }
 
-func questionJSON(count int) string {
+func questionJSON(count int, sourceChunkID string) string {
+	if strings.TrimSpace(sourceChunkID) == "" {
+		sourceChunkID = "chunk-fallback"
+	}
 	items := make([]string, 0, count)
 	correct := []string{"A", "B", "C", "D"}
 	for i := 0; i < count; i++ {
 		answer := correct[i%len(correct)]
-		items = append(items, fmt.Sprintf(`{"prompt":"Question %d?","options":["A","B","C","D"],"correct_answer":"%s","explanation":"Explanation %d.","hint":"Hint %d.","source_heading":"Complete Section","source_snippet":"Snippet %d."}`, i+1, answer, i+1, i+1, i+1))
+		items = append(items, fmt.Sprintf(`{"source_chunk_id":"%s","prompt":"Question %d?","options":["A","B","C","D"],"correct_answer":"%s","explanation":"Explanation %d.","hint":"Hint %d.","source_heading":"Complete Section","source_snippet":"Snippet %d."}`, sourceChunkID, i+1, answer, i+1, i+1, i+1))
 	}
 	return `{"questions":[` + strings.Join(items, ",") + `]}`
 }
 
-func flashcardJSON(count int) string {
+func flashcardJSON(count int, sourceChunkID string) string {
+	if strings.TrimSpace(sourceChunkID) == "" {
+		sourceChunkID = "chunk-fallback"
+	}
 	items := make([]string, 0, count)
 	for i := 0; i < count; i++ {
-		items = append(items, fmt.Sprintf(`{"prompt":"Flashcard %d prompt?","answer":"Flashcard %d answer."}`, i+1, i+1))
+		items = append(items, fmt.Sprintf(`{"source_chunk_id":"%s","prompt":"Flashcard %d prompt?","answer":"Flashcard %d answer."}`, sourceChunkID, i+1, i+1))
 	}
 	return `{"cards":[` + strings.Join(items, ",") + `]}`
+}
+
+func extractFirstChunkID(prompt string) string {
+	const marker = "chunk_id: "
+	idx := strings.Index(prompt, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := prompt[idx+len(marker):]
+	end := strings.Index(rest, " |")
+	if end < 0 {
+		end = strings.Index(rest, "\n")
+	}
+	if end < 0 {
+		end = len(rest)
+	}
+	return strings.TrimSpace(rest[:end])
 }
 
 type mockRAGPipeline struct {
@@ -1349,7 +1372,7 @@ func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) 
 		t.Fatalf("UpdateTopicReadingCursor failed: %v", err)
 	}
 
-	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3)}}
+	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3, "complete-session-c1")}}
 	resp := app.CompleteReadingSession(topicID, 1, 2)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("expected completion success, got error: %v", resp["error"])
@@ -1403,7 +1426,7 @@ func TestCompleteReadingSession_RejectsInvalidWindow(t *testing.T) {
 		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
 	}
 
-	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3)}}
+	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3, "complete-session-c1")}}
 	resp := app.CompleteReadingSession(topicID, 7, 6)
 	if _, hasErr := resp["error"]; !hasErr {
 		t.Fatalf("expected invalid window error, got %#v", resp)

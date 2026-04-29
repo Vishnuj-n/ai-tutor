@@ -29,9 +29,9 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 		}
 
 		result, execErr := tx.Exec(`
-			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, prompt, answer, state_json, due_at, suspended)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, card.ID, card.TopicID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
+			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 		if execErr != nil {
 			return execErr
 		}
@@ -54,7 +54,7 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 
 func getFlashcardsForTopicRepo(topicID string, dueOnly bool, now int64) ([]models.Flashcard, error) {
 	query := `
-		SELECT id, topic_id, prompt, answer, COALESCE(due_at, 0), suspended
+		SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, answer, COALESCE(due_at, 0), suspended
 		FROM fsrs_cards
 		WHERE topic_id = ?
 		  AND suspended = 0
@@ -87,7 +87,7 @@ func getFlashcardsForTopicRepo(topicID string, dueOnly bool, now int64) ([]model
 	for rows.Next() {
 		var card models.Flashcard
 		var suspended bool
-		if err := rows.Scan(&card.ID, &card.TopicID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
+		if err := rows.Scan(&card.ID, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
 			return nil, err
 		}
 		card.Suspended = suspended
@@ -107,10 +107,10 @@ func getFlashcardByIDRepo(cardID string) (*models.Flashcard, *models.FlashcardSt
 	var suspended bool
 
 	err := conn.QueryRow(`
-		SELECT id, topic_id, prompt, answer, COALESCE(due_at, 0), suspended, state_json
+		SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, answer, COALESCE(due_at, 0), suspended, state_json
 		FROM fsrs_cards
 		WHERE id = ?
-	`, cardID).Scan(&card.ID, &card.TopicID, &card.Prompt, &card.Answer, &card.DueAt, &suspended, &stateJSON)
+	`, cardID).Scan(&card.ID, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended, &stateJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil, nil
@@ -275,7 +275,7 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 
 	if count > 0 {
 		rows, err := tx.Query(`
-			SELECT id, topic_id, prompt, answer, COALESCE(due_at, 0), suspended
+			SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, answer, COALESCE(due_at, 0), suspended
 			FROM fsrs_cards
 			WHERE topic_id = ? AND suspended = 0
 			ORDER BY
@@ -295,7 +295,7 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 		for rows.Next() {
 			var card models.Flashcard
 			var suspended bool
-			if err := rows.Scan(&card.ID, &card.TopicID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
+			if err := rows.Scan(&card.ID, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
 				return nil, false, err
 			}
 			card.Suspended = suspended
@@ -319,9 +319,9 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 		}
 
 		result, execErr := tx.Exec(`
-			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, prompt, answer, state_json, due_at, suspended)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, card.ID, card.TopicID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
+			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 		if execErr != nil {
 			return nil, false, execErr
 		}

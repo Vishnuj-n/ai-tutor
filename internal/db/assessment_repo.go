@@ -12,6 +12,7 @@ import (
 // AssessmentFSRSRecord represents the shared FSRS state for an assessment
 type AssessmentFSRSRecord struct {
 	TopicID        string
+	SourceChunkID  string
 	State          models.FlashcardState
 	DueAt          int64
 	LastReviewedAt int64
@@ -29,6 +30,13 @@ func (r *AssessmentFSRSRecord) GetState() models.FlashcardState {
 		return models.FlashcardState{}
 	}
 	return r.State
+}
+
+func (r *AssessmentFSRSRecord) GetSourceChunkID() string {
+	if r == nil {
+		return ""
+	}
+	return r.SourceChunkID
 }
 
 func (r *AssessmentFSRSRecord) GetDueAt() int64 {
@@ -49,12 +57,18 @@ func createWrittenQuestionRepo(question models.WrittenQuestion) error {
 	if conn == nil {
 		return fmt.Errorf("database not initialized")
 	}
+	var sourceChunkID interface{}
+	if strings.TrimSpace(question.SourceChunkID) == "" {
+		sourceChunkID = nil
+	} else {
+		sourceChunkID = strings.TrimSpace(question.SourceChunkID)
+	}
 	_, err := conn.Exec(`
 		INSERT INTO written_questions (
-			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
+			id, topic_id, prompt, source_chunk_id, source_heading, source_page_start, source_page_end,
 			llm_model, prompt_version, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, question.ID, question.TopicID, question.Prompt, question.SourceHeading, question.SourcePageStart,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, question.ID, question.TopicID, question.Prompt, sourceChunkID, question.SourceHeading, question.SourcePageStart,
 		question.SourcePageEnd, question.LLMModel, question.PromptVersion)
 	return err
 }
@@ -65,11 +79,11 @@ func getWrittenQuestionByIDRepo(questionID string) (*models.WrittenQuestion, err
 	}
 	var question models.WrittenQuestion
 	err := conn.QueryRow(`
-		SELECT id, topic_id, prompt, COALESCE(source_heading, ''), COALESCE(source_page_start, 0),
+		SELECT id, topic_id, prompt, COALESCE(source_chunk_id, ''), COALESCE(source_heading, ''), COALESCE(source_page_start, 0),
 			COALESCE(source_page_end, 0), COALESCE(llm_model, ''), COALESCE(prompt_version, '')
 		FROM written_questions
 		WHERE id = ?
-	`, questionID).Scan(&question.ID, &question.TopicID, &question.Prompt, &question.SourceHeading,
+	`, questionID).Scan(&question.ID, &question.TopicID, &question.Prompt, &question.SourceChunkID, &question.SourceHeading,
 		&question.SourcePageStart, &question.SourcePageEnd, &question.LLMModel, &question.PromptVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -86,16 +100,17 @@ type querier interface {
 }
 
 // getAssessmentFSRSStateFromQuerier extracts FSRS state using any querier (DB or transaction)
-func getAssessmentFSRSStateFromQuerier(q querier, activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+func getAssessmentFSRSStateFromQuerier(q querier, activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
 	var topicID string
+	var storedSourceChunkID sql.NullString
 	var stateJSON string
 	var dueAt sql.NullInt64
 	var lastReviewedAt sql.NullInt64
 	err := q.QueryRow(`
-		SELECT topic_id, state_json, due_at, last_reviewed_at
+		SELECT topic_id, source_chunk_id, state_json, due_at, last_reviewed_at
 		FROM assessment_fsrs
-		WHERE activity_type = ? AND reference_id = ?
-	`, activityType, referenceID).Scan(&topicID, &stateJSON, &dueAt, &lastReviewedAt)
+		WHERE activity_type = ? AND reference_id = ? AND COALESCE(source_chunk_id, '') = ?
+	`, activityType, referenceID, strings.TrimSpace(sourceChunkID)).Scan(&topicID, &storedSourceChunkID, &stateJSON, &dueAt, &lastReviewedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -112,6 +127,7 @@ func getAssessmentFSRSStateFromQuerier(q querier, activityType, referenceID stri
 
 	record := &AssessmentFSRSRecord{
 		TopicID:        topicID,
+		SourceChunkID:  strings.TrimSpace(storedSourceChunkID.String),
 		State:          state,
 		DueAt:          dueAt.Int64,
 		LastReviewedAt: lastReviewedAt.Int64,
@@ -119,14 +135,14 @@ func getAssessmentFSRSStateFromQuerier(q querier, activityType, referenceID stri
 	return record, nil
 }
 
-func getAssessmentFSRSStateRepo(activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+func getAssessmentFSRSStateRepo(activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
-	return getAssessmentFSRSStateFromQuerier(conn, activityType, referenceID)
+	return getAssessmentFSRSStateFromQuerier(conn, activityType, referenceID, sourceChunkID)
 }
 
-func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
 	if conn == nil {
 		return fmt.Errorf("database not initialized")
 	}
@@ -154,17 +170,26 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID string, s
 		return err
 	}
 
+	normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
+	var sourceChunkIDValue interface{}
+	if normalizedSourceChunkID == "" {
+		sourceChunkIDValue = nil // Use NULL for empty strings
+	} else {
+		sourceChunkIDValue = normalizedSourceChunkID
+	}
+
 	if _, err = tx.Exec(`
 		INSERT INTO assessment_fsrs (
-			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id) DO UPDATE SET
+			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
 			topic_id = excluded.topic_id,
+			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,
 			due_at = excluded.due_at,
 			last_reviewed_at = excluded.last_reviewed_at,
 			updated_at = CURRENT_TIMESTAMP
-	`, activityType, referenceID, topicID, string(stateJSON), dueAt, reviewedAt); err != nil {
+	`, activityType, referenceID, topicID, sourceChunkIDValue, string(stateJSON), dueAt, reviewedAt); err != nil {
 		return err
 	}
 
@@ -185,14 +210,14 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID string, s
 	return nil
 }
 
-func getAssessmentFSRSStateRepoTx(tx *sql.Tx, activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+func getAssessmentFSRSStateRepoTx(tx *sql.Tx, activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("transaction not initialized")
 	}
-	return getAssessmentFSRSStateFromQuerier(tx, activityType, referenceID)
+	return getAssessmentFSRSStateFromQuerier(tx, activityType, referenceID, sourceChunkID)
 }
 
-func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
 	if tx == nil {
 		return fmt.Errorf("transaction not initialized")
 	}
@@ -209,17 +234,26 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 		return err
 	}
 
+	normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
+	var sourceChunkIDValue interface{}
+	if normalizedSourceChunkID == "" {
+		sourceChunkIDValue = nil // Use NULL for empty strings
+	} else {
+		sourceChunkIDValue = normalizedSourceChunkID
+	}
+
 	if _, err = tx.Exec(`
 		INSERT INTO assessment_fsrs (
-			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id) DO UPDATE SET
+			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
 			topic_id = excluded.topic_id,
+			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,
 			due_at = excluded.due_at,
 			last_reviewed_at = excluded.last_reviewed_at,
 			updated_at = CURRENT_TIMESTAMP
-	`, activityType, referenceID, topicID, string(stateJSON), dueAt, reviewedAt); err != nil {
+	`, activityType, referenceID, topicID, sourceChunkIDValue, string(stateJSON), dueAt, reviewedAt); err != nil {
 		return err
 	}
 

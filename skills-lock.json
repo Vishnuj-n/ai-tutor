@@ -10,6 +10,24 @@
       "source": "JuliusBrussee/caveman",
       "sourceType": "github",
       "computedHash": "3b624b02603ee2e485707bf352747433068079c26dd4e2f9c17edcfb12a871b2"
+    },
+    "check": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "skillPath": "skills/check/SKILL.md",
+      "computedHash": "f313bff1e11a9c8855a6193aca8d3859db80ebdb19a785b04bdfb081850541ec"
+    },
+    "design": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "skillPath": "skills/design/SKILL.md",
+      "computedHash": "c6beb4e787941e9d543d6078c52da1ae4e01143942c6c580e746960d7685f55a"
+    },
+    "think": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "skillPath": "skills/think/SKILL.md",
+      "computedHash": "6961cab51f2c4c9cdc0fbc190e0198778ab92ad43f969acf03a7ecd44ad083c7"
     }
   }
 }

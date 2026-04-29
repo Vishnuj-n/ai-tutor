@@ -636,45 +636,45 @@ func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) 
 }
 
 // GetAssessmentFSRSState returns shared assessment FSRS state for one quiz/written reference.
-func GetAssessmentFSRSState(activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+func GetAssessmentFSRSState(activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	if activityType == "" || referenceID == "" {
 		return nil, fmt.Errorf("activity type and reference id are required")
 	}
-	return getAssessmentFSRSStateRepo(activityType, referenceID)
+	return getAssessmentFSRSStateRepo(activityType, referenceID, sourceChunkID)
 }
 
 // GetAssessmentFSRSStateTx returns shared assessment FSRS state for one quiz/written reference within a transaction.
-func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID string) (*AssessmentFSRSRecord, error) {
+func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	if activityType == "" || referenceID == "" {
 		return nil, fmt.Errorf("activity type and reference id are required")
 	}
-	return getAssessmentFSRSStateRepoTx(tx, activityType, referenceID)
+	return getAssessmentFSRSStateRepoTx(tx, activityType, referenceID, sourceChunkID)
 }
 
 // UpsertAssessmentFSRSReview saves shared assessment FSRS state and corresponding review log.
-func UpsertAssessmentFSRSReview(activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+func UpsertAssessmentFSRSReview(activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	topicID = strings.TrimSpace(topicID)
 	if activityType == "" || referenceID == "" || topicID == "" {
 		return fmt.Errorf("activity type, reference id, and topic id are required")
 	}
-	return upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, state, dueAt, reviewedAt, reviewLog)
+	return upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceChunkID, state, dueAt, reviewedAt, reviewLog)
 }
 
 // UpsertAssessmentFSRSReviewTx saves shared assessment FSRS state and corresponding review log within a transaction.
-func UpsertAssessmentFSRSReviewTx(tx *sql.Tx, activityType, referenceID, topicID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
+func UpsertAssessmentFSRSReviewTx(tx *sql.Tx, activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
 	activityType = strings.TrimSpace(activityType)
 	referenceID = strings.TrimSpace(referenceID)
 	topicID = strings.TrimSpace(topicID)
 	if activityType == "" || referenceID == "" || topicID == "" {
 		return fmt.Errorf("activity type, reference id, and topic id are required")
 	}
-	return upsertAssessmentFSRSReviewRepoTx(tx, activityType, referenceID, topicID, state, dueAt, reviewedAt, reviewLog)
+	return upsertAssessmentFSRSReviewRepoTx(tx, activityType, referenceID, topicID, sourceChunkID, state, dueAt, reviewedAt, reviewLog)
 }
 
 // SaveUserAnswer stores a scored quiz response.

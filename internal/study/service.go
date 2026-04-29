@@ -1,7 +1,6 @@
 package study
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,28 +29,25 @@ type LLMProvider interface {
 
 // Config wires all dependencies into StudyService via constructor injection.
 type Config struct {
-	FastLLMProvider         LLMProvider
-	HeavyLLMProvider        LLMProvider
-	RetrievalEngine         *retrieval.Engine
-	ApplyAssessmentReviewTx func(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error)
+	FastLLMProvider  LLMProvider
+	HeavyLLMProvider LLMProvider
+	RetrievalEngine  *retrieval.Engine
 }
 
 // StudyService owns all study-mode generation and scoring logic.
 // quiz.go, flashcard.go, examiner.go, and socratic.go add methods to this type.
 type StudyService struct {
-	fastLLMProvider         LLMProvider
-	heavyLLMProvider        LLMProvider
-	retrievalEngine         *retrieval.Engine
-	applyAssessmentReviewTx func(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error)
+	fastLLMProvider  LLMProvider
+	heavyLLMProvider LLMProvider
+	retrievalEngine  *retrieval.Engine
 }
 
 // NewStudyService constructs a StudyService from injected dependencies.
 func NewStudyService(cfg Config) *StudyService {
 	return &StudyService{
-		fastLLMProvider:         cfg.FastLLMProvider,
-		heavyLLMProvider:        cfg.HeavyLLMProvider,
-		retrievalEngine:         cfg.RetrievalEngine,
-		applyAssessmentReviewTx: cfg.ApplyAssessmentReviewTx,
+		fastLLMProvider:  cfg.FastLLMProvider,
+		heavyLLMProvider: cfg.HeavyLLMProvider,
+		retrievalEngine:  cfg.RetrievalEngine,
 	}
 }
 
@@ -122,9 +118,6 @@ func (s *StudyService) ScoreShortAnswer(questionID, userAnswer string) map[strin
 	if s.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
-	if s.applyAssessmentReviewTx == nil {
-		return map[string]interface{}{"error": "assessment review callback not initialized"}
-	}
 
 	question, err := db.GetWrittenQuestionByID(questionID)
 	if err != nil {
@@ -185,8 +178,8 @@ Student answer: %s`, question.Prompt, userAnswer)
 	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
 		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
 	}
-	ratingLabel, _ := shortAnswerScoreToFSRSRating(score)
-	fsrsResult, err := s.applyAssessmentReviewTx(tx, question.TopicID, "written_question", question.ID, ratingLabel)
+	// Use source_chunk_id from written question for proper chunk lineage
+	fsrsResult, err := s.LogReviewTx(tx, question.TopicID, "written_question", question.ID, question.SourceChunkID, score)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
 	}
@@ -213,6 +206,7 @@ Student answer: %s`, question.Prompt, userAnswer)
 // ---------- LLM response types (shared across sub-files) ----------
 
 type quizLLMQuestion struct {
+	SourceChunkID   string   `json:"source_chunk_id"`
 	Prompt          string   `json:"prompt"`
 	Options         []string `json:"options"`
 	CorrectAnswer   string   `json:"correct_answer"`
@@ -229,8 +223,9 @@ type quizLLMResponse struct {
 }
 
 type flashcardLLMCard struct {
-	Prompt string `json:"prompt"`
-	Answer string `json:"answer"`
+	SourceChunkID string `json:"source_chunk_id"`
+	Prompt        string `json:"prompt"`
+	Answer        string `json:"answer"`
 }
 
 type flashcardLLMResponse struct {
@@ -534,23 +529,106 @@ func ScaledFlashcardCount(wordCount int) int {
 	}
 }
 
-// buildPageBoundedContext fetches raw chunk text for a notebook page range
-// and returns (contextText, tokenCount, error).
-func buildPageBoundedContext(notebookID string, startPage, endPage int) (string, int, error) {
-	text, err := db.GetChunkTextByNotebookPageRange(notebookID, startPage, endPage)
+// buildPageBoundedContext fetches structured chunk context for a notebook page range
+// and returns (chunks, tokenCount, error) with hard token budget enforcement.
+func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
+	chunks, err := db.GetChunksWithContextByNotebookPageRange(notebookID, startPage, endPage)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to load page-bounded context: %w", err)
+		return nil, 0, fmt.Errorf("failed to load page-bounded context: %w", err)
 	}
-	if strings.TrimSpace(text) == "" {
+	if len(chunks) == 0 {
 		// Return empty response instead of error for marathon mode compatibility
-		return "", 0, nil
+		return []models.ChunkWithContext{}, 0, nil
 	}
-	tokenCount, err := embeddings.CountTokens(text)
-	if err != nil {
-		// Fall back to word count estimation if tokenizer fails
-		tokenCount = len(strings.Fields(text))
+
+	// Enforce hard token budget during assembly
+	const maxContextTokens = 8000
+	const baseOverhead = 200       // Estimated tokens for prompt template and instructions
+	const chunkFormatOverhead = 30 // Estimated overhead per chunk for formatting
+
+	var budgetedChunks []models.ChunkWithContext
+	currentTokens := baseOverhead
+
+	for _, chunk := range chunks {
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+
+		// Estimate tokens for this chunk with formatting
+		chunkLine := fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
+		chunkTokens, err := embeddings.CountTokens(chunkLine)
+		if err != nil {
+			// Fallback to word count if tokenization fails
+			chunkTokens = len(strings.Fields(chunkLine))
+		}
+
+		// Check if adding this chunk would exceed budget
+		if currentTokens+chunkTokens > maxContextTokens {
+			break
+		}
+
+		budgetedChunks = append(budgetedChunks, chunk)
+		currentTokens += chunkTokens
 	}
-	return text, tokenCount, nil
+
+	// Calculate final token count
+	finalTokenCount := calculatePromptTokenCount(budgetedChunks)
+
+	return budgetedChunks, finalTokenCount, nil
+}
+
+// calculatePromptTokenCount estimates the actual token count that will be sent to the LLM
+// including prompt overhead and chunk formatting (chunk_id: | page_num: | text: format)
+func calculatePromptTokenCount(chunks []models.ChunkWithContext) int {
+	const maxContextChunks = 120
+	limit := len(chunks)
+	if limit > maxContextChunks {
+		limit = maxContextChunks
+	}
+
+	// Base prompt overhead (instructions, format, etc.)
+	baseOverhead := 200 // Estimated tokens for prompt template and instructions
+
+	// Build the complete formatted content once for efficient token counting
+	var contentBuilder strings.Builder
+	for i := 0; i < limit; i++ {
+		chunk := chunks[i]
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+		// Format: "- chunk_id: %s | page_num: %d | text: %s\n"
+		contentBuilder.WriteString(fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text))
+	}
+
+	// Add truncation notice if needed
+	if len(chunks) > maxContextChunks {
+		contentBuilder.WriteString("[...additional chunks truncated...]")
+	}
+
+	formattedContent := contentBuilder.String()
+
+	// Count tokens once for the complete formatted content
+	if contentTokens, err := embeddings.CountTokens(formattedContent); err == nil {
+		return baseOverhead + contentTokens
+	} else {
+		// Fallback to word count if tokenization fails
+		return baseOverhead + len(strings.Fields(formattedContent))
+	}
+}
+
+func buildContextTextFromChunks(chunks []models.ChunkWithContext) string {
+	var b strings.Builder
+	for _, chunk := range chunks {
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // suppressedUnusedImportForUUID ensures uuid is imported in sub-files via
