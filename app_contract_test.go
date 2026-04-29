@@ -1033,7 +1033,7 @@ func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
 		t.Fatalf("expected next_review_at, got %#v", got)
 	}
 
-	state, err := db.GetAssessmentFSRSState("written_question", "written-q-1")
+	state, err := db.GetAssessmentFSRSState("written_question", "written-q-1", "")
 	if err != nil {
 		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
 	}
@@ -1075,7 +1075,7 @@ func TestScoreAnswerReturnsSharedAssessmentFSRSFields(t *testing.T) {
 		t.Fatalf("expected scheduled_days in response")
 	}
 
-	state, err := db.GetAssessmentFSRSState("quiz_question", "quiz-fsrs-q1")
+	state, err := db.GetAssessmentFSRSState("quiz_question", "quiz-fsrs-q1", "")
 	if err != nil {
 		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
 	}

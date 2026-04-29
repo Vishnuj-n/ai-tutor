@@ -1,7 +1,6 @@
 package study
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,28 +29,25 @@ type LLMProvider interface {
 
 // Config wires all dependencies into StudyService via constructor injection.
 type Config struct {
-	FastLLMProvider         LLMProvider
-	HeavyLLMProvider        LLMProvider
-	RetrievalEngine         *retrieval.Engine
-	ApplyAssessmentReviewTx func(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error)
+	FastLLMProvider  LLMProvider
+	HeavyLLMProvider LLMProvider
+	RetrievalEngine  *retrieval.Engine
 }
 
 // StudyService owns all study-mode generation and scoring logic.
 // quiz.go, flashcard.go, examiner.go, and socratic.go add methods to this type.
 type StudyService struct {
-	fastLLMProvider         LLMProvider
-	heavyLLMProvider        LLMProvider
-	retrievalEngine         *retrieval.Engine
-	applyAssessmentReviewTx func(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error)
+	fastLLMProvider  LLMProvider
+	heavyLLMProvider LLMProvider
+	retrievalEngine  *retrieval.Engine
 }
 
 // NewStudyService constructs a StudyService from injected dependencies.
 func NewStudyService(cfg Config) *StudyService {
 	return &StudyService{
-		fastLLMProvider:         cfg.FastLLMProvider,
-		heavyLLMProvider:        cfg.HeavyLLMProvider,
-		retrievalEngine:         cfg.RetrievalEngine,
-		applyAssessmentReviewTx: cfg.ApplyAssessmentReviewTx,
+		fastLLMProvider:  cfg.FastLLMProvider,
+		heavyLLMProvider: cfg.HeavyLLMProvider,
+		retrievalEngine:  cfg.RetrievalEngine,
 	}
 }
 
@@ -122,9 +118,6 @@ func (s *StudyService) ScoreShortAnswer(questionID, userAnswer string) map[strin
 	if s.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
-	if s.applyAssessmentReviewTx == nil {
-		return map[string]interface{}{"error": "assessment review callback not initialized"}
-	}
 
 	question, err := db.GetWrittenQuestionByID(questionID)
 	if err != nil {
@@ -185,8 +178,7 @@ Student answer: %s`, question.Prompt, userAnswer)
 	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
 		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
 	}
-	ratingLabel, _ := shortAnswerScoreToFSRSRating(score)
-	fsrsResult, err := s.applyAssessmentReviewTx(tx, question.TopicID, "written_question", question.ID, ratingLabel)
+	fsrsResult, err := s.LogReviewTx(tx, question.TopicID, "written_question", question.ID, "", score)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
 	}
