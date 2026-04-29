@@ -55,12 +55,60 @@ func GetTopicContent(topicID string) (map[string]interface{}, error) {
 	}, nil
 }
 
+// GetChunksForTopicPageRange retrieves chunks for a topic within a page range.
+func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]models.Chunk, error) {
+	query := `
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score, page_num
+		FROM chunks
+		WHERE topic_id = ?`
+
+	var args []interface{}
+	args = append(args, topicID)
+
+	if startPage > 0 && endPage > 0 {
+		query += " AND page_num >= ? AND page_num <= ?"
+		args = append(args, startPage, endPage)
+	}
+
+	rows, err := conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chunks []models.Chunk
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(
+			&chunk.ID,
+			&chunk.TopicID,
+			&chunk.ParentID,
+			&chunk.Text,
+			&chunk.ImportanceScore,
+			&chunk.WeaknessScore,
+			&chunk.PageNum,
+		); err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return chunks, nil
+}
+
 // GetChunksForTopic retrieves all chunks for a topic.
 func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 	rows, err := conn.Query(`
-		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
 		WHERE topic_id = ?
+		ORDER BY id
 	`, topicID)
 	if err != nil {
 		return nil, err
@@ -79,6 +127,7 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 			&chunk.Text,
 			&chunk.ImportanceScore,
 			&chunk.WeaknessScore,
+			&chunk.PageNum,
 		); err != nil {
 			return nil, err
 		}
@@ -107,7 +156,7 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score
+		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
 		WHERE topic_id IN (%s)
 	`, strings.Join(placeholders, ","))
@@ -131,6 +180,7 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 			&chunk.Text,
 			&chunk.ImportanceScore,
 			&chunk.WeaknessScore,
+			&chunk.PageNum,
 		); err != nil {
 			return nil, err
 		}

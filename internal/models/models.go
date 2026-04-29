@@ -49,6 +49,7 @@ type Chunk struct {
 	Text            string
 	ImportanceScore float64
 	WeaknessScore   float64
+	PageNum         int
 }
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
