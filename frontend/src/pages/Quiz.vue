@@ -1,424 +1,365 @@
 <template>
-  <section class="page">
-    <p class="eyebrow">Quiz</p>
-    <h1>Topic Quiz</h1>
+  <div class="quiz-page">
+    <header class="page-header">
+      <h1 class="page-title">Quiz</h1>
+      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading">
+        <option value="">— Select Notebook —</option>
+        <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
+      </select>
+    </header>
 
-    <article class="panel controls">
-      <label class="field">
-        <span>Notebook</span>
-        <select v-model="selectedNotebookID" @change="onNotebookChange">
-          <option disabled value="">Select a notebook</option>
-          <option
-            v-for="notebook in notebookTree"
-            :key="notebook.notebook_id"
-            :value="notebook.notebook_id"
-          >
-            {{ notebook.title }}
-          </option>
-        </select>
-      </label>
+    <nav class="tabs">
+      <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" :disabled="loading" @click="activeTab = 'comprehensive'">Comprehensive Extraction</button>
+      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" :disabled="loading" @click="activeTab = 'explorer'">Semantic Discovery</button>
+    </nav>
 
-      <label class="field">
-        <span>Topic</span>
-        <select v-model="selectedTopicID" :disabled="availableTopics.length === 0">
-          <option disabled value="">
-            {{ availableTopics.length === 0 ? 'No topics available yet' : 'Select a topic' }}
-          </option>
-          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
-            {{ topic.title }}
-          </option>
-        </select>
-      </label>
-
-      <button class="primary" :disabled="isGenerating || !canGenerateQuiz" @click="onGenerateQuiz">
-        {{ isGenerating ? 'Generating...' : 'Generate Quiz' }}
-      </button>
-    </article>
-
-    <article v-if="errorMessage" class="panel error">{{ errorMessage }}</article>
-
-    <article v-if="currentQuestion" class="panel question-card">
-      <header>
-        <p class="question-index">Question {{ currentIndex + 1 }} / {{ questions.length }}</p>
-        <h2>{{ currentQuestion.prompt }}</h2>
-      </header>
-
-      <fieldset v-if="!feedbackVisible" class="options">
-        <legend>Answer choices for question {{ currentIndex + 1 }}</legend>
-        <label v-for="(opt, idx) in currentQuestion.options" :key="opt + idx" class="option">
-          <input
-            v-model="selectedAnswer"
-            type="radio"
-            :name="`quiz-question-${currentQuestion.id}`"
-            :value="opt"
-          />
-          <span>{{ String.fromCharCode(65 + idx) }}. {{ opt }}</span>
-        </label>
-      </fieldset>
-
-      <div
-        v-if="feedbackVisible && scoreResult"
-        class="feedback"
-        :class="scoreResult.correct ? 'good' : 'bad'"
-      >
-        <h3>{{ scoreResult.correct ? 'Correct' : 'Not quite' }} · Score {{ scoreResult.score }}</h3>
-        <p>{{ scoreResult.feedback }}</p>
-        <p class="hint">Hint: {{ scoreResult.hint }}</p>
-        <p v-if="!scoreResult.correct" class="expected">Expected: {{ scoreResult.expected }}</p>
-        <p class="meta">Rating: {{ formatRating(scoreResult.fsrsRating) }}</p>
-        <p class="meta">Next Review: {{ formatNextReview(scoreResult.nextReviewAt) }}</p>
+    <section v-if="activeTab === 'comprehensive'" class="content">
+      <div class="controls">
+        <div class="input-group">
+          <label>Start Page</label>
+          <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
+        </div>
+        <div class="input-group">
+          <label>End Page</label>
+          <input v-model.number="endPage" type="number" min="1" :disabled="loading" />
+        </div>
+        <BaseButton :disabled="!canGenerate" :loading="loading" @click="generate">Generate Quiz</BaseButton>
       </div>
+      <ErrorMessage :message="error" />
 
-      <footer class="actions">
-        <button
-          v-if="!feedbackVisible"
-          class="primary"
-          :disabled="isScoring || !selectedAnswer"
-          @click="onSubmitAnswer"
-        >
-          {{ isScoring ? 'Scoring...' : 'Submit Answer' }}
-        </button>
+      <div v-if="questions.length" class="questions">
+        <div v-for="(q, qi) in questions" :key="q.id" class="question" :class="{ answered: answers[q.id] !== undefined }">
+          <p class="prompt"><span class="num">{{ qi + 1 }}.</span> {{ q.prompt }}</p>
+          <ul class="options">
+            <li v-for="opt in q.options" :key="opt" class="option-item">
+              <button
+                type="button"
+                :class="['option', optionClass(q, opt)]"
+                @click="submitAnswer(q, opt)">
+                {{ opt }}
+              </button>
+            </li>
+          </ul>
+          <div v-if="answers[q.id]" class="result" :class="answers[q.id].correct ? 'correct' : 'wrong'">
+            <span class="label">{{ answers[q.id].correct ? '✓ Correct' : '✗ Incorrect' }}</span>
+            <p v-if="answers[q.id].feedback" class="feedback">{{ answers[q.id].feedback }}</p>
+          </div>
+        </div>
+        <div class="score">Score: {{ correctCount }} / {{ answeredCount }}</div>
+      </div>
+    </section>
 
-        <button
-          v-if="feedbackVisible"
-          class="primary"
-          :disabled="currentIndex >= questions.length - 1"
-          @click="onNext"
-        >
-          {{ currentIndex >= questions.length - 1 ? 'Quiz Complete' : 'Next Question' }}
-        </button>
-      </footer>
-    </article>
-
-    <article v-else-if="questions.length === 0" class="panel">
-      <h2>Ready to generate</h2>
-      <p v-if="notebookTree.length === 0">Upload a notebook to start generating quizzes.</p>
-      <p v-else-if="selectedNotebook && availableTopics.length === 0">
-        This notebook has no topics yet. Wait for extraction to finish or choose another notebook.
-      </p>
-      <p v-else>Select a notebook and topic to generate a quiz.</p>
-    </article>
-  </section>
+    <section v-else class="content stub">
+      <p>Semantic Discovery — coming in Phase 2.</p>
+    </section>
+  </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { generateQuiz, getNotebookTopicTree, scoreAnswer } from '../services/appApi'
-import { formatRating, formatNextReview } from '@/utils/formatting'
+import { ref, computed, onMounted } from 'vue'
+import { getNotebooks, generateMarathonQuiz, scoreAnswer } from '../services/appApi.js'
+import BaseButton from '../components/BaseButton.vue'
+import ErrorMessage from '../components/ErrorMessage.vue'
 
-const route = useRoute()
-
-const notebookTree = ref([])
+const notebooks     = ref([])
 const selectedNotebookID = ref('')
-const selectedTopicID = ref('')
-const questions = ref([])
-const currentIndex = ref(0)
-const selectedAnswer = ref('')
-const scoreResult = ref(null)
-const feedbackVisible = ref(false)
-const errorMessage = ref('')
-const isGenerating = ref(false)
-const isScoring = ref(false)
+const activeTab     = ref('comprehensive')
+const startPage     = ref(1)
+const endPage       = ref(10)
+const loading       = ref(false)
+const error         = ref('')
+const questions     = ref([])
+const answers       = ref({})
+const pendingAnswers = new Set()
 
-const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
-const selectedNotebook = computed(
-  () =>
-    notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
+const canGenerate = computed(() =>
+  selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
 )
-const availableTopics = computed(() => selectedNotebook.value?.topics || [])
-const canGenerateQuiz = computed(() => selectedTopicID.value !== '')
 
-// Helper to clear quiz state
-function resetQuizState() {
-  questions.value = []
-  currentIndex.value = 0
-  selectedAnswer.value = ''
-  scoreResult.value = null
-  feedbackVisible.value = false
-}
-
-// Clear quiz state when topic selection changes
-watch(selectedTopicID, () => {
-  resetQuizState()
-})
+const answeredCount = computed(() => Object.keys(answers.value).length)
+const correctCount  = computed(() => Object.values(answers.value).filter(a => a.correct).length)
 
 onMounted(async () => {
   try {
-    const data = await getNotebookTopicTree()
-    notebookTree.value = Array.isArray(data) ? data : []
-    applyInitialSelection(getPreferredTopicID())
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to load notebook topics'
+    const res = await getNotebooks()
+    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+  } catch (e) {
+    error.value = 'Failed to load notebooks.'
   }
 })
 
-async function onGenerateQuiz() {
-  if (!selectedTopicID.value) {
-    return
-  }
-  // Clear any stale quiz state before starting new generation
-  resetQuizState()
-  isGenerating.value = true
-  errorMessage.value = ''
+async function generate() {
+  error.value = ''
+  questions.value = []
+  answers.value = {}
+  loading.value = true
   try {
-    const result = await generateQuiz(selectedTopicID.value)
-    if (result?.error) {
-      errorMessage.value = result.error
+    const res = await generateMarathonQuiz(selectedNotebookID.value, startPage.value, endPage.value)
+    if (res.error) { error.value = res.error; return }
+    questions.value = res.questions ?? []
+  } catch (e) {
+    error.value = e?.message ?? 'Quiz generation failed.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function submitAnswer(q, opt) {
+  if (answers.value[q.id] !== undefined) return
+  if (pendingAnswers.has(q.id)) return
+  
+  pendingAnswers.add(q.id)
+  try {
+    const res = await scoreAnswer(q.id, opt)
+    if (res.error) {
+      // Don't mark as answered if there's an error, allow retry
       return
     }
-    questions.value = Array.isArray(result?.questions) ? result.questions : []
-    if (questions.value.length === 0) {
-      errorMessage.value = 'No quiz questions were generated for this topic.'
-    }
-  } catch (err) {
-    errorMessage.value = err?.message || 'Quiz generation failed'
+    answers.value[q.id] = { selected: opt, correct: res.correct, feedback: res.feedback }
+  } catch (e) {
+    // Don't mark as answered on network error, allow retry
   } finally {
-    isGenerating.value = false
+    pendingAnswers.delete(q.id)
   }
 }
 
-async function onSubmitAnswer() {
-  if (!currentQuestion.value || !selectedAnswer.value) {
-    return
-  }
-  isScoring.value = true
-  errorMessage.value = ''
-  try {
-    const result = await scoreAnswer(currentQuestion.value.id, selectedAnswer.value)
-    if (result?.error) {
-      errorMessage.value = result.error
-      return
-    }
-    scoreResult.value = {
-      ...result,
-      fsrsRating: String(result.fsrsRating || result.fsrs_rating || ''),
-      nextReviewAt: String(result.next_review_at || ''),
-    }
-    feedbackVisible.value = true
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to score answer'
-  } finally {
-    isScoring.value = false
-  }
+function optionClass(q, opt) {
+  const a = answers.value[q.id]
+  if (!a) return ''
+  if (opt === q.correct_answer) return 'correct-opt'
+  return a.selected === opt && !a.correct ? 'wrong-opt' : ''
 }
-
-function applyInitialSelection(preferredTopicID) {
-  if (notebookTree.value.length === 0) {
-    selectedNotebookID.value = ''
-    selectedTopicID.value = ''
-    return
-  }
-
-  if (preferredTopicID) {
-    for (const notebook of notebookTree.value) {
-      const topic = Array.isArray(notebook.topics)
-        ? notebook.topics.find((item) => item.topic_id === preferredTopicID)
-        : null
-      if (topic) {
-        selectedNotebookID.value = notebook.notebook_id
-        selectedTopicID.value = topic.topic_id
-        return
-      }
-    }
-  }
-
-  const firstNotebookWithTopics = notebookTree.value.find(
-    (notebook) => Array.isArray(notebook.topics) && notebook.topics.length > 0
-  )
-  const fallbackNotebook = firstNotebookWithTopics || notebookTree.value[0]
-  selectedNotebookID.value = fallbackNotebook?.notebook_id || ''
-  selectedTopicID.value = fallbackNotebook?.topics?.[0]?.topic_id || ''
-}
-
-function onNotebookChange() {
-  const nextTopicID = availableTopics.value[0]?.topic_id || ''
-  if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
-    selectedTopicID.value = nextTopicID
-  }
-}
-
-function getPreferredTopicID() {
-  if (typeof route.query.topic === 'string') {
-    return route.query.topic
-  }
-  return ''
-}
-
-function onNext() {
-  if (currentIndex.value < questions.value.length - 1) {
-    currentIndex.value += 1
-    selectedAnswer.value = ''
-    scoreResult.value = null
-    feedbackVisible.value = false
-  }
-}
-
 </script>
 
 <style scoped>
-.page {
-  display: grid;
-  gap: 20px;
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  overflow-x: hidden;
+.quiz-page {
+  padding: 1.5rem;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  font-weight: 700;
-}
-
-h1 {
-  margin: 0;
-  font-size: 46px;
-  font-family: 'Manrope', sans-serif;
-  letter-spacing: -0.02em;
-}
-
-.panel {
-  background: var(--surface-container-lowest);
-  border-radius: 16px;
-  padding: 24px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.controls {
+.page-header {
   display: flex;
-  align-items: end;
-  gap: 14px;
-  flex-wrap: wrap;
-  width: 100%;
-  box-sizing: border-box;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
 }
 
-.field {
-  display: grid;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: clamp(200px, 100%, 420px);
+.page-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--on-surface);
 }
 
-.field span {
-  color: var(--muted-text);
-  font-size: 13px;
+.notebook-select {
+  width: 300px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--on-surface);
+  font-size: 0.9rem;
 }
 
-select {
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  background: white;
-  border-radius: 12px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  font-size: 15px;
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 0.5rem;
 }
 
-.primary {
-  border: 0;
-  border-radius: 12px;
-  padding: 8px 14px;
-  background: #20222f;
-  color: #fff;
-  font-weight: 600;
-  font-size: 14px;
+.tab-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
   cursor: pointer;
+  font-size: 0.9rem;
+  border-radius: 4px;
 }
 
-.primary:disabled {
+.tab-btn:hover {
+  background: #f5f5f5;
+}
+
+.tab-btn.active {
+  background: var(--primary);
+  color: white;
+  font-weight: 600;
+}
+
+.tab-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-h2 {
-  margin: 0 0 8px;
-  font-family: 'Manrope', sans-serif;
+.content {
+  animation: fadeIn 0.2s ease;
 }
 
-p {
-  margin: 0;
-  color: var(--muted-text);
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.question-card {
-  display: grid;
-  gap: 18px;
-  width: 100%;
-  box-sizing: border-box;
+.controls {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  margin-bottom: 1rem;
 }
 
-.question-index {
-  margin-bottom: 6px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.input-group label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+
+.input-group input {
+  width: 100px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.question {
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: white;
+}
+
+.question.answered {
+  background: #fafafa;
+}
+
+.prompt {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem 0;
+  color: var(--on-surface);
+}
+
+.num {
+  color: var(--primary);
+  font-weight: 700;
 }
 
 .options {
-  display: grid;
-  gap: 10px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.option {
+  list-style: none;
+  padding: 0;
+  margin: 0;
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  border-radius: 12px;
-  padding: 10px 12px;
-  width: 100%;
-  box-sizing: border-box;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.feedback {
-  border-radius: 12px;
-  padding: 14px;
-  display: grid;
-  gap: 8px;
-}
-
-.feedback.good {
-  background: #e8f7ee;
-}
-
-.feedback.bad {
-  background: #fff1ee;
-}
-
-.feedback h3 {
+.option-item {
+  padding: 0;
   margin: 0;
 }
 
-.hint,
-.expected {
-  color: #2f334a;
+.option {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  background: white;
+  transition: background 0.1s;
+  text-align: left;
 }
 
-.meta {
-  color: #2f334a;
+.option:hover:not(.correct-opt):not(.wrong-opt) {
+  background: #f5f5f5;
+  border-color: var(--primary);
+}
+
+.correct-opt {
+  background: #dcfce7;
+  border-color: #22c55e;
+  color: #16a34a;
   font-weight: 600;
 }
 
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 8px;
+.wrong-opt {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #dc2626;
 }
 
-.error {
-  border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-lowest));
-  background: color-mix(in srgb, #b42318 10%, var(--surface-container-lowest));
-  color: #8a2d16;
+.result {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+}
+
+.result.correct {
+  background: #dcfce7;
+}
+
+.result.wrong {
+  background: #fee2e2;
+}
+
+.label {
+  font-weight: 700;
+  font-size: 0.85rem;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.result.correct .label {
+  color: #16a34a;
+}
+
+.result.wrong .label {
+  color: #dc2626;
+}
+
+.feedback {
+  font-size: 0.85rem;
+  color: #666;
+  margin: 0;
+}
+
+.score {
+  text-align: center;
+  padding: 0.75rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-top: 0.5rem;
+}
+
+.stub {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
 }
 </style>

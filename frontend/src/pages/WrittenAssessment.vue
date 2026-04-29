@@ -1,491 +1,424 @@
 <template>
-  <section class="page">
-    <p class="eyebrow">FSRS-Linked Assessment</p>
-    <h1>Examiner</h1>
+  <div class="assessment-page">
+    <header class="page-header">
+      <h1 class="page-title">Written Assessment</h1>
+      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading || scoring">
+        <option value="">— Select Notebook —</option>
+        <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
+      </select>
+    </header>
 
-    <article class="panel controls">
-      <label class="field">
-        <span>Notebook</span>
-        <select v-model="selectedNotebookID" @change="onNotebookChange">
-          <option disabled value="">Select a notebook</option>
-          <option
-            v-for="notebook in notebookTree"
-            :key="notebook.notebook_id"
-            :value="notebook.notebook_id"
-          >
-            {{ notebook.title }}
-          </option>
-        </select>
-      </label>
+    <nav class="tabs">
+      <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Exam</button>
+      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Semantic Discovery</button>
+    </nav>
 
-      <label class="field">
-        <span>Topic</span>
-        <select v-model="selectedTopicID" :disabled="availableTopics.length === 0">
-          <option disabled value="">
-            {{ availableTopics.length === 0 ? 'No topics available yet' : 'Select a topic' }}
-          </option>
-          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
-            {{ topic.title }}
-          </option>
-        </select>
-      </label>
-
-      <button class="primary" :disabled="isGenerating || !canGenerate" @click="onGeneratePrompt">
-        {{ isGenerating ? 'Generating...' : 'Generate Prompt' }}
-      </button>
-    </article>
-
-    <article v-if="errorMessage" class="panel error">{{ errorMessage }}</article>
-
-    <article v-if="isGenerating" class="panel loading-panel">
-      <div class="loading-bubble" aria-live="polite" aria-label="Generating short-answer question">
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
-      <p>Creating a grounded short-answer prompt...</p>
-    </article>
-
-    <article v-if="questionState && !isGenerating" class="panel question-card">
-      <header>
-        <p class="question-index">Question</p>
-        <h2>{{ questionState.prompt }}</h2>
-      </header>
-
-      <label class="field answer-field">
-        <span>Your answer</span>
-        <textarea
-          v-model="userAnswer"
-          rows="7"
-          class="answer-input"
-          placeholder="Write a concise answer grounded in your notes..."
-          :disabled="isScoring"
-        ></textarea>
-      </label>
-
-      <div class="actions">
-        <button class="ghost" :disabled="isScoring" @click="onClear">Clear</button>
-        <button class="primary" :disabled="isScoring || !canSubmitAnswer" @click="onSubmitAnswer">
-          {{ isScoring ? 'Scoring...' : 'Submit Answer' }}
-        </button>
-      </div>
-
-      <section v-if="scoreResult" class="feedback" :class="ratingClass(scoreResult.fsrsRating)">
-        <h3>Score {{ scoreResult.score }}/10 · {{ formatRating(scoreResult.fsrsRating) }}</h3>
-        <p>{{ scoreResult.feedback }}</p>
-        <p class="meta-line">Next Review: {{ formatNextReview(scoreResult.nextReviewAt) }}</p>
-
-        <div class="actions">
-          <button class="ghost" :disabled="isGenerating" @click="onClear">Clear</button>
-          <button class="primary" :disabled="isGenerating || !canGenerate" @click="onNextPrompt">
-            {{ isGenerating ? 'Generating...' : 'Next Prompt' }}
-          </button>
+    <section v-if="activeTab === 'comprehensive'" class="content">
+      <div v-if="!question">
+        <div class="controls">
+          <div class="input-group">
+            <label>Start Page</label>
+            <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
+          </div>
+          <div class="input-group">
+            <label>End Page</label>
+            <input v-model.number="endPage" type="number" min="1" :disabled="loading" />
+          </div>
+          <BaseButton :disabled="!canGenerate" :loading="loading" @click="generate">Generate Question</BaseButton>
         </div>
-      </section>
-    </article>
+        <ErrorMessage :message="error" />
+      </div>
 
-    <article v-else-if="!isGenerating" class="panel">
-      <h2>Ready to practice</h2>
-      <p v-if="notebookTree.length === 0">
-        Upload a notebook to start generating written assessments.
-      </p>
-      <p v-else-if="selectedNotebook && availableTopics.length === 0">
-        This notebook has no topics yet. Wait for extraction to finish or choose another notebook.
-      </p>
-      <p v-else>Select a notebook and topic to generate a short-answer prompt.</p>
-    </article>
-  </section>
+      <div v-if="question && !result" class="exam">
+        <div class="question-box">
+          <p class="prompt">{{ question.prompt }}</p>
+          <span class="badge">Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span>
+        </div>
+        <textarea v-model="userAnswer" rows="6" class="answer-input"
+          placeholder="Write your answer here…" :disabled="scoring" />
+        <div class="actions">
+          <BaseButton :disabled="!userAnswer.trim() || scoring" :loading="scoring" @click="submitAnswer">Submit Answer</BaseButton>
+          <button class="discard-btn" :disabled="scoring" @click="reset">Discard</button>
+        </div>
+      </div>
+
+      <div v-if="result" class="result">
+        <div class="score" :class="scoreClass">
+          <span class="num">{{ result.score }}</span>
+          <span class="denom">/10</span>
+        </div>
+        <div class="result-body">
+          <p class="feedback">{{ result.feedback }}</p>
+          <div class="fsrs" v-if="result.fsrsRating">
+            <span class="label">{{ result.fsrsRating }}</span>
+            <span class="days">Next: {{ result.scheduledDays }}d</span>
+          </div>
+        </div>
+        <BaseButton @click="reset">New Question</BaseButton>
+      </div>
+    </section>
+
+    <section v-else class="content stub">
+      <p>Semantic Discovery — coming in Phase 2.</p>
+    </section>
+  </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { formatRating, formatNextReview } from '@/utils/formatting'
-import {
-  generateShortAnswerPrompt,
-  getNotebookTopicTree,
-  scoreShortAnswer,
-} from '../services/appApi'
+import { ref, computed, onMounted } from 'vue'
+import { getNotebooks, generateComprehensiveExam, scoreShortAnswer } from '../services/appApi.js'
+import BaseButton from '../components/BaseButton.vue'
+import ErrorMessage from '../components/ErrorMessage.vue'
 
-const route = useRoute()
-
-const notebookTree = ref([])
+const notebooks          = ref([])
 const selectedNotebookID = ref('')
-const selectedTopicID = ref('')
-const questionState = ref(null)
-const userAnswer = ref('')
-const scoreResult = ref(null)
-const errorMessage = ref('')
-const isGenerating = ref(false)
-const isScoring = ref(false)
+const activeTab          = ref('comprehensive')
+const startPage          = ref(1)
+const endPage            = ref(10)
+const loading            = ref(false)
+const scoring            = ref(false)
+const error              = ref('')
+const question           = ref(null)
+const userAnswer         = ref('')
+const result             = ref(null)
 
-const selectedNotebook = computed(
-  () =>
-    notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
+const canGenerate = computed(() =>
+  selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
 )
-const availableTopics = computed(() => selectedNotebook.value?.topics || [])
-const canGenerate = computed(() => selectedTopicID.value !== '')
-const canSubmitAnswer = computed(
-  () => userAnswer.value.trim().length > 0 && questionState.value !== null
-)
-
-watch(selectedTopicID, () => {
-  resetAssessmentState()
+const scoreClass = computed(() => {
+  const s = result.value?.score ?? 0
+  if (s >= 8) return 'great'
+  if (s >= 5) return 'ok'
+  return 'low'
 })
 
 onMounted(async () => {
-  await loadNotebookTopicTree()
+  try {
+    const res = await getNotebooks()
+    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+  } catch { error.value = 'Failed to load notebooks.' }
 })
 
-async function loadNotebookTopicTree() {
-  try {
-    const data = await getNotebookTopicTree()
-    notebookTree.value = Array.isArray(data) ? data : []
-    applyInitialSelection(getPreferredTopicID())
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to load notebook topics'
-    notebookTree.value = []
-  }
-}
-
-function resetAssessmentState() {
-  questionState.value = null
+async function generate() {
+  error.value = ''
+  question.value = null
+  result.value = null
   userAnswer.value = ''
-  scoreResult.value = null
-  errorMessage.value = ''
+  loading.value = true
+  try {
+    const res = await generateComprehensiveExam(selectedNotebookID.value, startPage.value, endPage.value)
+    if (res.error) { error.value = res.error; return }
+    // Normalize API response to camelCase
+    question.value = {
+      questionId: res.questionID,
+      prompt: res.prompt,
+      topicId: res.topicID,
+      notebookId: res.notebook_id,
+      startPage: res.start_page,
+      endPage: res.end_page,
+      llmTier: res.llm_tier,
+      sourcePageStart: res.source_page_start,
+      sourcePageEnd: res.source_page_end
+    }
+  } catch (e) {
+    error.value = e?.message ?? 'Exam generation failed.'
+  } finally {
+    loading.value = false
+  }
 }
 
-function onClear() {
-  resetAssessmentState()
-}
-
-async function onGeneratePrompt() {
-  if (!canGenerate.value) {
+async function submitAnswer() {
+  if (!question.value || !userAnswer.value.trim()) return
+  if (!question.value.questionId) {
+    error.value = 'Invalid question: missing question ID'
     return
   }
-  isGenerating.value = true
-  isScoring.value = false
-  errorMessage.value = ''
-  questionState.value = null
-  scoreResult.value = null
+  scoring.value = true
+  try {
+    const res = await scoreShortAnswer(question.value.questionId, userAnswer.value.trim())
+    if (res.error) { error.value = res.error; return }
+    // Normalize API response to camelCase
+    result.value = {
+      questionId: res.question_id,
+      prompt: res.prompt,
+      score: res.score,
+      feedback: res.feedback,
+      fsrsRating: res.fsrsRating,
+      scheduledDays: res.scheduled_days
+    }
+  } catch (e) {
+    error.value = e?.message ?? 'Scoring failed.'
+  } finally {
+    scoring.value = false
+  }
+}
+
+function reset() {
+  question.value = null
+  result.value = null
   userAnswer.value = ''
-
-  try {
-    const result = await generateShortAnswerPrompt(selectedTopicID.value)
-    if (result?.error) {
-      errorMessage.value = result.error
-      return
-    }
-    if (!result?.questionID || !result?.prompt) {
-      errorMessage.value = 'Question generation returned invalid data.'
-      return
-    }
-    questionState.value = {
-      questionID: result.questionID,
-      prompt: result.prompt,
-      topicID: result.topicID || selectedTopicID.value,
-    }
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to generate short-answer prompt'
-  } finally {
-    isGenerating.value = false
-  }
-}
-
-async function onSubmitAnswer() {
-  if (!questionState.value || !userAnswer.value.trim()) {
-    return
-  }
-  isScoring.value = true
-  errorMessage.value = ''
-  try {
-    const result = await scoreShortAnswer(questionState.value.questionID, userAnswer.value.trim())
-    if (result?.error) {
-      errorMessage.value = result.error
-      return
-    }
-    scoreResult.value = {
-      score: Number(result.score || 0),
-      fsrsRating: String(result.fsrsRating || result.fsrs_rating || ''),
-      feedback: String(result.feedback || ''),
-      nextReviewAt: String(result.next_review_at || ''),
-    }
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to score short answer'
-  } finally {
-    isScoring.value = false
-  }
-}
-
-async function onNextPrompt() {
-  resetAssessmentState()
-  await onGeneratePrompt()
-}
-
-function applyInitialSelection(preferredTopicID) {
-  if (notebookTree.value.length === 0) {
-    selectedNotebookID.value = ''
-    selectedTopicID.value = ''
-    return
-  }
-
-  if (preferredTopicID) {
-    for (const notebook of notebookTree.value) {
-      const topic = Array.isArray(notebook.topics)
-        ? notebook.topics.find((item) => item.topic_id === preferredTopicID)
-        : null
-      if (topic) {
-        selectedNotebookID.value = notebook.notebook_id
-        selectedTopicID.value = topic.topic_id
-        return
-      }
-    }
-  }
-
-  const firstNotebookWithTopics = notebookTree.value.find(
-    (notebook) => Array.isArray(notebook.topics) && notebook.topics.length > 0
-  )
-  const fallbackNotebook = firstNotebookWithTopics || notebookTree.value[0]
-  selectedNotebookID.value = fallbackNotebook?.notebook_id || ''
-  selectedTopicID.value = fallbackNotebook?.topics?.[0]?.topic_id || ''
-}
-
-function onNotebookChange() {
-  const nextTopicID = availableTopics.value[0]?.topic_id || ''
-  if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
-    selectedTopicID.value = nextTopicID
-  }
-}
-
-function getPreferredTopicID() {
-  if (typeof route.query.topic === 'string') {
-    return route.query.topic
-  }
-  return ''
-}
-
-function ratingClass(raw) {
-  const value = String(raw || '').toLowerCase()
-  if (value === 'again') return 'bad'
-  if (value === 'hard') return 'warn'
-  if (value === 'good') return 'good'
-  if (value === 'easy') return 'great'
-  return ''
+  error.value = ''
 }
 </script>
 
 <style scoped>
-.page {
-  display: grid;
-  gap: 20px;
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  overflow-x: hidden;
+.assessment-page {
+  padding: 1.5rem;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--muted-text);
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.page-title {
+  font-size: 1.75rem;
   font-weight: 700;
-}
-
-h1 {
   margin: 0;
-  font-size: 46px;
-  font-family: 'Manrope', sans-serif;
-  letter-spacing: -0.02em;
+  color: var(--on-surface);
 }
 
-.panel {
-  background: var(--surface-container-lowest);
-  border-radius: 16px;
-  padding: 24px;
-  width: 100%;
-  box-sizing: border-box;
+.notebook-select {
+  width: 300px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--on-surface);
+  font-size: 0.9rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 0.5rem;
+}
+
+.tab-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  font-size: 0.9rem;
+  border-radius: 4px;
+}
+
+.tab-btn:hover {
+  background: #f5f5f5;
+}
+
+.tab-btn.active {
+  background: var(--primary);
+  color: white;
+  font-weight: 600;
+}
+
+.content {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .controls {
   display: flex;
-  align-items: end;
-  gap: 14px;
-  flex-wrap: wrap;
-  width: 100%;
-  box-sizing: border-box;
+  gap: 1rem;
+  align-items: flex-end;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  margin-bottom: 1rem;
 }
 
-.field {
-  display: grid;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: clamp(200px, 100%, 420px);
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.field span {
-  color: var(--muted-text);
-  font-size: 13px;
-}
-
-select {
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  background: white;
-  border-radius: 12px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  font-size: 15px;
-}
-
-.primary,
-.ghost {
-  border-radius: 12px;
-  padding: 8px 14px;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.primary {
-  border: 0;
-  background: #20222f;
-  color: #fff;
-}
-
-.ghost {
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  background: var(--surface-container-highest);
+.input-group label {
+  font-size: 0.85rem;
+  font-weight: 500;
   color: var(--on-surface);
 }
 
-.primary:disabled,
-.ghost:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.input-group input {
+  width: 100px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
 }
 
-h2 {
-  margin: 0 0 8px;
-  font-family: 'Manrope', sans-serif;
+.input-group input:focus {
+  outline: none;
+  border-color: var(--primary);
 }
 
-p {
-  margin: 0;
-  color: var(--muted-text);
+.exam {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.question-card {
-  display: grid;
-  gap: 18px;
+.question-box {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
 }
 
-.question-index {
-  margin-bottom: 6px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+.prompt {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--on-surface);
+  line-height: 1.5;
+  margin: 0 0 0.5rem 0;
 }
 
-.answer-field {
-  min-width: 100%;
+.badge {
+  font-size: 0.75rem;
+  color: #666;
+  background: white;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-weight: 500;
 }
 
 .answer-input {
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  background: white;
-  border-radius: 12px;
   width: 100%;
-  box-sizing: border-box;
-  padding: 12px;
-  font-size: 15px;
-  font-family: inherit;
+  background: white;
+  color: var(--on-surface);
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-size: 0.9rem;
   resize: vertical;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.answer-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.answer-input:disabled {
+  opacity: 0.5;
 }
 
 .actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.discard-btn {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  border: 1px solid #ccc;
+  color: var(--on-surface);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.discard-btn:hover {
+  border-color: #ef4444;
+  color: #dc2626;
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 2rem;
+  background: #f5f5f5;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.score {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.num {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.denom {
+  font-size: 1rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.score.great .num {
+  color: #16a34a;
+}
+
+.score.ok .num {
+  color: #ea580c;
+}
+
+.score.low .num {
+  color: #dc2626;
+}
+
+.result-body {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .feedback {
-  border-radius: 12px;
-  padding: 14px;
-  display: grid;
-  gap: 8px;
-}
-
-.feedback h3 {
+  font-size: 0.95rem;
+  color: var(--on-surface);
+  line-height: 1.5;
+  max-width: 500px;
+  font-weight: 500;
   margin: 0;
 }
 
-.meta-line {
-  color: #2f334a;
+.fsrs {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.label {
+  color: var(--primary);
   font-weight: 600;
 }
 
-.feedback.bad {
-  background: #fff1ee;
+.days {
+  color: #666;
+  font-weight: 500;
 }
 
-.feedback.warn {
-  background: #fff6e8;
-}
-
-.feedback.good {
-  background: #e8f7ee;
-}
-
-.feedback.great {
-  background: #e5f5ff;
-}
-
-.loading-panel {
-  display: grid;
-  gap: 12px;
-  justify-items: center;
-}
-
-.loading-bubble {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.loading-bubble span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #596080;
-  animation: pulse 1s ease-in-out infinite;
-}
-
-.loading-bubble span:nth-child(2) {
-  animation-delay: 0.12s;
-}
-
-.loading-bubble span:nth-child(3) {
-  animation-delay: 0.24s;
-}
-
-.error {
-  border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-lowest));
-  background: color-mix(in srgb, #b42318 10%, var(--surface-container-lowest));
-  color: #8a2d16;
-}
-
-@keyframes pulse {
-  0%,
-  80%,
-  100% {
-    transform: scale(0.8);
-    opacity: 0.5;
-  }
-  40% {
-    transform: scale(1);
-    opacity: 1;
-  }
+.stub {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
 }
 </style>

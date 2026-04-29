@@ -1,524 +1,408 @@
 <template>
-  <section class="page">
-    <p class="eyebrow">Flashcards</p>
-    <h1>Review Session</h1>
+  <div class="flashcards-page">
+    <header class="page-header">
+      <h1 class="page-title">Flashcards</h1>
+      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading || reviewing">
+        <option value="">— Select Notebook —</option>
+        <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
+      </select>
+    </header>
 
-    <article class="panel controls">
-      <label class="field">
-        <span>Notebook</span>
-        <select v-model="selectedNotebookID" :disabled="busy || notebookTree.length === 0" @change="onNotebookChange">
-          <option disabled value="">Select a notebook</option>
-          <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
-            {{ notebook.title }}
-          </option>
-        </select>
-      </label>
+    <nav class="tabs">
+      <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Extraction</button>
+      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Key Concept Extraction</button>
+    </nav>
 
-      <label class="field">
-        <span>Topic</span>
-        <select v-model="selectedTopicID" :disabled="busy || availableTopics.length === 0">
-          <option disabled value="">
-            {{ availableTopics.length === 0 ? 'No topics available yet' : 'Select a topic' }}
-          </option>
-          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
-            {{ topic.title }}
-          </option>
-        </select>
-      </label>
-
-      <button class="secondary" :disabled="busy || !selectedTopicID" @click="onPrepareCards">
-        {{ isGenerating ? 'Preparing...' : 'Prepare Cards' }}
-      </button>
-
-      <button class="primary" :disabled="busy || !selectedTopicID" @click="loadDueCards">
-        {{ isLoadingCards ? 'Loading...' : 'Start Review' }}
-      </button>
-    </article>
-
-    <article v-if="errorMessage" class="panel error">{{ errorMessage }}</article>
-    <article v-if="successMessage" class="panel success" role="status" aria-live="polite" aria-atomic="true">{{ successMessage }}</article>
-
-    <article v-if="currentCard" class="panel card-shell">
-      <header class="card-header">
-        <div>
-          <p class="card-count">Card {{ currentIndex + 1 }} / {{ cards.length }}</p>
-          <h2>{{ currentCard.prompt }}</h2>
+    <section v-if="activeTab === 'comprehensive'" class="content">
+      <div v-if="!reviewing">
+        <div class="controls">
+          <div class="input-group">
+            <label>Start Page</label>
+            <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
+          </div>
+          <div class="input-group">
+            <label>End Page</label>
+            <input v-model.number="endPage" type="number" min="1" :disabled="loading" />
+          </div>
+          <BaseButton :disabled="!canGenerate" :loading="loading" @click="generate">Generate Cards</BaseButton>
         </div>
-        <span class="badge">{{ currentTopicTitle }}</span>
-      </header>
-
-      <div class="card-face" :class="{ revealed: answerVisible }">
-        <p class="label">{{ answerVisible ? 'Answer' : 'Prompt' }}</p>
-        <p class="content">{{ answerVisible ? currentCard.answer : currentCard.prompt }}</p>
+        <ErrorMessage :message="error" />
       </div>
 
-      <footer class="actions">
-        <button v-if="!answerVisible" class="secondary" :disabled="busy" @click="answerVisible = true">
-          Reveal Answer
-        </button>
+      <div v-if="reviewing && currentCard" class="review-session">
+        <p class="progress">Card {{ reviewIndex + 1 }} of {{ cards.length }}</p>
+        <div class="flashcard" :class="{ flipped }">
+          <div class="card-inner">
+            <div class="card-front">
+              <p class="card-text">{{ currentCard.prompt }}</p>
+              <button class="flip-btn" @click="flipped = true">Show Answer</button>
+            </div>
+            <div class="card-back">
+              <p class="card-text answer-text">{{ currentCard.answer }}</p>
+              <div class="rating-buttons">
+                <button v-for="r in ratings" :key="r.key" :class="['rating-btn', r.key]" @click="rate(r.key)" :disabled="isSubmittingReview">
+                  {{ r.label }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-        <template v-else>
-          <button class="rating danger" :disabled="busy" @click="onRateCard('again')">Again</button>
-          <button class="rating warn" :disabled="busy" @click="onRateCard('hard')">Hard</button>
-          <button class="rating good" :disabled="busy" @click="onRateCard('good')">Good</button>
-          <button class="rating easy" :disabled="busy" @click="onRateCard('easy')">Easy</button>
-        </template>
-      </footer>
-    </article>
+      <div v-if="reviewing && !currentCard" class="done">
+        <h2>Session Complete</h2>
+        <p>{{ cards.length }} card{{ cards.length !== 1 ? 's' : '' }} reviewed.</p>
+        <BaseButton @click="reset">New Session</BaseButton>
+      </div>
+    </section>
 
-    <article v-else class="panel empty">
-      <h2>{{ emptyState.title }}</h2>
-      <p>{{ emptyState.message }}</p>
-    </article>
-  </section>
+    <section v-else class="content stub">
+      <p>Explorer Mode — coming in Phase 2.</p>
+    </section>
+  </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import {
-  generateFlashcards,
-  getFlashcards,
-  getNotebookTopicTree,
-  recordFlashcardReview,
-} from '../services/appApi'
+import { ref, computed, onMounted } from 'vue'
+import { getNotebooks, generateMarathonFlashcards, getFlashcards, recordFlashcardReview } from '../services/appApi.js'
+import BaseButton from '../components/BaseButton.vue'
+import ErrorMessage from '../components/ErrorMessage.vue'
 
-const route = useRoute()
-
-const notebookTree = ref([])
+const notebooks          = ref([])
 const selectedNotebookID = ref('')
-const selectedTopicID = ref('')
-const cards = ref([])
-const currentIndex = ref(0)
-const answerVisible = ref(false)
-const errorMessage = ref('')
-const isGenerating = ref(false)
-const isLoadingCards = ref(false)
-const isReviewing = ref(false)
-const hasPreparedCards = ref(false)
-const successMessage = ref('')
+const activeTab          = ref('comprehensive')
+const startPage          = ref(1)
+const endPage            = ref(10)
+const loading            = ref(false)
+const error              = ref('')
+const cards              = ref([])
+const reviewIndex        = ref(0)
+const reviewing          = ref(false)
+const flipped            = ref(false)
+const isSubmittingReview = ref(false)
 
-const currentCard = computed(() => cards.value[currentIndex.value] || null)
-const selectedNotebook = computed(() =>
-  notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
+const ratings = [
+  { key: 'again', label: '✕ Again' },
+  { key: 'hard',  label: '~ Hard' },
+  { key: 'good',  label: '✓ Good' },
+  { key: 'easy',  label: '⚡ Easy' },
+]
+
+const canGenerate  = computed(() =>
+  selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
 )
-const availableTopics = computed(() => selectedNotebook.value?.topics || [])
-const currentTopicTitle = computed(() => {
-  const match = availableTopics.value.find((topic) => topic.topic_id === selectedTopicID.value)
-  return match?.title || 'Topic'
-})
-const busy = computed(() => isGenerating.value || isLoadingCards.value || isReviewing.value)
-
-const emptyState = computed(() => {
-  if (notebookTree.value.length === 0) {
-    return {
-      title: 'No notebooks yet',
-      message: 'Upload a notebook to create topic-scoped flashcards.',
-    }
-  }
-  if (selectedNotebook.value && availableTopics.value.length === 0) {
-    return {
-      title: 'No topics yet',
-      message: 'This notebook has not finished topic extraction yet.',
-    }
-  }
-  if (!selectedTopicID.value) {
-    return {
-      title: 'Choose a topic',
-      message: 'Select a notebook and topic, then prepare cards or start a due review session.',
-    }
-  }
-  if (hasPreparedCards.value) {
-    return {
-      title: 'All due cards cleared',
-      message: 'This topic has no cards due right now. Come back later or review another topic.',
-    }
-  }
-  return {
-    title: 'Ready to review',
-    message: 'Prepare cards for this topic if it is new, or start review to load cards that are due now.',
-  }
-})
-
-watch(selectedTopicID, () => {
-  resetSession()
-  clearMessages()
-})
+const currentCard  = computed(() => cards.value[reviewIndex.value] ?? null)
 
 onMounted(async () => {
   try {
-    const data = await getNotebookTopicTree()
-    notebookTree.value = Array.isArray(data) ? data : []
-    applyInitialSelection(getPreferredTopicID())
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to load notebook topics'
-  }
+    const res = await getNotebooks()
+    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+  } catch { error.value = 'Failed to load notebooks.' }
 })
 
-function resetSession() {
+async function generate() {
+  error.value = ''
   cards.value = []
-  currentIndex.value = 0
-  answerVisible.value = false
-  hasPreparedCards.value = false
-}
-
-function clearMessages() {
-  errorMessage.value = ''
-  successMessage.value = ''
-}
-
-async function onPrepareCards() {
-  if (!selectedTopicID.value) {
-    return
-  }
-  isGenerating.value = true
-  clearMessages()
+  reviewIndex.value = 0
+  flipped.value = false
+  reviewing.value = false
+  loading.value = true
   try {
-    const result = await generateFlashcards(selectedTopicID.value)
-    if (result?.error) {
-      errorMessage.value = result.error
+    const res = await generateMarathonFlashcards(selectedNotebookID.value, startPage.value, endPage.value)
+    if (res.error) { error.value = res.error; return }
+    cards.value = res.cards ?? []
+    if (cards.value.length) reviewing.value = true
+  } catch (e) {
+    error.value = e?.message ?? 'Flashcard generation failed.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function rate(ratingKey) {
+  const card = currentCard.value
+  if (!card || isSubmittingReview.value) return
+  
+  isSubmittingReview.value = true
+  try {
+    const res = await recordFlashcardReview(card.id, ratingKey)
+    if (res.error) {
+      error.value = `Failed to save review: ${res.error}`
       return
     }
-    hasPreparedCards.value = true
-    await loadDueCards()
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to prepare flashcards'
+    flipped.value = false
+    reviewIndex.value++
+  } catch (e) {
+    error.value = `Failed to save review: ${e?.message ?? 'Unknown error'}`
   } finally {
-    isGenerating.value = false
+    isSubmittingReview.value = false
   }
 }
 
-async function loadDueCards() {
-  if (!selectedTopicID.value) {
-    return
-  }
-  isLoadingCards.value = true
-  clearMessages()
-  try {
-    const result = await getFlashcards(selectedTopicID.value, true)
-    if (result?.error) {
-      errorMessage.value = result.error
-      return
-    }
-    cards.value = Array.isArray(result?.cards) ? result.cards : []
-    currentIndex.value = 0
-    answerVisible.value = false
-    hasPreparedCards.value = true
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to load due flashcards'
-  } finally {
-    isLoadingCards.value = false
-  }
-}
-
-async function onRateCard(rating) {
-  if (!currentCard.value) {
-    return
-  }
-  clearMessages()
-  const cardId = typeof currentCard.value.id === 'string' || typeof currentCard.value.id === 'number'
-    ? String(currentCard.value.id).trim()
-    : ''
-  if (!cardId) {
-    errorMessage.value = 'Cannot record flashcard review: current card has no valid ID.'
-    return
-  }
-  isReviewing.value = true
-  try {
-    const result = await recordFlashcardReview(cardId, rating)
-    if (result?.error) {
-      errorMessage.value = result.error
-      return
-    }
-
-    successMessage.value = buildReviewFeedback(rating, result?.state?.scheduled_days)
-    cards.value.splice(currentIndex.value, 1)
-    if (currentIndex.value >= cards.value.length) {
-      currentIndex.value = Math.max(0, cards.value.length - 1)
-    }
-    answerVisible.value = false
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to record flashcard review'
-  } finally {
-    isReviewing.value = false
-  }
-}
-
-function applyInitialSelection(preferredTopicID) {
-  if (notebookTree.value.length === 0) {
-    selectedNotebookID.value = ''
-    selectedTopicID.value = ''
-    return
-  }
-
-  if (preferredTopicID) {
-    for (const notebook of notebookTree.value) {
-      const topic = Array.isArray(notebook.topics)
-        ? notebook.topics.find((item) => item.topic_id === preferredTopicID)
-        : null
-      if (topic) {
-        selectedNotebookID.value = notebook.notebook_id
-        selectedTopicID.value = topic.topic_id
-        return
-      }
-    }
-  }
-
-  const firstNotebookWithTopics = notebookTree.value.find(
-    (notebook) => Array.isArray(notebook.topics) && notebook.topics.length > 0
-  )
-  const fallbackNotebook = firstNotebookWithTopics || notebookTree.value[0]
-  selectedNotebookID.value = fallbackNotebook?.notebook_id || ''
-  selectedTopicID.value = fallbackNotebook?.topics?.[0]?.topic_id || ''
-}
-
-function onNotebookChange() {
-  const nextTopicID = availableTopics.value[0]?.topic_id || ''
-  if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
-    selectedTopicID.value = nextTopicID
-  }
-}
-
-function getPreferredTopicID() {
-  return typeof route.query.topic === 'string' ? route.query.topic : ''
-}
-
-function buildReviewFeedback(rating, scheduledDays) {
-  const nextReview = formatNextReview(scheduledDays)
-  const ratingLabel = {
-    again: 'Again',
-    hard: 'Hard',
-    good: 'Good',
-    easy: 'Easy',
-  }[rating] || 'Review'
-
-  return `${ratingLabel} saved. Next review ${nextReview}.`
-}
-
-function formatNextReview(days) {
-  const n = Number(days)
-  if (!Number.isFinite(n)) {
-    return 'scheduled soon'
-  }
-  const daysInt = Math.round(n)
-  if (daysInt <= 0) {
-    return 'today'
-  }
-  if (daysInt === 1) {
-    return 'in 1 day'
-  }
-  return `in ${daysInt} days`
+function reset() {
+  reviewing.value = false
+  cards.value = []
+  reviewIndex.value = 0
+  flipped.value = false
+  isSubmittingReview.value = false
+  error.value = ''
 }
 </script>
 
 <style scoped>
-.page {
-  display: grid;
-  gap: 20px;
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  overflow-x: hidden;
+.flashcards-page {
+  padding: 1.5rem;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--muted-text);
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.page-title {
+  font-size: 1.75rem;
   font-weight: 700;
-}
-
-h1 {
   margin: 0;
-  font-size: 46px;
-  font-family: 'Manrope', sans-serif;
-  letter-spacing: -0.02em;
+  color: var(--on-surface);
 }
 
-.panel {
-  background: var(--surface-container-lowest);
-  border-radius: 16px;
-  padding: 24px;
-  width: 100%;
-  box-sizing: border-box;
+.notebook-select {
+  width: 300px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--on-surface);
+  font-size: 0.9rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 0.5rem;
+}
+
+.tab-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  font-size: 0.9rem;
+  border-radius: 4px;
+}
+
+.tab-btn:hover {
+  background: #f5f5f5;
+}
+
+.tab-btn.active {
+  background: var(--primary);
+  color: white;
+  font-weight: 600;
+}
+
+.content {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .controls {
   display: flex;
-  align-items: end;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  margin-bottom: 1rem;
 }
 
-.field {
-  display: grid;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: clamp(200px, 100%, 360px);
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.field span,
-.label,
-.card-count {
-  color: var(--muted-text);
-  font-size: 13px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.input-group label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--on-surface);
 }
 
-select {
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  background: white;
-  border-radius: 12px;
+.input-group input {
+  width: 100px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.review-session {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.progress {
+  text-align: center;
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.flashcard {
   width: 100%;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  font-size: 15px;
+  max-width: 500px;
+  height: 280px;
+  perspective: 1000px;
 }
 
-button {
-  border: 0;
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-weight: 700;
-  font-size: 14px;
+.card-inner {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.5s;
+  border-radius: 8px;
+}
+
+.flashcard.flipped .card-inner {
+  transform: rotateY(180deg);
+}
+
+.card-front,
+.card-back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border-radius: 8px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  gap: 1rem;
+}
+
+.card-back {
+  transform: rotateY(180deg);
+}
+
+.card-text {
+  font-size: 1rem;
+  color: var(--on-surface);
+  text-align: center;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.answer-text {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.flip-btn {
+  padding: 0.5rem 1.25rem;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
   cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.flip-btn:hover {
+  background: #0056b3;
 }
 
-.primary {
-  background: #20222f;
-  color: #fff;
-}
-
-.secondary {
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-}
-
-.card-shell {
-  display: grid;
-  gap: 22px;
-}
-
-.card-header {
+.rating-buttons {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: start;
-}
-
-.card-header h2,
-.empty h2 {
-  margin: 6px 0 0;
-  font-family: 'Manrope', sans-serif;
-  font-size: 30px;
-  line-height: 1.1;
-}
-
-.badge {
-  border-radius: 999px;
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.card-face {
-  min-height: 220px;
-  border-radius: 22px;
-  padding: 24px;
-  background:
-    radial-gradient(circle at top right, rgba(114, 160, 193, 0.18), transparent 34%),
-    linear-gradient(145deg, #f8fbff, #eef2f8);
-  display: grid;
-  align-content: center;
-  gap: 10px;
-}
-
-.card-face.revealed {
-  background:
-    radial-gradient(circle at top right, rgba(126, 180, 116, 0.18), transparent 34%),
-    linear-gradient(145deg, #f8fff8, #eef7ef);
-}
-
-.content {
-  margin: 0;
-  color: var(--on-surface);
-  font-size: clamp(22px, 3vw, 34px);
-  line-height: 1.2;
-  font-family: 'Manrope', sans-serif;
-  letter-spacing: -0.02em;
-}
-
-.actions {
-  display: flex;
+  gap: 0.5rem;
   flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
-.rating {
-  min-width: 92px;
+.rating-btn {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  background: white;
+  color: var(--on-surface);
+  font-size: 0.85rem;
+  font-weight: 500;
 }
 
-.danger {
-  background: #ffe8e3;
-  color: #8b341f;
+.rating-btn:hover.again {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #dc2626;
 }
 
-.warn {
-  background: #fff4df;
-  color: #8a5811;
+.rating-btn:hover.hard {
+  background: #ffedd5;
+  border-color: #f97316;
+  color: #ea580c;
 }
 
-.good {
-  background: #e9f7ef;
-  color: #1f6a3a;
+.rating-btn:hover.good {
+  background: #dcfce7;
+  border-color: #22c55e;
+  color: #16a34a;
 }
 
-.easy {
-  background: #e6f3ff;
-  color: #1c5f8b;
+.rating-btn:hover.easy {
+  background: #ede9fe;
+  border-color: #8b5cf6;
+  color: #7c3aed;
 }
 
-.empty p,
-.error {
+.done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 3rem;
+  text-align: center;
+  background: #f5f5f5;
+  border-radius: 8px;
+}
+
+.done h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
   margin: 0;
-  color: var(--muted-text);
+  color: var(--on-surface);
 }
 
-.error {
-  border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-lowest));
-  background: color-mix(in srgb, #b42318 10%, var(--surface-container-lowest));
-  color: #8a2d16;
-}
-
-.success {
-  border: 1px solid color-mix(in srgb, #1f6a3a 30%, var(--surface-container-lowest));
-  background: color-mix(in srgb, #1f6a3a 10%, var(--surface-container-lowest));
-  color: #1f6a3a;
+.done p {
+  font-size: 0.95rem;
+  color: #666;
   margin: 0;
 }
 
-@media (max-width: 960px) {
-  h1 {
-    font-size: 38px;
-  }
-
-  .card-header {
-    grid-template-columns: 1fr;
-  }
-
-  .card-face {
-    min-height: 180px;
-  }
+.stub {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
 }
 </style>

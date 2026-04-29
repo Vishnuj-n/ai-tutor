@@ -43,16 +43,21 @@ export function updateDailyStudyMinutes(minutes) {
   return appBridge().UpdateDailyStudyMinutes(minutes)
 }
 
-export function generateQuiz(topicID) {
-  return appBridge().GenerateQuiz(topicID)
+// Comprehensive Mode endpoints (Phase 1)
+export function generateMarathonQuiz(notebookID, startPage, endPage) {
+  return appBridge().GenerateMarathonQuiz(notebookID, startPage, endPage)
+}
+
+export function generateMarathonFlashcards(notebookID, startPage, endPage) {
+  return appBridge().GenerateMarathonFlashcards(notebookID, startPage, endPage)
+}
+
+export function generateComprehensiveExam(notebookID, startPage, endPage) {
+  return appBridge().GenerateComprehensiveExam(notebookID, startPage, endPage)
 }
 
 export function scoreAnswer(questionID, userAnswer) {
   return appBridge().ScoreAnswer(questionID, userAnswer)
-}
-
-export function generateFlashcards(topicID) {
-  return appBridge().GenerateFlashcards(topicID)
 }
 
 export function generateShortAnswerPrompt(topicID) {

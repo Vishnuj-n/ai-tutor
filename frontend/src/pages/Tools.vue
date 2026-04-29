@@ -7,6 +7,7 @@
       <p>Select a tool to continue.</p>
     </article>
 
+    
     <div class="tool-stack">
       <button type="button" class="tool-card" @click="go('/socratic')">
         <span class="tool-icon" aria-hidden="true">◎</span>
@@ -46,6 +47,11 @@ function go(path) {
 .page {
   display: grid;
   gap: 20px;
+  padding: 3rem 2rem;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--background);
+  min-height: 100vh;
 }
 
 .eyebrow {
@@ -55,6 +61,7 @@ function go(path) {
   text-transform: uppercase;
   color: var(--muted-text);
   font-weight: 700;
+  font-family: 'Inter', sans-serif;
 }
 
 h1 {
@@ -62,6 +69,7 @@ h1 {
   font-size: 46px;
   font-family: 'Manrope', sans-serif;
   letter-spacing: -0.02em;
+  color: var(--on-surface);
 }
 
 .panel {
@@ -74,6 +82,71 @@ h1 {
   margin: 0;
   color: var(--muted-text);
   font-size: 15px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+}
+
+/* Tools Analytics Panel */
+.tools-analytics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+/* Responsive: collapse to single column on small screens */
+@media (max-width: 768px) {
+  .tools-analytics {
+    grid-template-columns: 1fr;
+  }
+}
+
+.analytics-card {
+  background: var(--surface-container-low);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.analytics-card:hover {
+  background: var(--surface-container-lowest);
+  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.06);
+  transform: translateY(-2px);
+}
+
+.analytics-title {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--on-surface);
+  margin: 0 0 1rem 0;
+  letter-spacing: -0.2%;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.metric-row:last-child {
+  border-bottom: none;
+}
+
+.metric-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--muted-text);
+}
+
+.metric-value {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--on-surface);
 }
 
 .tool-stack {
@@ -100,7 +173,7 @@ h1 {
 
 .tool-card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(31, 38, 53, 0.08);
+  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.06);
 }
 
 .tool-icon {
@@ -121,18 +194,22 @@ h1 {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted-text);
+  font-family: 'Inter', sans-serif;
 }
 
 h2 {
   margin: 0;
   font-size: 24px;
   font-family: 'Manrope', sans-serif;
+  color: var(--on-surface);
 }
 
 .card-copy {
   margin: 0;
   color: var(--muted-text);
   line-height: 1.5;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
 }
 
 @media (max-width: 960px) {
