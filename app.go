@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -165,9 +164,6 @@ func (a *App) startup(ctx context.Context) {
 		FastLLMProvider:  fastLLMProvider,
 		HeavyLLMProvider: heavyLLMProvider,
 		RetrievalEngine:  a.retrievalEngine,
-		ApplyAssessmentReviewTx: func(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error) {
-			return applyAssessmentReviewTx(tx, topicID, activityType, referenceID, ratingLabel)
-		},
 	})
 
 	notebookDir, err := resolveNotebookDir()
@@ -445,6 +441,11 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 	if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
 		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
 	}
+	if a.studyService != nil {
+		if err := a.studyService.LogReview(card.TopicID, "flashcard", card.ID, card.SourceChunkID, ratingCode); err != nil {
+			return map[string]interface{}{"error": "failed to update assessment FSRS: " + err.Error()}
+		}
+	}
 	// Only update local state after successful database transaction
 	card.DueAt = dueAt
 	return map[string]interface{}{"card": card, "state": &nextState, "review_log_id": reviewLog.ID}
@@ -496,11 +497,10 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 	if err := db.SaveUserAnswerTx(tx, score); err != nil {
 		return map[string]interface{}{"error": "failed to save score: " + err.Error()}
 	}
-	ratingLabel := "again"
-	if correct {
-		ratingLabel = "good"
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	fsrsResult, err := applyAssessmentReviewTx(tx, question.TopicID, "quiz_question", question.ID, ratingLabel)
+	fsrsResult, err := a.studyService.LogReviewTx(tx, question.TopicID, "quiz_question", question.ID, question.SourceChunkID, score.Score)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to update quiz FSRS: " + err.Error()}
 	}
@@ -518,6 +518,16 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 	}
 }
 
+func (a *App) LogReview(topicID, activityType, referenceID, sourceChunkID string, score int) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	if err := a.studyService.LogReview(topicID, activityType, referenceID, sourceChunkID, score); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
 func (a *App) GenerateShortAnswerPrompt(topicID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -530,79 +540,6 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
-}
-
-// ---------- Internal helpers ----------
-
-func applyAssessmentReviewCore(
-	topicID, activityType, referenceID, ratingLabel string,
-	getStateFunc func(string, string) (*db.AssessmentFSRSRecord, error),
-	upsertFunc func(string, string, string, models.FlashcardState, int64, int64, models.FSRSReviewLog) error,
-) (map[string]interface{}, error) {
-	ratingCode, ok := mapReviewRating(strings.ToLower(strings.TrimSpace(ratingLabel)))
-	if !ok {
-		return nil, fmt.Errorf("invalid assessment rating: %s", ratingLabel)
-	}
-	current, err := getStateFunc(activityType, referenceID)
-	if err != nil {
-		return nil, err
-	}
-	state := models.FlashcardState{}
-	stateBeforeJSON := "{}"
-	if current != nil {
-		state = current.GetState()
-		beforeBytes, err := json.Marshal(state)
-		if err != nil {
-			return nil, err
-		}
-		stateBeforeJSON = string(beforeBytes)
-		elapsedDays := 0
-		if current.GetDueAt() > 0 {
-			elapsedSeconds := time.Now().Unix() - current.GetDueAt()
-			if elapsedSeconds > 0 {
-				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
-			}
-		}
-		state.ElapsedDays = elapsedDays
-	}
-	nextState := scheduler.NextFSRSState(state, ratingCode)
-	now := time.Now().Unix()
-	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
-	if nextState.ScheduledDays == 0 {
-		dueAt = now
-	}
-	stateAfterBytes, err := json.Marshal(nextState)
-	if err != nil {
-		return nil, err
-	}
-	reviewLog := models.FSRSReviewLog{
-		ID: uuid.NewString(), TopicID: topicID,
-		ActivityType: activityType, ReferenceID: referenceID,
-		ReviewedAt: now, Rating: ratingCode, ScheduledDays: nextState.ScheduledDays,
-		StateBeforeJSON: stateBeforeJSON, StateAfterJSON: string(stateAfterBytes),
-	}
-	if err := upsertFunc(activityType, referenceID, topicID, nextState, dueAt, now, reviewLog); err != nil {
-		return nil, err
-	}
-	ratingDisplay := strings.ToLower(strings.TrimSpace(ratingLabel))
-	ratingTitle := strings.ToUpper(ratingDisplay[:1]) + ratingDisplay[1:]
-	return map[string]interface{}{
-		"fsrs_rating":    ratingTitle,
-		"scheduled_days": nextState.ScheduledDays,
-		"next_review_at": time.Unix(dueAt, 0).Format(time.RFC3339),
-		"review_log_id":  reviewLog.ID,
-	}, nil
-}
-
-func applyAssessmentReviewTx(tx *sql.Tx, topicID, activityType, referenceID, ratingLabel string) (map[string]interface{}, error) {
-	return applyAssessmentReviewCore(topicID, activityType, referenceID, ratingLabel,
-		func(actType, refID string) (*db.AssessmentFSRSRecord, error) {
-			return db.GetAssessmentFSRSStateTx(tx, actType, refID)
-		},
-		func(actType, refID, tID string, state models.FlashcardState, dueAt, now int64, log models.FSRSReviewLog) error {
-			return db.UpsertAssessmentFSRSReviewTx(tx, actType, refID, tID, state, dueAt, now, log)
-		},
-	)
 }
 
 func mapReviewRating(rating string) (int, bool) {
