@@ -18,3 +18,5 @@ build/
 *.db
 uploads/
 .config/
+.agents/
+.windsurf/
