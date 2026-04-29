@@ -16,6 +16,7 @@ import (
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
+	"ai-tutor/internal/study"
 )
 
 func initTestDB(t *testing.T) {
@@ -591,9 +592,9 @@ func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokens failed: %v", err)
 	}
-	want := scaledFlashcardCount(expectedCount)
+	want := study.ScaledFlashcardCount(expectedCount)
 
-	resp := app.GenerateFlashcards("os-scheduling")
+	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("expected success, got error: %v", resp["error"])
 	}
@@ -623,14 +624,14 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokens failed: %v", err)
 	}
-	want := scaledFlashcardCount(totalTokens)
+	want := study.ScaledFlashcardCount(totalTokens)
 
-	first := app.GenerateFlashcards("os-scheduling")
+	first := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
 	if _, hasErr := first["error"]; hasErr {
 		t.Fatalf("first generation failed: %v", first["error"])
 	}
 
-	second := app.GenerateFlashcards("os-scheduling")
+	second := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
 	if _, hasErr := second["error"]; hasErr {
 		t.Fatalf("second generation failed: %v", second["error"])
 	}
@@ -651,7 +652,7 @@ func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
 	initTestDB(t)
 	app := &App{fastLLMProvider: initTestProvider(t)}
 
-	resp := app.GenerateFlashcards("os-scheduling")
+	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("generation failed: %v", resp["error"])
 	}
@@ -680,7 +681,7 @@ func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
 	provider := initTestProvider(t)
 	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
 
-	resp := app.GenerateFlashcards("os-scheduling")
+	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("generation failed: %v", resp["error"])
 	}
@@ -737,7 +738,7 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 	provider := initTestProvider(t)
 	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
 
-	resp := app.GenerateFlashcards("os-scheduling")
+	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("generation failed: %v", resp["error"])
 	}
