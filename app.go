@@ -441,11 +441,7 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 	if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
 		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
 	}
-	if a.studyService != nil {
-		if err := a.studyService.LogReview(card.TopicID, "flashcard", card.ID, card.SourceChunkID, ratingCode); err != nil {
-			return map[string]interface{}{"error": "failed to update assessment FSRS: " + err.Error()}
-		}
-	}
+	// Note: UpdateFlashcardReview already logs to fsrs_review_log, so no need to call studyService.LogReview
 	// Only update local state after successful database transaction
 	card.DueAt = dueAt
 	return map[string]interface{}{"card": card, "state": &nextState, "review_log_id": reviewLog.ID}
