@@ -21,10 +21,11 @@ func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, e
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextText, _, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, _, err := buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	contextText := buildContextTextFromChunks(contextChunks)
 
 	llm, tier := s.selectLLM(contextText)
 	if llm == nil {
