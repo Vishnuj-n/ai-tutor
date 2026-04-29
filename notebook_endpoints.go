@@ -130,6 +130,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 	_ = db.UpdateNotebookStatus(notebookID, "analyzing")
 	result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
 	if err != nil {
+		_ = db.UpdateNotebookStatus(notebookID, "failed")
 		return map[string]interface{}{"error": err.Error()}
 	}
 
@@ -253,12 +254,18 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		_ = db.UpdateNotebookTopic(notebookID, topicIDs[0])
 	}
 
+	// Track which topic IDs were newly created for cleanup
+	newlyCreatedTopicIDs := make(map[string]bool)
+	for _, item := range topicItems {
+		newlyCreatedTopicIDs[item.TopicID] = true
+	}
+
 	groups, allChunks := notebook.BuildTopicGroupsFromChapters(notebookID, doc, topicIDs, normalized)
 	if len(groups) == 0 || len(allChunks) == 0 {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
-		// Cleanup: delete created topic rows to avoid orphaned records
-		for _, item := range topicItems {
-			_ = db.DeleteTopic(item.TopicID)
+		// Cleanup: delete only newly created topic rows to avoid orphaned records
+		for topicID := range newlyCreatedTopicIDs {
+			_ = db.DeleteTopic(topicID)
 		}
 		return map[string]interface{}{"error": "confirmed chapters produced no chunks"}
 	}
@@ -275,9 +282,9 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	if err := a.notebookService.IngestNotebookContentByTopic(notebookID, groups); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
-		// Cleanup: delete created topic rows to avoid orphaned records
-		for _, item := range topicItems {
-			_ = db.DeleteTopic(item.TopicID)
+		// Cleanup: delete only newly created topic rows to avoid orphaned records
+		for topicID := range newlyCreatedTopicIDs {
+			_ = db.DeleteTopic(topicID)
 		}
 		emitIngestionProgress(a, ingestionProgressPayload{
 			NotebookID: notebookID,

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="message" class="error-msg">
+  <div v-if="message" class="error-msg" role="alert" aria-live="assertive" aria-atomic="true">
     {{ message }}
   </div>
 </template>

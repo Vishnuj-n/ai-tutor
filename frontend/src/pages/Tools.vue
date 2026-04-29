@@ -94,6 +94,13 @@ h1 {
   margin-top: 2rem;
 }
 
+/* Responsive: collapse to single column on small screens */
+@media (max-width: 768px) {
+  .tools-analytics {
+    grid-template-columns: 1fr;
+  }
+}
+
 .analytics-card {
   background: var(--surface-container-low);
   border-radius: 0.75rem;

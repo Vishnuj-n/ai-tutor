@@ -65,18 +65,21 @@ func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]model
 	var args []interface{}
 	args = append(args, topicID)
 
+	// Validate that either both bounds are provided or neither is
+	if (startPage > 0) != (endPage > 0) {
+		return nil, fmt.Errorf("both startPage and endPage must be provided together, or neither")
+	}
+
 	if startPage > 0 && endPage > 0 {
 		if startPage > endPage {
 			startPage, endPage = endPage, startPage
 		}
-		if startPage > endPage {
-			startPage, endPage = endPage, startPage
-
-			query += " ORDER BY page_num ASC, id ASC"
-		}
 		query += " AND page_num >= ? AND page_num <= ?"
 		args = append(args, startPage, endPage)
 	}
+
+	// Always include deterministic ordering
+	query += " ORDER BY page_num ASC, id ASC"
 
 	rows, err := conn.Query(query, args...)
 	if err != nil {

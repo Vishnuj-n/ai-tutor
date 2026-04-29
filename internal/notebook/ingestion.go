@@ -65,6 +65,7 @@ func BuildTopicGroupsFromChapters(notebookID string, doc *ExtractedDocument, top
 				TopicID:         builder.topicID,
 				ParentID:        parentID,
 				Text:            chunkText,
+				PageNum:         page,
 				ImportanceScore: 0,
 				WeaknessScore:   0,
 			})

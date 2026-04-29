@@ -80,7 +80,10 @@ func (s *StudyService) CompleteReadingSession(topicID string, startPage int, tar
 	if err != nil {
 		return map[string]interface{}{"error": "failed to calculate completion quiz density: " + err.Error()}
 	}
-	expectedQuestionCount := scaledQuizQuestionCount(totalChunkTokens)
+	// Convert token count to estimated word count for scaledQuizQuestionCount
+	// scaledQuizQuestionCount expects word counts, but we have token counts
+	estimatedWordCount := totalChunkTokens * 3 / 4 // Approximate 4 tokens per word ratio
+	expectedQuestionCount := scaledQuizQuestionCount(estimatedWordCount)
 	prompt, err := buildReaderCompletionQuizPrompt(topicID, startPage, targetPage, contextEndPage, parentPassages, totalChunkTokens, expectedQuestionCount)
 	if err != nil {
 		return map[string]interface{}{"error": "completion quiz prompt generation failed: " + err.Error()}
@@ -397,8 +400,9 @@ func buildReaderCompletionRetryPrompt(topicID string, startPage, targetPage, con
 		bufferEmpty = false
 		currentTokens += passageTokens
 	}
+	// Return error if no context was added (consistent with quiz prompt behavior)
 	if bufferEmpty {
-		utils.Warnf("completion quiz retry prompt for topic %s has no context passages", topicID)
+		return "", fmt.Errorf("no context passages for retry prompt (topicID: %s)", topicID)
 	}
 	return b.String(), nil
 }
