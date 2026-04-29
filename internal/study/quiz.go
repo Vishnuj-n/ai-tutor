@@ -23,7 +23,7 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextText, wordCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextText, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -33,8 +33,8 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 		return map[string]interface{}{"error": "no LLM provider available (tier: " + tier + ")"}
 	}
 
-	targetCount := scaledQuizQuestionCount(wordCount)
-	prompt := buildMarathonQuizPrompt(notebookID, startPage, endPage, contextText, wordCount, targetCount)
+	targetCount := scaledQuizQuestionCount(tokenCount)
+	prompt := buildMarathonQuizPrompt(notebookID, startPage, endPage, contextText, tokenCount, targetCount)
 
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
@@ -108,12 +108,12 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 }
 
 // buildMarathonQuizPrompt constructs the page-injection prompt for quiz generation.
-func buildMarathonQuizPrompt(notebookID string, startPage, endPage int, contextText string, wordCount, targetCount int) string {
+func buildMarathonQuizPrompt(notebookID string, startPage, endPage int, contextText string, tokenCount, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor quiz generator. Return STRICT JSON only. No markdown.\n")
 	fmt.Fprintf(&b, "Generate exactly %d multiple-choice questions covering pages %d-%d of notebook '%s'.\n",
 		targetCount, startPage, endPage, notebookID)
-	fmt.Fprintf(&b, "Content word count: %d\n", wordCount)
+	fmt.Fprintf(&b, "Content token count: %d\n", tokenCount)
 	b.WriteString(`JSON format: {"questions":[{"prompt":string,"options":[string,string,string,string],"correct_answer":string,"explanation":string,"hint":string,"source_heading":string,"source_snippet":string,"source_page_start":number,"source_page_end":number}]}` + "\n")
 	b.WriteString("\n=== QUESTION DIVERSITY (CRITICAL) ===\n")
 	b.WriteString("Cover different concepts: recall, application/analysis, and one misconception when count allows.\n")

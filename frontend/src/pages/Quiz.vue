@@ -31,13 +31,13 @@
         <div v-for="(q, qi) in questions" :key="q.id" class="question" :class="{ answered: answers[q.id] !== undefined }">
           <p class="prompt"><span class="num">{{ qi + 1 }}.</span> {{ q.prompt }}</p>
           <ul class="options">
-            <li v-for="opt in q.options" :key="opt"
-              :class="['option', optionClass(q, opt)]"
-              tabindex="0"
-              @click="submitAnswer(q, opt)"
-              @keydown.enter.prevent="submitAnswer(q, opt)"
-              @keydown.space.prevent="submitAnswer(q, opt)">
-              {{ opt }}
+            <li v-for="opt in q.options" :key="opt" class="option-item">
+              <button
+                type="button"
+                :class="['option', optionClass(q, opt)]"
+                @click="submitAnswer(q, opt)">
+                {{ opt }}
+              </button>
             </li>
           </ul>
           <div v-if="answers[q.id]" class="result" :class="answers[q.id].correct ? 'correct' : 'wrong'">
@@ -273,7 +273,13 @@ function optionClass(q, opt) {
   gap: 0.5rem;
 }
 
+.option-item {
+  padding: 0;
+  margin: 0;
+}
+
 .option {
+  width: 100%;
   padding: 0.6rem 0.75rem;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
@@ -281,6 +287,7 @@ function optionClass(q, opt) {
   font-size: 0.9rem;
   background: white;
   transition: background 0.1s;
+  text-align: left;
 }
 
 .option:hover:not(.correct-opt):not(.wrong-opt) {

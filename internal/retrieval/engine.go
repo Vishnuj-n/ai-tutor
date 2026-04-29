@@ -211,20 +211,21 @@ func (e *Engine) tfVector(text string) map[string]float64 {
 	return vec
 }
 
+var stopWords = map[string]bool{
+	"the": true, "a": true, "an": true, "and": true, "or": true,
+	"in": true, "on": true, "at": true, "to": true, "for": true,
+	"is": true, "are": true, "was": true, "be": true, "been": true,
+	"have": true, "has": true, "do": true, "does": true, "did": true,
+	"of": true, "with": true, "by": true, "from": true, "as": true,
+	"if": true, "about": true, "into": true, "it": true, "its": true,
+	"that": true, "this": true, "which": true, "who": true,
+}
+
 func tokenize(text string) []string {
 	text = strings.ToLower(text)
 	raw := strings.FieldsFunc(text, func(r rune) bool {
 		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
-	stopWords := map[string]bool{
-		"the": true, "a": true, "an": true, "and": true, "or": true,
-		"in": true, "on": true, "at": true, "to": true, "for": true,
-		"is": true, "are": true, "was": true, "be": true, "been": true,
-		"have": true, "has": true, "do": true, "does": true, "did": true,
-		"of": true, "with": true, "by": true, "from": true, "as": true,
-		"if": true, "about": true, "into": true, "it": true, "its": true,
-		"that": true, "this": true, "which": true, "who": true,
-	}
 	out := make([]string, 0, len(raw))
 	for _, w := range raw {
 		if len(w) > 2 && !stopWords[w] {

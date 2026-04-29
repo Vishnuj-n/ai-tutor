@@ -136,10 +136,14 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 	chapters := result.Chapters
 	fallbackUsed := result.FallbackUsed
 	if len(chapters) == 0 {
+		endPage := doc.PageCount
+		if endPage <= 0 {
+			endPage = 1
+		}
 		chapters = []models.SyllabusChapterDraft{{
 			Title:     "General",
 			StartPage: 1,
-			EndPage:   doc.PageCount,
+			EndPage:   endPage,
 		}}
 		fallbackUsed = true
 	}
