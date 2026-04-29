@@ -63,7 +63,15 @@ func (s *StudyService) logReview(tx *sql.Tx, topicID, activityType, referenceID,
 		}
 		stateBeforeJSON = string(beforeBytes)
 		elapsedDays := 0
-		if current.GetDueAt() > 0 {
+		// Use last_reviewed_at for proper spacing calculation, fallback to due_at if missing
+		lastReviewedAt := current.GetLastReviewedAt()
+		if lastReviewedAt > 0 {
+			elapsedSeconds := time.Now().Unix() - lastReviewedAt
+			if elapsedSeconds > 0 {
+				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+			}
+		} else if current.GetDueAt() > 0 {
+			// Fallback to due_at if last_reviewed_at is not available
 			elapsedSeconds := time.Now().Unix() - current.GetDueAt()
 			if elapsedSeconds > 0 {
 				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
@@ -114,7 +122,7 @@ func (s *StudyService) logReview(tx *sql.Tx, topicID, activityType, referenceID,
 
 func mapScoreToFSRSRating(activityType string, score int) (int, error) {
 	switch strings.ToLower(strings.TrimSpace(activityType)) {
-	case "quiz", "quiz_question", "written", "written_question":
+	case "quiz", "quiz_question":
 		switch {
 		case score < 0 || score > 100:
 			return 0, fmt.Errorf("percentage score must be between 0 and 100")
@@ -123,6 +131,19 @@ func mapScoreToFSRSRating(activityType string, score int) (int, error) {
 		case score <= 60:
 			return scheduler.Hard, nil
 		case score <= 90:
+			return scheduler.Good, nil
+		default:
+			return scheduler.Easy, nil
+		}
+	case "written", "written_question":
+		switch {
+		case score < 1 || score > 10:
+			return 0, fmt.Errorf("rubric score must be between 1 and 10")
+		case score <= 3:
+			return scheduler.Again, nil
+		case score <= 5:
+			return scheduler.Hard, nil
+		case score <= 8:
 			return scheduler.Good, nil
 		default:
 			return scheduler.Easy, nil

@@ -57,12 +57,18 @@ func createWrittenQuestionRepo(question models.WrittenQuestion) error {
 	if conn == nil {
 		return fmt.Errorf("database not initialized")
 	}
+	var sourceChunkID interface{}
+	if strings.TrimSpace(question.SourceChunkID) == "" {
+		sourceChunkID = nil
+	} else {
+		sourceChunkID = strings.TrimSpace(question.SourceChunkID)
+	}
 	_, err := conn.Exec(`
 		INSERT INTO written_questions (
-			id, topic_id, prompt, source_heading, source_page_start, source_page_end,
+			id, topic_id, prompt, source_chunk_id, source_heading, source_page_start, source_page_end,
 			llm_model, prompt_version, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, question.ID, question.TopicID, question.Prompt, question.SourceHeading, question.SourcePageStart,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, question.ID, question.TopicID, question.Prompt, sourceChunkID, question.SourceHeading, question.SourcePageStart,
 		question.SourcePageEnd, question.LLMModel, question.PromptVersion)
 	return err
 }
@@ -73,11 +79,11 @@ func getWrittenQuestionByIDRepo(questionID string) (*models.WrittenQuestion, err
 	}
 	var question models.WrittenQuestion
 	err := conn.QueryRow(`
-		SELECT id, topic_id, prompt, COALESCE(source_heading, ''), COALESCE(source_page_start, 0),
+		SELECT id, topic_id, prompt, COALESCE(source_chunk_id, ''), COALESCE(source_heading, ''), COALESCE(source_page_start, 0),
 			COALESCE(source_page_end, 0), COALESCE(llm_model, ''), COALESCE(prompt_version, '')
 		FROM written_questions
 		WHERE id = ?
-	`, questionID).Scan(&question.ID, &question.TopicID, &question.Prompt, &question.SourceHeading,
+	`, questionID).Scan(&question.ID, &question.TopicID, &question.Prompt, &question.SourceChunkID, &question.SourceHeading,
 		&question.SourcePageStart, &question.SourcePageEnd, &question.LLMModel, &question.PromptVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -164,18 +170,26 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceCh
 		return err
 	}
 
+	normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
+	var sourceChunkIDValue interface{}
+	if normalizedSourceChunkID == "" {
+		sourceChunkIDValue = nil // Use NULL for empty strings
+	} else {
+		sourceChunkIDValue = normalizedSourceChunkID
+	}
+
 	if _, err = tx.Exec(`
 		INSERT INTO assessment_fsrs (
 			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id) DO UPDATE SET
+		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
 			topic_id = excluded.topic_id,
 			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,
 			due_at = excluded.due_at,
 			last_reviewed_at = excluded.last_reviewed_at,
 			updated_at = CURRENT_TIMESTAMP
-	`, activityType, referenceID, topicID, strings.TrimSpace(sourceChunkID), string(stateJSON), dueAt, reviewedAt); err != nil {
+	`, activityType, referenceID, topicID, sourceChunkIDValue, string(stateJSON), dueAt, reviewedAt); err != nil {
 		return err
 	}
 
@@ -220,18 +234,26 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 		return err
 	}
 
+	normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
+	var sourceChunkIDValue interface{}
+	if normalizedSourceChunkID == "" {
+		sourceChunkIDValue = nil // Use NULL for empty strings
+	} else {
+		sourceChunkIDValue = normalizedSourceChunkID
+	}
+
 	if _, err = tx.Exec(`
 		INSERT INTO assessment_fsrs (
 			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id) DO UPDATE SET
+		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
 			topic_id = excluded.topic_id,
 			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,
 			due_at = excluded.due_at,
 			last_reviewed_at = excluded.last_reviewed_at,
 			updated_at = CURRENT_TIMESTAMP
-	`, activityType, referenceID, topicID, strings.TrimSpace(sourceChunkID), string(stateJSON), dueAt, reviewedAt); err != nil {
+	`, activityType, referenceID, topicID, sourceChunkIDValue, string(stateJSON), dueAt, reviewedAt); err != nil {
 		return err
 	}
 

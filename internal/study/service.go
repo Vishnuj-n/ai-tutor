@@ -178,7 +178,8 @@ Student answer: %s`, question.Prompt, userAnswer)
 	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
 		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
 	}
-	fsrsResult, err := s.LogReviewTx(tx, question.TopicID, "written_question", question.ID, "", score)
+	// Use source_chunk_id from written question for proper chunk lineage
+	fsrsResult, err := s.LogReviewTx(tx, question.TopicID, "written_question", question.ID, question.SourceChunkID, score)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
 	}
@@ -529,7 +530,7 @@ func ScaledFlashcardCount(wordCount int) int {
 }
 
 // buildPageBoundedContext fetches structured chunk context for a notebook page range
-// and returns (chunks, tokenCount, error).
+// and returns (chunks, tokenCount, error) with hard token budget enforcement.
 func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
 	chunks, err := db.GetChunksWithContextByNotebookPageRange(notebookID, startPage, endPage)
 	if err != nil {
@@ -540,10 +541,41 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 		return []models.ChunkWithContext{}, 0, nil
 	}
 
-	// Calculate tokens based on actual LLM prompt format, not just raw text
-	tokenCount := calculatePromptTokenCount(chunks)
+	// Enforce hard token budget during assembly
+	const maxContextTokens = 8000
+	const baseOverhead = 200       // Estimated tokens for prompt template and instructions
+	const chunkFormatOverhead = 30 // Estimated overhead per chunk for formatting
 
-	return chunks, tokenCount, nil
+	var budgetedChunks []models.ChunkWithContext
+	currentTokens := baseOverhead
+
+	for _, chunk := range chunks {
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+
+		// Estimate tokens for this chunk with formatting
+		chunkLine := fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
+		chunkTokens, err := embeddings.CountTokens(chunkLine)
+		if err != nil {
+			// Fallback to word count if tokenization fails
+			chunkTokens = len(strings.Fields(chunkLine))
+		}
+
+		// Check if adding this chunk would exceed budget
+		if currentTokens+chunkTokens > maxContextTokens {
+			break
+		}
+
+		budgetedChunks = append(budgetedChunks, chunk)
+		currentTokens += chunkTokens
+	}
+
+	// Calculate final token count
+	finalTokenCount := calculatePromptTokenCount(budgetedChunks)
+
+	return budgetedChunks, finalTokenCount, nil
 }
 
 // calculatePromptTokenCount estimates the actual token count that will be sent to the LLM
@@ -558,7 +590,8 @@ func calculatePromptTokenCount(chunks []models.ChunkWithContext) int {
 	// Base prompt overhead (instructions, format, etc.)
 	baseOverhead := 200 // Estimated tokens for prompt template and instructions
 
-	var contentTokens int
+	// Build the complete formatted content once for efficient token counting
+	var contentBuilder strings.Builder
 	for i := 0; i < limit; i++ {
 		chunk := chunks[i]
 		text := strings.TrimSpace(chunk.Text)
@@ -566,22 +599,23 @@ func calculatePromptTokenCount(chunks []models.ChunkWithContext) int {
 			continue
 		}
 		// Format: "- chunk_id: %s | page_num: %d | text: %s\n"
-		chunkLine := fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
-		// Count tokens for this formatted chunk line
-		if chunkTokens, err := embeddings.CountTokens(chunkLine); err == nil {
-			contentTokens += chunkTokens
-		} else {
-			// Fallback to word count
-			contentTokens += len(strings.Fields(chunkLine))
-		}
+		contentBuilder.WriteString(fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text))
 	}
 
 	// Add truncation notice if needed
 	if len(chunks) > maxContextChunks {
-		contentTokens += 10 // Tokens for "[...additional chunks truncated...]"
+		contentBuilder.WriteString("[...additional chunks truncated...]")
 	}
 
-	return baseOverhead + contentTokens
+	formattedContent := contentBuilder.String()
+
+	// Count tokens once for the complete formatted content
+	if contentTokens, err := embeddings.CountTokens(formattedContent); err == nil {
+		return baseOverhead + contentTokens
+	} else {
+		// Fallback to word count if tokenization fails
+		return baseOverhead + len(strings.Fields(formattedContent))
+	}
 }
 
 func buildContextTextFromChunks(chunks []models.ChunkWithContext) string {

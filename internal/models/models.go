@@ -173,6 +173,7 @@ type WrittenQuestion struct {
 	ID              string `json:"id"`
 	TopicID         string `json:"topic_id"`
 	Prompt          string `json:"prompt"`
+	SourceChunkID   string `json:"source_chunk_id,omitempty"`
 	SourceHeading   string `json:"source_heading,omitempty"`
 	SourcePageStart int    `json:"source_page_start,omitempty"`
 	SourcePageEnd   int    `json:"source_page_end,omitempty"`
