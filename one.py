@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 ROOT_DIR = Path(".")
@@ -65,18 +66,16 @@ for file in ROOT_DIR.rglob("*"):
         continue
 
     try:
-        # fast pre-filter using bytes
-        if file.stat().st_size < 12000:
-            continue
-
         with open(file, "r", encoding="utf-8", errors="ignore") as f:
             lines = sum(1 for _ in f)
 
         if lines > LINE_LIMIT:
             results.append((lines, str(file)))
 
-    except:
-        pass
+    except OSError as e:
+        print(f"Error processing {file}: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"Unexpected error processing {file}: {e}", file=sys.stderr)
 
 results.sort(reverse=True)
 

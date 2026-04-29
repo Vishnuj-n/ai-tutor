@@ -1,60 +1,225 @@
-# SPRINT.md — AI Tutor
- 
+# SPRINT.md — AI Tutor Mission Engine (Task + FSRS Priority)
 
 ## The Immutable Architecture Rules (Apply to all Sprints)
-1. **Fresh Schema:** No migration scripts. Delete `ai-tutor.db` and let `store.go` rebuild it. (manually already done at location AppData\Roaming\ai-tutor)
+1. **Fresh Schema:** No migration scripts. Delete `ai-tutor.db` and let `store.go` rebuild it.
 2. **One Page, One Chunk:** Text chunks strictly map to a single `page_num`. 
 3. **Question Lineage:** Every generated question stores `source_page_start`, `source_page_end`, `llm_model`, and `prompt_version`.
 4. **Hard Deletion:** If a user shrinks a chapter boundary, execute an immediate SQL `DELETE` for questions orphaned by the new boundaries.
-5. **Two-Step Fast Retrieval:** Vector search must pre-filter `rowid` by `topic_id` and `page_num` *before* executing the distance calculation to avoid virtual table join penalties.
+5. **Two-Step Fast Retrieval:** Vector search must pre-filter `rowid` by `topic_id` and `page_num` *before* executing the distance calculation.
 
 ---
 
-## Sprint 12: Schema Rebuild & Dynamic Pacing
-**Goal:** Establish the foundation and the time-budget math engine.
+## Phase 1: The Unified FSRS Brain (Highest Priority)
 
-* **Database Reset:** Implement the fresh schema. Add `page_num` to `chunks`. Add `current_page_cursor` to `topics`. Create the `user_settings` table to store a single `daily_study_minutes` integer.
-* **The Scheduler Math (`service.go`):** * Calculate FSRS review time: `(DueCards * 0.5 mins) = ReviewBudget`.
-  * Calculate reading capacity: `(daily_study_minutes - ReviewBudget) = ReadingBudget`.
-  * Calculate page target: `ReadingBudget / 2.5 mins = PagesToRead`.
-  * Calculate end cursor: `TargetPage = current_page_cursor + PagesToRead`.
-* **The Clamp Edge Case:** If `TargetPage` lands within 4 pages of the topic's `end_page`, force `TargetPage = end_page`.
-* **The Settings UI:** Build the input in the Vue frontend to update the global `daily_study_minutes` limit.
-* **Output:** Return a daily task formatted as: `"Read: [Topic] (Pages X to Y)"`.
+### Goal
+Create a single, unified endpoint that handles ALL review scoring across the application. Whether a user completes a Flashcard, a Quiz, or an AI Examiner session, the final action MUST pass through this brain.
 
-## Sprint 13: Context-Locked Reader & The Great Purge
-**Goal:** Build the execution environment, generate assessments safely, and delete legacy guesswork code.
+### Backend (`internal/study/fsrs.go`)
 
-* **The Purge:** Delete regex TOC parsers, blind 180-word splitters, and vector-based ingestion routing.
-* **Semantic Chunker:** Write the new chunker that splits text at the nearest period or newline around the 150-word mark, strictly bounded by page endings.
-* **The Reader UI:** Mount the PDF viewer. Accept the start and target page numbers from the dashboard. Add a "Complete Session" button.
-* **Cursor Advancement:** Only advance the database `current_page_cursor` when the user explicitly clicks "Complete Session". 
-* **Mid-Sentence Buffer Fetch:** When "Complete" is clicked, fetch text using: `SELECT text FROM chunks WHERE topic_id = ? AND page_num BETWEEN ? AND ?+1 ORDER BY id ASC`. Send this text to the FAST_LLM.
-* **Incremental Assessment Generation:** Generate 5 questions. Save them with exact page lineage and prompt version metadata.
-* **Acceptance Gates:** Context-locked vector retrieval must test at p95 < 50ms. Macro-quiz assembly from stored questions must test at p95 < 100ms.
+**Create the Core Endpoint:**
+```go
+func LogReview(notebookID string, pageRange [2]int, score int) error
+```
 
+**Score Mapping (Strict):**
+- 1 = Again (low recall)
+- 2 = Hard (partial recall)  
+- 3 = Good (expected recall)
+- 4 = Easy (strong recall)
 
-### **Sprint 14: FSRS Integration & Smart Scaling (2026-04-01 — 2026-04-14)**
-**Goal:** Tie generated assessments to memory algorithms and automate background generation.
+**Logic Flow:**
+1. Identify the `activity_type` (flashcard, quiz, written) and `reference_id`
+2. Load current FSRS state from `assessment_fsrs` table
+3. Apply `scheduler.NextFSRSState(currentState, score)` 
+4. Calculate `next_review = now + (scheduledDays * 24h)`
+5. Update `assessment_fsrs` with new state and due timestamp
+6. Log the review in `fsrs_review_log` for analytics
 
-* **[COMPLETED] FSRS Hookup:** Connect the FSRS scoring algorithm to the quiz and Socratic examiner outputs. Track success/failure on individual generated questions.
-* **[COMPLETED] Density Scaling:** Replace hardcoded assessment counts. Pass total chunk length to `FAST_LLM` and scale flashcard/quiz counts to match material density.
-* **[IN PROGRESS] Phase 3: Background Worker:**
-    * Implement `BuildUpcomingReadingTasks` in the scheduler to find the "next 2" unbuilt topics.
-    * Create the `startPrebuildWorker` loop in `app.go` with the `select` channel listener.
-    * Implement the "Ignore + Dirty Recheck" safety logic to handle concurrent generation.
+**Database Operations:**
+- Use `assessment_fsrs` table: PRIMARY KEY (activity_type, reference_id)
+- Update `state_json`, `due_at`, `last_reviewed_at`
+- Insert into `fsrs_review_log` with before/after state snapshots
 
-### **Sprint 15: Task Management & Dashboard Routing**
-**Goal:** Finalize the user dashboard experience and state-locking.
+### Integration Points
+- **Flashcard flow:** Existing `GradeFlashcard()` calls `LogReview(cardID, [page, page], score)`
+- **Quiz flow:** Quiz completion aggregates per-question scores into single `LogReview(quizID, [startPage, endPage], averageScore)`
+- **Written assessment flow:** Examiner completion calls `LogReview(writtenID, [startPage, endPage], score)`
 
-* **Persistent Checklist:** Build a task checklist in the left sidebar. Allow users to tick off items to log completed work.
-* **State Routing:** Wire dashboard buttons to control application state. Clicking a task mounts `Reader.vue`, loads the topic, and physically locks the context to the assigned pages.
-* **Completion State:** Clear the dashboard state and trigger a "Victory" animation when the daily queue is finished.
+---
 
-### **Sprint 16: Concurrency & Tools Sidebar**
-**Goal:** Optimize speed and add specific learning utilities.
+## Phase 2: The Task Orchestrator (`internal/orchestrator/service.go`)
 
-* **Concurrent Ingestion:** Rewrite the PDF indexing pipeline to use Go routines. Process chapter chunking and ONNX embedding concurrently.
-* **Acronym & Mindmap Generators:** Add specialized tools to the sidebar that read the locked active page context to generate mnemonics or structured JSON for visualization.
-* **Documentation Rewrite:** Finalize `/doc` files covering the dual-LLM routing, the context-locked schema, and the two-step vector retrieval for the final project submission.
+### Goal
+Build the engine that generates the daily agenda by querying the FSRS brain and reading progress.
+
+### Core Function
+```go
+func GetDailyAgenda() []models.ScheduledTask
+```
+
+### Priority Algorithm (Strict Order):
+
+**Priority 1 (Retention): Review Missions**
+```sql
+SELECT activity_type, reference_id, topic_id 
+FROM assessment_fsrs 
+WHERE due_at <= strftime('%s', 'now')
+ORDER BY due_at ASC
+LIMIT 10
+```
+- Convert each due item to `ScheduledTask` with `ActionType = "Review"`
+- Include `TopicID`, `StartPage`, `EndPage` from source lineage
+- Estimate: 2 minutes per flashcard, 5 minutes per quiz, 8 minutes per written
+
+**Priority 2 (Continuity): Reading Missions**
+```sql
+SELECT id, title, current_page_cursor, end_page 
+FROM notebooks 
+WHERE status = 'active' 
+ORDER BY updated_at DESC
+LIMIT 3
+```
+- Calculate reading target based on daily study minutes setting
+- Create `ScheduledTask` with `ActionType = "Read"`
+- Set `StartPage = current_page_cursor`, `EndPage = target_page`
+
+### Output Format
+Return strict array of 5-10 tasks max:
+```json
+{
+  "tasks": [
+    {
+      "id": "review-1",
+      "action_type": "Review", 
+      "title": "Flashcard Review: Neural Networks",
+      "topic_id": "topic-123",
+      "start_page": 45,
+      "end_page": 45,
+      "estimate_minutes": 10,
+      "priority": 1,
+      "meta": "flashcard"
+    },
+    {
+      "id": "read-1",
+      "action_type": "Read",
+      "title": "Continue Reading: Deep Learning Fundamentals", 
+      "topic_id": "topic-123",
+      "start_page": 67,
+      "end_page": 85,
+      "estimate_minutes": 45,
+      "priority": 2,
+      "meta": "reading"
+    }
+  ]
+}
+```
+
+---
+
+## Phase 3: The "Context-Locked" UI Execution
+
+### Goal
+Transform the Dashboard from a metrics display into a pure task execution launcher.
+
+### Frontend (`frontend/src/pages/Dashboard.vue`)
+
+**Delete All Generic Metrics:**
+- Remove progress charts, summary statistics, completion percentages
+- Keep ONLY the task list returned by `GetDailyAgenda()`
+
+**Task Rendering:**
+```vue
+<template>
+  <div class="dashboard">
+    <h1>Today's Mission</h1>
+    <div v-for="task in tasks" :key="task.id" class="task-card" @click="executeTask(task)">
+      <h3>{{ task.title }}</h3>
+      <p>{{ task.action_type }} • {{ task.estimate_minutes }} minutes</p>
+      <div class="task-meta">{{ task.meta }}</div>
+    </div>
+  </div>
+</template>
+```
+
+### Router Integration (`frontend/src/router/index.js`)
+
+**Context-Locked Routing:**
+```javascript
+executeTask(task) {
+  const route = {
+    name: task.action_type === 'Read' ? 'Reader' : 
+          task.action_type === 'Review' && task.meta === 'flashcard' ? 'Flashcards' :
+          task.action_type === 'Review' && task.meta === 'quiz' ? 'Quiz' : 'WrittenAssessment',
+    params: {
+      notebookId: task.topic_id,
+      startPage: task.start_page,
+      endPage: task.end_page
+    }
+  }
+  this.$router.push(route)
+}
+```
+
+### Component State Locking
+
+**Reader.vue:**
+- Accept `startPage` and `endPage` as route params
+- Lock PDF viewer to this page range
+- Show "Complete Session" button that advances `current_page_cursor` and calls `orchestrator.GetDailyAgenda()`
+
+**Quiz/Flashcard/WrittenAssessment.vue:**
+- Load only assessments for the specified `topic_id` and page range
+- Show "Complete Session" button that calls `LogReview()` with aggregated score
+- On completion, immediately refresh the daily agenda
+
+### Completion Flow
+1. User completes task (finishes reading, finishes review)
+2. Component calls appropriate backend endpoint (`LogReview` or cursor update)
+3. Backend updates database state
+4. Component emits `task-completed` event
+5. Dashboard automatically refreshes `GetDailyAgenda()`
+6. Next task appears or shows "Mission Complete!" victory state
+
+---
+
+## Strict Success Criteria
+
+### Phase 1 Success
+- `LogReview()` endpoint accepts any (notebookID, pageRange, score) and correctly updates `assessment_fsrs.due_at`
+- All three assessment types (flashcard, quiz, written) funnel through this single endpoint
+- FSRS math produces valid `next_review` timestamps
+
+### Phase 2 Success  
+- `GetDailyAgenda()` returns 5-10 prioritized tasks
+- Priority 1 always returns due reviews first
+- Priority 2 returns reading continuations with calculated page targets
+- Task estimates are realistic (2-8 minutes per review, 2.5 minutes per reading page)
+
+### Phase 3 Success
+- Dashboard renders ONLY the task list, no metrics
+- Clicking any task routes to exact component with locked context
+- "Complete Session" buttons update state and refresh agenda immediately
+- User can complete entire daily queue without leaving the task flow
+
+---
+
+## Explicit Out of Scope (Deferred)
+
+- Background ingestion queues
+- Soft page boundaries and semantic chunking improvements  
+- Acronym/Mindmap generator tools
+- Documentation rewrites
+- Advanced analytics or progress tracking
+- Sync functionality
+- Multi-device support
+
+---
+
+## Implementation Order
+
+1. **Phase 1:** Build `LogReview()` endpoint first - this is the brain
+2. **Phase 2:** Build `GetDailyAgenda()` - this creates the mission  
+3. **Phase 3:** Rewrite Dashboard and routing - this executes the mission
+
+**Stop after each phase for validation.** The brain must work before building the mission system. The mission system must work before building the UI.
 

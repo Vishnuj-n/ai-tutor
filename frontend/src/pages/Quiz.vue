@@ -111,9 +111,13 @@ async function submitAnswer(q, opt) {
   pendingAnswers.add(q.id)
   try {
     const res = await scoreAnswer(q.id, opt)
+    if (res.error) {
+      // Don't mark as answered if there's an error, allow retry
+      return
+    }
     answers.value[q.id] = { selected: opt, correct: res.correct, feedback: res.feedback }
   } catch (e) {
-    answers.value[q.id] = { selected: opt, correct: false, feedback: 'Scoring failed.' }
+    // Don't mark as answered on network error, allow retry
   } finally {
     pendingAnswers.delete(q.id)
   }

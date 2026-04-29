@@ -1,6 +1,7 @@
 package notebook
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"ai-tutor/internal/models"
 )
@@ -44,8 +46,16 @@ func runPDFCPUBookmarksExport(filePath string, uploadDir string) ([]byte, error)
 		_ = os.Remove(tmpPath)
 	}()
 
-	cmd := exec.Command(pdfcpuPath, "bookmarks", "export", absFilePath, tmpPath)
+	// Create context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, pdfcpuPath, "bookmarks", "export", absFilePath, tmpPath)
 	if _, runErr := cmd.Output(); runErr != nil {
+		// Check if the error was due to timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("pdfcpu command timed out after 30 seconds")
+		}
 		return nil, runErr
 	}
 

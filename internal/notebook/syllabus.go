@@ -30,7 +30,6 @@ func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *Extracte
 	}
 
 	bookmarkLikeDraft := []models.SyllabusChapterDraft{}
-	fallbackUsed := false
 	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
 		bookmarkLikeDraft = extractPDFCPUBookmarkDraft(filePath, doc.PageCount, s.config.UploadDir)
 	}
@@ -52,7 +51,7 @@ func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *Extracte
 		return &SyllabusDraftResult{
 			Chapters:     NormalizeSyllabusChapters(bookmarkLikeDraft, doc.PageCount),
 			PageCount:    doc.PageCount,
-			FallbackUsed: fallbackUsed,
+			FallbackUsed: true, // Bookmark-based chapters are a fallback
 		}, nil
 	}
 
@@ -176,7 +175,11 @@ func buildPageSample(doc *ExtractedDocument, maxSections int) string {
 	}
 	joined := strings.Join(parts, "\n\n")
 	if len(joined) > topicExtractionMaxChars {
-		return joined[:topicExtractionMaxChars]
+		// Use rune-aware truncation to avoid splitting multi-byte UTF-8 characters
+		runes := []rune(joined)
+		if len(runes) > topicExtractionMaxChars {
+			return string(runes[:topicExtractionMaxChars])
+		}
 	}
 	return joined
 }

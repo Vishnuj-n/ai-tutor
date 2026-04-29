@@ -23,7 +23,7 @@ func GetChunkTextByNotebookPageRange(notebookID string, startPage, endPage int) 
 		JOIN chunks c ON c.id = nc.chunk_id
 		WHERE nc.notebook_id = ?
 		  AND nc.page_num BETWEEN ? AND ?
-		ORDER BY nc.page_num ASC
+		ORDER BY nc.page_num ASC, nc.chunk_id ASC
 	`, notebookID, startPage, endPage)
 	if err != nil {
 		return "", fmt.Errorf("page-range query failed: %w", err)

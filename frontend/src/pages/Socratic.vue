@@ -45,7 +45,7 @@
             <span class="metric-value">{{ Math.floor(messages.length * 2) }} min</span>
           </div>
           <div class="metric-row">
-            <span class="metric-label">Topics Covered</span>
+            <span class="metric-label">Available Topics</span>
             <span class="metric-value">{{ availableTopics.length }}</span>
           </div>
         </div>
@@ -426,6 +426,13 @@ h1 {
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
   margin-top: 0.5rem;
+}
+
+/* Responsive: collapse to single column on small screens */
+@media (max-width: 768px) {
+  .conversation-analytics {
+    grid-template-columns: 1fr;
+  }
 }
 
 .analytics-card {

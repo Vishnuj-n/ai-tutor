@@ -2,9 +2,6 @@
   <span class="spinner"></span>
 </template>
 
-<script setup>
-// No props needed for basic spinner
-</script>
 
 <style scoped>
 .spinner {

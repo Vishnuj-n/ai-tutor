@@ -371,7 +371,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "failed to get topic page bounds: " + err.Error()}
 	}
 
-	return a.studyService.GenerateMarathonFlashcards(notebookID, startPage, endPage)
+	return a.studyService.GenerateMarathonFlashcardsWithTopic(topicID, notebookID, startPage, endPage)
 }
 
 // ---------- Reader / existing flows ----------

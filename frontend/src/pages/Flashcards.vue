@@ -40,7 +40,7 @@
             <div class="card-back">
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
               <div class="rating-buttons">
-                <button v-for="r in ratings" :key="r.key" :class="['rating-btn', r.key]" @click="rate(r.key)">
+                <button v-for="r in ratings" :key="r.key" :class="['rating-btn', r.key]" @click="rate(r.key)" :disabled="isSubmittingReview">
                   {{ r.label }}
                 </button>
               </div>
@@ -79,6 +79,7 @@ const cards              = ref([])
 const reviewIndex        = ref(0)
 const reviewing          = ref(false)
 const flipped            = ref(false)
+const isSubmittingReview = ref(false)
 
 const ratings = [
   { key: 'again', label: '✕ Again' },
@@ -120,19 +121,22 @@ async function generate() {
 
 async function rate(ratingKey) {
   const card = currentCard.value
-  if (!card) return
+  if (!card || isSubmittingReview.value) return
+  
+  isSubmittingReview.value = true
   try {
     const res = await recordFlashcardReview(card.id, ratingKey)
     if (res.error) {
       error.value = `Failed to save review: ${res.error}`
       return
     }
+    flipped.value = false
+    reviewIndex.value++
   } catch (e) {
     error.value = `Failed to save review: ${e?.message ?? 'Unknown error'}`
-    return
+  } finally {
+    isSubmittingReview.value = false
   }
-  flipped.value = false
-  reviewIndex.value++
 }
 
 function reset() {
@@ -140,6 +144,7 @@ function reset() {
   cards.value = []
   reviewIndex.value = 0
   flipped.value = false
+  isSubmittingReview.value = false
   error.value = ''
 }
 </script>
