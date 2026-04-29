@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"ai-tutor/internal/notebook"
 )
 
 func TestParsePDFCPUBookmarkDraftFromJSON_NestedPayload(t *testing.T) {
@@ -14,7 +16,7 @@ func TestParsePDFCPUBookmarkDraftFromJSON_NestedPayload(t *testing.T) {
 		]
 	}`)
 
-	draft := parsePDFCPUBookmarkDraftFromJSON(raw, 12)
+	draft := notebook.ParsePDFCPUBookmarkDraftFromJSON(raw, 12)
 	if len(draft) != 3 {
 		t.Fatalf("expected 3 draft entries, got %d (%#v)", len(draft), draft)
 	}
@@ -35,7 +37,7 @@ func TestParsePDFCPUBookmarkDraftFromJSON_NestedPayload(t *testing.T) {
 
 func TestParsePDFCPUBookmarkDraftFromJSON_EmptyPayload(t *testing.T) {
 	raw := []byte(`{"bookmarks":[]}`)
-	draft := parsePDFCPUBookmarkDraftFromJSON(raw, 10)
+	draft := notebook.ParsePDFCPUBookmarkDraftFromJSON(raw, 10)
 	if len(draft) != 0 {
 		t.Fatalf("expected empty draft, got %#v", draft)
 	}

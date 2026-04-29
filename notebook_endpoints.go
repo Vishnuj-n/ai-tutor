@@ -1,13 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
 
 	"ai-tutor/internal/db"
@@ -18,7 +12,6 @@ import (
 )
 
 const ingestionEventName = "ingestion-progress"
-const topicExtractionMaxChars = 30000
 
 type ingestionProgressPayload struct {
 	NotebookID   string `json:"notebook_id"`
@@ -135,12 +128,18 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 	}
 
 	_ = db.UpdateNotebookStatus(notebookID, "analyzing")
-	chapters, fallbackUsed := a.draftSyllabusChapters(nb.FileType, nb.FilePath, doc)
+	result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	chapters := result.Chapters
+	fallbackUsed := result.FallbackUsed
 	if len(chapters) == 0 {
 		chapters = []models.SyllabusChapterDraft{{
 			Title:     "General",
 			StartPage: 1,
-			EndPage:   maxPage(doc.PageCount),
+			EndPage:   doc.PageCount,
 		}}
 		fallbackUsed = true
 	}
@@ -178,7 +177,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	normalized := normalizeSyllabusChapters(chapters, doc.PageCount)
+	normalized := notebook.NormalizeSyllabusChapters(chapters, doc.PageCount)
 	if len(normalized) == 0 {
 		return map[string]interface{}{"error": "at least one valid chapter is required"}
 	}
@@ -250,7 +249,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		_ = db.UpdateNotebookTopic(notebookID, topicIDs[0])
 	}
 
-	groups, allChunks := buildTopicGroupsFromChapters(notebookID, doc, topicIDs, normalized)
+	groups, allChunks := notebook.BuildTopicGroupsFromChapters(notebookID, doc, topicIDs, normalized)
 	if len(groups) == 0 || len(allChunks) == 0 {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
 		// Cleanup: delete created topic rows to avoid orphaned records
@@ -313,481 +312,6 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		"topic_ids":   topicIDs,
 		"chunk_count": len(allChunks),
 	}
-}
-
-func (a *App) draftSyllabusChapters(fileType, filePath string, doc *notebook.ExtractedDocument) ([]models.SyllabusChapterDraft, bool) {
-	if doc == nil || len(doc.Sections) == 0 {
-		return nil, false
-	}
-
-	bookmarkLikeDraft := []models.SyllabusChapterDraft{}
-	fallbackUsed := false
-	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
-		bookmarkLikeDraft = extractPDFCPUBookmarkDraft(filePath, doc.PageCount)
-	}
-	sample := buildPageSample(doc, 30)
-
-	if a.heavyLLMProvider != nil {
-		bookmarkJSON, _ := json.Marshal(bookmarkLikeDraft)
-		prompt := fmt.Sprintf("Create syllabus chapter ranges from this document sample. Return strict JSON only as {\"chapters\":[{\"title\":\"...\",\"start_page\":1,\"end_page\":10}]}. Keep absolute page numbers, preserve order, avoid overlaps, and cover as much content as possible.\\n\\nFile type: %s\\nPage count: %d\\nBookmark candidates (may be empty): %s\\n\\nText sample with absolute page markers:\\n%s", strings.ToLower(fileType), doc.PageCount, string(bookmarkJSON), sample)
-		raw, err := a.heavyLLMProvider.GenerateAnswer(prompt)
-		if err == nil {
-			parsed := parseSyllabusDraft(raw, doc.PageCount)
-			if len(parsed) > 0 {
-				return parsed, false
-			}
-		}
-	}
-
-	if len(bookmarkLikeDraft) > 0 {
-		return normalizeSyllabusChapters(bookmarkLikeDraft, doc.PageCount), fallbackUsed
-	}
-
-	// No LLM response and no bookmarks - indicate fallback needed
-	return nil, true
-}
-
-func parseSyllabusDraft(raw string, pageCount int) []models.SyllabusChapterDraft {
-	clean := strings.TrimSpace(raw)
-	start := strings.Index(clean, "{")
-	end := strings.LastIndex(clean, "}")
-	if start >= 0 && end > start {
-		clean = clean[start : end+1]
-	}
-
-	var payload struct {
-		Chapters []models.SyllabusChapterDraft `json:"chapters"`
-	}
-	if err := json.Unmarshal([]byte(clean), &payload); err != nil {
-		return nil
-	}
-
-	return normalizeSyllabusChapters(payload.Chapters, pageCount)
-}
-
-func normalizeSyllabusChapters(chapters []models.SyllabusChapterDraft, pageCount int) []models.SyllabusChapterDraft {
-	if len(chapters) == 0 {
-		return nil
-	}
-	max := maxPage(pageCount)
-	normalized := make([]models.SyllabusChapterDraft, 0, len(chapters))
-	for _, ch := range chapters {
-		title := strings.TrimSpace(ch.Title)
-		if title == "" {
-			continue
-		}
-		start := ch.StartPage
-		end := ch.EndPage
-		if start <= 0 {
-			start = 1
-		}
-		if start > max {
-			start = max
-		}
-		if end < start {
-			end = start
-		}
-		if end > max {
-			end = max
-		}
-		normalized = append(normalized, models.SyllabusChapterDraft{Title: title, StartPage: start, EndPage: end})
-	}
-
-	if len(normalized) == 0 {
-		return nil
-	}
-
-	sort.SliceStable(normalized, func(i, j int) bool {
-		if normalized[i].StartPage == normalized[j].StartPage {
-			return normalized[i].EndPage < normalized[j].EndPage
-		}
-		return normalized[i].StartPage < normalized[j].StartPage
-	})
-
-	resolved := make([]models.SyllabusChapterDraft, 0, len(normalized))
-	nextPage := 1
-	for i, ch := range normalized {
-		start := ch.StartPage
-		if start > nextPage && len(resolved) > 0 {
-			// Assign gap pages to the previous chapter so no pages are dropped during ingestion.
-			resolved[len(resolved)-1].EndPage = start - 1
-			nextPage = start
-		}
-		if start < nextPage {
-			start = nextPage
-		}
-		if start > max {
-			break
-		}
-		end := ch.EndPage
-		if i < len(normalized)-1 {
-			nextStart := normalized[i+1].StartPage
-			if nextStart > start && end <= start {
-				end = nextStart - 1
-			}
-		}
-		if end < start {
-			end = start
-		}
-		if end > max {
-			end = max
-		}
-		resolved = append(resolved, models.SyllabusChapterDraft{Title: ch.Title, StartPage: start, EndPage: end})
-		nextPage = end + 1
-	}
-
-	if len(resolved) == 0 {
-		return nil
-	}
-	resolved[len(resolved)-1].EndPage = max
-	return resolved
-}
-
-func extractPDFCPUBookmarkDraft(filePath string, pageCount int) []models.SyllabusChapterDraft {
-	jsonOutput, err := runPDFCPUBookmarksExport(filePath)
-	if err != nil || strings.TrimSpace(string(jsonOutput)) == "" {
-		return nil
-	}
-
-	return parsePDFCPUBookmarkDraftFromJSON(jsonOutput, pageCount)
-}
-
-func runPDFCPUBookmarksExport(filePath string) ([]byte, error) {
-	absFilePath, err := validatePDFCPUInputFilePath(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	pdfcpuPath, err := findPDFCPUExecutable()
-	if err != nil {
-		return nil, err
-	}
-
-	tmpFile, err := os.CreateTemp("", "pdfcpu-bookmarks-*.json")
-	if err != nil {
-		return nil, err
-	}
-	tmpPath := tmpFile.Name()
-	_ = tmpFile.Close()
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-
-	cmd := exec.Command(pdfcpuPath, "bookmarks", "export", absFilePath, tmpPath)
-	if _, runErr := cmd.Output(); runErr != nil {
-		return nil, runErr
-	}
-
-	content, readErr := os.ReadFile(tmpPath)
-	if readErr != nil {
-		return nil, readErr
-	}
-	return content, nil
-}
-
-func validatePDFCPUInputFilePath(filePath string) (string, error) {
-	trimmed := strings.TrimSpace(filePath)
-	if trimmed == "" {
-		return "", fmt.Errorf("file path is required")
-	}
-	if strings.Contains(trimmed, "\x00") {
-		return "", fmt.Errorf("invalid file path")
-	}
-	if strings.Contains(trimmed, "..\\") || strings.Contains(trimmed, "../") {
-		return "", fmt.Errorf("file path traversal is not allowed")
-	}
-
-	cleaned := filepath.Clean(trimmed)
-	absPath, err := filepath.Abs(cleaned)
-	if err != nil {
-		return "", fmt.Errorf("invalid file path: %w", err)
-	}
-	uploadDir, err := resolveNotebookDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve upload directory: %w", err)
-	}
-	uploadRoot, err := filepath.Abs(uploadDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve upload directory: %w", err)
-	}
-	relToUploadRoot, err := filepath.Rel(uploadRoot, absPath)
-	if err != nil {
-		return "", fmt.Errorf("invalid file path relation: %w", err)
-	}
-	if relToUploadRoot == ".." || strings.HasPrefix(relToUploadRoot, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("file path is outside allowed upload directory")
-	}
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to stat file path: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("file path must point to a regular file")
-	}
-	return absPath, nil
-}
-
-func findPDFCPUExecutable() (string, error) {
-	pdfcpuPath, err := exec.LookPath("pdfcpu")
-	if err == nil {
-		return pdfcpuPath, nil
-	}
-
-	binary := "pdfcpu"
-	if runtime.GOOS == "windows" {
-		binary = "pdfcpu.exe"
-	}
-
-	candidateDirs := make([]string, 0, 8)
-	if gobin := strings.TrimSpace(os.Getenv("GOBIN")); gobin != "" {
-		candidateDirs = append(candidateDirs, gobin)
-	}
-	if gopath := strings.TrimSpace(os.Getenv("GOPATH")); gopath != "" {
-		candidateDirs = append(candidateDirs, filepath.Join(gopath, "bin"))
-	} else if home, homeErr := os.UserHomeDir(); homeErr == nil && home != "" {
-		candidateDirs = append(candidateDirs, filepath.Join(home, "go", "bin"))
-	}
-
-	switch runtime.GOOS {
-	case "windows":
-		candidateDirs = append(candidateDirs, `C:\Program Files\pdfcpu`, `C:\Program Files (x86)\pdfcpu`)
-	case "darwin":
-		candidateDirs = append(candidateDirs, "/usr/local/bin", "/opt/homebrew/bin")
-	default:
-		candidateDirs = append(candidateDirs, "/usr/local/bin", "/usr/bin")
-	}
-
-	for _, dir := range candidateDirs {
-		if strings.TrimSpace(dir) == "" {
-			continue
-		}
-		candidate := filepath.Join(dir, binary)
-		info, statErr := os.Stat(candidate)
-		if statErr == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-
-	return "", fmt.Errorf("pdfcpu binary not found; install pdfcpu and ensure it is available on PATH, GOBIN, or GOPATH/bin")
-}
-
-func parsePDFCPUBookmarkDraftFromJSON(raw []byte, pageCount int) []models.SyllabusChapterDraft {
-	var payload interface{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil
-	}
-
-	type bookmarkNode struct {
-		title string
-		page  int
-	}
-
-	collected := make([]bookmarkNode, 0)
-	var walk func(node interface{})
-	walk = func(node interface{}) {
-		switch typed := node.(type) {
-		case map[string]interface{}:
-			title := strings.TrimSpace(firstString(typed, "title", "Title", "name", "Name"))
-			page := firstInt(typed, "page", "Page", "pageNr", "PageNr", "p", "PageFrom", "from")
-			if title != "" && page > 0 {
-				collected = append(collected, bookmarkNode{title: title, page: page})
-			}
-			for _, key := range []string{"children", "Children", "bookmarks", "Bookmarks", "items", "Items", "nodes", "Nodes", "sub", "Sub"} {
-				if child, ok := typed[key]; ok {
-					walk(child)
-				}
-			}
-		case []interface{}:
-			for _, child := range typed {
-				walk(child)
-			}
-		}
-	}
-
-	walk(payload)
-	if len(collected) == 0 {
-		return nil
-	}
-
-	draft := make([]models.SyllabusChapterDraft, 0, len(collected))
-	for _, item := range collected {
-		draft = append(draft, models.SyllabusChapterDraft{Title: item.title, StartPage: item.page, EndPage: item.page})
-	}
-
-	return normalizeSyllabusChapters(draft, pageCount)
-}
-
-func firstString(node map[string]interface{}, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := node[key]; ok {
-			switch typed := value.(type) {
-			case string:
-				if strings.TrimSpace(typed) != "" {
-					return typed
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func firstInt(node map[string]interface{}, keys ...string) int {
-	for _, key := range keys {
-		if value, ok := node[key]; ok {
-			switch typed := value.(type) {
-			case float64:
-				return int(typed)
-			case int:
-				return typed
-			case string:
-				var parsed int
-				if _, err := fmt.Sscanf(strings.TrimSpace(typed), "%d", &parsed); err == nil {
-					return parsed
-				}
-			}
-		}
-	}
-	return 0
-}
-
-func buildPageSample(doc *notebook.ExtractedDocument, maxSections int) string {
-	if doc == nil || len(doc.Sections) == 0 || maxSections <= 0 {
-		return ""
-	}
-	parts := make([]string, 0, maxSections)
-	for i, section := range doc.Sections {
-		if i >= maxSections {
-			break
-		}
-		text := strings.TrimSpace(section.Text)
-		if text == "" {
-			continue
-		}
-		parts = append(parts, fmt.Sprintf("[Page %d] %s", section.PageNum, firstN(text, 2000)))
-	}
-	joined := strings.Join(parts, "\n\n")
-	if len(joined) > topicExtractionMaxChars {
-		return joined[:topicExtractionMaxChars]
-	}
-	return joined
-}
-
-func maxPage(pageCount int) int {
-	if pageCount <= 0 {
-		return 1
-	}
-	return pageCount
-}
-
-func buildTopicGroupsFromChapters(notebookID string, doc *notebook.ExtractedDocument, topicIDs []string, chapters []models.SyllabusChapterDraft) ([]db.NotebookTopicIngestionGroup, []models.Chunk) {
-	if doc == nil || len(doc.Sections) == 0 || len(topicIDs) == 0 || len(chapters) == 0 || len(topicIDs) != len(chapters) {
-		return nil, nil
-	}
-
-	builders := make([]*topicGroupBuilder, len(topicIDs))
-	for i := range topicIDs {
-		builders[i] = &topicGroupBuilder{topicID: topicIDs[i]}
-	}
-
-	allChunks := make([]models.Chunk, 0)
-	for sectionIndex, section := range doc.Sections {
-		sectionText := strings.TrimSpace(section.Text)
-		if sectionText == "" {
-			continue
-		}
-		page := section.PageNum
-		if page <= 0 {
-			page = 1
-		}
-
-		topicIdx := chapterIndexForPage(page, chapters)
-		if topicIdx < 0 {
-			continue
-		}
-
-		builder := builders[topicIdx]
-		builder.order++
-		parentID := fmt.Sprintf("nbp_%s_%02d_%04d", notebookID, topicIdx+1, builder.order)
-		heading := strings.TrimSpace(section.Heading)
-		if heading == "" {
-			heading = fmt.Sprintf("Section %d", sectionIndex+1)
-		}
-
-		builder.parents = append(builder.parents, db.NotebookParentInput{
-			ID:         parentID,
-			Heading:    heading,
-			Content:    sectionText,
-			OrderIndex: builder.order,
-		})
-
-		chunkTexts := notebook.SplitPageIntoSemanticChunks(sectionText, notebook.DefaultSemanticChunkTargetWords)
-		for chunkIndex, chunkText := range chunkTexts {
-			chunkID := fmt.Sprintf("nbc_%s_%02d_%04d_%03d", notebookID, topicIdx+1, builder.order, chunkIndex+1)
-			builder.chunks = append(builder.chunks, db.NotebookChunkInput{
-				ID:         chunkID,
-				ParentID:   parentID,
-				Text:       chunkText,
-				TokenCount: len(strings.Fields(chunkText)),
-				PageNum:    page,
-			})
-			allChunks = append(allChunks, models.Chunk{
-				ID:              chunkID,
-				TopicID:         builder.topicID,
-				ParentID:        parentID,
-				Text:            chunkText,
-				ImportanceScore: 0,
-				WeaknessScore:   0,
-			})
-		}
-	}
-
-	groups := make([]db.NotebookTopicIngestionGroup, 0, len(builders))
-	for _, builder := range builders {
-		if len(builder.chunks) == 0 {
-			continue
-		}
-		groups = append(groups, db.NotebookTopicIngestionGroup{
-			TopicID: builder.topicID,
-			Parents: builder.parents,
-			Chunks:  builder.chunks,
-		})
-	}
-
-	return groups, allChunks
-}
-
-func chapterIndexForPage(page int, chapters []models.SyllabusChapterDraft) int {
-	for i, ch := range chapters {
-		if page >= ch.StartPage && page <= ch.EndPage {
-			return i
-		}
-	}
-	if len(chapters) == 0 {
-		return -1
-	}
-	if page < chapters[0].StartPage {
-		return 0
-	}
-	last := chapters[len(chapters)-1]
-	if page > last.EndPage {
-		return len(chapters) - 1
-	}
-	return -1
-}
-
-type topicGroupBuilder struct {
-	topicID string
-	parents []db.NotebookParentInput
-	chunks  []db.NotebookChunkInput
-	order   int
-}
-
-func firstN(text string, n int) string {
-	if n <= 0 || len(text) <= n {
-		return text
-	}
-	return text[:n]
 }
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
