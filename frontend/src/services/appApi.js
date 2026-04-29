@@ -68,6 +68,10 @@ export function scoreShortAnswer(questionID, userAnswer) {
   return appBridge().ScoreShortAnswer(questionID, userAnswer)
 }
 
+export function logReview(topicID, activityType, referenceID, sourceChunkID, score) {
+  return appBridge().LogReview(topicID, activityType, referenceID, sourceChunkID, score)
+}
+
 export function getFlashcards(topicID, dueOnly = true) {
   return appBridge().GetFlashcards(topicID, dueOnly)
 }

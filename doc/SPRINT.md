@@ -12,13 +12,13 @@
 ## Phase 1: The Unified FSRS Brain (Highest Priority)
 
 ### Goal
-Create a single, unified endpoint that handles ALL review scoring across the application. Whether a user completes a Flashcard, a Quiz, or an AI Examiner session, the final action MUST pass through this brain.
+Create a Surgical Task Engine for review scoring, not a blunt-force page reader. We track mastery at chunk/item granularity across the application. Whether a user completes a Flashcard, a Quiz item, or a Written Assessment item, each scored item MUST pass through this brain.
 
 ### Backend (`internal/study/fsrs.go`)
 
 **Create the Core Endpoint:**
 ```go
-func LogReview(notebookID string, pageRange [2]int, score int) error
+func LogReview(topicID string, activityType string, referenceID string, sourceChunkID string, score int) error
 ```
 
 **Score Mapping (Strict):**
@@ -27,8 +27,13 @@ func LogReview(notebookID string, pageRange [2]int, score int) error
 - 3 = Good (expected recall)
 - 4 = Easy (strong recall)
 
+**Minimal Chunk Fix (Required Before FSRS Logic):**
+- Before writing FSRS logic, refactor `buildPageBoundedContext` to return a structured `[]ChunkWithContext` array.
+- Update the LLM prompt to require a `source_chunk_id` for every generated item.
+- Every generated item's `source_chunk_id` must be passed through to `LogReview`.
+
 **Logic Flow:**
-1. Identify the `activity_type` (flashcard, quiz, written) and `reference_id`
+1. Receive `topic_id`, `activity_type`, `reference_id`, `source_chunk_id`, and `score`
 2. Load current FSRS state from `assessment_fsrs` table
 3. Apply `scheduler.NextFSRSState(currentState, score)` 
 4. Calculate `next_review = now + (scheduledDays * 24h)`
@@ -37,13 +42,17 @@ func LogReview(notebookID string, pageRange [2]int, score int) error
 
 **Database Operations:**
 - Use `assessment_fsrs` table: PRIMARY KEY (activity_type, reference_id)
-- Update `state_json`, `due_at`, `last_reviewed_at`
+- Update `state_json`, `due_at`, `last_reviewed_at`, `source_chunk_id`
 - Insert into `fsrs_review_log` with before/after state snapshots
 
 ### Integration Points
-- **Flashcard flow:** Existing `GradeFlashcard()` calls `LogReview(cardID, [page, page], score)`
-- **Quiz flow:** Quiz completion aggregates per-question scores into single `LogReview(quizID, [startPage, endPage], averageScore)`
-- **Written assessment flow:** Examiner completion calls `LogReview(writtenID, [startPage, endPage], score)`
+- **Flashcard flow:** Existing `GradeFlashcard()` calls `LogReview(topicID, "flashcard", cardID, sourceChunkID, score)` per card.
+- **Quiz flow (strict item-level):** On quiz completion, loop through every question attempt and call `LogReview(topicID, "quiz_question", questionID, sourceChunkID, score)` for each item. No averaging allowed. A 10-question quiz MUST produce 10 separate FSRS log entries.
+- **Written assessment flow (strict item-level):** Loop through every written question/answer pair and call `LogReview(topicID, "written_question", questionID, sourceChunkID, score)` for each item. No session-level averaging.
+
+### Phase 1 Implementation Order (Required)
+1. Implement the Minimal Chunk Fix first so LLM-generated items include `source_chunk_id`.
+2. Then implement the `LogReview` endpoint to persist and use `source_chunk_id` + `reference_id` metadata in FSRS updates.
 
 ---
 

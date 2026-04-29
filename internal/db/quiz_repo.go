@@ -20,10 +20,10 @@ func insertQuestionsInTx(tx *sql.Tx, topicID string, questions []models.QuizQues
 
 		if _, err := tx.Exec(`
 			INSERT INTO questions (
-				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+				id, topic_id, source_chunk_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
 				source_page_start, source_page_end, llm_model, prompt_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, q.ID, topicID, q.SourceChunkID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
 			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
 			return fmt.Errorf("insert question %s failed: %w", q.ID, err)
 		}
@@ -86,7 +86,7 @@ func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestio
 
 func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
 	rows, err := conn.Query(`
-		SELECT id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+		SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
 			source_page_start, source_page_end, llm_model, prompt_version
 		FROM questions
 		WHERE topic_id = ?
@@ -106,6 +106,7 @@ func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
 		if err := rows.Scan(
 			&q.ID,
 			&q.TopicID,
+			&q.SourceChunkID,
 			&q.Prompt,
 			&optionsJSON,
 			&q.CorrectAnswer,
@@ -162,13 +163,14 @@ func getQuestionByIDRepo(questionID string) (*models.QuizQuestion, error) {
 	var q models.QuizQuestion
 	var optionsJSON string
 	err := conn.QueryRow(`
-		SELECT id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+		SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
 			source_page_start, source_page_end, llm_model, prompt_version
 		FROM questions
 		WHERE id = ?
 	`, questionID).Scan(
 		&q.ID,
 		&q.TopicID,
+		&q.SourceChunkID,
 		&q.Prompt,
 		&optionsJSON,
 		&q.CorrectAnswer,

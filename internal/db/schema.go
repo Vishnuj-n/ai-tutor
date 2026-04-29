@@ -61,6 +61,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS questions (
 			id TEXT PRIMARY KEY,
 			topic_id TEXT NOT NULL,
+			source_chunk_id TEXT,
 			prompt TEXT NOT NULL,
 			options_json TEXT NOT NULL,
 			correct_answer TEXT NOT NULL,
@@ -73,7 +74,8 @@ func InitSchema(tx *sql.Tx) error {
 			llm_model TEXT,
 			prompt_version TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS user_answers (
@@ -93,6 +95,7 @@ func InitSchema(tx *sql.Tx) error {
 			id TEXT PRIMARY KEY,
 			topic_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,
+			source_chunk_id TEXT,
 			source_heading TEXT,
 			source_page_start INTEGER DEFAULT 0,
 			source_page_end INTEGER DEFAULT 0,
@@ -100,7 +103,8 @@ func InitSchema(tx *sql.Tx) error {
 			prompt_version TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS written_user_answers (
@@ -149,6 +153,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS fsrs_cards (
 			id TEXT PRIMARY KEY,
 			topic_id TEXT NOT NULL,
+			source_chunk_id TEXT,
 			prompt TEXT NOT NULL,
 			answer TEXT NOT NULL,
 			state_json TEXT,
@@ -156,7 +161,8 @@ func InitSchema(tx *sql.Tx) error {
 			suspended BOOLEAN DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS fsrs_review_log (
@@ -178,13 +184,15 @@ func InitSchema(tx *sql.Tx) error {
 			activity_type TEXT NOT NULL,
 			reference_id TEXT NOT NULL,
 			topic_id TEXT NOT NULL,
+			source_chunk_id TEXT,
 			state_json TEXT NOT NULL,
 			due_at INTEGER,
 			last_reviewed_at INTEGER,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (activity_type, reference_id),
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+			PRIMARY KEY (activity_type, reference_id, COALESCE(source_chunk_id, '')),
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
 		)`,
 	}
 
