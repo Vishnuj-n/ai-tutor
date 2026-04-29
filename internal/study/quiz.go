@@ -87,19 +87,22 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 	}
 
 	// Ensure the synthetic topic row exists for FK constraints on questions table.
-	_ = db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: syntheticTopicID, Title: fmt.Sprintf("Marathon %s p%d-%d", notebookID, startPage, endPage)}})
+	if err := db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: syntheticTopicID, Title: fmt.Sprintf("Marathon %s p%d-%d", notebookID, startPage, endPage)}}); err != nil {
+		fmt.Printf("failed to create synthetic topic %s for marathon quiz: %v\n", syntheticTopicID, err)
+		return map[string]interface{}{"error": "failed to create synthetic topic for marathon quiz: " + err.Error()}
+	}
 	if err := db.ReplaceQuestionsForTopic(syntheticTopicID, questions); err != nil {
 		return map[string]interface{}{"error": "failed to persist marathon quiz: " + err.Error()}
 	}
 
 	return map[string]interface{}{
-		"notebook_id":      notebookID,
-		"start_page":       startPage,
-		"end_page":         endPage,
-		"topic_id":         syntheticTopicID,
-		"questions":        questions,
-		"question_count":   len(questions),
-		"llm_tier":         tier,
+		"notebook_id":       notebookID,
+		"start_page":        startPage,
+		"end_page":          endPage,
+		"topic_id":          syntheticTopicID,
+		"questions":         questions,
+		"question_count":    len(questions),
+		"llm_tier":          tier,
 		"generated_at_unix": time.Now().Unix(),
 	}
 }

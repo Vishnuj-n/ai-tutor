@@ -117,13 +117,17 @@ func resolveSocraticLineage(topicID string, parentIDs []string) (string, int, in
 		return "", 0, 0
 	}
 	sourceHeading, sourcePageStart, sourcePageEnd := "", 0, 0
+	maxSpan := 0
+	// Pick the heading with the widest page span to ensure sourceHeading covers the computed range
 	for _, pid := range parentIDs {
 		normalized := normalizeHeadingKey(pid)
 		pageRange, ok := headingPageRanges[normalized]
 		if !ok {
 			continue
 		}
-		if sourceHeading == "" {
+		span := pageRange[1] - pageRange[0]
+		if span > maxSpan {
+			maxSpan = span
 			sourceHeading = pid
 		}
 		if sourcePageStart == 0 || pageRange[0] < sourcePageStart {
