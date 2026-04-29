@@ -7,40 +7,7 @@
       <p>Select a tool to continue.</p>
     </article>
 
-    <!-- Tools Analytics Panel -->
-    <div class="tools-analytics">
-      <div class="analytics-card">
-        <h3 class="analytics-title">Tool Usage</h3>
-        <div class="metric-row">
-          <span class="metric-label">Available Tools</span>
-          <span class="metric-value">3</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">Sessions Today</span>
-          <span class="metric-value">12</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">Active Users</span>
-          <span class="metric-value">8</span>
-        </div>
-      </div>
-      <div class="analytics-card">
-        <h3 class="analytics-title">Learning Impact</h3>
-        <div class="metric-row">
-          <span class="metric-label">Concepts Mapped</span>
-          <span class="metric-value">47</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">Mnemonics Created</span>
-          <span class="metric-value">23</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">Questions Guided</span>
-          <span class="metric-value">156</span>
-        </div>
-      </div>
-    </div>
-
+    
     <div class="tool-stack">
       <button type="button" class="tool-card" @click="go('/socratic')">
         <span class="tool-icon" aria-hidden="true">◎</span>
@@ -77,8 +44,6 @@ function go(path) {
 </script>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
-
 .page {
   display: grid;
   gap: 20px;

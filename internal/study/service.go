@@ -535,7 +535,7 @@ func ScaledFlashcardCount(wordCount int) int {
 }
 
 // buildPageBoundedContext fetches raw chunk text for a notebook page range
-// and returns (contextText, wordCount, error).
+// and returns (contextText, tokenCount, error).
 func buildPageBoundedContext(notebookID string, startPage, endPage int) (string, int, error) {
 	text, err := db.GetChunkTextByNotebookPageRange(notebookID, startPage, endPage)
 	if err != nil {
@@ -545,8 +545,12 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) (string,
 		// Return empty response instead of error for marathon mode compatibility
 		return "", 0, nil
 	}
-	wordCount := len(strings.Fields(text))
-	return text, wordCount, nil
+	tokenCount, err := embeddings.CountTokens(text)
+	if err != nil {
+		// Fall back to word count estimation if tokenizer fails
+		tokenCount = len(strings.Fields(text))
+	}
+	return text, tokenCount, nil
 }
 
 // suppressedUnusedImportForUUID ensures uuid is imported in sub-files via

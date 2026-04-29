@@ -22,7 +22,7 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextText, wordCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextText, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -32,8 +32,8 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 		return map[string]interface{}{"error": "no LLM provider available (tier: " + tier + ")"}
 	}
 
-	targetCount := ScaledFlashcardCount(wordCount)
-	prompt := buildMarathonFlashcardPrompt(notebookID, startPage, endPage, contextText, wordCount, targetCount)
+	targetCount := ScaledFlashcardCount(tokenCount)
+	prompt := buildMarathonFlashcardPrompt(notebookID, startPage, endPage, contextText, tokenCount, targetCount)
 
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
@@ -102,12 +102,12 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 	}
 }
 
-func buildMarathonFlashcardPrompt(notebookID string, startPage, endPage int, contextText string, wordCount, targetCount int) string {
+func buildMarathonFlashcardPrompt(notebookID string, startPage, endPage int, contextText string, tokenCount, targetCount int) string {
 	var b strings.Builder
 	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
 	fmt.Fprintf(&b, "Generate exactly %d flashcards covering pages %d-%d of notebook '%s'.\n",
 		targetCount, startPage, endPage, notebookID)
-	fmt.Fprintf(&b, "Content word count: %d\n", wordCount)
+	fmt.Fprintf(&b, "Content token count: %d\n", tokenCount)
 	b.WriteString(`JSON format: {"cards":[{"prompt":string,"answer":string}]}` + "\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
 	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")

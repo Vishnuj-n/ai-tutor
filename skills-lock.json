@@ -10,42 +10,6 @@
       "source": "JuliusBrussee/caveman",
       "sourceType": "github",
       "computedHash": "3b624b02603ee2e485707bf352747433068079c26dd4e2f9c17edcfb12a871b2"
-    },
-    "check": {
-      "source": "tw93/Waza",
-      "sourceType": "github",
-      "skillPath": "skills/check/SKILL.md",
-      "computedHash": "f313bff1e11a9c8855a6193aca8d3859db80ebdb19a785b04bdfb081850541ec"
-    },
-    "design": {
-      "source": "tw93/Waza",
-      "sourceType": "github",
-      "skillPath": "skills/design/SKILL.md",
-      "computedHash": "c6beb4e787941e9d543d6078c52da1ae4e01143942c6c580e746960d7685f55a"
-    },
-    "hunt": {
-      "source": "tw93/Waza",
-      "sourceType": "github",
-      "skillPath": "skills/hunt/SKILL.md",
-      "computedHash": "5575a936a06f19806f367c19226b18a20b283b546a88af445286f9b64c3b91ae"
-    },
-    "read": {
-      "source": "tw93/Waza",
-      "sourceType": "github",
-      "skillPath": "skills/read/SKILL.md",
-      "computedHash": "f3c9cc32f67f56fbf3f71a5708383d1d3216e34e38b17be7e8ee16310b625def"
-    },
-    "think": {
-      "source": "tw93/Waza",
-      "sourceType": "github",
-      "skillPath": "skills/think/SKILL.md",
-      "computedHash": "6961cab51f2c4c9cdc0fbc190e0198778ab92ad43f969acf03a7ecd44ad083c7"
-    },
-    "write": {
-      "source": "tw93/Waza",
-      "sourceType": "github",
-      "skillPath": "skills/write/SKILL.md",
-      "computedHash": "47feab70ae51c6a4f6d28dcf18f4b713f7bc77e564b1345752e5fa8ef3fd2778"
     }
   }
 }
