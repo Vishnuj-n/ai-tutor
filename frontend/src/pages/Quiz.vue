@@ -1,424 +1,181 @@
 <template>
-  <section class="page">
-    <p class="eyebrow">Quiz</p>
-    <h1>Topic Quiz</h1>
+  <div class="command-center">
+    <header class="cc-header">
+      <h1 class="cc-title">Quiz</h1>
+      <select id="notebook-select" v-model="selectedNotebookID" class="notebook-select" :disabled="loading">
+        <option value="">— Select Notebook —</option>
+        <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
+      </select>
+    </header>
 
-    <article class="panel controls">
-      <label class="field">
-        <span>Notebook</span>
-        <select v-model="selectedNotebookID" @change="onNotebookChange">
-          <option disabled value="">Select a notebook</option>
-          <option
-            v-for="notebook in notebookTree"
-            :key="notebook.notebook_id"
-            :value="notebook.notebook_id"
-          >
-            {{ notebook.title }}
-          </option>
-        </select>
-      </label>
+    <div class="cc-tabs">
+      <button id="tab-marathon" :class="['tab-btn', { active: activeTab === 'marathon' }]" @click="activeTab = 'marathon'">Marathon Mode</button>
+      <button id="tab-explorer" :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Explorer Mode</button>
+    </div>
 
-      <label class="field">
-        <span>Topic</span>
-        <select v-model="selectedTopicID" :disabled="availableTopics.length === 0">
-          <option disabled value="">
-            {{ availableTopics.length === 0 ? 'No topics available yet' : 'Select a topic' }}
-          </option>
-          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
-            {{ topic.title }}
-          </option>
-        </select>
-      </label>
-
-      <button class="primary" :disabled="isGenerating || !canGenerateQuiz" @click="onGenerateQuiz">
-        {{ isGenerating ? 'Generating...' : 'Generate Quiz' }}
-      </button>
-    </article>
-
-    <article v-if="errorMessage" class="panel error">{{ errorMessage }}</article>
-
-    <article v-if="currentQuestion" class="panel question-card">
-      <header>
-        <p class="question-index">Question {{ currentIndex + 1 }} / {{ questions.length }}</p>
-        <h2>{{ currentQuestion.prompt }}</h2>
-      </header>
-
-      <fieldset v-if="!feedbackVisible" class="options">
-        <legend>Answer choices for question {{ currentIndex + 1 }}</legend>
-        <label v-for="(opt, idx) in currentQuestion.options" :key="opt + idx" class="option">
-          <input
-            v-model="selectedAnswer"
-            type="radio"
-            :name="`quiz-question-${currentQuestion.id}`"
-            :value="opt"
-          />
-          <span>{{ String.fromCharCode(65 + idx) }}. {{ opt }}</span>
-        </label>
-      </fieldset>
-
-      <div
-        v-if="feedbackVisible && scoreResult"
-        class="feedback"
-        :class="scoreResult.correct ? 'good' : 'bad'"
-      >
-        <h3>{{ scoreResult.correct ? 'Correct' : 'Not quite' }} · Score {{ scoreResult.score }}</h3>
-        <p>{{ scoreResult.feedback }}</p>
-        <p class="hint">Hint: {{ scoreResult.hint }}</p>
-        <p v-if="!scoreResult.correct" class="expected">Expected: {{ scoreResult.expected }}</p>
-        <p class="meta">Rating: {{ formatRating(scoreResult.fsrsRating) }}</p>
-        <p class="meta">Next Review: {{ formatNextReview(scoreResult.nextReviewAt) }}</p>
+    <!-- Marathon Mode -->
+    <section v-if="activeTab === 'marathon'" class="tab-panel">
+      <div class="range-row">
+        <label class="range-label">Start Page</label>
+        <input id="start-page" v-model.number="startPage" type="number" min="1" class="page-input" :disabled="loading" />
+        <label class="range-label">End Page</label>
+        <input id="end-page" v-model.number="endPage" type="number" min="1" class="page-input" :disabled="loading" />
+        <button id="btn-generate" class="generate-btn" :disabled="!canGenerate" @click="generate">
+          <span v-if="!loading">Generate Quiz →</span>
+          <span v-else class="spinner" />
+        </button>
       </div>
+      <p v-if="error" class="error-msg">{{ error }}</p>
 
-      <footer class="actions">
-        <button
-          v-if="!feedbackVisible"
-          class="primary"
-          :disabled="isScoring || !selectedAnswer"
-          @click="onSubmitAnswer"
-        >
-          {{ isScoring ? 'Scoring...' : 'Submit Answer' }}
-        </button>
+      <!-- Questions -->
+      <div v-if="questions.length" class="questions-list">
+        <div v-for="(q, qi) in questions" :key="q.id" class="question-card" :class="{ answered: answers[q.id] !== undefined }">
+          <p class="q-prompt"><span class="q-num">{{ qi + 1 }}.</span> {{ q.prompt }}</p>
+          <ul class="options">
+            <li v-for="(opt, oi) in q.options" :key="oi"
+              :class="['option', optionClass(q, opt)]"
+              @click="submitAnswer(q, opt)">
+              {{ opt }}
+            </li>
+          </ul>
+          <div v-if="answers[q.id]" class="answer-result" :class="answers[q.id].correct ? 'correct' : 'wrong'">
+            <p class="result-label">{{ answers[q.id].correct ? '✓ Correct' : '✗ Incorrect' }}</p>
+            <p v-if="answers[q.id].feedback" class="result-feedback">{{ answers[q.id].feedback }}</p>
+          </div>
+        </div>
+        <div class="score-bar">
+          Score: {{ correctCount }} / {{ answeredCount }} answered
+        </div>
+      </div>
+    </section>
 
-        <button
-          v-if="feedbackVisible"
-          class="primary"
-          :disabled="currentIndex >= questions.length - 1"
-          @click="onNext"
-        >
-          {{ currentIndex >= questions.length - 1 ? 'Quiz Complete' : 'Next Question' }}
-        </button>
-      </footer>
-    </article>
-
-    <article v-else-if="questions.length === 0" class="panel">
-      <h2>Ready to generate</h2>
-      <p v-if="notebookTree.length === 0">Upload a notebook to start generating quizzes.</p>
-      <p v-else-if="selectedNotebook && availableTopics.length === 0">
-        This notebook has no topics yet. Wait for extraction to finish or choose another notebook.
-      </p>
-      <p v-else>Select a notebook and topic to generate a quiz.</p>
-    </article>
-  </section>
+    <!-- Explorer Mode stub -->
+    <section v-else class="tab-panel explorer-stub">
+      <div class="stub-icon">🔭</div>
+      <h2 class="stub-title">Explorer Mode</h2>
+      <p class="stub-desc">Search by topic or concept — coming in Phase 2.</p>
+    </section>
+  </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { generateQuiz, getNotebookTopicTree, scoreAnswer } from '../services/appApi'
-import { formatRating, formatNextReview } from '@/utils/formatting'
+import { ref, computed, onMounted } from 'vue'
+import { getNotebooks, generateMarathonQuiz, scoreAnswer } from '../services/appApi.js'
 
-const route = useRoute()
-
-const notebookTree = ref([])
+const notebooks     = ref([])
 const selectedNotebookID = ref('')
-const selectedTopicID = ref('')
-const questions = ref([])
-const currentIndex = ref(0)
-const selectedAnswer = ref('')
-const scoreResult = ref(null)
-const feedbackVisible = ref(false)
-const errorMessage = ref('')
-const isGenerating = ref(false)
-const isScoring = ref(false)
+const activeTab     = ref('marathon')
+const startPage     = ref(1)
+const endPage       = ref(10)
+const loading       = ref(false)
+const error         = ref('')
+const questions     = ref([])
+const answers       = ref({})
 
-const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
-const selectedNotebook = computed(
-  () =>
-    notebookTree.value.find((notebook) => notebook.notebook_id === selectedNotebookID.value) || null
+const canGenerate = computed(() =>
+  selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
 )
-const availableTopics = computed(() => selectedNotebook.value?.topics || [])
-const canGenerateQuiz = computed(() => selectedTopicID.value !== '')
 
-// Helper to clear quiz state
-function resetQuizState() {
-  questions.value = []
-  currentIndex.value = 0
-  selectedAnswer.value = ''
-  scoreResult.value = null
-  feedbackVisible.value = false
-}
-
-// Clear quiz state when topic selection changes
-watch(selectedTopicID, () => {
-  resetQuizState()
-})
+const answeredCount = computed(() => Object.keys(answers.value).length)
+const correctCount  = computed(() => Object.values(answers.value).filter(a => a.correct).length)
 
 onMounted(async () => {
   try {
-    const data = await getNotebookTopicTree()
-    notebookTree.value = Array.isArray(data) ? data : []
-    applyInitialSelection(getPreferredTopicID())
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to load notebook topics'
+    const res = await getNotebooks()
+    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+  } catch (e) {
+    error.value = 'Failed to load notebooks.'
   }
 })
 
-async function onGenerateQuiz() {
-  if (!selectedTopicID.value) {
-    return
-  }
-  // Clear any stale quiz state before starting new generation
-  resetQuizState()
-  isGenerating.value = true
-  errorMessage.value = ''
+async function generate() {
+  error.value = ''
+  questions.value = []
+  answers.value = {}
+  loading.value = true
   try {
-    const result = await generateQuiz(selectedTopicID.value)
-    if (result?.error) {
-      errorMessage.value = result.error
-      return
-    }
-    questions.value = Array.isArray(result?.questions) ? result.questions : []
-    if (questions.value.length === 0) {
-      errorMessage.value = 'No quiz questions were generated for this topic.'
-    }
-  } catch (err) {
-    errorMessage.value = err?.message || 'Quiz generation failed'
+    const res = await generateMarathonQuiz(selectedNotebookID.value, startPage.value, endPage.value)
+    if (res.error) { error.value = res.error; return }
+    questions.value = res.questions ?? []
+  } catch (e) {
+    error.value = e?.message ?? 'Quiz generation failed.'
   } finally {
-    isGenerating.value = false
+    loading.value = false
   }
 }
 
-async function onSubmitAnswer() {
-  if (!currentQuestion.value || !selectedAnswer.value) {
-    return
-  }
-  isScoring.value = true
-  errorMessage.value = ''
+async function submitAnswer(q, opt) {
+  if (answers.value[q.id] !== undefined) return
   try {
-    const result = await scoreAnswer(currentQuestion.value.id, selectedAnswer.value)
-    if (result?.error) {
-      errorMessage.value = result.error
-      return
-    }
-    scoreResult.value = {
-      ...result,
-      fsrsRating: String(result.fsrsRating || result.fsrs_rating || ''),
-      nextReviewAt: String(result.next_review_at || ''),
-    }
-    feedbackVisible.value = true
-  } catch (err) {
-    errorMessage.value = err?.message || 'Failed to score answer'
-  } finally {
-    isScoring.value = false
+    const res = await scoreAnswer(q.id, opt)
+    answers.value[q.id] = { correct: res.correct, feedback: res.feedback }
+  } catch (e) {
+    answers.value[q.id] = { correct: false, feedback: 'Scoring failed.' }
   }
 }
 
-function applyInitialSelection(preferredTopicID) {
-  if (notebookTree.value.length === 0) {
-    selectedNotebookID.value = ''
-    selectedTopicID.value = ''
-    return
-  }
-
-  if (preferredTopicID) {
-    for (const notebook of notebookTree.value) {
-      const topic = Array.isArray(notebook.topics)
-        ? notebook.topics.find((item) => item.topic_id === preferredTopicID)
-        : null
-      if (topic) {
-        selectedNotebookID.value = notebook.notebook_id
-        selectedTopicID.value = topic.topic_id
-        return
-      }
-    }
-  }
-
-  const firstNotebookWithTopics = notebookTree.value.find(
-    (notebook) => Array.isArray(notebook.topics) && notebook.topics.length > 0
-  )
-  const fallbackNotebook = firstNotebookWithTopics || notebookTree.value[0]
-  selectedNotebookID.value = fallbackNotebook?.notebook_id || ''
-  selectedTopicID.value = fallbackNotebook?.topics?.[0]?.topic_id || ''
+function optionClass(q, opt) {
+  const a = answers.value[q.id]
+  if (!a) return ''
+  if (opt === q.correct_answer) return 'correct-opt'
+  return a.correct ? '' : 'wrong-opt'
 }
-
-function onNotebookChange() {
-  const nextTopicID = availableTopics.value[0]?.topic_id || ''
-  if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
-    selectedTopicID.value = nextTopicID
-  }
-}
-
-function getPreferredTopicID() {
-  if (typeof route.query.topic === 'string') {
-    return route.query.topic
-  }
-  return ''
-}
-
-function onNext() {
-  if (currentIndex.value < questions.value.length - 1) {
-    currentIndex.value += 1
-    selectedAnswer.value = ''
-    scoreResult.value = null
-    feedbackVisible.value = false
-  }
-}
-
 </script>
 
 <style scoped>
-.page {
-  display: grid;
-  gap: 20px;
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  overflow-x: hidden;
-}
+.command-center { display: flex; flex-direction: column; gap: 1.5rem; padding: 2rem; max-width: 860px; margin: 0 auto; }
 
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  font-weight: 700;
-}
+.cc-header { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.cc-title  { font-size: 1.6rem; font-weight: 700; color: var(--color-heading, #e2e8f0); margin: 0; }
 
-h1 {
-  margin: 0;
-  font-size: 46px;
-  font-family: 'Manrope', sans-serif;
-  letter-spacing: -0.02em;
-}
+.notebook-select { flex: 1; min-width: 220px; background: var(--color-surface, #1e293b); color: var(--color-text, #cbd5e1); border: 1px solid var(--color-border, #334155); border-radius: 8px; padding: .5rem .75rem; font-size: .95rem; cursor: pointer; }
+.notebook-select:disabled { opacity: .5; }
 
-.panel {
-  background: var(--surface-container-lowest);
-  border-radius: 16px;
-  padding: 24px;
-  width: 100%;
-  box-sizing: border-box;
-}
+.cc-tabs   { display: flex; gap: .5rem; }
+.tab-btn   { padding: .5rem 1.25rem; border: 1px solid var(--color-border, #334155); border-radius: 20px; background: transparent; color: var(--color-text, #94a3b8); cursor: pointer; font-size: .9rem; transition: all .2s; }
+.tab-btn.active { background: var(--color-accent, #6366f1); border-color: var(--color-accent, #6366f1); color: #fff; }
 
-.controls {
-  display: flex;
-  align-items: end;
-  gap: 14px;
-  flex-wrap: wrap;
-  width: 100%;
-  box-sizing: border-box;
-}
+.tab-panel { animation: fadeIn .2s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-.field {
-  display: grid;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: clamp(200px, 100%, 420px);
-}
+.range-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.range-label { font-size: .85rem; color: var(--color-muted, #64748b); white-space: nowrap; }
+.page-input  { width: 72px; background: var(--color-surface, #1e293b); color: var(--color-text, #e2e8f0); border: 1px solid var(--color-border, #334155); border-radius: 8px; padding: .4rem .6rem; font-size: .9rem; text-align: center; }
+.page-input:disabled { opacity: .5; }
 
-.field span {
-  color: var(--muted-text);
-  font-size: 13px;
-}
+.generate-btn { margin-left: auto; padding: .55rem 1.4rem; background: var(--color-accent, #6366f1); color: #fff; border: none; border-radius: 8px; font-size: .95rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: .4rem; transition: opacity .2s; }
+.generate-btn:disabled { opacity: .4; cursor: default; }
 
-select {
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  background: white;
-  border-radius: 12px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  font-size: 15px;
-}
+.spinner { width: 16px; height: 16px; border: 2px solid #fff4; border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-.primary {
-  border: 0;
-  border-radius: 12px;
-  padding: 8px 14px;
-  background: #20222f;
-  color: #fff;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: pointer;
-}
+.error-msg { color: #f87171; font-size: .9rem; }
 
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.questions-list { display: flex; flex-direction: column; gap: 1.25rem; }
+.question-card  { background: var(--color-surface, #1e293b); border: 1px solid var(--color-border, #334155); border-radius: 12px; padding: 1.25rem; transition: border-color .2s; }
+.question-card.answered { border-color: #475569; }
 
-h2 {
-  margin: 0 0 8px;
-  font-family: 'Manrope', sans-serif;
-}
+.q-prompt { font-size: 1rem; font-weight: 600; color: var(--color-heading, #e2e8f0); margin-bottom: .85rem; }
+.q-num    { color: var(--color-accent, #6366f1); margin-right: .4rem; }
 
-p {
-  margin: 0;
-  color: var(--muted-text);
-}
+.options  { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .45rem; }
+.option   { padding: .6rem .9rem; border: 1px solid var(--color-border, #334155); border-radius: 8px; cursor: pointer; font-size: .9rem; color: var(--color-text, #cbd5e1); transition: all .15s; }
+.option:hover:not(.correct-opt):not(.wrong-opt) { border-color: var(--color-accent, #6366f1); background: #6366f11a; }
+.correct-opt { border-color: #22c55e; background: #22c55e18; color: #86efac; }
+.wrong-opt   { border-color: #ef4444; background: #ef444418; color: #fca5a5; }
 
-.question-card {
-  display: grid;
-  gap: 18px;
-  width: 100%;
-  box-sizing: border-box;
-}
+.answer-result { margin-top: .85rem; padding: .65rem .9rem; border-radius: 8px; }
+.answer-result.correct { background: #16a34a18; }
+.answer-result.wrong   { background: #dc262618; }
+.result-label    { font-weight: 700; font-size: .9rem; margin-bottom: .25rem; }
+.answer-result.correct .result-label { color: #4ade80; }
+.answer-result.wrong .result-label   { color: #f87171; }
+.result-feedback { font-size: .85rem; color: var(--color-muted, #94a3b8); }
 
-.question-index {
-  margin-bottom: 6px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
+.score-bar { text-align: center; padding: .75rem; background: var(--color-surface, #1e293b); border-radius: 10px; font-size: .95rem; color: var(--color-text, #cbd5e1); border: 1px solid var(--color-border, #334155); }
 
-.options {
-  display: grid;
-  gap: 10px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.option {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  border: 1px solid color-mix(in srgb, var(--muted-text) 20%, transparent);
-  border-radius: 12px;
-  padding: 10px 12px;
-  width: 100%;
-  box-sizing: border-box;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-}
-
-.feedback {
-  border-radius: 12px;
-  padding: 14px;
-  display: grid;
-  gap: 8px;
-}
-
-.feedback.good {
-  background: #e8f7ee;
-}
-
-.feedback.bad {
-  background: #fff1ee;
-}
-
-.feedback h3 {
-  margin: 0;
-}
-
-.hint,
-.expected {
-  color: #2f334a;
-}
-
-.meta {
-  color: #2f334a;
-  font-weight: 600;
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 8px;
-}
-
-.error {
-  border: 1px solid color-mix(in srgb, #b42318 30%, var(--surface-container-lowest));
-  background: color-mix(in srgb, #b42318 10%, var(--surface-container-lowest));
-  color: #8a2d16;
-}
+.explorer-stub { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 4rem 1rem; color: var(--color-muted, #64748b); }
+.stub-icon   { font-size: 3rem; }
+.stub-title  { font-size: 1.25rem; font-weight: 700; color: var(--color-heading, #e2e8f0); margin: 0; }
+.stub-desc   { font-size: .9rem; }
 </style>
