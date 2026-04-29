@@ -1,74 +1,65 @@
 <template>
-  <div class="command-center">
-    <header class="cc-header">
-      <h1 class="cc-title">Written Assessment</h1>
-      <select id="notebook-select" v-model="selectedNotebookID" class="notebook-select" :disabled="loading">
+  <div class="assessment-page">
+    <header class="page-header">
+      <h1 class="page-title">Written Assessment</h1>
+      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading || scoring">
         <option value="">— Select Notebook —</option>
         <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
       </select>
     </header>
 
-    <div class="cc-tabs">
-      <button id="tab-comprehensive" :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Extraction</button>
-      <button id="tab-explorer" :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Semantic Discovery</button>
-    </div>
+    <nav class="tabs">
+      <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Exam</button>
+      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Semantic Discovery</button>
+    </nav>
 
-    <!-- Comprehensive Extraction -->
-    <section v-if="activeTab === 'comprehensive'" class="tab-panel">
+    <section v-if="activeTab === 'comprehensive'" class="content">
       <div v-if="!question">
-        <div class="range-row">
-          <label class="range-label">Start Page</label>
-          <input id="start-page" v-model.number="startPage" type="number" min="1" class="page-input" :disabled="loading" />
-          <label class="range-label">End Page</label>
-          <input id="end-page" v-model.number="endPage" type="number" min="1" class="page-input" :disabled="loading" />
-          <button id="btn-generate" class="generate-btn" :disabled="!canGenerate" @click="generate">
-            <span v-if="!loading">Generate Question →</span>
-            <span v-else class="spinner" />
-          </button>
+        <div class="controls">
+          <div class="input-group">
+            <label>Start Page</label>
+            <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
+          </div>
+          <div class="input-group">
+            <label>End Page</label>
+            <input v-model.number="endPage" type="number" min="1" :disabled="loading" />
+          </div>
+          <BaseButton :disabled="!canGenerate" :loading="loading" @click="generate">Generate Question</BaseButton>
         </div>
-        <p v-if="error" class="error-msg">{{ error }}</p>
+        <ErrorMessage :message="error" />
       </div>
 
-
-      <!-- Exam prompt -->
-      <div v-if="question && !result" class="exam-panel">
+      <div v-if="question && !result" class="exam">
         <div class="question-box">
-          <p class="exam-prompt">{{ question.prompt }}</p>
-          <span class="page-badge">Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span>
+          <p class="prompt">{{ question.prompt }}</p>
+          <span class="badge">Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span>
         </div>
-        <textarea id="answer-input" v-model="userAnswer" rows="6" class="answer-textarea"
+        <textarea v-model="userAnswer" rows="6" class="answer-input"
           placeholder="Write your answer here…" :disabled="scoring" />
-        <div class="exam-actions">
-          <button id="btn-submit" class="generate-btn" :disabled="!userAnswer.trim() || scoring" @click="submitAnswer">
-            <span v-if="!scoring">Submit Answer →</span>
-            <span v-else class="spinner" />
-          </button>
-          <button id="btn-discard" class="discard-btn" :disabled="scoring" @click="reset">Discard</button>
+        <div class="actions">
+          <BaseButton :disabled="!userAnswer.trim() || scoring" :loading="scoring" @click="submitAnswer">Submit Answer</BaseButton>
+          <button class="discard-btn" :disabled="scoring" @click="reset">Discard</button>
         </div>
       </div>
 
-      <!-- Result -->
-      <div v-if="result" class="result-panel">
-        <div class="score-ring" :class="scoreClass">
-          <span class="score-num">{{ result.score }}</span>
-          <span class="score-denom">/10</span>
+      <div v-if="result" class="result">
+        <div class="score" :class="scoreClass">
+          <span class="num">{{ result.score }}</span>
+          <span class="denom">/10</span>
         </div>
         <div class="result-body">
-          <p class="result-feedback">{{ result.feedback }}</p>
-          <div class="fsrs-chip" v-if="result.fsrsRating">
-            <span class="fsrs-label">{{ result.fsrsRating }}</span>
-            <span class="fsrs-days">Next: {{ result.scheduledDays }}d</span>
+          <p class="feedback">{{ result.feedback }}</p>
+          <div class="fsrs" v-if="result.fsrsRating">
+            <span class="label">{{ result.fsrsRating }}</span>
+            <span class="days">Next: {{ result.scheduledDays }}d</span>
           </div>
         </div>
-        <button id="btn-new" class="generate-btn" @click="reset">New Question</button>
+        <BaseButton @click="reset">New Question</BaseButton>
       </div>
     </section>
 
-    <!-- Explorer stub -->
-    <section v-else class="tab-panel explorer-stub">
-      <div class="stub-icon">🔭</div>
-      <h2 class="stub-title">Semantic Discovery</h2>
-      <p class="stub-desc">Search by topic or concept — coming in Phase 2.</p>
+    <section v-else class="content stub">
+      <p>Semantic Discovery — coming in Phase 2.</p>
     </section>
   </div>
 </template>
@@ -76,6 +67,8 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { getNotebooks, generateComprehensiveExam, scoreShortAnswer } from '../services/appApi.js'
+import BaseButton from '../components/BaseButton.vue'
+import ErrorMessage from '../components/ErrorMessage.vue'
 
 const notebooks          = ref([])
 const selectedNotebookID = ref('')
@@ -169,413 +162,263 @@ function reset() {
 </script>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
-
-.command-center {
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-  padding: 3rem 2rem;
-  max-width: 720px;
+.assessment-page {
+  padding: 1.5rem;
+  max-width: 1000px;
   margin: 0 auto;
-  background: var(--background);
-  min-height: 100vh;
 }
 
-.cc-header {
+.page-header {
   display: flex;
-  align-items: flex-end;
-  gap: 2rem;
+  align-items: center;
+  gap: 1.5rem;
   margin-bottom: 1rem;
 }
 
-.cc-title {
-  font-family: 'Manrope', sans-serif;
-  font-size: 2.5rem;
+.page-title {
+  font-size: 1.75rem;
   font-weight: 700;
-  color: var(--on-surface);
   margin: 0;
-  letter-spacing: -0.5%;
-  line-height: 1.1;
+  color: var(--on-surface);
 }
 
 .notebook-select {
-  flex: 1;
-  min-width: 280px;
-  background: var(--surface-container-low);
+  width: 300px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: var(--background);
   color: var(--on-surface);
-  border: none;
-  border-radius: 0.75rem;
-  padding: 0.75rem 1rem;
-  font-family: 'Inter', sans-serif;
-  font-size: 0.95rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
+  font-size: 0.9rem;
 }
 
-.notebook-select:hover {
-  background: var(--surface-container-lowest);
-}
-
-.notebook-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.cc-tabs {
+.tabs {
   display: flex;
   gap: 0.5rem;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 0.5rem;
 }
 
 .tab-btn {
-  padding: 0.75rem 1.5rem;
+  padding: 0.5rem 1rem;
   border: none;
-  border-radius: 0.75rem;
-  background: var(--surface-container);
+  background: transparent;
   color: var(--on-surface);
   cursor: pointer;
-  font-family: 'Inter', sans-serif;
   font-size: 0.9rem;
-  font-weight: 500;
-  transition: all 0.2s ease;
+  border-radius: 4px;
 }
 
 .tab-btn:hover {
-  background: var(--surface-container-low);
+  background: #f5f5f5;
 }
 
 .tab-btn.active {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
-  color: var(--on-primary);
+  background: var(--primary);
+  color: white;
   font-weight: 600;
 }
 
-.tab-panel {
-  animation: fadeIn 0.3s ease;
+.content {
+  animation: fadeIn 0.2s ease;
 }
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.range-row {
+.controls {
   display: flex;
-  align-items: center;
   gap: 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 2rem;
-  padding: 1.5rem;
-  background: var(--surface-container-low);
-  border-radius: 0.75rem;
-  transition: all 0.3s ease;
+  align-items: flex-end;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  margin-bottom: 1rem;
 }
 
-.range-row:hover {
-  background: var(--surface-container-lowest);
-  transform: translateY(-2px);
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.range-label {
-  font-family: 'Inter', sans-serif;
-  font-size: 0.875rem;
+.input-group label {
+  font-size: 0.85rem;
   font-weight: 500;
-  color: var(--muted-text);
-  white-space: nowrap;
-}
-
-.page-input {
-  width: 80px;
-  background: var(--surface-container-lowest);
   color: var(--on-surface);
-  border: 1px solid rgba(45, 51, 56, 0.2);
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-family: 'Inter', sans-serif;
-  font-size: 0.9rem;
-  font-weight: 500;
-  text-align: center;
-  transition: all 0.2s ease;
 }
 
-.page-input:focus {
+.input-group input {
+  width: 100px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.input-group input:focus {
   outline: none;
   border-color: var(--primary);
-  background: var(--surface-container-lowest);
 }
 
-.page-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.generate-btn {
-  margin-left: auto;
-  padding: 0.75rem 1.75rem;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
-  color: var(--on-primary);
-  border: none;
-  border-radius: 0.75rem;
-  font-family: 'Inter', sans-serif;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
+.exam {
   display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.question-box {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+}
+
+.prompt {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--on-surface);
+  line-height: 1.5;
+  margin: 0 0 0.5rem 0;
+}
+
+.badge {
+  font-size: 0.75rem;
+  color: #666;
+  background: white;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-weight: 500;
+}
+
+.answer-input {
+  width: 100%;
+  background: white;
+  color: var(--on-surface);
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  resize: vertical;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.answer-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.answer-input:disabled {
+  opacity: 0.5;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
   align-items: center;
-  gap: 0.5rem;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0, 91, 193, 0.15);
 }
 
-.generate-btn:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 91, 193, 0.25);
-}
-
-.generate-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: var(--on-primary);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.error-msg {
-  font-family: 'Inter', sans-serif;
+.discard-btn {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  border: 1px solid #ccc;
+  color: var(--on-surface);
+  border-radius: 4px;
+  cursor: pointer;
   font-size: 0.9rem;
   font-weight: 500;
-  color: #9f403d;
-  padding: 1rem;
-  background: rgba(159, 64, 61, 0.08);
-  border-radius: 0.5rem;
-  margin-top: 1rem;
 }
 
-.exam-panel  { 
-  display: flex; 
-  flex-direction: column; 
-  gap: 1rem; 
+.discard-btn:hover {
+  border-color: #ef4444;
+  color: #dc2626;
 }
 
-.question-box { 
-  background: var(--surface-container-low); 
-  border-radius: 0.75rem; 
-  padding: 1.5rem; 
-  transition: all 0.3s ease;
+.result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 2rem;
+  background: #f5f5f5;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
 }
 
-.question-box:hover {
-  background: var(--surface-container-lowest);
-  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.06);
-  transform: translateY(-2px);
+.score {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
 }
 
-.exam-prompt  { 
-  font-family: 'Inter', sans-serif;
-  font-size: 1.125rem; 
-  font-weight: 600; 
-  color: var(--on-surface); 
-  line-height: 1.5; 
-  margin-bottom: 0.75rem; 
+.num {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
-.page-badge   { 
-  font-family: 'Inter', sans-serif;
-  font-size: 0.75rem; 
-  color: var(--muted-text); 
-  background: var(--surface-container-highest); 
-  border-radius: 0.5rem; 
-  padding: 0.25rem 0.75rem; 
+.denom {
+  font-size: 1rem;
+  color: #666;
   font-weight: 500;
 }
 
-.answer-textarea { 
-  width: 100%; 
-  background: var(--surface-container-lowest); 
-  color: var(--on-surface); 
-  border: 1px solid rgba(45, 51, 56, 0.2); 
-  border-radius: 0.75rem; 
-  padding: 1rem; 
-  font-family: 'Inter', sans-serif;
-  font-size: 0.95rem; 
-  resize: vertical; 
-  line-height: 1.6; 
-  box-sizing: border-box; 
-  transition: all 0.2s ease;
+.score.great .num {
+  color: #16a34a;
 }
 
-.answer-textarea:focus { 
-  outline: none; 
-  border-color: var(--primary); 
-  background: var(--surface-container-lowest);
+.score.ok .num {
+  color: #ea580c;
 }
 
-.answer-textarea:disabled { 
-  opacity: 0.5; 
+.score.low .num {
+  color: #dc2626;
 }
 
-.exam-actions { 
-  display: flex; 
-  gap: 0.75rem; 
-  align-items: center; 
+.result-body {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.discard-btn  { 
-  padding: 0.75rem 1.5rem; 
-  background: transparent; 
-  border: 1px solid rgba(45, 51, 56, 0.2); 
-  color: var(--on-surface); 
-  border-radius: 0.75rem; 
-  cursor: pointer; 
-  font-family: 'Inter', sans-serif;
-  font-size: 0.9rem; 
+.feedback {
+  font-size: 0.95rem;
+  color: var(--on-surface);
+  line-height: 1.5;
+  max-width: 500px;
   font-weight: 500;
-  transition: all 0.15s ease; 
+  margin: 0;
 }
 
-.discard-btn:hover { 
-  border-color: #ef4444; 
-  color: #dc2626; 
-  transform: translateY(-2px);
+.fsrs {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8rem;
 }
 
-.result-panel { 
-  display: flex; 
-  flex-direction: column; 
-  align-items: center; 
-  gap: 1.5rem; 
-  padding: 2.5rem; 
-  background: var(--surface-container-low); 
-  border-radius: 0.75rem; 
-  transition: all 0.3s ease;
+.label {
+  color: var(--primary);
+  font-weight: 600;
 }
 
-.result-panel:hover {
-  background: var(--surface-container-lowest);
-  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.06);
-  transform: translateY(-2px);
-}
-
-.score-ring  { 
-  display: flex; 
-  align-items: baseline; 
-  gap: 0.25rem; 
-}
-
-.score-num   { 
-  font-family: 'Manrope', sans-serif;
-  font-size: 4rem; 
-  font-weight: 800; 
-  line-height: 1; 
-}
-
-.score-denom { 
-  font-family: 'Inter', sans-serif;
-  font-size: 1.25rem; 
-  color: var(--muted-text); 
+.days {
+  color: #666;
   font-weight: 500;
 }
 
-.score-ring.great .score-num { 
-  color: #16a34a; 
-}
-
-.score-ring.ok    .score-num { 
-  color: #ea580c; 
-}
-
-.score-ring.low   .score-num { 
-  color: #dc2626; 
-}
-
-.result-body { 
-  text-align: center; 
-  display: flex; 
-  flex-direction: column; 
-  gap: 0.75rem; 
-}
-
-.result-feedback { 
-  font-family: 'Inter', sans-serif;
-  font-size: 1rem; 
-  color: var(--on-surface); 
-  line-height: 1.6; 
-  max-width: 500px; 
-  font-weight: 500;
-}
-
-.fsrs-chip   { 
-  display: inline-flex; 
-  gap: 0.5rem; 
-  align-items: center; 
-  background: var(--surface-container-highest); 
-  border: 1px solid var(--outline-variant); 
-  border-radius: 1rem; 
-  padding: 0.375rem 0.875rem; 
-  font-size: 0.8rem; 
-}
-
-.fsrs-label  { 
-  font-family: 'Inter', sans-serif;
-  color: var(--primary); 
-  font-weight: 600; 
-}
-
-.fsrs-days   { 
-  font-family: 'Inter', sans-serif;
-  color: var(--muted-text); 
-  font-weight: 500;
-}
-
-.explorer-stub { 
-  display: flex; 
-  flex-direction: column; 
-  align-items: center; 
-  gap: 1rem; 
-  padding: 6rem 2rem; 
-  color: var(--muted-text); 
-  text-align: center; 
-}
-
-.stub-icon  { 
-  font-size: 4rem; 
-  opacity: 0.6; 
-}
-
-.stub-title { 
-  font-family: 'Manrope', sans-serif;
-  font-size: 1.5rem; 
-  font-weight: 700; 
-  color: var(--on-surface); 
-  margin: 0; 
-}
-
-.stub-desc  { 
-  font-family: 'Inter', sans-serif;
-  font-size: 0.95rem; 
-  line-height: 1.5; 
-  max-width: 400px; 
+.stub {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
 }
 </style>
