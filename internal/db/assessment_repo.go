@@ -269,3 +269,110 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 
 	return nil
 }
+
+// GetDueAssessmentItems returns due assessment items from assessment_fsrs
+func GetDueAssessmentItems(now int64, limit int) ([]DueAssessmentItem, error) {
+	rows, err := conn.Query(`
+		SELECT 
+			af.activity_type,
+			af.reference_id,
+			af.topic_id,
+			af.source_chunk_id,
+			af.due_at,
+			t.title,
+			COALESCE(t.start_page, 0),
+			COALESCE(t.end_page, 0),
+			COALESCE(t.current_page_cursor, 0)
+		FROM assessment_fsrs af
+		JOIN topics t ON t.id = af.topic_id
+		WHERE af.due_at IS NOT NULL
+		  AND af.due_at <= ?
+		ORDER BY af.due_at ASC
+		LIMIT ?
+	`, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var items []DueAssessmentItem
+	for rows.Next() {
+		var item DueAssessmentItem
+		if err := rows.Scan(&item.ActivityType, &item.ReferenceID, &item.TopicID, &item.SourceChunkID, &item.DueAt, &item.TopicTitle, &item.StartPage, &item.EndPage, &item.CurrentCursor); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+// DueAssessmentItem represents a due assessment item
+type DueAssessmentItem struct {
+	ActivityType  string
+	ReferenceID   string
+	TopicID       string
+	SourceChunkID string
+	DueAt         int64
+	TopicTitle    string
+	StartPage     int
+	EndPage       int
+	CurrentCursor int
+}
+
+// GetActiveNotebooks returns notebooks with status='active'
+func GetActiveNotebooks(limit int) ([]ActiveNotebook, error) {
+	rows, err := conn.Query(`
+		SELECT 
+			n.id,
+			n.title,
+			n.topic_id,
+			COALESCE(t.start_page, 0),
+			COALESCE(t.end_page, 0),
+			COALESCE(t.current_page_cursor, 0),
+			n.page_count
+		FROM notebooks n
+		LEFT JOIN topics t ON t.id = n.topic_id
+		WHERE n.status = 'active'
+		ORDER BY n.updated_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var notebooks []ActiveNotebook
+	for rows.Next() {
+		var nb ActiveNotebook
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.TopicID, &nb.StartPage, &nb.EndPage, &nb.CurrentCursor, &nb.PageCount); err != nil {
+			return nil, err
+		}
+		notebooks = append(notebooks, nb)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return notebooks, nil
+}
+
+// ActiveNotebook represents an active notebook with topic info
+type ActiveNotebook struct {
+	ID            string
+	Title         string
+	TopicID       string
+	StartPage     int
+	EndPage       int
+	CurrentCursor int
+	PageCount     int
+}
