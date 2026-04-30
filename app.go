@@ -17,6 +17,7 @@ import (
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
+	"ai-tutor/internal/orchestrator"
 	"ai-tutor/internal/rag"
 	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/runtime"
@@ -46,6 +47,7 @@ type App struct {
 	fastLLMProvider   llmProviderInterface
 	heavyLLMProvider  llmProviderInterface
 	scheduler         scheduler.Service
+	orchestrator      *orchestrator.Service
 	notebookService   *notebook.Service
 	studyService      *study.StudyService
 	notebookUploadDir string
@@ -97,6 +99,7 @@ func (a *App) startup(ctx context.Context) {
 	utils.Infof("Database initialized at %s", dbPath)
 
 	a.scheduler = scheduler.New()
+	a.orchestrator = orchestrator.NewService()
 
 	// Init ONNX embedder
 	onnxRuntimePath := assetValidator.OnnxRuntimePath()
@@ -302,6 +305,20 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
 		"insights_available": false, "plan_source": "scheduler-v2-context-locked",
+	}
+}
+
+func (a *App) GetDailyAgenda() map[string]interface{} {
+	if a.orchestrator == nil {
+		return map[string]interface{}{"error": "orchestrator not initialized"}
+	}
+	tasks, err := a.orchestrator.GetDailyAgenda()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{
+		"tasks":             tasks,
+		"generated_at_unix": time.Now().Unix(),
 	}
 }
 
