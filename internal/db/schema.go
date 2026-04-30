@@ -140,6 +140,7 @@ func InitSchema(tx *sql.Tx) error {
 			chunk_count INTEGER DEFAULT 0,
 			mission_end_page INTEGER DEFAULT 0,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
 

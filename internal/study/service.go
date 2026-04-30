@@ -188,6 +188,11 @@ Student answer: %s`, question.Prompt, userAnswer)
 	}
 	committed = true
 
+	// Update notebook timestamp to track user engagement
+	if notebook, err := db.GetNotebookByTopic(question.TopicID); err == nil && notebook != nil {
+		_ = db.UpdateNotebookTimestamp(notebook.ID)
+	}
+
 	return map[string]interface{}{
 		"question_id":       question.ID,
 		"prompt":            question.Prompt,

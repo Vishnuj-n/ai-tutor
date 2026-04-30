@@ -295,6 +295,24 @@ func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	return &nb, nil
 }
 
+// GetNotebookByTopic retrieves a notebook by its associated topic ID
+func GetNotebookByTopic(topicID string) (*models.Notebook, error) {
+	var nb models.Notebook
+	err := conn.QueryRow(`
+		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), page_count, chunk_count, uploaded_at
+		FROM notebooks
+		WHERE topic_id = ?
+	`, topicID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &nb, nil
+}
+
 // LinkChunksToNotebook associates chunks with a notebook
 func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
 	validatedNotebookID, err := validateID(notebookID, "notebook id")
@@ -336,6 +354,28 @@ func UpdateNotebookChunkCount(notebookID string, count int) error {
 		SET chunk_count = ?
 		WHERE id = ?
 	`, count, notebookID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// UpdateNotebookTimestamp updates the updated_at timestamp for a notebook
+func UpdateNotebookTimestamp(notebookID string) error {
+	result, err := conn.Exec(`
+		UPDATE notebooks
+		SET updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, notebookID)
 	if err != nil {
 		return err
 	}

@@ -28,6 +28,12 @@
       "sourceType": "github",
       "skillPath": "skills/think/SKILL.md",
       "computedHash": "6961cab51f2c4c9cdc0fbc190e0198778ab92ad43f969acf03a7ecd44ad083c7"
+    },
+    "waza": {
+      "source": "tw93/Waza",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "05617da856413c8881eaceb5f0b7e5edf23b1908cd7f9aa4c2b4afa0def0b88d"
     }
   }
 }
