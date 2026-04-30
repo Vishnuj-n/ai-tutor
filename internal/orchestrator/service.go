@@ -132,12 +132,24 @@ func (s *Service) getReadingTasks(availableMinutes int) ([]models.ScheduledTask,
 
 	var tasks []models.ScheduledTask
 	readingIndex := 1
+	remainingMinutes := availableMinutes
 
 	for _, nb := range notebooks {
-		// Calculate end page based on available minutes
-		availablePages := int(float64(availableMinutes) * readingSpeedPagesPerMinute)
+		// Stop if no time remaining
+		if remainingMinutes <= 0 {
+			break
+		}
+
 		startPage := nb.CurrentCursor
-		endPage := nb.CurrentCursor + availablePages
+		var endPage int
+
+		// Use mission_end_page if set, otherwise calculate based on remaining minutes
+		if nb.MissionEndPage > 0 {
+			endPage = nb.MissionEndPage
+		} else {
+			availablePages := int(float64(remainingMinutes) * readingSpeedPagesPerMinute)
+			endPage = nb.CurrentCursor + availablePages
+		}
 
 		// Cap at page count if available
 		if nb.PageCount > 0 && endPage > nb.PageCount {
@@ -158,6 +170,7 @@ func (s *Service) getReadingTasks(availableMinutes int) ([]models.ScheduledTask,
 				Meta:            "reading",
 			}
 			tasks = append(tasks, task)
+			remainingMinutes -= task.EstimateMinutes
 			readingIndex++
 		}
 	}

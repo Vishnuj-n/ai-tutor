@@ -167,6 +167,122 @@ func UpsertDailyStudyMinutes(minutes int) error {
 	return err
 }
 
+// GetStudentID returns the student ID from user_settings.
+func GetStudentID() (string, error) {
+	var studentID sql.NullString
+	err := conn.QueryRow(`
+		SELECT student_id
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&studentID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return studentID.String, err
+}
+
+// GetInstitutionalSync returns whether institutional sync is enabled.
+func GetInstitutionalSync() (bool, error) {
+	var syncEnabled sql.NullInt64
+	err := conn.QueryRow(`
+		SELECT institutional_sync
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&syncEnabled)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return syncEnabled.Int64 == 1, err
+}
+
+// GetDashboardEndpoint returns the teacher dashboard endpoint URL.
+func GetDashboardEndpoint() (string, error) {
+	var endpoint sql.NullString
+	err := conn.QueryRow(`
+		SELECT dashboard_endpoint
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&endpoint)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return endpoint.String, err
+}
+
+// UpsertStudentSettings stores student configuration for institutional sync.
+func UpsertStudentSettings(studentID string, institutionalSync bool, dashboardEndpoint string, dailyStudyMinutes int) error {
+	syncVal := 0
+	if institutionalSync {
+		syncVal = 1
+	}
+
+	_, err := conn.Exec(`
+		INSERT INTO user_settings (id, student_id, institutional_sync, dashboard_endpoint, daily_study_minutes)
+		VALUES (1, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			student_id = excluded.student_id,
+			institutional_sync = excluded.institutional_sync,
+			dashboard_endpoint = excluded.dashboard_endpoint,
+			daily_study_minutes = excluded.daily_study_minutes,
+			updated_at = CURRENT_TIMESTAMP
+	`, studentID, syncVal, dashboardEndpoint, dailyStudyMinutes)
+	return err
+}
+
+// LogToSyncOutbox records an event for institutional telemetry.
+func LogToSyncOutbox(payload string, eventType string) error {
+	if conn == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	_, err := conn.Exec(`
+		INSERT INTO sync_outbox (payload, event_type)
+		VALUES (?, ?)
+	`, payload, eventType)
+	return err
+}
+
+// UpdateTaskBoundary updates the mission_end_page for a reading task based on taskID.
+// taskID format: "read-{index}" for reading tasks, "review-{index}" for review tasks.
+// For reading tasks, updates notebooks.mission_end_page.
+func UpdateTaskBoundary(taskID string, newEndPage int) error {
+	if conn == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return fmt.Errorf("task ID is required")
+	}
+
+	// Parse taskID to determine type
+	parts := strings.Split(taskID, "-")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid task ID format: %s", taskID)
+	}
+
+	taskType := parts[0]
+	if taskType != "read" {
+		// Only reading tasks have mission boundaries
+		return fmt.Errorf("task type %s does not support mission boundaries", taskType)
+	}
+
+	// For reading tasks, we need to find the notebook associated with this task
+	// The taskID format is "read-{index}" where index corresponds to the reading task order
+	// We'll update the most recently used active notebook's mission_end_page
+	_, err := conn.Exec(`
+		UPDATE notebooks
+		SET mission_end_page = ?
+		WHERE id = (
+			SELECT id FROM notebooks
+			WHERE status = 'active'
+			ORDER BY updated_at DESC
+			LIMIT 1
+		)
+	`, newEndPage)
+	return err
+}
+
 // CreateFlashcards stores a new set of flashcards for one topic.
 func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
 	topicID = strings.TrimSpace(topicID)

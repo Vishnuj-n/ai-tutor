@@ -122,6 +122,9 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS user_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			daily_study_minutes INTEGER NOT NULL DEFAULT 90,
+			student_id TEXT,
+			institutional_sync INTEGER DEFAULT 0,
+			dashboard_endpoint TEXT,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 
@@ -135,6 +138,7 @@ func InitSchema(tx *sql.Tx) error {
 			status TEXT DEFAULT 'uploaded',
 			page_count INTEGER,
 			chunk_count INTEGER DEFAULT 0,
+			mission_end_page INTEGER DEFAULT 0,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
@@ -194,6 +198,14 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
 			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
 		)`,
+
+		// Sync outbox for institutional telemetry (Sprint 15)
+		`CREATE TABLE IF NOT EXISTS sync_outbox (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			payload TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	// Execute all table creation statements
@@ -214,6 +226,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_chunks_topic_page_num ON chunks(topic_id, page_num)`,
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_updated_at ON topics(status, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_created_at ON topics(status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sync_outbox_event_type_created_at ON sync_outbox(event_type, created_at DESC)`,
 	}
 
 	for _, stmt := range indexes {

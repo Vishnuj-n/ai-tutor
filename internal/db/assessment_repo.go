@@ -272,6 +272,9 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 
 // GetDueAssessmentItems returns due assessment items from assessment_fsrs
 func GetDueAssessmentItems(now int64, limit int) ([]DueAssessmentItem, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
 	rows, err := conn.Query(`
 		SELECT 
 			af.activity_type,
@@ -300,8 +303,14 @@ func GetDueAssessmentItems(now int64, limit int) ([]DueAssessmentItem, error) {
 	var items []DueAssessmentItem
 	for rows.Next() {
 		var item DueAssessmentItem
-		if err := rows.Scan(&item.ActivityType, &item.ReferenceID, &item.TopicID, &item.SourceChunkID, &item.DueAt, &item.TopicTitle, &item.StartPage, &item.EndPage, &item.CurrentCursor); err != nil {
+		var sourceChunkID sql.NullString
+		if err := rows.Scan(&item.ActivityType, &item.ReferenceID, &item.TopicID, &sourceChunkID, &item.DueAt, &item.TopicTitle, &item.StartPage, &item.EndPage, &item.CurrentCursor); err != nil {
 			return nil, err
+		}
+		if sourceChunkID.Valid {
+			item.SourceChunkID = strings.TrimSpace(sourceChunkID.String)
+		} else {
+			item.SourceChunkID = ""
 		}
 		items = append(items, item)
 	}
@@ -328,15 +337,19 @@ type DueAssessmentItem struct {
 
 // GetActiveNotebooks returns notebooks with status='active'
 func GetActiveNotebooks(limit int) ([]ActiveNotebook, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
 	rows, err := conn.Query(`
 		SELECT 
 			n.id,
 			n.title,
-			n.topic_id,
+			COALESCE(n.topic_id, ''),
 			COALESCE(t.start_page, 0),
 			COALESCE(t.end_page, 0),
 			COALESCE(t.current_page_cursor, 0),
-			n.page_count
+			n.page_count,
+			COALESCE(n.mission_end_page, 0)
 		FROM notebooks n
 		LEFT JOIN topics t ON t.id = n.topic_id
 		WHERE n.status = 'active'
@@ -353,7 +366,7 @@ func GetActiveNotebooks(limit int) ([]ActiveNotebook, error) {
 	var notebooks []ActiveNotebook
 	for rows.Next() {
 		var nb ActiveNotebook
-		if err := rows.Scan(&nb.ID, &nb.Title, &nb.TopicID, &nb.StartPage, &nb.EndPage, &nb.CurrentCursor, &nb.PageCount); err != nil {
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.TopicID, &nb.StartPage, &nb.EndPage, &nb.CurrentCursor, &nb.PageCount, &nb.MissionEndPage); err != nil {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
@@ -368,11 +381,12 @@ func GetActiveNotebooks(limit int) ([]ActiveNotebook, error) {
 
 // ActiveNotebook represents an active notebook with topic info
 type ActiveNotebook struct {
-	ID            string
-	Title         string
-	TopicID       string
-	StartPage     int
-	EndPage       int
-	CurrentCursor int
-	PageCount     int
+	ID             string
+	Title          string
+	TopicID        string
+	StartPage      int
+	EndPage        int
+	CurrentCursor  int
+	PageCount      int
+	MissionEndPage int
 }
