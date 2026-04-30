@@ -629,6 +629,12 @@ func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} 
 		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
 	}
 	committed = true
+
+	// Update notebook timestamp to track user engagement
+	if notebook, err := db.GetNotebookByTopic(question.TopicID); err == nil && notebook != nil {
+		_ = db.UpdateNotebookTimestamp(notebook.ID)
+	}
+
 	return map[string]interface{}{
 		"question_id": score.QuestionID, "correct": score.Correct,
 		"score": score.Score, "expected": score.Expected,

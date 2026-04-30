@@ -245,6 +245,12 @@ func (s *StudyService) CompleteReadingSession(topicID string, startPage int, tar
 	if err := db.AppendQuestionsAndAdvanceCursor(topicID, questions, nextCursor, markLearned); err != nil {
 		return map[string]interface{}{"error": "failed to append completion questions and update cursor: " + err.Error()}
 	}
+
+	// Update notebook timestamp to track user engagement
+	if notebook, err := db.GetNotebookByTopic(topicID); err == nil && notebook != nil {
+		_ = db.UpdateNotebookTimestamp(notebook.ID)
+	}
+
 	status := "reading"
 	if markLearned {
 		status = "learned"
