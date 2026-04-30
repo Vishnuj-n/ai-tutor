@@ -111,3 +111,16 @@ export function updateNotebookTitle(notebookID, title) {
 export function deleteNotebook(notebookID) {
   return appBridge().DeleteNotebook(notebookID)
 }
+
+// Student Settings and Institutional Sync
+export function getStudentSettings() {
+  return appBridge().GetStudentSettings()
+}
+
+export function upsertStudentSettings(studentID, institutionalSync, dashboardEndpoint, dailyStudyMinutes) {
+  return appBridge().UpsertStudentSettings(studentID, institutionalSync, dashboardEndpoint, dailyStudyMinutes)
+}
+
+export function updateTaskBoundary(taskID, newEndPage) {
+  return appBridge().UpdateTaskBoundary(taskID, newEndPage)
+}

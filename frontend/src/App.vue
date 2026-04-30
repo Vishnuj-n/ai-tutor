@@ -1,5 +1,33 @@
 <script setup>
+import { onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import Sidebar from './components/Sidebar.vue'
+import { getStudentSettings } from './services/appApi'
+
+const router = useRouter()
+const route = useRoute()
+
+onMounted(async () => {
+  // Skip setup check if already on setup page
+  if (route.path === '/setup') {
+    return
+  }
+
+  try {
+    const response = await getStudentSettings()
+    if (response.error) {
+      console.error('Failed to check student settings:', response.error)
+      return
+    }
+
+    // Redirect to setup if student_id is not set
+    if (!response.student_id) {
+      router.push('/setup')
+    }
+  } catch (err) {
+    console.error('Error checking student settings:', err)
+  }
+})
 </script>
 
 <template>

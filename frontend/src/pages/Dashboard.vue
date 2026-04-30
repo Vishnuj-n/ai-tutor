@@ -194,6 +194,9 @@ function startTask(task) {
   const path = actionRoutes[task.action_type] || '/dashboard'
 
   if (task.action_type === 'read' && task.topic_id) {
+    // Use route params for context-locked reading
+    // For now, we need to get the notebook_id from the topic
+    // This is a temporary solution - ideally the task should include notebook_id
     const query = { topic: task.topic_id }
     if (task.start_page) {
       query.start = String(task.start_page)

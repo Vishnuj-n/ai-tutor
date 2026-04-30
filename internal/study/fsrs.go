@@ -112,6 +112,32 @@ func (s *StudyService) logReview(tx *sql.Tx, topicID, activityType, referenceID,
 		return nil, err
 	}
 
+	// Log to sync_outbox if institutional sync is enabled
+	institutionalSync, err := db.GetInstitutionalSync()
+	if err == nil && institutionalSync {
+		studentID, err := db.GetStudentID()
+		if err == nil && studentID != "" {
+			// Build telemetry payload
+			telemetryPayload := map[string]interface{}{
+				"student_id":     studentID,
+				"activity_type":  activityType,
+				"reference_id":   referenceID,
+				"topic_id":       topicID,
+				"score":          score,
+				"rating":         ratingCode,
+				"stability":      nextState.Stability,
+				"difficulty":     nextState.Difficulty,
+				"scheduled_days": nextState.ScheduledDays,
+				"reviewed_at":    now,
+				"next_review_at": dueAt,
+			}
+			payloadBytes, err := json.Marshal(telemetryPayload)
+			if err == nil {
+				_ = db.LogToSyncOutbox(string(payloadBytes), "review_log")
+			}
+		}
+	}
+
 	return map[string]interface{}{
 		"fsrs_rating":    ratingCodeToTitle(ratingCode),
 		"scheduled_days": nextState.ScheduledDays,

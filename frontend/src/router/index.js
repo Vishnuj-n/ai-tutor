@@ -9,11 +9,14 @@ import Tools from '../pages/Tools.vue'
 import ToolPlaceholder from '../pages/ToolPlaceholder.vue'
 import Settings from '../pages/Settings.vue'
 import Notebook from '../pages/Notebook.vue'
+import Setup from '../pages/Setup.vue'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
+  { path: '/setup', name: 'setup', component: Setup },
   { path: '/dashboard', name: 'dashboard', component: Dashboard },
   { path: '/reader', name: 'reader', component: Reader },
+  { path: '/reader/:notebookId/:startPage/:endPage', name: 'reader-with-params', component: Reader },
   { path: '/quiz', name: 'quiz', component: Quiz },
   { path: '/flashcards', name: 'flashcards', component: Flashcards },
   {

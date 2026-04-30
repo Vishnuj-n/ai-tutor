@@ -340,6 +340,59 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 	return map[string]interface{}{"ok": true, "daily_study_minutes": minutes}
 }
 
+// ---------- Student Settings and Institutional Sync ----------
+
+func (a *App) GetStudentSettings() map[string]interface{} {
+	studentID, err := db.GetStudentID()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	institutionalSync, err := db.GetInstitutionalSync()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	dashboardEndpoint, err := db.GetDashboardEndpoint()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	dailyMinutes, err := db.GetDailyStudyMinutes()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{
+		"student_id":          studentID,
+		"institutional_sync":  institutionalSync,
+		"dashboard_endpoint":  dashboardEndpoint,
+		"daily_study_minutes": dailyMinutes,
+	}
+}
+
+func (a *App) UpsertStudentSettings(studentID string, institutionalSync bool, dashboardEndpoint string, dailyStudyMinutes int) map[string]interface{} {
+	if studentID == "" {
+		return map[string]interface{}{"error": "student ID is required"}
+	}
+	if dailyStudyMinutes < 15 || dailyStudyMinutes > 480 {
+		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
+	}
+	if err := db.UpsertStudentSettings(studentID, institutionalSync, dashboardEndpoint, dailyStudyMinutes); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) UpdateTaskBoundary(taskID string, newEndPage int) map[string]interface{} {
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required"}
+	}
+	if newEndPage < 0 {
+		return map[string]interface{}{"error": "end page must be non-negative"}
+	}
+	if err := db.UpdateTaskBoundary(taskID, newEndPage); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true, "new_end_page": newEndPage}
+}
+
 // ---------- Marathon Mode endpoints (Phase 1 new) ----------
 
 func (a *App) GenerateMarathonQuiz(notebookID string, startPage, endPage int) map[string]interface{} {

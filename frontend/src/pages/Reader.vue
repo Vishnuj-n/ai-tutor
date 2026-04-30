@@ -62,6 +62,46 @@
         </article>
       </article>
 
+      <!-- Boundary Breach Modal -->
+      <div v-if="showBoundaryModal" class="modal-overlay" @click.self="closeBoundaryModal">
+        <div class="modal-content">
+          <h2>Mission Boundary Reached</h2>
+          <p class="modal-subtitle">You've reached page {{ lockedTargetPage }} of your assigned reading session.</p>
+          
+          <div class="modal-options">
+            <button class="modal-btn system-btn" @click="handleSystemDefined">
+              <span class="btn-title">System Defined</span>
+              <span class="btn-desc">Complete session and return to dashboard</span>
+            </button>
+            
+            <button class="modal-btn current-btn" @click="handleCurrent">
+              <span class="btn-title">Current</span>
+              <span class="btn-desc">Extend to current page ({{ currentPage }})</span>
+            </button>
+            
+            <button class="modal-btn custom-btn" @click="showCustomInput = true">
+              <span class="btn-title">Custom</span>
+              <span class="btn-desc">Set a custom end page</span>
+            </button>
+          </div>
+
+          <div v-if="showCustomInput" class="custom-input-section">
+            <label for="custom-end-page">Custom End Page:</label>
+            <input
+              id="custom-end-page"
+              v-model.number="customEndPage"
+              type="number"
+              :min="currentPage"
+              :max="pageCount"
+              class="custom-input"
+            />
+            <button class="modal-btn apply-btn" @click="handleCustom">
+              Apply Custom Limit
+            </button>
+          </div>
+        </div>
+      </div>
+
       <aside class="panel chat" :class="{ closed: chatCollapsed }">
         <div class="chat-head">
           <h2>AI Chat</h2>
@@ -104,11 +144,12 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { askAI, completeReadingSession, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
+import { useRoute, useRouter } from 'vue-router'
+import { askAI, completeReadingSession, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle, updateTaskBoundary } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
+const router = useRouter()
 
 const notebookTree = ref([])
 const selectedNotebookID = ref('')
@@ -128,6 +169,13 @@ const lockedTargetPage = ref(0)
 const completingSession = ref(false)
 const completionMessage = ref('')
 const completionError = ref('')
+
+// Boundary breach modal state
+const showBoundaryModal = ref(false)
+const boundaryOverrideFlag = ref(false)
+const customEndPage = ref(0)
+const boundaryTaskID = ref('')
+const showCustomInput = ref(false)
 
 const chatCollapsed = ref(false)
 const chatMessages = ref([])
@@ -454,6 +502,91 @@ watch(() => route.query.end, () => {
     void loadBundle()
   }
 })
+
+// Watch for boundary breach
+watch(currentPage, (newPage) => {
+  if (hasLockedWindow.value && !boundaryOverrideFlag.value && newPage > lockedTargetPage.value) {
+    showBoundaryModal.value = true
+    boundaryTaskID.value = 'read-1' // Default task ID for reading tasks
+  }
+})
+
+// Boundary breach modal handlers
+function closeBoundaryModal() {
+  showBoundaryModal.value = false
+  showCustomInput.value = false
+  customEndPage.value = 0
+}
+
+async function handleSystemDefined() {
+  closeBoundaryModal()
+  boundaryOverrideFlag.value = true
+  // Complete the session and return to dashboard
+  await completeSession()
+  router.push('/dashboard')
+}
+
+async function handleCurrent() {
+  try {
+    const response = await updateTaskBoundary(boundaryTaskID.value, currentPage.value)
+    if (response.error) {
+      console.error('Failed to update task boundary:', response.error)
+      return
+    }
+    
+    // Update the locked target page to current page
+    lockedTargetPage.value = currentPage.value
+    boundaryOverrideFlag.value = true
+    closeBoundaryModal()
+    
+    // Update route query to reflect new boundary
+    router.push({
+      path: route.path,
+      query: {
+        ...route.query,
+        end: String(currentPage.value)
+      }
+    })
+  } catch (err) {
+    console.error('Error updating task boundary:', err)
+  }
+}
+
+async function handleCustom() {
+  if (!customEndPage.value || customEndPage.value < currentPage.value) {
+    alert('Custom end page must be at least the current page.')
+    return
+  }
+  
+  if (customEndPage.value > pageCount.value) {
+    alert('Custom end page cannot exceed total page count.')
+    return
+  }
+  
+  try {
+    const response = await updateTaskBoundary(boundaryTaskID.value, customEndPage.value)
+    if (response.error) {
+      console.error('Failed to update task boundary:', response.error)
+      return
+    }
+    
+    // Update the locked target page to custom value
+    lockedTargetPage.value = customEndPage.value
+    boundaryOverrideFlag.value = true
+    closeBoundaryModal()
+    
+    // Update route query to reflect new boundary
+    router.push({
+      path: route.path,
+      query: {
+        ...route.query,
+        end: String(customEndPage.value)
+      }
+    })
+  } catch (err) {
+    console.error('Error updating task boundary:', err)
+  }
+}
 </script>
 
 <style scoped>
