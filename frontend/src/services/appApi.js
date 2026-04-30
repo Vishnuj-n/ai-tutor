@@ -35,6 +35,10 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
+export function getDailyAgenda() {
+  return appBridge().GetDailyAgenda()
+}
+
 export function getDailyStudySettings() {
   return appBridge().GetDailyStudySettings()
 }
@@ -54,6 +58,19 @@ export function generateMarathonFlashcards(notebookID, startPage, endPage) {
 
 export function generateComprehensiveExam(notebookID, startPage, endPage) {
   return appBridge().GenerateComprehensiveExam(notebookID, startPage, endPage)
+}
+
+// Topic-scoped review endpoints (Phase 3)
+export function generateTopicQuiz(topicId, startPage, endPage) {
+  return appBridge().GenerateTopicQuiz(topicId, startPage, endPage)
+}
+
+export function generateTopicFlashcards(topicId, startPage, endPage) {
+  return appBridge().GenerateTopicFlashcards(topicId, startPage, endPage)
+}
+
+export function generateTopicWrittenAssessment(topicId, startPage, endPage) {
+  return appBridge().GenerateTopicWrittenAssessment(topicId, startPage, endPage)
 }
 
 export function scoreAnswer(questionID, userAnswer) {

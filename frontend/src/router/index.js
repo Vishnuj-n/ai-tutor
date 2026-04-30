@@ -15,8 +15,8 @@ const routes = [
   { path: '/', redirect: '/dashboard' },
   { path: '/setup', name: 'setup', component: Setup },
   { path: '/dashboard', name: 'dashboard', component: Dashboard },
+  // Context-locked routes (Phase 3) - use query params: topicId, startPage, endPage, taskId
   { path: '/reader', name: 'reader', component: Reader },
-  { path: '/reader/:notebookId/:startPage/:endPage', name: 'reader-with-params', component: Reader },
   { path: '/quiz', name: 'quiz', component: Quiz },
   { path: '/flashcards', name: 'flashcards', component: Flashcards },
   {
@@ -24,6 +24,8 @@ const routes = [
     name: 'examiner',
     component: () => import('../pages/WrittenAssessment.vue'),
   },
+  // Legacy routes for backward compatibility
+  { path: '/reader/:notebookId/:startPage/:endPage', name: 'reader-with-params', component: Reader },
   { path: '/socratic', name: 'socratic', component: Socratic },
   { path: '/tools', name: 'tools', component: Tools },
   {

@@ -2,19 +2,19 @@
   <div class="quiz-page">
     <header class="page-header">
       <h1 class="page-title">Quiz</h1>
-      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading">
+      <select v-if="!isContextLocked" v-model="selectedNotebookID" class="notebook-select" :disabled="loading">
         <option value="">— Select Notebook —</option>
         <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
       </select>
     </header>
 
-    <nav class="tabs">
+    <nav v-if="!isContextLocked" class="tabs">
       <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" :disabled="loading" @click="activeTab = 'comprehensive'">Comprehensive Extraction</button>
       <button :class="['tab-btn', { active: activeTab === 'explorer' }]" :disabled="loading" @click="activeTab = 'explorer'">Semantic Discovery</button>
     </nav>
 
     <section v-if="activeTab === 'comprehensive'" class="content">
-      <div class="controls">
+      <div v-if="!isContextLocked && !questions.length" class="controls">
         <div class="input-group">
           <label>Start Page</label>
           <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
@@ -27,7 +27,7 @@
       </div>
       <ErrorMessage :message="error" />
 
-      <div v-if="questions.length" class="questions">
+      <div v-if="questions.length && !sessionComplete" class="questions">
         <div v-for="(q, qi) in questions" :key="q.id" class="question" :class="{ answered: answers[q.id] !== undefined }">
           <p class="prompt"><span class="num">{{ qi + 1 }}.</span> {{ q.prompt }}</p>
           <ul class="options">
@@ -47,6 +47,12 @@
         </div>
         <div class="score">Score: {{ correctCount }} / {{ answeredCount }}</div>
       </div>
+
+      <div v-if="sessionComplete" class="session-complete">
+        <h2>Session Complete</h2>
+        <p>Final Score: {{ correctCount }} / {{ questions.length }}</p>
+        <BaseButton @click="returnToDashboard">Return to Dashboard</BaseButton>
+      </div>
     </section>
 
     <section v-else class="content stub">
@@ -57,9 +63,16 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getNotebooks, generateMarathonQuiz, scoreAnswer } from '../services/appApi.js'
+import { useRoute, useRouter } from 'vue-router'
+import { getDailyAgenda, getNotebooks, generateMarathonQuiz, generateTopicQuiz, scoreAnswer } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+// Phase 3: Context-locked mode
+const isContextLocked = computed(() => Boolean(route.query.topicId))
 
 const notebooks     = ref([])
 const selectedNotebookID = ref('')
@@ -71,6 +84,8 @@ const error         = ref('')
 const questions     = ref([])
 const answers       = ref({})
 const pendingAnswers = new Set()
+const sessionComplete = ref(false)
+const navigatingToDashboard = ref(false)
 
 const canGenerate = computed(() =>
   selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
@@ -80,18 +95,50 @@ const answeredCount = computed(() => Object.keys(answers.value).length)
 const correctCount  = computed(() => Object.values(answers.value).filter(a => a.correct).length)
 
 onMounted(async () => {
-  try {
-    const res = await getNotebooks()
-    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
-  } catch (e) {
-    error.value = 'Failed to load notebooks.'
+  if (isContextLocked.value) {
+    // Auto-generate quiz from route context
+    await loadContextLockedQuiz()
+  } else {
+    try {
+      const res = await getNotebooks()
+      notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+    } catch (e) {
+      error.value = 'Failed to load notebooks.'
+    }
   }
 })
+
+async function loadContextLockedQuiz() {
+  const topicId = route.query.topicId
+  const start = Number(route.query.startPage) || 1
+  const end = Number(route.query.endPage) || 10
+  
+  if (!topicId) {
+    error.value = 'Missing topic ID in route'
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await generateTopicQuiz(topicId, start, end)
+    if (res.error) {
+      error.value = res.error
+      return
+    }
+    questions.value = res.questions ?? []
+  } catch (e) {
+    error.value = e?.message ?? 'Quiz generation failed.'
+  } finally {
+    loading.value = false
+  }
+}
 
 async function generate() {
   error.value = ''
   questions.value = []
   answers.value = {}
+  sessionComplete.value = false
   loading.value = true
   try {
     const res = await generateMarathonQuiz(selectedNotebookID.value, startPage.value, endPage.value)
@@ -116,11 +163,28 @@ async function submitAnswer(q, opt) {
       return
     }
     answers.value[q.id] = { selected: opt, correct: res.correct, feedback: res.feedback }
+    
+    // Check if session is complete (all questions answered)
+    if (answeredCount.value === questions.value.length) {
+      sessionComplete.value = true
+      // Phase 3: Refresh agenda and auto-return to dashboard in context-locked mode
+      if (isContextLocked.value) {
+        setTimeout(async () => {
+          await getDailyAgenda() // Refresh agenda
+          returnToDashboard()
+        }, 1500)
+      }
+    }
   } catch (e) {
     // Don't mark as answered on network error, allow retry
   } finally {
     pendingAnswers.delete(q.id)
   }
+}
+
+function returnToDashboard() {
+  navigatingToDashboard.value = true
+  router.push('/dashboard')
 }
 
 function optionClass(q, opt) {
@@ -355,6 +419,26 @@ function optionClass(q, opt) {
   font-weight: 600;
   font-size: 0.95rem;
   margin-top: 0.5rem;
+}
+
+.session-complete {
+  text-align: center;
+  padding: 3rem;
+  background: #f5f5f5;
+  border-radius: 8px;
+}
+
+.session-complete h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem 0;
+  color: var(--on-surface);
+}
+
+.session-complete p {
+  font-size: 0.95rem;
+  color: #666;
+  margin: 0 0 1rem 0;
 }
 
 .stub {
