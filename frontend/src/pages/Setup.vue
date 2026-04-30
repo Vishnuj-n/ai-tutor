@@ -5,6 +5,28 @@
     <p class="subtitle">Configure your study preferences to get started.</p>
 
     <article class="panel form-grid">
+      <label class="section-label">Choose Your Study Mode</label>
+      <div class="mode-selection">
+        <div
+          class="mode-card"
+          :class="{ active: studyMode === 'solo' }"
+          @click="studyMode = 'solo'"
+        >
+          <div class="mode-icon">👤</div>
+          <h3>Solo Study</h3>
+          <p>Study independently at your own pace</p>
+        </div>
+        <div
+          class="mode-card"
+          :class="{ active: studyMode === 'class' }"
+          @click="studyMode = 'class'"
+        >
+          <div class="mode-icon">👥</div>
+          <h3>Join Class</h3>
+          <p>Sync progress with your teacher's dashboard</p>
+        </div>
+      </div>
+
       <label for="student-id">Student ID</label>
       <input
         id="student-id"
@@ -15,29 +37,17 @@
       />
       <p class="hint">Your unique identifier for tracking progress.</p>
 
-      <label for="institutional-sync">Institutional Mode</label>
-      <div class="row">
-        <label class="toggle-label">
-          <input
-            id="institutional-sync"
-            v-model="institutionalSync"
-            type="checkbox"
-            :disabled="loading || saving"
-          />
-          <span>Enable sync to teacher dashboard</span>
-        </label>
-      </div>
-      <p class="hint">When enabled, your study data syncs to your institution's dashboard.</p>
-
-      <label for="dashboard-endpoint">Dashboard Endpoint (optional)</label>
-      <input
-        id="dashboard-endpoint"
-        v-model="dashboardEndpoint"
-        type="text"
-        placeholder="https://dashboard.example.com/api"
-        :disabled="loading || saving || !institutionalSync"
-      />
-      <p class="hint">Leave blank if you don't know this value.</p>
+      <template v-if="studyMode === 'class'">
+        <label for="dashboard-endpoint">Dashboard Endpoint</label>
+        <input
+          id="dashboard-endpoint"
+          v-model="dashboardEndpoint"
+          type="text"
+          placeholder="https://dashboard.example.com/api"
+          :disabled="loading || saving"
+        />
+        <p class="hint">Your teacher will provide this URL for the class dashboard.</p>
+      </template>
 
       <label for="daily-minutes">Daily Study Limit (minutes)</label>
       <input
@@ -71,6 +81,7 @@ const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
 const success = ref('')
+const studyMode = ref('solo')
 const studentID = ref('')
 const institutionalSync = ref(false)
 const dashboardEndpoint = ref('')
@@ -119,8 +130,9 @@ async function saveAndContinue() {
     return
   }
 
-  if (institutionalSync.value && !dashboardEndpoint.value.trim()) {
-    error.value = 'Dashboard endpoint is required when institutional sync is enabled.'
+  const shouldSync = studyMode.value === 'class'
+  if (shouldSync && !dashboardEndpoint.value.trim()) {
+    error.value = 'Dashboard endpoint is required when joining a class.'
     return
   }
 
@@ -128,7 +140,7 @@ async function saveAndContinue() {
     saving.value = true
     const response = await upsertStudentSettings(
       studentID.value.trim(),
-      institutionalSync.value,
+      shouldSync,
       dashboardEndpoint.value.trim(),
       minutes
     )
@@ -269,5 +281,56 @@ input:disabled {
   margin: 0;
   color: #256f36;
   font-size: 13px;
+}
+
+.section-label {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.mode-selection {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.mode-card {
+  border: 2px solid var(--outline-variant);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--surface-container-low);
+}
+
+.mode-card:hover {
+  border-color: var(--primary);
+  background: var(--surface-container);
+}
+
+.mode-card.active {
+  border-color: var(--primary);
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
+  color: var(--on-primary);
+}
+
+.mode-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.mode-card h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.mode-card p {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.9;
 }
 </style>

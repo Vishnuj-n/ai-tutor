@@ -109,7 +109,7 @@ func getAssessmentFSRSStateFromQuerier(q querier, activityType, referenceID, sou
 	err := q.QueryRow(`
 		SELECT topic_id, source_chunk_id, state_json, due_at, last_reviewed_at
 		FROM assessment_fsrs
-		WHERE activity_type = ? AND reference_id = ? AND COALESCE(source_chunk_id, '') = ?
+		WHERE activity_type = ? AND reference_id = ? AND source_chunk_id = ?
 	`, activityType, referenceID, strings.TrimSpace(sourceChunkID)).Scan(&topicID, &storedSourceChunkID, &stateJSON, &dueAt, &lastReviewedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -171,18 +171,13 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceCh
 	}
 
 	normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
-	var sourceChunkIDValue interface{}
-	if normalizedSourceChunkID == "" {
-		sourceChunkIDValue = nil // Use NULL for empty strings
-	} else {
-		sourceChunkIDValue = normalizedSourceChunkID
-	}
+	sourceChunkIDValue := normalizedSourceChunkID
 
 	if _, err = tx.Exec(`
 		INSERT INTO assessment_fsrs (
 			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
+		ON CONFLICT(activity_type, reference_id, source_chunk_id) DO UPDATE SET
 			topic_id = excluded.topic_id,
 			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,
@@ -235,18 +230,13 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 	}
 
 	normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
-	var sourceChunkIDValue interface{}
-	if normalizedSourceChunkID == "" {
-		sourceChunkIDValue = nil // Use NULL for empty strings
-	} else {
-		sourceChunkIDValue = normalizedSourceChunkID
-	}
+	sourceChunkIDValue := normalizedSourceChunkID
 
 	if _, err = tx.Exec(`
 		INSERT INTO assessment_fsrs (
 			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
+		ON CONFLICT(activity_type, reference_id, source_chunk_id) DO UPDATE SET
 			topic_id = excluded.topic_id,
 			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,

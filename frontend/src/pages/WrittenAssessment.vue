@@ -2,19 +2,19 @@
   <div class="assessment-page">
     <header class="page-header">
       <h1 class="page-title">Written Assessment</h1>
-      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading || scoring">
+      <select v-if="!isContextLocked" v-model="selectedNotebookID" class="notebook-select" :disabled="loading || scoring">
         <option value="">— Select Notebook —</option>
         <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
       </select>
     </header>
 
-    <nav class="tabs">
+    <nav v-if="!isContextLocked" class="tabs">
       <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Exam</button>
       <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Semantic Discovery</button>
     </nav>
 
     <section v-if="activeTab === 'comprehensive'" class="content">
-      <div v-if="!question">
+      <div v-if="!isContextLocked && !question">
         <div class="controls">
           <div class="input-group">
             <label>Start Page</label>
@@ -54,7 +54,8 @@
             <span class="days">Next: {{ result.scheduledDays }}d</span>
           </div>
         </div>
-        <BaseButton @click="reset">New Question</BaseButton>
+        <BaseButton v-if="!isContextLocked" @click="reset">New Question</BaseButton>
+        <BaseButton v-else @click="returnToDashboard">Return to Dashboard</BaseButton>
       </div>
     </section>
 
@@ -66,9 +67,16 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getNotebooks, generateComprehensiveExam, scoreShortAnswer } from '../services/appApi.js'
+import { useRoute, useRouter } from 'vue-router'
+import { getDailyAgenda, getNotebooks, generateComprehensiveExam, generateTopicWrittenAssessment, scoreShortAnswer } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+// Phase 3: Context-locked mode
+const isContextLocked = computed(() => Boolean(route.query.topicId))
 
 const notebooks          = ref([])
 const selectedNotebookID = ref('')
@@ -81,6 +89,7 @@ const error              = ref('')
 const question           = ref(null)
 const userAnswer         = ref('')
 const result             = ref(null)
+const navigatingToDashboard = ref(false)
 
 const canGenerate = computed(() =>
   selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
@@ -93,11 +102,53 @@ const scoreClass = computed(() => {
 })
 
 onMounted(async () => {
-  try {
-    const res = await getNotebooks()
-    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
-  } catch { error.value = 'Failed to load notebooks.' }
+  if (isContextLocked.value) {
+    // Auto-generate question from route context
+    await loadContextLockedAssessment()
+  } else {
+    try {
+      const res = await getNotebooks()
+      notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+    } catch { error.value = 'Failed to load notebooks.' }
+  }
 })
+
+async function loadContextLockedAssessment() {
+  const topicId = route.query.topicId
+  const start = Number(route.query.startPage) || 1
+  const end = Number(route.query.endPage) || 10
+  
+  if (!topicId) {
+    error.value = 'Missing topic ID in route'
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await generateTopicWrittenAssessment(topicId, start, end)
+    if (res.error) {
+      error.value = res.error
+      return
+    }
+    // Normalize API response to camelCase
+    question.value = {
+      questionId: res.questionID,
+      prompt: res.prompt,
+      topicId: res.topicID,
+      notebookId: res.notebook_id,
+      startPage: res.start_page,
+      endPage: res.end_page,
+      llmTier: res.llm_tier,
+      sourcePageStart: res.source_page_start,
+      sourcePageEnd: res.source_page_end
+    }
+  } catch (e) {
+    error.value = e?.message ?? 'Assessment generation failed.'
+  } finally {
+    loading.value = false
+  }
+}
 
 async function generate() {
   error.value = ''
@@ -146,6 +197,14 @@ async function submitAnswer() {
       fsrsRating: res.fsrsRating,
       scheduledDays: res.scheduled_days
     }
+    
+    // Phase 3: Refresh agenda and auto-return to dashboard in context-locked mode
+    if (isContextLocked.value) {
+      setTimeout(async () => {
+        await getDailyAgenda() // Refresh agenda
+        returnToDashboard()
+      }, 1500)
+    }
   } catch (e) {
     error.value = e?.message ?? 'Scoring failed.'
   } finally {
@@ -153,11 +212,17 @@ async function submitAnswer() {
   }
 }
 
+function returnToDashboard() {
+  navigatingToDashboard.value = true
+  router.push('/dashboard')
+}
+
 function reset() {
   question.value = null
   result.value = null
   userAnswer.value = ''
   error.value = ''
+  navigatingToDashboard.value = false
 }
 </script>
 

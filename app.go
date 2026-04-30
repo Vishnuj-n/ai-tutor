@@ -416,6 +416,61 @@ func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage in
 	return a.studyService.GenerateComprehensiveExam(notebookID, startPage, endPage)
 }
 
+// Topic-scoped review endpoints (Phase 3)
+func (a *App) GenerateTopicQuiz(topicId string, startPage, endPage int) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+
+	// Get notebook for this topic
+	notebooks, err := db.GetNotebooks(topicId)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to get notebook: " + err.Error()}
+	}
+	if len(notebooks) == 0 {
+		return map[string]interface{}{"error": "no notebook found for topic"}
+	}
+	notebookID := notebooks[0].ID
+
+	return a.studyService.GenerateMarathonQuiz(notebookID, startPage, endPage)
+}
+
+func (a *App) GenerateTopicFlashcards(topicId string, startPage, endPage int) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+
+	// Get notebook for this topic
+	notebooks, err := db.GetNotebooks(topicId)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to get notebook: " + err.Error()}
+	}
+	if len(notebooks) == 0 {
+		return map[string]interface{}{"error": "no notebook found for topic"}
+	}
+	notebookID := notebooks[0].ID
+
+	return a.studyService.GenerateMarathonFlashcardsWithTopic(topicId, notebookID, startPage, endPage)
+}
+
+func (a *App) GenerateTopicWrittenAssessment(topicId string, startPage, endPage int) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+
+	// Get notebook for this topic
+	notebooks, err := db.GetNotebooks(topicId)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to get notebook: " + err.Error()}
+	}
+	if len(notebooks) == 0 {
+		return map[string]interface{}{"error": "no notebook found for topic"}
+	}
+	notebookID := notebooks[0].ID
+
+	return a.studyService.GenerateComprehensiveExam(notebookID, startPage, endPage)
+}
+
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}

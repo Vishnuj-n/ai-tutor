@@ -9,7 +9,7 @@
       </p>
     </header>
 
-    <article class="panel controls">
+    <article v-if="!isContextLocked" class="panel controls">
       <label class="field">
         <span>Notebook</span>
         <select v-model="selectedNotebookID" :disabled="loadingTree || notebookTree.length === 0 || loadingBundle" @change="onNotebookChange">
@@ -47,15 +47,15 @@
         </div>
         <p v-if="hasLockedWindow" class="lock-meta">Locked Session: Pages {{ lockedStartPage }}-{{ lockedTargetPage }}</p>
 
-        <div v-if="loadingBundle" class="empty">Loading document...</div>
+        <div v-if="loadingBundle || !isReady" class="empty">Loading document...</div>
         <div v-else-if="!pdfVisible" class="empty">PDF not available for selected notebook/topic.</div>
         <div v-else class="pdf-wrap">
           <iframe class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
         </div>
 
         <article class="complete-session">
-          <button class="primary" :disabled="!canCompleteSession" @click="completeSession">
-            {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
+          <button class="primary" :disabled="!canCompleteSession || navigatingToDashboard" @click="completeSession">
+            {{ completingSession ? 'Completing Session...' : navigatingToDashboard ? 'Returning to dashboard...' : 'Complete Session' }}
           </button>
           <p v-if="completionMessage" class="completion-message">{{ completionMessage }}</p>
           <p v-if="completionError" class="error">{{ completionError }}</p>
@@ -145,7 +145,7 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { askAI, completeReadingSession, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle, updateTaskBoundary } from '../services/appApi'
+import { askAI, completeReadingSession, explainReaderSection, getDailyAgenda, getNotebookTopicTree, getReaderTopicBundle, updateTaskBoundary } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
@@ -156,6 +156,11 @@ const selectedNotebookID = ref('')
 const selectedTopicID = ref(typeof route.query.topic === 'string' ? route.query.topic : '')
 let routeStartPage = parsePageQueryValue(route.query.start)
 let routeEndPage = parsePageQueryValue(route.query.end)
+
+// Phase 3: Context-locked mode
+const isContextLocked = computed(() => Boolean(route.query.topicId))
+const routeTaskId = ref(typeof route.query.taskId === 'string' ? route.query.taskId : '')
+const isReady = ref(false) // Prevent PDF rendering before notebook is resolved
 
 const topicTitle = ref('Reader')
 const notebookUrl = ref('')
@@ -187,6 +192,7 @@ const messagesPane = ref(null)
 const loadingTree = ref(true)
 const loadingBundle = ref(false)
 const globalError = ref('')
+const navigatingToDashboard = ref(false)
 
 const selectedNotebook = computed(() => notebookTree.value.find((n) => n.notebook_id === selectedNotebookID.value) || null)
 const selectedNotebookTitle = computed(() => selectedNotebook.value?.title || '')
@@ -240,8 +246,13 @@ const canCompleteSession = computed(() =>
 )
 
 onMounted(async () => {
-  await loadNotebookTree()
-  await loadBundle()
+  if (isContextLocked.value) {
+    // In context-locked mode, skip tree loading and resolve notebook from topicId
+    await loadContextLockedBundle()
+  } else {
+    await loadNotebookTree()
+    await loadBundle()
+  }
 })
 
 async function loadNotebookTree() {
@@ -311,6 +322,80 @@ function onTopicChange() {
   void loadBundle()
 }
 
+async function loadContextLockedBundle() {
+  const topicId = route.query.topicId
+  if (!topicId) {
+    globalError.value = 'Missing topic ID in route'
+    return
+  }
+
+  loadingBundle.value = true
+  isReady.value = false
+  globalError.value = ''
+
+  try {
+    // Get notebook for this topic
+    const notebooks = await getNotebookTopicTree()
+    if (!Array.isArray(notebooks) || notebooks.length === 0) {
+      globalError.value = 'No notebooks available'
+      return
+    }
+
+    // Find notebook containing this topic
+    let targetNotebook = null
+    let targetTopic = null
+    for (const nb of notebooks) {
+      const topic = Array.isArray(nb.topics) ? nb.topics.find(t => t.topic_id === topicId) : null
+      if (topic) {
+        targetNotebook = nb
+        targetTopic = topic
+        break
+      }
+    }
+
+    if (!targetNotebook || !targetTopic) {
+      globalError.value = 'Topic not found in any notebook'
+      return
+    }
+
+    selectedNotebookID.value = targetNotebook.notebook_id
+    selectedTopicID.value = targetTopic.topic_id
+
+    // Parse route params
+    routeStartPage = parsePageQueryValue(route.query.startPage)
+    routeEndPage = parsePageQueryValue(route.query.endPage)
+    routeTaskId.value = typeof route.query.taskId === 'string' ? route.query.taskId : ''
+
+    // Load bundle
+    const result = await getReaderTopicBundle(selectedTopicID.value, selectedNotebookID.value)
+    if (result?.error) {
+      globalError.value = result.error
+      return
+    }
+
+    topicTitle.value = result?.topic_title || targetTopic.title || 'Reader'
+    notebookUrl.value = result?.notebook_url || ''
+    fileType.value = (result?.file_type || '').toLowerCase()
+    pageCount.value = Math.max(1, Number(result?.page_count) || 1)
+    sections.value = Array.isArray(result?.sections) ? result.sections : []
+    activeSection.value = sections.value[0] || null
+
+    // Set locked window from route params
+    lockedStartPage.value = routeStartPage > 0 ? clampPage(routeStartPage, pageCount.value) : 1
+    lockedTargetPage.value = routeEndPage > 0 ? clampPage(routeEndPage, pageCount.value) : pageCount.value
+    if (lockedTargetPage.value < lockedStartPage.value) {
+      lockedTargetPage.value = lockedStartPage.value
+    }
+    currentPage.value = lockedStartPage.value
+
+    isReady.value = true
+  } catch (err) {
+    globalError.value = err?.message || 'Failed to load reader data'
+  } finally {
+    loadingBundle.value = false
+  }
+}
+
 async function loadBundle() {
   if (!selectedTopicID.value) {
     topicTitle.value = 'Reader'
@@ -325,6 +410,7 @@ async function loadBundle() {
   }
 
   loadingBundle.value = true
+  isReady.value = false
   globalError.value = ''
 
   try {
@@ -361,6 +447,8 @@ async function loadBundle() {
       lockedTargetPage.value = lockedStartPage.value
     }
     currentPage.value = hasLockedWindow.value ? lockedStartPage.value : normalizedTopicStart
+
+    isReady.value = true
   } catch (err) {
     topicTitle.value = 'Reader'
     notebookUrl.value = ''
@@ -422,6 +510,15 @@ async function completeSession() {
     const generated = Number(result?.questions_generated) || 0
     const nextCursor = Number(result?.current_page_cursor) || lockedTargetPage.value + 1
     completionMessage.value = `Saved ${generated} questions. Cursor advanced to page ${nextCursor}.`
+
+    // Phase 3: Refresh agenda and return to dashboard
+    if (isContextLocked.value) {
+      navigatingToDashboard.value = true
+      await getDailyAgenda() // Refresh agenda in background
+      setTimeout(() => {
+        router.push('/dashboard')
+      }, 1500) // Brief delay to show completion message
+    }
   } catch (err) {
     completionError.value = err?.message || 'Failed to complete session'
   } finally {
@@ -503,11 +600,19 @@ watch(() => route.query.end, () => {
   }
 })
 
+// Watch for context-locked route changes
+watch(() => route.query.topicId, async () => {
+  if (isContextLocked.value) {
+    await loadContextLockedBundle()
+  }
+})
+
 // Watch for boundary breach
 watch(currentPage, (newPage) => {
   if (hasLockedWindow.value && !boundaryOverrideFlag.value && newPage > lockedTargetPage.value) {
     showBoundaryModal.value = true
-    boundaryTaskID.value = 'read-1' // Default task ID for reading tasks
+    // Use real taskId from route in context-locked mode, otherwise default
+    boundaryTaskID.value = routeTaskId.value || 'read-1'
   }
 })
 
@@ -521,9 +626,11 @@ function closeBoundaryModal() {
 async function handleSystemDefined() {
   closeBoundaryModal()
   boundaryOverrideFlag.value = true
-  // Complete the session and return to dashboard
+  // Complete the session (will handle dashboard navigation if context-locked)
   await completeSession()
-  router.push('/dashboard')
+  if (!isContextLocked.value) {
+    router.push('/dashboard')
+  }
 }
 
 async function handleCurrent() {

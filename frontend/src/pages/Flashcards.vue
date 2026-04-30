@@ -2,19 +2,19 @@
   <div class="flashcards-page">
     <header class="page-header">
       <h1 class="page-title">Flashcards</h1>
-      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading || reviewing">
+      <select v-if="!isContextLocked" v-model="selectedNotebookID" class="notebook-select" :disabled="loading || reviewing">
         <option value="">— Select Notebook —</option>
         <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
       </select>
     </header>
 
-    <nav class="tabs">
+    <nav v-if="!isContextLocked" class="tabs">
       <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Extraction</button>
       <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Key Concept Extraction</button>
     </nav>
 
     <section v-if="activeTab === 'comprehensive'" class="content">
-      <div v-if="!reviewing">
+      <div v-if="!isContextLocked && !reviewing">
         <div class="controls">
           <div class="input-group">
             <label>Start Page</label>
@@ -52,7 +52,8 @@
       <div v-if="reviewing && !currentCard" class="done">
         <h2>Session Complete</h2>
         <p>{{ cards.length }} card{{ cards.length !== 1 ? 's' : '' }} reviewed.</p>
-        <BaseButton @click="reset">New Session</BaseButton>
+        <BaseButton v-if="!isContextLocked" @click="reset">New Session</BaseButton>
+        <BaseButton v-else @click="returnToDashboard">Return to Dashboard</BaseButton>
       </div>
     </section>
 
@@ -64,9 +65,16 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getNotebooks, generateMarathonFlashcards, getFlashcards, recordFlashcardReview } from '../services/appApi.js'
+import { useRoute, useRouter } from 'vue-router'
+import { getDailyAgenda, getNotebooks, generateMarathonFlashcards, generateTopicFlashcards, getFlashcards, recordFlashcardReview } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+// Phase 3: Context-locked mode
+const isContextLocked = computed(() => Boolean(route.query.topicId))
 
 const notebooks          = ref([])
 const selectedNotebookID = ref('')
@@ -80,6 +88,7 @@ const reviewIndex        = ref(0)
 const reviewing          = ref(false)
 const flipped            = ref(false)
 const isSubmittingReview = ref(false)
+const navigatingToDashboard = ref(false)
 
 const ratings = [
   { key: 'again', label: '✕ Again' },
@@ -94,11 +103,43 @@ const canGenerate  = computed(() =>
 const currentCard  = computed(() => cards.value[reviewIndex.value] ?? null)
 
 onMounted(async () => {
-  try {
-    const res = await getNotebooks()
-    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
-  } catch { error.value = 'Failed to load notebooks.' }
+  if (isContextLocked.value) {
+    // Auto-generate flashcards from route context
+    await loadContextLockedFlashcards()
+  } else {
+    try {
+      const res = await getNotebooks()
+      notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+    } catch { error.value = 'Failed to load notebooks.' }
+  }
 })
+
+async function loadContextLockedFlashcards() {
+  const topicId = route.query.topicId
+  const start = Number(route.query.startPage) || 1
+  const end = Number(route.query.endPage) || 10
+  
+  if (!topicId) {
+    error.value = 'Missing topic ID in route'
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await generateTopicFlashcards(topicId, start, end)
+    if (res.error) {
+      error.value = res.error
+      return
+    }
+    cards.value = res.cards ?? []
+    if (cards.value.length) reviewing.value = true
+  } catch (e) {
+    error.value = e?.message ?? 'Flashcard generation failed.'
+  } finally {
+    loading.value = false
+  }
+}
 
 async function generate() {
   error.value = ''
@@ -132,11 +173,27 @@ async function rate(ratingKey) {
     }
     flipped.value = false
     reviewIndex.value++
+    
+    // Check if session is complete (all cards reviewed)
+    if (reviewIndex.value >= cards.value.length) {
+      // Phase 3: Refresh agenda and auto-return to dashboard in context-locked mode
+      if (isContextLocked.value) {
+        setTimeout(async () => {
+          await getDailyAgenda() // Refresh agenda
+          returnToDashboard()
+        }, 1500)
+      }
+    }
   } catch (e) {
     error.value = `Failed to save review: ${e?.message ?? 'Unknown error'}`
   } finally {
     isSubmittingReview.value = false
   }
+}
+
+function returnToDashboard() {
+  navigatingToDashboard.value = true
+  router.push('/dashboard')
 }
 
 function reset() {
@@ -146,6 +203,7 @@ function reset() {
   flipped.value = false
   isSubmittingReview.value = false
   error.value = ''
+  navigatingToDashboard.value = false
 }
 </script>
 
