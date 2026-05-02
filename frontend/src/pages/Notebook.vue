@@ -117,6 +117,7 @@
         </div>
 
         <div v-if="draftError" class="error-message modal-error">{{ draftError }}</div>
+        <div v-if="isDraftLoading" class="loading">Drafting chapter suggestions...</div>
 
         <div class="chapter-table-wrap">
           <table class="chapter-table">
@@ -226,6 +227,7 @@ const draftChapters = ref([])
 const originalDraftChapters = ref([])
 const draftError = ref('')
 const isConfirmingDraft = ref(false)
+const isDraftLoading = ref(false)
 const showFallbackToast = ref(false)
 const fallbackToastMessage = ref('')
 const showActionToast = ref(false)
@@ -462,6 +464,8 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
   draftNotebookID.value = notebookID
   draftNotebookTitle.value = String(notebookTitle || '').trim()
   draftError.value = ''
+  isDraftLoading.value = true
+  showSyllabusModal.value = true
   try {
     const draft = await apiDraftNotebookSyllabus(notebookID)
     if (draft?.error) {
@@ -495,16 +499,17 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
       end_page: Number(ch.end_page) || 1,
     }))
 
-    showSyllabusModal.value = true
   } catch (error) {
-    showSyllabusModal.value = true
     draftError.value = `Could not draft syllabus: ${error.message}`
+  } finally {
+    isDraftLoading.value = false
   }
 }
 
 function closeSyllabusModal() {
   showSyllabusModal.value = false
   isConfirmingDraft.value = false
+  isDraftLoading.value = false
 }
 
 function addDraftChapter() {

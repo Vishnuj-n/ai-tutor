@@ -1,0 +1,33 @@
+# --- AI / agent tooling ---
+.agents/
+.kiro/
+.windsurf/
+
+# --- Editor / config noise ---
+.vscode/
+.github/
+
+# --- Go caches (very important) ---
+.gocache/
+.gomodcache/
+
+# --- Build outputs ---
+build/
+dist/
+
+# --- Dependencies ---
+node_modules/
+
+# --- Graphify output (avoid recursion) ---
+graphify-out/
+
+# --- Environment files ---
+.env
+.env.*
+
+# --- Logs ---
+*.log
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db

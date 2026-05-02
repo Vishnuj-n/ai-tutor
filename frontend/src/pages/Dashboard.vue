@@ -26,10 +26,17 @@
       </article>
     </template>
 
-    <template v-else-if="tasks.length === 0">
+    <template v-else-if="tasks.length === 0 && hasActiveStudyContent">
       <article class="card state-card victory-card">
         <h2>Mission Complete!</h2>
         <p class="muted">You've completed all tasks for today. Great work!</p>
+      </article>
+    </template>
+
+    <template v-else-if="tasks.length === 0">
+      <article class="card state-card">
+        <h2>No tasks yet</h2>
+        <p class="muted">Upload and confirm a notebook syllabus to generate your first agenda tasks.</p>
       </article>
     </template>
 
@@ -54,13 +61,14 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getDailyAgenda } from '../services/appApi'
+import { getDailyAgenda, getNotebooks } from '../services/appApi'
 
 const router = useRouter()
 
 const loading = ref(true)
 const error = ref('')
 const tasks = ref([])
+const hasActiveStudyContent = ref(false)
 
 onMounted(async () => {
   await loadAgenda()
@@ -78,6 +86,12 @@ async function loadAgenda() {
     }
 
     tasks.value = response.tasks || []
+    const notebooks = await getNotebooks('')
+    const notebookList = Array.isArray(notebooks) ? notebooks.filter((nb) => !nb?.error) : []
+    hasActiveStudyContent.value = notebookList.some((nb) => {
+      const status = String(nb?.status || '').toLowerCase()
+      return status === 'active' || status === 'chunked' || status === 'indexed'
+    })
   } catch (err) {
     error.value = err.message || 'Failed to load daily agenda'
   } finally {
