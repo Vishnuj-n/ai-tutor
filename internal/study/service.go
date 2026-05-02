@@ -11,7 +11,6 @@ import (
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/retrieval"
-	"ai-tutor/internal/scheduler"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
@@ -355,55 +354,6 @@ func resolveCorrectOption(correctAnswer string, options []string) (string, bool)
 	return "", false
 }
 
-func normalizeHeadingKey(heading string) string {
-	if heading == "" {
-		return ""
-	}
-	cleaned := strings.FieldsFunc(strings.TrimSpace(heading), func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != ' '
-	})
-	return strings.ToLower(strings.Join(cleaned, " "))
-}
-
-func semanticSnippet(content string, limit int) string {
-	trimmed := strings.TrimSpace(content)
-	if limit <= 0 || trimmed == "" {
-		return ""
-	}
-	runes := []rune(trimmed)
-	if len(runes) <= limit {
-		return trimmed
-	}
-	cutRunes := runes[:limit]
-	cut := string(cutRunes)
-	best := strings.LastIndex(cut, ". ")
-	if idx := strings.LastIndex(cut, "\n"); idx > best {
-		best = idx
-	}
-	if idx := strings.LastIndex(cut, "? "); idx > best {
-		best = idx
-	}
-	if idx := strings.LastIndex(cut, "! "); idx > best {
-		best = idx
-	}
-	if best > limit/2 {
-		candidate := strings.TrimSpace(cut[:best+1])
-		if candidate != "" {
-			candidateRunes := []rune(candidate)
-			if len(candidateRunes) > limit-3 {
-				candidateRunes = candidateRunes[:limit-3]
-			}
-			return string(candidateRunes) + "..."
-		}
-	}
-	cut = strings.TrimSpace(cut)
-	cutRunes = []rune(cut)
-	if len(cutRunes) > limit-3 {
-		cutRunes = cutRunes[:limit-3]
-	}
-	return string(cutRunes) + "..."
-}
-
 func semanticSnippetByTokens(content string, maxTokens int) (string, error) {
 	trimmed := strings.TrimSpace(content)
 	if maxTokens <= 0 || trimmed == "" {
@@ -468,19 +418,6 @@ func semanticSnippetByTokens(content string, maxTokens int) (string, error) {
 		return truncated, nil
 	}
 	return "", fmt.Errorf("truncated text exceeds maxTokens: %d > %d", truncatedTokens, maxTokens)
-}
-
-func shortAnswerScoreToFSRSRating(score int) (string, int) {
-	switch {
-	case score <= 3:
-		return "again", scheduler.Again
-	case score <= 5:
-		return "hard", scheduler.Hard
-	case score <= 8:
-		return "good", scheduler.Good
-	default:
-		return "easy", scheduler.Easy
-	}
 }
 
 // ---------- Env-configurable density thresholds ----------
@@ -549,8 +486,6 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 	// Enforce hard token budget during assembly
 	const maxContextTokens = 8000
 	const baseOverhead = 200       // Estimated tokens for prompt template and instructions
-	const chunkFormatOverhead = 30 // Estimated overhead per chunk for formatting
-
 	var budgetedChunks []models.ChunkWithContext
 	currentTokens := baseOverhead
 
@@ -604,7 +539,7 @@ func calculatePromptTokenCount(chunks []models.ChunkWithContext) int {
 			continue
 		}
 		// Format: "- chunk_id: %s | page_num: %d | text: %s\n"
-		contentBuilder.WriteString(fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text))
+		_, _ = fmt.Fprintf(&contentBuilder, "- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
 	}
 
 	// Add truncation notice if needed

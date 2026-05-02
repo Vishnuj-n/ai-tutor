@@ -1,5 +1,11 @@
 package models
 
+import (
+	"time"
+
+	fsrs "github.com/open-spaced-repetition/go-fsrs/v4"
+)
+
 // ScheduledTask represents one actionable study task for the day.
 type ScheduledTask struct {
 	ID              string `json:"id"`
@@ -214,4 +220,69 @@ type FSRSReviewLog struct {
 	ScheduledDays   int    `json:"scheduled_days"`
 	StateBeforeJSON string `json:"state_before_json"`
 	StateAfterJSON  string `json:"state_after_json"`
+}
+
+// FlashcardStateToCard converts our FlashcardState to go-fsrs Card
+func FlashcardStateToCard(state FlashcardState, dueAt, lastReviewedAt int64) fsrs.Card {
+	var dueTime, lastReviewTime time.Time
+	if dueAt > 0 {
+		dueTime = time.Unix(dueAt, 0)
+	}
+	if lastReviewedAt > 0 {
+		lastReviewTime = time.Unix(lastReviewedAt, 0)
+	}
+
+	// Map StateCode to fsrs.State
+	var fsrsState fsrs.State
+	switch state.StateCode {
+	case 0:
+		fsrsState = fsrs.New
+	case 1:
+		fsrsState = fsrs.Learning
+	case 2:
+		fsrsState = fsrs.Review
+	case 3:
+		fsrsState = fsrs.Relearning
+	default:
+		fsrsState = fsrs.New
+	}
+
+	return fsrs.Card{
+		Due:            dueTime,
+		Stability:      state.Stability,
+		Difficulty:     state.Difficulty,
+		ElapsedDays:    uint64(state.ElapsedDays),
+		ScheduledDays:  uint64(state.ScheduledDays),
+		Reps:           uint64(state.Reps),
+		Lapses:         uint64(state.Lapses),
+		State:          fsrsState,
+		LastReview:     lastReviewTime,
+		RemainingSteps: 0, // Not tracked in our current implementation
+	}
+}
+
+// CardToFlashcardState converts go-fsrs Card to our FlashcardState
+func CardToFlashcardState(card fsrs.Card) FlashcardState {
+	// Map fsrs.State to StateCode
+	stateCode := 0
+	switch card.State {
+	case fsrs.New:
+		stateCode = 0
+	case fsrs.Learning:
+		stateCode = 1
+	case fsrs.Review:
+		stateCode = 2
+	case fsrs.Relearning:
+		stateCode = 3
+	}
+
+	return FlashcardState{
+		Stability:     card.Stability,
+		Difficulty:    card.Difficulty,
+		ElapsedDays:   int(card.ElapsedDays),
+		ScheduledDays: int(card.ScheduledDays),
+		Reps:          int(card.Reps),
+		Lapses:        int(card.Lapses),
+		StateCode:     stateCode,
+	}
 }

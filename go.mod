@@ -1,12 +1,13 @@
 module ai-tutor
 
-go 1.24.11
+go 1.26
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mattn/go-sqlite3 v1.14.18
+	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0-20260430040645-8a550b948980
 	github.com/sugarme/tokenizer v0.3.0
 	github.com/wailsapp/wails/v2 v2.11.0
 	github.com/yalue/onnxruntime_go v1.27.0
