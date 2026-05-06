@@ -23,7 +23,6 @@ import (
 	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
 	"ai-tutor/internal/study"
-	"ai-tutor/internal/subtopic"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
@@ -51,7 +50,6 @@ type App struct {
 	orchestrator      *orchestrator.Service
 	notebookService   *notebook.Service
 	studyService      *study.StudyService
-	subtopicWorker    *subtopic.Worker
 	notebookUploadDir string
 	aiReady           bool
 	aiInitError       string
