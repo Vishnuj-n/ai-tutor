@@ -1,6 +1,54 @@
 
 # AI Tutor — Requirements
 
+## Core V4 Requirements
+
+* Upload PDF
+* Extract text per page
+* Generate missions (word-based boundaries)
+* Generate quizzes (Phase 1, pre-end)
+* Generate flashcards (Phase 2, during break)
+* Schedule reviews using go-fsrs (page anchored)
+* Track page-level stability
+
+---
+
+## System Behavior
+
+* Background ingestion runs during reading
+* Orchestrator selects missions using:
+  `Score = (Stars × 10) + VelocityRequirement`
+
+---
+
+## User Constraints
+
+* User cannot select next task
+* Reading locks at mission boundary until quiz is passed
+* Review must be completed before new reading
+
+---
+
+## Failure & Recovery Rules
+
+* Page stability < threshold → force re-read
+* Card failed 3 times → mission lock
+* Re-quiz requires +10% higher score
+* Missed session (>24h) → recalculate pace
+* If impossible → emit schedule alert
+
+---
+
+## Technical Constraints
+
+* Fully offline (local-first)
+* Background tasks must not block UI
+* LLM must support any OpenAI-compatible endpoint
+
+---
+
+# AI Tutor — Requirements
+
 ## Purpose
 
 Provide a local-first desktop assistant for studying and knowledge work that lets users upload documents (PDF, TXT, Markdown), index them, and use LLM-powered features (search, Q&A, flashcards, quizzes, Socratic tutoring) with per-notebook scope.

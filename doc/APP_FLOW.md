@@ -1,251 +1,121 @@
 # AI Tutor App Flow
 
-## 1. UX Intent
+## Daily Study Flow
+
+```
+App Launch
+    │
+    ▼
+Dashboard loads daily agenda (orchestrator.GetDailyAgenda)
+    │
+    ├─► Review tasks (Priority 1)
+    │    └─► Due flashcards, quiz questions, written assessments
+    │
+    └─► Reading tasks (Priority 2)
+         └─► Active notebooks with page ranges
+    │
+    ▼
+User selects a task
+    │
+    ▼
+─────────────────────────────────────────────────────
+REVIEW TASK FLOW
+─────────────────────────────────────────────────────
+    │
+    ├─► Flashcard review
+    │    └─► Show card → User rates (Again/Hard/Good/Easy)
+    │         └─► Update FSRS state in SQLite
+    │
+    ├─► Quiz review
+    │    └─► Show question → User answers
+    │         └─► Score answer → Update FSRS state
+    │
+    └─► Written assessment
+         └─► Show prompt → User writes answer
+              └─► LLM scores answer → Update FSRS state
+    │
+    ▼
+─────────────────────────────────────────────────────
+READING TASK FLOW
+─────────────────────────────────────────────────────
+    │
+    ▼
+Reader displays notebook content (page range)
+    │
+    ▼
+User reads content
+    │
+    ├─► Ask AI (optional)
+    │    └─► RAG pipeline retrieves relevant chunks
+    │         └─► LLM generates contextual answer
+    │
+    ▼
+User completes reading session
+    │
+    ▼
+─────────────────────────────────────────────────────
+MARATHON MODE (Optional)
+─────────────────────────────────────────────────────
+    │
+    ▼
+Generate quiz for page range (study.GenerateMarathonQuiz)
+    │
+    ▼
+Generate flashcards for page range (study.GenerateMarathonFlashcards)
+    │
+    ▼
+Generate comprehensive exam (study.GenerateComprehensiveExam)
+    │
+    ▼
+User completes assessments
+    │
+    ┼─► Quiz answers scored → FSRS updated
+    ┼─► Flashcard reviews → FSRS updated
+    └─► Written answers scored → FSRS updated
+    │
+    ▼
+Back to Dashboard
+```
+
+## Notebook Upload Flow
+
+```
+User uploads PDF
+    │
+    ▼
+notebook.Service processes file
+    │
+    ├─► Extract text from PDF
+    ├─► Parse into topics and sections
+    ├─► Create chunks with page boundaries
+    └─► Store in SQLite
+    │
+    ▼
+Generate embeddings (if AI runtime available)
+    │
+    ├─► ONNX embedder processes chunks
+    └─► Store vectors in sqlite-vec
+    │
+    ▼
+Notebook available for reading and assessment
+```
+
+## Context Window Strategy
 
-### What
+LLM calls via `internal/llm` provider include:
 
-A guided tutor experience that always proposes the next best learning action.
+| Layer | Content | Token Budget |
+|---|---|---|
+| System prompt | Task-specific instructions | Fixed |
+| Context chunks | Retrieved chunks (RAG) or page-bounded content | ~8000 tokens max |
+| Task instruction | Generate quiz/flashcards/score answer | Fixed |
 
-### Why
+## Error States
 
-Users progress faster when decision fatigue is removed.
+| Trigger | Behaviour |
+|---|---|
+| AI runtime not ready | Show error in Ask AI, disable AI features |
+| No chunks found for page range | Return empty result for marathon mode |
+| LLM generation fails | Return error message to user |
+| Database error | Return error message to user |
 
-### How
-
-- Dashboard prioritizes actionable tasks
-- Every task click routes directly to the exact working screen
-- AI appears only as contextual assistance within learning steps
-
-## 2. Navigation and Layout Behavior
-
-### What
-
-Left sidebar navigation with persistent sections:
-
-1. Dashboard
-2. Reader
-3. Quiz
-4. Flashcards
-5. Socratic Tutor
-6. Settings (bottom)
-7. Sync button (bottom)
-
-### Why
-
-Creates a stable mental model and low-friction task switching.
-
-### How
-
-- Active section is highlighted
-- Bottom actions remain visible across pages
-- Dashboard is default landing page on app launch
-
-## 3. Daily Use Flow
-
-### What
-
-Primary daily sequence:
-
-1. Open Dashboard
-2. Complete due reviews
-3. Read new topic
-4. Mark topic as learned
-5. Generate quiz and start review loop
-
-### Why
-
-Aligns behavior with spaced repetition and gradual knowledge expansion.
-
-### How
-
-- Dashboard computes task order from scheduler priorities
-- Each completed task updates counters and next recommendations
-- Progress summary refreshes immediately after key actions
-
-## 4. Dashboard Flow
-
-### What
-
-Dashboard is the command center for today tasks.
-
-### Why
-
-Centralized action list prevents scattered study behavior.
-
-### How
-
-Task groups:
-
-- Due reviews
-- New topics to read
-- Optional exploration
-
-Task interaction contract:
-
-- Clicking a task opens the destination page with topic scope
-- If data is ready, page renders immediately
-- If data requires preparation, show loading and transition automatically
-
-Example:
-
-- Today task says Quiz for Topic 1
-- Click task -> Quiz page opens for Topic 1
-- Quiz is preloaded, or page shows preparing quiz state until ready
-
-## 5. Reading Flow
-
-### What
-
-Structured concept learning in Reader page.
-
-### Why
-
-Reading should focus on curated sections, not raw source files.
-
-### How
-
-1. User opens a topic from Dashboard or Reader list.
-2. Reader shows sectioned content with headings.
-3. User uses Ask AI panel for contextual clarifications.
-4. User clicks Mark as Learned when confident.
-5. System updates topic status and unlocks review lifecycle.
-
-## 6. Ask AI Flow
-
-### What
-
-Single-turn contextual help for the active topic.
-
-### Why
-
-Maintains precision and avoids chatbot drift.
-
-### How
-
-1. User submits question from Reader or Flashcards Explain.
-2. Backend runs topic-scoped retrieval.
-3. Prompt is assembled from user query plus selected context.
-4. LLM returns one response.
-5. UI displays answer tied to current topic context.
-
-Rules:
-
-- No cross-topic retrieval by default
-- No chat memory between requests
-- No fallback output when network/API is unavailable
-
-## 7. Quiz Flow
-
-### What
-
-Topic-based quiz sessions generated after learning milestones.
-
-### Why
-
-Checks understanding before long-term spaced reinforcement.
-
-### How
-
-1. Topic is marked learned.
-2. User triggers quiz generation (or receives scheduled prompt).
-3. Backend generates and stores quiz_set JSON.
-4. Quiz page loads latest set for selected topic.
-5. Results can inform follow-up review content.
-
-Offline behavior:
-
-- Existing quizzes can be attempted offline
-- New quiz generation requires internet and returns clear error if unavailable
-
-## 8. Flashcards Review Flow
-
-### What
-
-FSRS-driven retention loop for learned material.
-
-### Why
-
-Transforms short-term understanding into durable memory.
-
-### How
-
-1. User starts due review session from Dashboard.
-2. Flashcard is shown with recall prompt.
-3. User grades recall: Again, Hard, Good, Easy.
-4. FSRS updates due date and card state.
-5. User may click Explain for contextual AI clarification.
-
-## 9. Socratic Tutor Flow
-
-### What
-
-Topic-scoped RAG-powered chat interface for guided questioning and explanation.
-
-### Why
-
-Promotes deeper reasoning without becoming a general chatbot. Maintains strict topic scope and single-turn logic like Ask AI.
-
-### How
-
-1. Select active topic from sidebar or jump from Dashboard.
-2. Socratic page shows topic name and empty chat canvas.
-3. Submit questions using topic-scoped retrieval (powered by RAG pipeline).
-4. Responses are displayed with citations to source sections.
-5. User can ask follow-up questions within the same topic.
-
-Keyboard behavior:
-
-- **Enter (without Shift):** Submit the current message
-- **Shift+Enter:** Insert a newline without submitting
-- **Ctrl+C / native copy:** Standard text selection and copying
-
-Conversation rules:
-
-- Retrieval is strictly scoped to active topic
-- No cross-topic search or global knowledge base
-- No conversation memory; each response is independent
-- User can clear chat history manually using the Clear Chat action
-- Responses include section/parent labels for traceability
-
-## 10. Settings and Sync Flow
-
-### What
-
-Configuration and manual sync trigger.
-
-### Why
-
-Keeps provider switching simple and future sync explicit.
-
-### How
-
-Settings:
-
-- Base URL
-- API key
-- model
-- Phase 2 cloud endpoint placeholder
-- App preferences
-
-Sync button:
-
-- Manual trigger only
-- Version token format: timestamp + hash
-- No distributed conflict resolution in phase 1
-
-## 11. Error and State Feedback Rules
-
-### What
-
-Consistent status signaling for loading, success, and failure.
-
-### Why
-
-A guided app must communicate state clearly at every step.
-
-### How
-
-- Show loading states for any asynchronous page preload
-- Show empty-state guidance when no tasks are available
-- Show explicit AI-unavailable errors for online-only features
-- Never present fabricated AI responses

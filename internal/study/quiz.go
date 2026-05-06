@@ -24,7 +24,7 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, tokenCount, err := BuildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}

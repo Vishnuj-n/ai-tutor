@@ -19,12 +19,16 @@ const (
 type queryDueReviewCardsFn func(now int64) (int, error)
 type queryDailyStudyMinutesFn func() (int, error)
 type queryNextReadingTopicFn func() (models.ReadingTopicCursor, bool, error)
+type querySubtopicsByParentTopicFn func(parentTopicID string) ([]models.Subtopic, error)
+type queryNextSubtopicFn func(parentTopicID string, currentPage int) (*models.Subtopic, error)
 
 // service builds one context-locked daily reading task.
 type service struct {
-	queryDueReviewCards   queryDueReviewCardsFn
-	queryDailyStudyMinute queryDailyStudyMinutesFn
-	queryNextReadingTopic queryNextReadingTopicFn
+	queryDueReviewCards         queryDueReviewCardsFn
+	queryDailyStudyMinute       queryDailyStudyMinutesFn
+	queryNextReadingTopic       queryNextReadingTopicFn
+	querySubtopicsByParentTopic querySubtopicsByParentTopicFn
+	queryNextSubtopic           queryNextSubtopicFn
 }
 
 // Option customizes service dependencies for testing and advanced setups.
@@ -57,6 +61,24 @@ func WithQueryNextReadingTopic(fn queryNextReadingTopicFn) Option {
 	}
 }
 
+// WithQuerySubtopicsByParentTopic overrides the subtopic query dependency.
+func WithQuerySubtopicsByParentTopic(fn querySubtopicsByParentTopicFn) Option {
+	return func(s *service) {
+		if fn != nil {
+			s.querySubtopicsByParentTopic = fn
+		}
+	}
+}
+
+// WithQueryNextSubtopic overrides the next subtopic query dependency.
+func WithQueryNextSubtopic(fn queryNextSubtopicFn) Option {
+	return func(s *service) {
+		if fn != nil {
+			s.queryNextSubtopic = fn
+		}
+	}
+}
+
 // Service is the public interface for daily plan scheduling.
 type Service interface {
 	BuildTodayPlan(now time.Time) (*models.TodayPlan, error)
@@ -65,9 +87,11 @@ type Service interface {
 // New creates a new scheduler service with real database queries.
 func New(opts ...Option) Service {
 	s := &service{
-		queryDueReviewCards:   db.QueryDueReviewCards,
-		queryDailyStudyMinute: db.GetDailyStudyMinutes,
-		queryNextReadingTopic: db.QueryNextReadingTopic,
+		queryDueReviewCards:         db.QueryDueReviewCards,
+		queryDailyStudyMinute:       db.GetDailyStudyMinutes,
+		queryNextReadingTopic:       db.QueryNextReadingTopic,
+		querySubtopicsByParentTopic: db.GetSubtopicsByParentTopic,
+		queryNextSubtopic:           db.GetNextSubtopic,
 	}
 
 	for _, opt := range opts {
@@ -116,22 +140,65 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	activeTopics := make([]string, 0, 1)
 
 	if foundReadingTopic {
-		startPage, endPage, ok := resolvePageWindow(readingTopic, pagesToRead)
-		if ok {
-			activeTopics = append(activeTopics, readingTopic.Title)
-			// Calculate actual task minutes based on page span
-			actualTaskMinutes := int(float64(endPage-startPage+1) * MinutesPerPage)
-			tasks = append(tasks, models.ScheduledTask{
-				ID:              "task-read-" + readingTopic.ID,
-				ActionType:      "read",
-				Title:           fmt.Sprintf("Read: %s (Pages %d to %d)", readingTopic.Title, startPage, endPage),
-				TopicID:         readingTopic.ID,
-				StartPage:       startPage,
-				EndPage:         endPage,
-				EstimateMinutes: actualTaskMinutes,
-				Priority:        1,
-				Meta:            fmt.Sprintf("Context-locked to pages %d-%d", startPage, endPage),
-			})
+		// Try to use subtopic-based missions first
+		if s.querySubtopicsByParentTopic != nil && s.queryNextSubtopic != nil {
+			subtopics, err := s.querySubtopicsByParentTopic(readingTopic.ID)
+			if err == nil && len(subtopics) > 0 {
+				// Find the next subtopic based on current page cursor
+				currentPage := readingTopic.CurrentPageCursor
+				if currentPage <= 0 {
+					currentPage = readingTopic.StartPage
+				}
+				if currentPage <= 0 {
+					currentPage = 1
+				}
+
+				nextSubtopic, err := s.queryNextSubtopic(readingTopic.ID, currentPage)
+				if err == nil && nextSubtopic != nil {
+					// Create a subtopic-based mission
+					activeTopics = append(activeTopics, readingTopic.Title)
+					subtopicPages := nextSubtopic.EndPage - nextSubtopic.StartPage + 1
+					actualTaskMinutes := int(float64(subtopicPages) * MinutesPerPage)
+
+					// Truncate if exceeds reading budget
+					if actualTaskMinutes > readingBudget {
+						actualTaskMinutes = readingBudget
+					}
+
+					tasks = append(tasks, models.ScheduledTask{
+						ID:              "task-read-" + nextSubtopic.ID,
+						ActionType:      "read",
+						Title:           fmt.Sprintf("Read: %s > %s (Pages %d to %d)", readingTopic.Title, nextSubtopic.Title, nextSubtopic.StartPage, nextSubtopic.EndPage),
+						TopicID:         readingTopic.ID,
+						StartPage:       nextSubtopic.StartPage,
+						EndPage:         nextSubtopic.EndPage,
+						EstimateMinutes: actualTaskMinutes,
+						Priority:        1,
+						Meta:            fmt.Sprintf("Subtopic: %s | Search snippet: %s", nextSubtopic.Title, nextSubtopic.SearchSnippet),
+					})
+				}
+			}
+		}
+
+		// Fallback to topic-based mission if no subtopics available
+		if len(tasks) == 0 {
+			startPage, endPage, ok := resolvePageWindow(readingTopic, pagesToRead)
+			if ok {
+				activeTopics = append(activeTopics, readingTopic.Title)
+				// Calculate actual task minutes based on page span
+				actualTaskMinutes := int(float64(endPage-startPage+1) * MinutesPerPage)
+				tasks = append(tasks, models.ScheduledTask{
+					ID:              "task-read-" + readingTopic.ID,
+					ActionType:      "read",
+					Title:           fmt.Sprintf("Read: %s (Pages %d to %d)", readingTopic.Title, startPage, endPage),
+					TopicID:         readingTopic.ID,
+					StartPage:       startPage,
+					EndPage:         endPage,
+					EstimateMinutes: actualTaskMinutes,
+					Priority:        1,
+					Meta:            fmt.Sprintf("Context-locked to pages %d-%d", startPage, endPage),
+				})
+			}
 		}
 	}
 

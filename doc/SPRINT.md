@@ -1,5 +1,88 @@
 # SPRINT.md — AI Tutor Mission Engine (Task + FSRS Priority)
 
+## AI-Tutor V4: Development Sprint Plan
+
+### Sprint 1: The Foundation (Database & Ingestion)
+**Tasks:**
+* Initialize the Wails workspace with the React + TypeScript template.
+* Create compilable Go skeletons across all `internal/` packages.
+* Build the SQLite schema, ensuring fields like `target_end_date`, `session_blocks`, and the new `blocks` table are present.
+* Implement the `pdftotext -layout` shell command to extract entire PDF to raw text.
+* Implement the cleanup script: join hyphenated words, remove headers/footers, normalize whitespace.
+* Write the chunker logic to build paragraph-aware blocks (~2500 words each) while tracking page ranges.
+* Write the syllabus logic to tag blocks with chapter boundaries.
+
+**Agent to Use:** `root/agent.md` + `internal/db/agent.md` + `internal/parser/agent.md`
+**Skills to Use:** `think`, `write`, `check`
+**Docs / Context:** `Architecture.md`, `Schema.md`, `Requirements.md`
+
+---
+
+### Sprint 2: The Brain (Memory & Scheduler)
+**Tasks:**
+* Wrap the `go-fsrs` library, ensuring stability is tracked per `block_id` with page ranges.
+* Implement the velocity math (`RemainingWords / DaysUntilDeadline`) and the missed session recalculation.
+* Build the `engine.go` weighted scoring queue: `(Stars * 10) + VelocityRequirement`.
+* Write the `session_blocks.go` logic to track timeboxes and trigger graceful session closures.
+
+**Agent to Use:** `internal/fsrs/agent.md` + `internal/scheduler/agent.md` + `internal/orchestrator/agent.md`
+**Skills to Use:** `think`, `design`, `check`
+**Docs / Context:** `Architecture.md`, `App_Flow.md`, `Data_API.md`
+
+---
+
+### Sprint 3: The Teacher (LLM & Background Pipelines)
+**Tasks:**
+* Refactor the legacy HTTP client to fit the new OpenAI-compatible `client.go` interface.
+* Implement the Phase 1 prompt generation (quizzes during reading) and the < 2 question retry loop.
+* Implement the Phase 2 background goroutine (flashcards and examiner essays during the break).
+* Build the greedy ingestion worker that triggers parser and Phase 1 while the user is reading.
+
+**Agent to Use:** `internal/tutor/agent.md` + `internal/api/agent.md`
+**Skills to Use:** `design`, `write`, `hunt` (to harvest old code safely)
+**Docs / Context:** `Architecture.md`, `App_Flow.md`
+
+---
+
+### Sprint 4: The Bridge & UI Scaffold
+**Tasks:**
+* Expose all necessary Go functions in `app.go` to satisfy the Wails bridge.
+* Create `lib/wailsBindings.ts` on the frontend to map all `window.go.api.App` calls.
+* Set up the React stores (`sessionStore`, `fsrsStore`) and custom hooks.
+* Scaffold the base UI components (Dashboard, Reader layout, Break Timer) using minimal CSS/Tailwind.
+
+**Agent to Use:** `internal/api/agent.md` + `frontend/src/agent.md`
+**Skills to Use:** `think`, `write`
+**Docs / Context:** `Data_API.md`, `Architecture.md`
+
+---
+
+### Sprint 5: The Mission Loop (UI Integration)
+**Tasks:**
+* Implement the "Scroll Lock" in `Reader.tsx` to strictly enforce the mission boundary.
+* Build the `QuizGate.tsx` UI and wire it to send results back to `fsrs/scoring.go`.
+* Implement the 5-minute break timer UI and listen for the Phase 2 background generation status.
+* Wire the global FSRS review timebox so the session starts with clearing due cards.
+
+**Agent to Use:** `frontend/src/agent.md` + `internal/fsrs/agent.md`
+**Skills to Use:** `write`, `check`
+**Docs / Context:** `App_Flow.md`, `Requirements.md`
+
+---
+
+### Sprint 6: Edge Cases & Strict Locks
+**Tasks:**
+* Build the Remediation Phase: lock the screen to a specific block if stability drops below threshold.
+* Implement the Memory Collapse lock: force a re-read of the source block and +10% re-quiz if a card fails 3x consecutively.
+* Wire the Schedule Alerts for syllabus expansion and impossible deadlines.
+* Conduct an end-to-end test with a sample PDF to verify the greedy ingestion doesn't block the UI thread.
+
+**Agent to Use:** `internal/orchestrator/agent.md` + `frontend/src/agent.md`
+**Skills to Use:** `think`, `check`, `hunt`
+**Docs / Context:** `App_Flow.md`, `Plan_Scope.md`
+
+---
+
 ## The Immutable Architecture Rules (Apply to all Sprints)
 1. **Fresh Schema:** No migration scripts. Delete `ai-tutor.db` and let `store.go` rebuild it.
 2. **One Page, One Chunk:** Text chunks strictly map to a single `page_num`. 

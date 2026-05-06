@@ -342,7 +342,7 @@ func GetActiveNotebooks(limit int) ([]ActiveNotebook, error) {
 			COALESCE(n.mission_end_page, 0)
 		FROM notebooks n
 		LEFT JOIN topics t ON t.id = n.topic_id
-		WHERE n.status = 'active'
+		WHERE n.status IN ('active', 'chunked')
 		ORDER BY n.updated_at DESC
 		LIMIT ?
 	`, limit)

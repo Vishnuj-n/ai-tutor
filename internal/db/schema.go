@@ -207,6 +207,19 @@ func InitSchema(tx *sql.Tx) error {
 			event_type TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
+
+		// Subtopics for greedy micro-mission orchestration
+		`CREATE TABLE IF NOT EXISTS subtopics (
+			id TEXT PRIMARY KEY,
+			parent_topic_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			start_page INTEGER NOT NULL,
+			end_page INTEGER NOT NULL,
+			search_snippet TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (parent_topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
 	}
 
 	// Execute all table creation statements
@@ -228,6 +241,8 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_updated_at ON topics(status, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_created_at ON topics(status, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_sync_outbox_event_type_created_at ON sync_outbox(event_type, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_subtopics_parent_topic_start_page ON subtopics(parent_topic_id, start_page)`,
+		`CREATE INDEX IF NOT EXISTS idx_subtopics_parent_topic_end_page ON subtopics(parent_topic_id, end_page)`,
 	}
 
 	for _, stmt := range indexes {

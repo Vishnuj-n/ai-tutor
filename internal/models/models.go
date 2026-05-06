@@ -133,6 +133,7 @@ type ReaderTopicBundle struct {
 	FileType      string          `json:"file_type,omitempty"`
 	PageCount     int             `json:"page_count"`
 	Sections      []ReaderSection `json:"sections"`
+	Subtopics     []Subtopic      `json:"subtopics,omitempty"`
 }
 
 // QuizQuestion is a generated question persisted per topic.
@@ -285,4 +286,45 @@ func CardToFlashcardState(card fsrs.Card) FlashcardState {
 		Lapses:        int(card.Lapses),
 		StateCode:     stateCode,
 	}
+}
+
+// Subtopic represents a logical section within a parent topic for micro-mission orchestration.
+type Subtopic struct {
+	ID            string `json:"id"`
+	ParentTopicID string `json:"parent_topic_id"`
+	Title         string `json:"title"`
+	StartPage     int    `json:"start_page"`
+	EndPage       int    `json:"end_page"`
+	SearchSnippet string `json:"search_snippet,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+}
+
+// SubtopicExtractionResult is the structured output from LLM subtopic extraction.
+type SubtopicExtractionResult struct {
+	Subtopics []ExtractedSubtopic `json:"subtopics"`
+}
+
+// ExtractedSubtopic is one subtopic identified by the LLM with page boundaries.
+type ExtractedSubtopic struct {
+	Title         string                `json:"title"`
+	StartPage     int                   `json:"start_page"`
+	EndPage       int                   `json:"end_page"`
+	SearchSnippet string                `json:"search_snippet"`
+	Flashcards    []GeneratedFlashcard  `json:"flashcards"`
+	QuizQuestion  GeneratedQuizQuestion `json:"quiz_question"`
+}
+
+// GeneratedFlashcard is a flashcard generated during subtopic extraction.
+type GeneratedFlashcard struct {
+	Prompt string `json:"prompt"`
+	Answer string `json:"answer"`
+}
+
+// GeneratedQuizQuestion is a quiz question generated during subtopic extraction.
+type GeneratedQuizQuestion struct {
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	Explanation   string   `json:"explanation"`
 }
