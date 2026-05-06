@@ -163,5 +163,11 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 		return nil, err
 	}
 
+	// Fetch subtopics for breadcrumb navigation
+	subtopics, err := GetSubtopicsByParentTopic(topicID)
+	if err == nil && len(subtopics) > 0 {
+		bundle.Subtopics = subtopics
+	}
+
 	return bundle, nil
 }

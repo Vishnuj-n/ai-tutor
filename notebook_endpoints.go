@@ -304,7 +304,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		}
 	}
 
-	status := "chunked"
+	status := "active"
 	emitIngestionProgress(a, ingestionProgressPayload{
 		NotebookID: notebookID,
 		Status:     status,

@@ -50,6 +50,16 @@ func NewStudyService(cfg Config) *StudyService {
 	}
 }
 
+// GetFastLLMProvider returns the fast LLM provider.
+func (s *StudyService) GetFastLLMProvider() LLMProvider {
+	return s.fastLLMProvider
+}
+
+// GetHeavyLLMProvider returns the heavy LLM provider.
+func (s *StudyService) GetHeavyLLMProvider() LLMProvider {
+	return s.heavyLLMProvider
+}
+
 // selectLLM picks FAST or HEAVY based on the word count of the context.
 func (s *StudyService) selectLLM(contextText string) (LLMProvider, string) {
 	wordCount := len(strings.Fields(contextText))
@@ -471,9 +481,9 @@ func ScaledFlashcardCount(wordCount int) int {
 	}
 }
 
-// buildPageBoundedContext fetches structured chunk context for a notebook page range
+// BuildPageBoundedContext fetches structured chunk context for a notebook page range
 // and returns (chunks, tokenCount, error) with hard token budget enforcement.
-func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
+func BuildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
 	chunks, err := db.GetChunksWithContextByNotebookPageRange(notebookID, startPage, endPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to load page-bounded context: %w", err)
@@ -485,7 +495,7 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 
 	// Enforce hard token budget during assembly
 	const maxContextTokens = 8000
-	const baseOverhead = 200       // Estimated tokens for prompt template and instructions
+	const baseOverhead = 200 // Estimated tokens for prompt template and instructions
 	var budgetedChunks []models.ChunkWithContext
 	currentTokens := baseOverhead
 

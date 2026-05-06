@@ -23,6 +23,7 @@ import (
 	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
 	"ai-tutor/internal/study"
+	"ai-tutor/internal/subtopic"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
@@ -50,6 +51,7 @@ type App struct {
 	orchestrator      *orchestrator.Service
 	notebookService   *notebook.Service
 	studyService      *study.StudyService
+	subtopicWorker    *subtopic.Worker
 	notebookUploadDir string
 	aiReady           bool
 	aiInitError       string
@@ -177,10 +179,6 @@ func (a *App) startup(ctx context.Context) {
 	a.notebookUploadDir = notebookDir
 	a.notebookService = notebook.NewService(notebookDir)
 	utils.Infof("App initialized successfully")
-}
-
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
 
 func (a *App) GetTopicContent(topicID string) map[string]interface{} {

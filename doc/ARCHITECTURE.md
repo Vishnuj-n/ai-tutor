@@ -1,5 +1,181 @@
 # AI Tutor Architecture
 
+## Technology Stack
+
+| Layer | Technology | Reason |
+|---|---|---|
+| Desktop shell | Wails v2 (Go + WebView) | Native window, file system access, no Electron overhead |
+| Backend language | Go | Concurrency for greedy ingestion, go-fsrs library |
+| Frontend framework | Vue.js | Simple, reactive framework, Wails support |
+| Database | SQLite (via modernc/sqlite) | Embedded, zero-dependency, single file |
+| FSRS engine | go-fsrs | Correct FSRS v4 implementation |
+| PDF extraction | pdftotext (poppler-utils) | -layout flag preserves prose structure |
+| LLM interface | HTTP (OpenAI-compatible) | Works with OpenAI, Anthropic, or any local proxy |
+
+## Layer Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    React Frontend (WebView)                   │
+│                                                              │
+│  components/     hooks/        stores/        lib/           │
+│  reader          useSession    sessionStore   wailsBindings  │
+│  quiz            useTimer      fsrsStore      api            │
+│  flashcard       useFSRS       notebookStore                 │
+│  dashboard       useQuiz                                     │
+│  settings        types/                                      │
+│  shared          mission / notebook / fsrs / quiz / settings │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  window.go.*  (Wails bridge)
+                           │  Only wailsBindings.ts crosses this line
+┌──────────────────────────▼──────────────────────────────────┐
+│                       app.go (Wails bindings)                │
+│               All exposed Go methods live here               │
+└──┬──────────┬──────────┬──────────┬───────────┬────────────┘
+   │          │          │          │           │
+   ▼          ▼          ▼          ▼           ▼
+orchestr-  scheduler  tutor/    parser/     fsrs/
+ator/      session_   client    pdf.go      engine.go
+engine.go  blocks.go  pipeline  cleaner     scoring.go
+velocity   quota.go   prompts   syllabus
+remediat.  alerts.go  retry     ocr.go
+   │          │          │          │           │
+   └──────────┴──────────┴──────────┴───────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│                     internal/db                              │
+│          schema.sql  queries.go  migrations.go               │
+│                       SQLite                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Go Package Responsibilities
+
+### `app.go` — Wails Bridge
+The single translation layer between React and Go. Every method here maps directly to a UI action. No business logic lives here — it delegates immediately to the relevant internal package.
+
+### `internal/orchestrator`
+- Task orchestration and agenda building
+- Manages daily task prioritization
+
+### `internal/scheduler`
+- FSRS scheduling logic
+- Daily planning and quota management
+- Session block tracking
+
+### `internal/db`
+- `schema.sql` — Canonical schema. See Schema section below.
+- `queries.go` — All SQL. No raw queries outside this file. Exports typed Go structs.
+- `migrations.go` — Version table, sequential forward migrations only.
+
+### `internal/llm`
+- LLM provider abstraction
+- OpenAI-compatible HTTP interface
+- Handles auth, timeouts
+
+### `internal/study`
+- Study session management
+- Quiz generation and scoring
+- Flashcard generation and review
+- Reading session completion
+
+### `internal/notebook`
+- Notebook ingestion and management
+- PDF parsing
+- Topic and section extraction
+
+### `internal/embeddings`
+- ONNX-based embedding generation
+- Local model runtime management
+
+### `internal/rag`
+- RAG pipeline for Ask AI
+- Vector indexing and retrieval
+
+### `internal/retrieval`
+- Retrieval engine for Socratic mode
+- Topic-scoped search
+
+### `internal/runtime`
+- Asset validation
+- Runtime preparation
+
+### `internal/models`
+- Shared data models
+
+### `internal/subtopic`
+- Subtopic processing
+
+### `internal/utils`
+- Shared utilities
+
+## Frontend Architecture Rules
+
+1. **Wails bindings bridge Go and Vue**. The `app.go` file exposes methods that Vue components call via Wails runtime.
+
+2. **Components are organized by feature**. Each page has its own component structure.
+
+3. **State management**. Vue's reactivity system manages component state.
+
+4. **Business logic in Go**. The frontend is thin; most logic lives in Go services.
+
+## Concurrency Model
+
+```
+Main goroutine          Background goroutine        Background goroutine
+(session flow)          (greedy ingestion)           (Phase 2 — break)
+
+Reader displayed  ────► Parse next mission PDF   ──►  Generate flashcards
+                        Generate next quiz             Generate examiner Q
+                        Store in SQLite                Store in SQLite
+                                                       Timeout: 5 min
+                                                       On timeout: queue
+                                                         for tomorrow
+```
+
+Greedy ingestion and Phase 2 write to separate SQLite rows with a `status` column (`pending` / `ready` / `failed`). The orchestrator only serves missions where the quiz status is `ready`.
+
+## LLM Call Structure
+
+```
+POST {llm_endpoint}/v1/chat/completions
+{
+  "model": "{model_name}",
+  "messages": [
+    { "role": "system", "content": "{reader_level_prompt}" },
+    { "role": "user",   "content": "CONTEXT (previous 500 words or chapter title):\n{context}\n\nLESSON:\n{mission_text}\n\nTASK:\n{quiz_or_flashcard_instruction}" }
+  ]
+}
+```
+
+Response is parsed for JSON containing questions array. If JSON parse fails or count < 2: retry once.
+
+## Data Flow: PDF → Mission → Quiz
+
+```
+Upload PDF
+  └─► parser/pdf.go           pdftotext -layout → raw text file
+  └─► parser/cleaner.go       Join hyphens, strip headers → clean paragraphs
+  └─► parser/chunker.go       Build blocks ~2500 words, track page ranges
+  └─► parser/syllabus.go      Detect chapter boundaries → tag blocks
+  └─► db/queries.go           Store blocks with start_page, end_page, chapter_tag
+
+Orchestrator picks notebook
+  └─► velocity.go             Calculate score, pick winner
+  └─► engine.go               Find next unread block
+  └─► tutor/pipeline.go       Phase 1: send block → receive quizzes
+  └─► db/queries.go           Store mission + quizzes (status: ready)
+
+Session serves mission
+  └─► app.go                  GetNextMission() → React
+  └─► Reader.tsx              Display block text, lock boundary
+  └─► QuizGate.tsx            Serve questions after read
+  └─► useQuiz.ts              Score → wailsBindings → fsrs/scoring.go
+  └─► fsrs/engine.go          Update card stability in SQLite
+```
+
+---
+
 ## 1. Architecture Goals
 
 ### What
@@ -43,7 +219,7 @@ Separates concerns clearly while keeping boundaries simple.
 - Backend executes retrieval, scheduling, and persistence
 - AI requests are stateless and scoped to current topic only
 
-## 3. Frontend Structure (Vue Multi-Page)
+## 3. Frontend Structure (Vue.js)
 
 ### What
 
