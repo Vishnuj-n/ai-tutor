@@ -122,7 +122,7 @@ func (w *Worker) ExtractSubtopics(cfg Config) (*ExtractionResult, error) {
 }
 
 // extractWithLLM calls the LLM to extract subtopics and generate assessments in a single pass.
-func (w *Worker) extractWithLLM(notebookID, parentTopicID string, startPage, endPage int) (*models.SubtopicExtractionResult, error) {
+func (w *Worker) extractWithLLM(notebookID, _ string, startPage, endPage int) (*models.SubtopicExtractionResult, error) {
 	// Build page-bounded context
 	contextChunks, tokenCount, err := study.BuildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
@@ -164,7 +164,7 @@ func (w *Worker) extractWithLLM(notebookID, parentTopicID string, startPage, end
 }
 
 // persistFlashcards creates flashcards for a subtopic with FSRS state.
-func (w *Worker) persistFlashcards(parentTopicID string, flashcards []models.GeneratedFlashcard, startPage, endPage int) error {
+func (w *Worker) persistFlashcards(parentTopicID string, flashcards []models.GeneratedFlashcard, _, _ int) error {
 	if len(flashcards) == 0 {
 		return nil
 	}
