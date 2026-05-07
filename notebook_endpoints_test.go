@@ -1,6 +1,8 @@
 package main
 
 import (
+	"ai-tutor/internal/parser"
+	"ai-tutor/internal/tutor"
 	"testing"
 
 	"ai-tutor/internal/notebook"
@@ -25,7 +27,7 @@ func TestExtractDeterministicChapterCandidatesKeepsNumberedChapters(t *testing.T
 		},
 	}
 
-	got := extractDeterministicChapterCandidates(doc)
+	got := parser.ExtractDeterministicChapterCandidates(doc)
 	if len(got) < 2 {
 		t.Fatalf("expected at least two chapter candidates, got %#v", got)
 	}
@@ -44,12 +46,12 @@ func TestExtractDeterministicChapterCandidatesRemovesFrontMatter(t *testing.T) {
 		},
 	}
 
-	got := extractDeterministicChapterCandidates(doc)
+	got := parser.ExtractDeterministicChapterCandidates(doc)
 	if len(got) == 0 {
 		t.Fatalf("expected at least one candidate, got %#v", got)
 	}
 	for _, title := range got {
-		if isFrontMatterTitle(title) {
+		if parser.IsFrontMatterTitle(title) {
 			t.Fatalf("front matter should be removed, got %#v", got)
 		}
 	}
@@ -63,9 +65,9 @@ func TestExtractDeterministicChapterCandidatesDedupesAndCaps(t *testing.T) {
 		},
 	}
 
-	got := extractDeterministicChapterCandidates(doc)
-	if len(got) != maxChapterTitles {
-		t.Fatalf("expected candidate cap of %d, got %d (%#v)", maxChapterTitles, len(got), got)
+	got := parser.ExtractDeterministicChapterCandidates(doc)
+	if len(got) != 25 {
+		t.Fatalf("expected candidate cap of %d, got %d (%#v)", 25, len(got), got)
 	}
 	if got[0] != "Chapter 1 Intro" {
 		t.Fatalf("expected normalized deduped first chapter, got %#v", got)
@@ -84,7 +86,7 @@ func TestExtractChapterTitlesMalformedLLMOutputFallsBackToDeterministic(t *testi
 		},
 	}
 
-	got := app.extractChapterTitles(doc)
+	got := tutor.ExtractChapterTitles(app.llmProvider, doc)
 	if len(got) < 2 {
 		t.Fatalf("expected deterministic fallback chapters, got %#v", got)
 	}
@@ -95,7 +97,7 @@ func TestExtractChapterTitlesMalformedLLMOutputFallsBackToDeterministic(t *testi
 
 func TestParseChapterTitlesSanitizesFrontMatterFromModel(t *testing.T) {
 	raw := `{"chapters":["Preface","Chapter 1 Foundations","References","Chapter 2 Systems"]}`
-	got := parseChapterTitles(raw)
+	got := parser.ParseChapterTitles(raw)
 
 	if len(got) != 2 {
 		t.Fatalf("expected front matter removed, got %#v", got)
@@ -112,7 +114,7 @@ func TestPickTopicForSectionHeadingOverlapWins(t *testing.T) {
 	}
 	topics := []string{"Cell Biology", "Thermodynamics"}
 
-	idx, confident := pickTopicForSection(section, topics, -1)
+	idx, confident := parser.PickTopicForSection(section, topics, -1)
 	if !confident {
 		t.Fatalf("expected confident match from heading overlap")
 	}
@@ -128,7 +130,7 @@ func TestPickTopicForSectionZeroScoreUsesPriorMatch(t *testing.T) {
 	}
 	topics := []string{"Topic A", "Topic B", "Topic C"}
 
-	idx, confident := pickTopicForSection(section, topics, 2)
+	idx, confident := parser.PickTopicForSection(section, topics, 2)
 	if confident {
 		t.Fatalf("expected zero-score fallback to prior match to be non-confident")
 	}
@@ -139,7 +141,7 @@ func TestPickTopicForSectionZeroScoreUsesPriorMatch(t *testing.T) {
 
 func TestExtractInlineChapterCandidatesFromFlattenedTOC(t *testing.T) {
 	text := "A Note to Readers Chapter 1 The Truth about Relativity Why Everything Is Relative Chapter 2 The Fallacy of Supply and Demand Why Prices Drift Chapter 3 The Cost of Zero Cost"
-	got := extractInlineChapterCandidates(text)
+	got := parser.ExtractInlineChapterCandidates(text)
 
 	if len(got) < 3 {
 		t.Fatalf("expected inline chapter extraction from flattened text, got %#v", got)
@@ -151,7 +153,7 @@ func TestExtractInlineChapterCandidatesFromFlattenedTOC(t *testing.T) {
 
 func TestExtractInlineNumericTOCCandidatesIncludesIntroAndPostscript(t *testing.T) {
 	text := "Introduction The Greatest Show On Earth 1. No One's Crazy 2. Luck & Risk 3. Never Enough 20. Confessions Postscript A Brief History of Why the U.S. Consumer Thinks the Way They Do"
-	got := extractInlineNumericTOCCandidates(text)
+	got := parser.ExtractInlineNumericTOCCandidates(text)
 
 	if len(got) < 6 {
 		t.Fatalf("expected intro, numeric chapters, and postscript, got %#v", got)
@@ -182,7 +184,7 @@ func TestExtractChapterTitlesFallsBackWhenLLMTooLossy(t *testing.T) {
 		},
 	}
 
-	got := app.extractChapterTitles(doc)
+	got := tutor.ExtractChapterTitles(app.llmProvider, doc)
 	if len(got) < 4 {
 		t.Fatalf("expected deterministic fallback to preserve richer chapter list, got %#v", got)
 	}
@@ -228,7 +230,7 @@ func TestShouldPreferDeterministicCandidatesRequiresNearCompleteCoverage(t *test
 		"14. You'll Change",
 	}
 
-	if !shouldPreferDeterministicCandidates(llmReduced, deterministic) {
+	if !parser.ShouldPreferDeterministicCandidates(llmReduced, deterministic) {
 		t.Fatalf("expected deterministic preference when LLM drops large chapter ranges")
 	}
 }
@@ -246,7 +248,7 @@ func TestDetectChapterBoundaryTopicUsesChapterNumber(t *testing.T) {
 		"The Influence of Arousal",
 	}
 
-	idx, ok := detectChapterBoundaryTopic(section, topics, 1)
+	idx, ok := parser.DetectChapterBoundaryTopic(section, topics, 1)
 	if !ok {
 		t.Fatalf("expected chapter boundary detection to match")
 	}

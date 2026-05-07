@@ -1,6 +1,8 @@
 package main
 
 import (
+	"ai-tutor/internal/api"
+	"ai-tutor/internal/parser"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -46,6 +48,30 @@ type App struct {
 	notebookUploadDir string
 	aiReady           bool
 	aiInitError       string
+}
+
+// Interface implementations for api.AppInterface
+func (a *App) GetNotebookService() *notebook.Service {
+	return a.notebookService
+}
+
+func (a *App) GetLLMProvider() parser.LLMProvider {
+	return a.llmProvider
+}
+
+func (a *App) GetEmbedStore() api.EmbedStoreInterface {
+	return a.embedStore
+}
+
+func (a *App) GetEmbedder() api.EmbedderInterface {
+	if a.embedder == nil {
+		return nil
+	}
+	return a.embedder
+}
+
+func (a *App) GetContext() context.Context {
+	return a.ctx
 }
 
 // NewApp creates a new App application struct
@@ -188,6 +214,23 @@ func (a *App) startup(ctx context.Context) {
 	fmt.Printf("Notebook service initialized at %s\n", notebookDir)
 
 	fmt.Println("App initialized successfully")
+}
+
+// Delegate Wails endpoints to internal/api
+func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interface{} {
+	return api.UploadNotebook(a, fileData, fileName)
+}
+
+func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
+	return api.GetNotebooks(topicID)
+}
+
+func (a *App) GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
+	return api.GetNotebookTopicTree()
+}
+
+func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
+	return api.DeleteNotebook(a, notebookID)
 }
 
 // Greet returns a greeting for the given name
