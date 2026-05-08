@@ -6,6 +6,14 @@ import (
 	fsrs "github.com/open-spaced-repetition/go-fsrs/v4"
 )
 
+// safeUint64FromInt clamps negative ints to 0 before casting to uint64.
+func safeUint64FromInt(v int) uint64 {
+	if v < 0 {
+		return 0
+	}
+	return uint64(v)
+}
+
 // ScheduledTask represents one actionable study task for the day.
 type ScheduledTask struct {
 	ID              string `json:"id"`
@@ -17,6 +25,56 @@ type ScheduledTask struct {
 	EstimateMinutes int    `json:"estimate_minutes"`
 	Priority        int    `json:"priority"`
 	Meta            string `json:"meta,omitempty"`
+}
+
+type StudyTaskType string
+
+const (
+	StudyTaskTypeFlashcardReview StudyTaskType = "FLASHCARD_REVIEW"
+	StudyTaskTypeReread          StudyTaskType = "REREAD"
+	StudyTaskTypeQuiz            StudyTaskType = "QUIZ"
+	StudyTaskTypeReading         StudyTaskType = "READING"
+	StudyTaskTypeExaminer        StudyTaskType = "EXAMINER"
+)
+
+type StudyTaskStatus string
+
+const (
+	StudyTaskStatusPending   StudyTaskStatus = "PENDING"
+	StudyTaskStatusActive    StudyTaskStatus = "ACTIVE"
+	StudyTaskStatusCompleted StudyTaskStatus = "COMPLETED"
+	StudyTaskStatusSkipped   StudyTaskStatus = "SKIPPED"
+	StudyTaskStatusFailed    StudyTaskStatus = "FAILED"
+)
+
+// StudyQueueTask is the persisted queue task driving guided study progression.
+type StudyQueueTask struct {
+	ID          string          `json:"id"`
+	NotebookID  string          `json:"notebook_id"`
+	TopicID     string          `json:"topic_id,omitempty"`
+	TaskType    StudyTaskType   `json:"task_type"`
+	Status      StudyTaskStatus `json:"status"`
+	Priority    int             `json:"priority"`
+	CreatedAt   string          `json:"created_at"`
+	ActivatedAt string          `json:"activated_at,omitempty"`
+	CompletedAt string          `json:"completed_at,omitempty"`
+	PayloadJSON string          `json:"payload_json,omitempty"`
+	StartPage   int             `json:"start_page,omitempty"`
+	EndPage     int             `json:"end_page,omitempty"`
+}
+
+// QueueState provides pending counts grouped by task type for dashboard summaries.
+type QueueState struct {
+	NotebookID string         `json:"notebook_id,omitempty"`
+	Pending    map[string]int `json:"pending"`
+	Total      int            `json:"total"`
+}
+
+// CompletionResult captures explicit completion outcome and optional explicit follow-up inserts.
+type CompletionResult struct {
+	Status    StudyTaskStatus  `json:"status"`
+	Payload   string           `json:"payload_json,omitempty"`
+	FollowUps []StudyQueueTask `json:"follow_ups,omitempty"`
 }
 
 // TodayPlan is the scheduler output consumed by the dashboard.
@@ -252,10 +310,10 @@ func FlashcardStateToCard(state FlashcardState, dueAt, lastReviewedAt int64) fsr
 		Due:            dueTime,
 		Stability:      state.Stability,
 		Difficulty:     state.Difficulty,
-		ElapsedDays:    uint64(state.ElapsedDays),
-		ScheduledDays:  uint64(state.ScheduledDays),
-		Reps:           uint64(state.Reps),
-		Lapses:         uint64(state.Lapses),
+		ElapsedDays:    safeUint64FromInt(state.ElapsedDays),
+		ScheduledDays:  safeUint64FromInt(state.ScheduledDays),
+		Reps:           safeUint64FromInt(state.Reps),
+		Lapses:         safeUint64FromInt(state.Lapses),
 		State:          fsrsState,
 		LastReview:     lastReviewTime,
 		RemainingSteps: 0, // Not tracked in our current implementation

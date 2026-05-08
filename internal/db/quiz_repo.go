@@ -22,7 +22,7 @@ func insertQuestionsInTx(tx *sql.Tx, topicID string, questions []models.QuizQues
 			INSERT INTO questions (
 				id, topic_id, source_chunk_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
 				source_page_start, source_page_end, llm_model, prompt_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, q.ID, topicID, q.SourceChunkID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
 			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
 			return fmt.Errorf("insert question %s failed: %w", q.ID, err)

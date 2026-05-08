@@ -351,6 +351,28 @@ func UpdateNotebookChunkCount(notebookID string, count int) error {
 	return nil
 }
 
+// UpdateNotebookPriority updates the notebook priority
+func UpdateNotebookPriority(notebookID string, priority int) error {
+	result, err := conn.Exec(`
+		UPDATE notebooks
+		SET priority = ?
+		WHERE id = ?
+	`, priority, notebookID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
 // DeleteNotebook removes a notebook and its chunk links
 func DeleteNotebook(notebookID string) error {
 	notebookID = strings.TrimSpace(notebookID)
