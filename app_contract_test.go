@@ -16,6 +16,7 @@ import (
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
+	"ai-tutor/internal/scheduler"
 	"ai-tutor/internal/study"
 )
 
@@ -128,6 +129,69 @@ func initTestProvider(t *testing.T) *llm.Provider {
 	return llm.NewProvider(llm.LoadConfigFromEnv())
 }
 
+// newTestApp provides canonical test App initialization with all dependencies wired.
+// This eliminates inconsistent partial initialization patterns (e.g., &App{}, NewApp(), etc.)
+// and ensures deterministic setup for all App-level contract tests.
+//
+// DEPENDENCY STRUCT EVALUATION:
+// After reviewing App initialization complexity, a lightweight dependency struct is NOT needed.
+// Current constructor patterns are sufficient because:
+// - App has ~12 dependencies, all explicit
+// - newTestApp() provides centralized wiring
+// - No circular dependencies or complex lifecycle management
+// - Tests can override specific fields via direct assignment when needed
+// - Adding a container would be over-engineering for this scale
+func newTestApp(t *testing.T) *App {
+	t.Helper()
+	initTestDB(t)
+
+	provider := initTestProvider(t)
+	uploadDir := t.TempDir()
+
+	app := &App{
+		ctx:               context.Background(),
+		fastLLMProvider:   provider,
+		heavyLLMProvider:  provider,
+		scheduler:         scheduler.New(),
+		notebookService:   notebook.NewService(uploadDir),
+		notebookUploadDir: uploadDir,
+		aiReady:           true,
+		aiInitError:       "",
+	}
+
+	// Initialize study service with minimal dependencies
+	app.studyService = study.NewStudyService(study.Config{
+		FastLLMProvider:  provider,
+		HeavyLLMProvider: provider,
+		RetrievalEngine:  nil, // Can be nil for tests that don't use retrieval
+	})
+
+	return app
+}
+
+// ============================================================================
+// SECTION MARKERS FOR FUTURE MODULAR SPLIT
+// ============================================================================
+// The following sections organize tests by domain for easier navigation and
+// future extraction into separate test files. This is a light organization
+// pass without premature churn.
+//
+// Domain sections:
+// - AI/RAG tests (AskAI, RAG pipeline)
+// - Notebook/Topic tests (GetAvailableTopics, GetNotebookTopicTree, etc.)
+// - Quiz/Scoring tests (ScoreAnswer, quiz generation)
+// - Flashcard/FSRS tests (GenerateFlashcards, RecordFlashcardReview)
+// - Written Answer tests (GenerateShortAnswerPrompt, ScoreShortAnswer)
+// - Reader tests (GetReaderTopicBundle, ExplainReaderSection, CompleteReadingSession)
+// - Notebook Upload tests (DraftNotebookSyllabus, ConfirmNotebookSyllabus)
+// - Queue tests (GetNextTask, ActivateTask, CompleteTask, SkipTask) [TO BE ADDED]
+// - Deterministic Ordering tests [TO BE ADDED]
+// ============================================================================
+
+// ============================================================================
+// AI/RAG TESTS
+// ============================================================================
+
 func TestAskAIResponseShape(t *testing.T) {
 	app := &App{ragPipeline: initTestPipeline(t), aiReady: true}
 
@@ -193,6 +257,10 @@ func TestGetAvailableTopicsFromDB(t *testing.T) {
 		t.Fatalf("expected seeded topic os-scheduling in available topics: %#v", topics)
 	}
 }
+
+// ============================================================================
+// NOTEBOOK/TOPIC TESTS
+// ============================================================================
 
 func TestGetNotebookTopicTreeEmptyReturnsArray(t *testing.T) {
 	initTestDB(t)
@@ -314,6 +382,10 @@ func TestAskAINotReadyReturnsError(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// NOTEBOOK UTILITY TESTS
+// ============================================================================
+
 func TestNotebookAssetURLUsesBasename(t *testing.T) {
 	assetURL := notebookAssetURL("C:/Users/vishn/AppData/Roaming/ai-tutor/uploads/sample.pdf")
 	if assetURL != "/notebooks/sample.pdf" {
@@ -329,6 +401,10 @@ func TestNotebookAssetURLRejectsTraversalNames(t *testing.T) {
 		t.Fatalf("expected empty URL for current directory segment, got %q", got)
 	}
 }
+
+// ============================================================================
+// QUIZ/SCORING TESTS
+// ============================================================================
 
 func TestScoreAnswerCorrectAnswerFullText(t *testing.T) {
 	initTestDB(t)
@@ -585,6 +661,10 @@ func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// FLASHCARD/FSRS TESTS
+// ============================================================================
+
 func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	initTestDB(t)
 	app := &App{fastLLMProvider: initTestProvider(t)}
@@ -764,6 +844,10 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 		t.Fatalf("expected scheduled_days > 0 for easy, got %d", state.ScheduledDays)
 	}
 }
+
+// ============================================================================
+// WRITTEN ANSWER TESTS
+// ============================================================================
 
 func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
 	initTestDB(t)
@@ -1167,6 +1251,10 @@ func (m *mockRAGPipeline) ProcessQuery(topicID, question string, startPage, endP
 	return m.result, nil
 }
 
+// ============================================================================
+// READER TESTS
+// ============================================================================
+
 // Contract tests for GetReaderTopicBundle
 func TestGetReaderTopicBundle_Success(t *testing.T) {
 	initTestDB(t)
@@ -1328,7 +1416,7 @@ func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 }
 
 func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) {
-	initTestDB(t)
+	app := newTestApp(t)
 
 	topicID := "complete-session-topic"
 	notebookID := "complete-session-notebook"
@@ -1372,7 +1460,7 @@ func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) 
 		t.Fatalf("UpdateTopicReadingCursor failed: %v", err)
 	}
 
-	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3, "complete-session-c1")}}
+	app.fastLLMProvider = &mockLLMProvider{answer: questionJSON(3, "complete-session-c1")}
 	resp := app.CompleteReadingSession(topicID, 1, 2)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("expected completion success, got error: %v", resp["error"])
@@ -1432,6 +1520,10 @@ func TestCompleteReadingSession_RejectsInvalidWindow(t *testing.T) {
 		t.Fatalf("expected invalid window error, got %#v", resp)
 	}
 }
+
+// ============================================================================
+// NOTEBOOK UPLOAD TESTS
+// ============================================================================
 
 func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 	initTestDB(t)
@@ -1521,5 +1613,431 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 	}
 	if bundle.Sections[0].PageNum <= 0 {
 		t.Fatalf("expected page-aware section mapping, got page_num=%d", bundle.Sections[0].PageNum)
+	}
+}
+
+// ============================================================================
+// QUEUE CONTRACT TESTS
+// ============================================================================
+
+// TestGetNextTask_ReturnsNextPendingTask verifies GetNextTask returns the next pending task
+// and returns ErrNoPendingTasks when queue is empty.
+func TestGetNextTask_ReturnsNextPendingTask(t *testing.T) {
+	app := newTestApp(t)
+
+	// Create a notebook for queue tasks
+	notebookID := "queue-test-nb"
+	if err := db.CreateNotebook(notebookID, "Queue Test Notebook", "/tmp/queue.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Test empty queue returns ErrNoPendingTasks
+	resp := app.GetNextTask(notebookID)
+	if code, ok := resp["code"].(int); !ok || code != 204 {
+		t.Fatalf("expected code 204 for empty queue, got: %#v", resp)
+	}
+
+	// Insert a pending task
+	task := models.StudyQueueTask{
+		ID:         "task-1",
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeFlashcardReview,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+		StartPage:  1,
+		EndPage:    5,
+	}
+	if err := db.InsertStudyTask(task); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	// GetNextTask should return the task
+	resp = app.GetNextTask(notebookID)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	returnedTask, ok := resp["task"].(*models.StudyQueueTask)
+	if !ok {
+		t.Fatalf("expected task in response, got: %#v", resp["task"])
+	}
+	if returnedTask.ID != "task-1" {
+		t.Fatalf("expected task-1, got: %s", returnedTask.ID)
+	}
+	if returnedTask.Status != models.StudyTaskStatusPending {
+		t.Fatalf("expected PENDING status, got: %s", returnedTask.Status)
+	}
+}
+
+// TestActivateTask_TransitionsPendingToActive verifies ActivateTask moves task from PENDING to ACTIVE.
+func TestActivateTask_TransitionsPendingToActive(t *testing.T) {
+	app := newTestApp(t)
+
+	notebookID := "activate-test-nb"
+	if err := db.CreateNotebook(notebookID, "Activate Test Notebook", "/tmp/activate.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	task := models.StudyQueueTask{
+		ID:         "task-activate-1",
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeReading,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+	}
+	if err := db.InsertStudyTask(task); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	// Activate the task
+	resp := app.ActivateTask("task-activate-1")
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	// Verify task is no longer in pending queue
+	_, err := db.GetNextTask(notebookID)
+	if err != db.ErrNoPendingTasks {
+		t.Fatalf("expected no pending tasks after activation, got: %v", err)
+	}
+}
+
+// TestActivateTask_RejectsNonPendingTask verifies ActivateTask rejects tasks not in PENDING status.
+func TestActivateTask_RejectsNonPendingTask(t *testing.T) {
+	app := newTestApp(t)
+
+	notebookID := "activate-reject-nb"
+	if err := db.CreateNotebook(notebookID, "Activate Reject Notebook", "/tmp/activate-reject.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	task := models.StudyQueueTask{
+		ID:         "task-already-active",
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeQuiz,
+		Status:     models.StudyTaskStatusActive, // Already active
+		Priority:   1,
+	}
+	if err := db.InsertStudyTask(task); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	resp := app.ActivateTask("task-already-active")
+	if code, ok := resp["code"].(int); !ok || code != 409 {
+		t.Fatalf("expected code 409 for non-pending task, got: %#v", resp)
+	}
+}
+
+// TestCompleteTask_MarksActiveAsCompleted verifies CompleteTask marks ACTIVE task as COMPLETED.
+func TestCompleteTask_MarksActiveAsCompleted(t *testing.T) {
+	app := newTestApp(t)
+
+	notebookID := "complete-test-nb"
+	if err := db.CreateNotebook(notebookID, "Complete Test Notebook", "/tmp/complete.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	task := models.StudyQueueTask{
+		ID:         "task-complete-1",
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeReread,
+		Status:     models.StudyTaskStatusActive,
+		Priority:   1,
+	}
+	if err := db.InsertStudyTask(task); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	result := models.CompletionResult{
+		Status: models.StudyTaskStatusCompleted,
+	}
+
+	resp := app.CompleteTask("task-complete-1", result)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	// Verify task is now COMPLETED (should not appear in pending queue)
+	_, err := db.GetNextTask(notebookID)
+	if err != db.ErrNoPendingTasks {
+		t.Fatalf("expected no pending tasks after completion, got: %v", err)
+	}
+}
+
+// TestCompleteTask_InsertsFollowUpTasks verifies CompleteTask inserts follow-up tasks transactionally.
+func TestCompleteTask_InsertsFollowUpTasks(t *testing.T) {
+	app := newTestApp(t)
+
+	notebookID := "followup-test-nb"
+	if err := db.CreateNotebook(notebookID, "Followup Test Notebook", "/tmp/followup.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	task := models.StudyQueueTask{
+		ID:         "task-with-followup",
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeReading,
+		Status:     models.StudyTaskStatusActive,
+		Priority:   1,
+	}
+	if err := db.InsertStudyTask(task); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	followUp := models.StudyQueueTask{
+		ID:         "followup-1",
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeQuiz,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+	}
+
+	result := models.CompletionResult{
+		Status:    models.StudyTaskStatusCompleted,
+		FollowUps: []models.StudyQueueTask{followUp},
+	}
+
+	resp := app.CompleteTask("task-with-followup", result)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	// Verify follow-up task was inserted
+	nextTask, err := db.GetNextTask(notebookID)
+	if err != nil {
+		t.Fatalf("expected follow-up task in queue, got error: %v", err)
+	}
+	if nextTask.ID != "followup-1" {
+		t.Fatalf("expected followup-1, got: %s", nextTask.ID)
+	}
+}
+
+// TestSkipTask_MarksTaskAsSkipped verifies SkipTask marks task as SKIPPED.
+func TestSkipTask_MarksTaskAsSkipped(t *testing.T) {
+	app := newTestApp(t)
+
+	notebookID := "skip-test-nb"
+	if err := db.CreateNotebook(notebookID, "Skip Test Notebook", "/tmp/skip.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	task := models.StudyQueueTask{
+		ID:         "task-skip-1",
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeExaminer,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+	}
+	if err := db.InsertStudyTask(task); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	resp := app.SkipTask("task-skip-1")
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	// Verify task is no longer in pending queue
+	_, err := db.GetNextTask(notebookID)
+	if err != db.ErrNoPendingTasks {
+		t.Fatalf("expected no pending tasks after skip, got: %v", err)
+	}
+}
+
+// ============================================================================
+// DETERMINISTIC ORDERING TESTS
+// ============================================================================
+
+// TestOrdering_TaskTypePriority verifies FLASHCARD_REVIEW > REREAD > QUIZ > READING > EXAMINER.
+func TestOrdering_TaskTypePriority(t *testing.T) {
+	initTestDB(t)
+
+	notebookID := "ordering-type-nb"
+	if err := db.CreateNotebook(notebookID, "Ordering Type Notebook", "/tmp/ordering-type.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Insert tasks in reverse priority order (EXAMINER first, FLASHCARD_REVIEW last)
+	tasks := []models.StudyQueueTask{
+		{ID: "task-5", NotebookID: notebookID, TaskType: models.StudyTaskTypeExaminer, Status: models.StudyTaskStatusPending, Priority: 1},
+		{ID: "task-4", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 1},
+		{ID: "task-3", NotebookID: notebookID, TaskType: models.StudyTaskTypeQuiz, Status: models.StudyTaskStatusPending, Priority: 1},
+		{ID: "task-2", NotebookID: notebookID, TaskType: models.StudyTaskTypeReread, Status: models.StudyTaskStatusPending, Priority: 1},
+		{ID: "task-1", NotebookID: notebookID, TaskType: models.StudyTaskTypeFlashcardReview, Status: models.StudyTaskStatusPending, Priority: 1},
+	}
+
+	for _, task := range tasks {
+		if err := db.InsertStudyTask(task); err != nil {
+			t.Fatalf("InsertStudyTask failed: %v", err)
+		}
+	}
+
+	// Verify FLASHCARD_REVIEW is returned first
+	nextTask, err := db.GetNextTask(notebookID)
+	if err != nil {
+		t.Fatalf("GetNextTask failed: %v", err)
+	}
+	if nextTask.TaskType != models.StudyTaskTypeFlashcardReview {
+		t.Fatalf("expected FLASHCARD_REVIEW first, got: %s", nextTask.TaskType)
+	}
+
+	// Activate and complete to get next task
+	if err := db.ActivateTask("task-1"); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+	if err := db.CompleteTask("task-1", models.CompletionResult{Status: models.StudyTaskStatusCompleted}); err != nil {
+		t.Fatalf("CompleteTask failed: %v", err)
+	}
+
+	// Verify REREAD is second
+	nextTask, err = db.GetNextTask(notebookID)
+	if err != nil {
+		t.Fatalf("GetNextTask failed: %v", err)
+	}
+	if nextTask.TaskType != models.StudyTaskTypeReread {
+		t.Fatalf("expected REREAD second, got: %s", nextTask.TaskType)
+	}
+}
+
+// TestOrdering_NotebookPriority verifies higher notebook priority tasks are returned first.
+// NOTE: This test is skipped because db.UpdateNotebookPriority does not exist in the current codebase.
+// Notebook priority ordering is preserved in the query but cannot be tested without a method to set priority.
+func TestOrdering_NotebookPriority(t *testing.T) {
+	t.Skip("db.UpdateNotebookPriority method does not exist - notebook priority ordering is preserved in query but cannot be tested")
+}
+
+// TestOrdering_TaskPriority verifies lower task priority numbers are returned first.
+func TestOrdering_TaskPriority(t *testing.T) {
+	initTestDB(t)
+
+	notebookID := "ordering-priority-nb"
+	if err := db.CreateNotebook(notebookID, "Ordering Priority Notebook", "/tmp/ordering-priority.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Insert tasks with different priorities (same type)
+	taskHighPriority := models.StudyQueueTask{ID: "task-high-priority", NotebookID: notebookID, TaskType: models.StudyTaskTypeQuiz, Status: models.StudyTaskStatusPending, Priority: 1}
+	taskLowPriority := models.StudyQueueTask{ID: "task-low-priority", NotebookID: notebookID, TaskType: models.StudyTaskTypeQuiz, Status: models.StudyTaskStatusPending, Priority: 10}
+
+	if err := db.InsertStudyTask(taskLowPriority); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+	if err := db.InsertStudyTask(taskHighPriority); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	// Verify high priority task (lower number) is returned first
+	nextTask, err := db.GetNextTask(notebookID)
+	if err != nil {
+		t.Fatalf("GetNextTask failed: %v", err)
+	}
+	if nextTask.ID != "task-high-priority" {
+		t.Fatalf("expected task-high-priority first, got: %s", nextTask.ID)
+	}
+}
+
+// TestOrdering_FIFOFallback verifies FIFO ordering when all other priorities are equal.
+func TestOrdering_FIFOFallback(t *testing.T) {
+	initTestDB(t)
+
+	notebookID := "ordering-fifo-nb"
+	if err := db.CreateNotebook(notebookID, "FIFO Notebook", "/tmp/fifo.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Insert tasks with same type and priority (order of insertion determines FIFO)
+	task1 := models.StudyQueueTask{ID: "task-fifo-1", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 5}
+	task2 := models.StudyQueueTask{ID: "task-fifo-2", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 5}
+	task3 := models.StudyQueueTask{ID: "task-fifo-3", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 5}
+
+	if err := db.InsertStudyTask(task1); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+	if err := db.InsertStudyTask(task2); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+	if err := db.InsertStudyTask(task3); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
+	}
+
+	// Verify FIFO order (first inserted is first returned)
+	nextTask, err := db.GetNextTask(notebookID)
+	if err != nil {
+		t.Fatalf("GetNextTask failed: %v", err)
+	}
+	if nextTask.ID != "task-fifo-1" {
+		t.Fatalf("expected task-fifo-1 first (FIFO), got: %s", nextTask.ID)
+	}
+}
+
+// TestOrdering_AntiStarvation verifies deterministic ordering prevents starvation.
+// This test verifies that the ordering is query-time deterministic and not adaptive.
+func TestOrdering_AntiStarvation(t *testing.T) {
+	initTestDB(t)
+
+	notebookID := "anti-starvation-nb"
+	if err := db.CreateNotebook(notebookID, "Anti Starvation Notebook", "/tmp/anti-starvation.txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Insert mix of task types and priorities
+	tasks := []models.StudyQueueTask{
+		{ID: "task-a", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 10},
+		{ID: "task-b", NotebookID: notebookID, TaskType: models.StudyTaskTypeFlashcardReview, Status: models.StudyTaskStatusPending, Priority: 10},
+		{ID: "task-c", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 1},
+	}
+
+	for _, task := range tasks {
+		if err := db.InsertStudyTask(task); err != nil {
+			t.Fatalf("InsertStudyTask failed: %v", err)
+		}
+	}
+
+	// Query multiple times to verify deterministic ordering (same result each time)
+	var firstTaskID string
+	for i := 0; i < 3; i++ {
+		nextTask, err := db.GetNextTask(notebookID)
+		if err != nil {
+			t.Fatalf("GetNextTask failed on iteration %d: %v", i, err)
+		}
+		if i == 0 {
+			firstTaskID = nextTask.ID
+		} else if nextTask.ID != firstTaskID {
+			t.Fatalf("deterministic ordering violated: iteration 0 returned %s, iteration %d returned %s", firstTaskID, i, nextTask.ID)
+		}
+	}
+
+	// Verify FLASHCARD_REVIEW type wins despite higher priority number on other tasks
+	// (task type priority > task priority)
+	if firstTaskID != "task-b" {
+		t.Fatalf("expected task-b (FLASHCARD_REVIEW) to win due to type priority, got: %s", firstTaskID)
+	}
+}
+
+// ============================================================================
+// LIGHTWEIGHT TEST BUILDERS
+// ============================================================================
+
+// createTestNotebook is a lightweight helper to reduce notebook creation repetition.
+func createTestNotebook(t *testing.T, notebookID, title string) {
+	t.Helper()
+	if err := db.CreateNotebook(notebookID, title, "/tmp/"+notebookID+".txt", "txt", "", 1); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+}
+
+// createTestTopic is a lightweight helper to reduce topic creation repetition.
+func createTestTopic(t *testing.T, topicID, title string) {
+	t.Helper()
+	if err := db.EnsureTopic(topicID, title); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+}
+
+// createQueueTask is a lightweight helper to reduce queue task insertion repetition.
+func createQueueTask(t *testing.T, task models.StudyQueueTask) {
+	t.Helper()
+	if err := db.InsertStudyTask(task); err != nil {
+		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 }

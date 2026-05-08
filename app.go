@@ -305,6 +305,83 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 }
 
+func (a *App) GetNextTask(notebookID string) map[string]interface{} {
+	if strings.TrimSpace(notebookID) == "" {
+		return map[string]interface{}{"error": "notebook ID is required", "code": 400}
+	}
+	task, err := db.GetNextTask(notebookID)
+	if err != nil {
+		if err == db.ErrNoPendingTasks {
+			return map[string]interface{}{
+				"error": "ErrNoPendingTasks",
+				"code":  204,
+			}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"task": task}
+}
+
+func (a *App) ActivateTask(taskID string) map[string]interface{} {
+	if strings.TrimSpace(taskID) == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.ActivateTask(taskID); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotPending:
+			return map[string]interface{}{"error": "ErrTaskNotPending", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) CompleteTask(taskID string, result models.CompletionResult) map[string]interface{} {
+	if strings.TrimSpace(taskID) == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.CompleteTask(taskID, result); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) SkipTask(taskID string) map[string]interface{} {
+	if strings.TrimSpace(taskID) == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.SkipTask(taskID); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) GetQueueState(notebookID string) map[string]interface{} {
+	if strings.TrimSpace(notebookID) == "" {
+		return map[string]interface{}{"error": "notebook ID is required", "code": 400}
+	}
+	state, err := db.GetQueueState(notebookID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"queue_state": state}
+}
+
 func (a *App) GetDailyStudySettings() map[string]interface{} {
 	minutes, err := db.GetDailyStudyMinutes()
 	if err != nil {

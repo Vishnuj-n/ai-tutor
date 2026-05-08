@@ -48,8 +48,8 @@
             <span class="task-estimate">{{ task.estimate_minutes }} min</span>
           </div>
           <h3>{{ task.title }}</h3>
-          <p class="task-meta">{{ task.meta || 'Pages ' + task.start_page + '-' + task.end_page }}</p>
-          <button type="button" class="primary-btn" @click="startTask(task)">
+          <p class="task-meta">{{ task.meta ? task.meta : (task.start_page !== undefined && task.start_page !== null && task.end_page !== undefined && task.end_page !== null ? 'Pages ' + task.start_page + '-' + task.end_page : 'Pages N/A') }}</p>
+          <button type="button" class="primary-btn" :aria-label="'Start task ' + (task.title || task.id)" @click="startTask(task)">
             Start
           </button>
         </article>
@@ -100,7 +100,7 @@ async function loadAgenda() {
 }
 
 function startTask(task) {
-  // Normalize task routing from agenda values
+  // Normalize task routing from agenda values (case-insensitive)
   let routePath = '/dashboard'
   const query = {
     topicId: task.topic_id,
@@ -109,11 +109,13 @@ function startTask(task) {
     taskId: task.id,
   }
 
-  if (task.action_type === 'Read') {
+  const action = (task.action_type || '').toLowerCase()
+  const meta = String(task.meta || '').toLowerCase()
+
+  if (action === 'read') {
     routePath = '/reader'
-  } else if (task.action_type === 'Review') {
+  } else if (action === 'review') {
     // Route based on review subtype in meta
-    const meta = (task.meta || '').toLowerCase()
     if (meta === 'flashcard') {
       routePath = '/flashcards'
     } else if (meta === 'quiz') {
@@ -121,8 +123,13 @@ function startTask(task) {
     } else if (meta === 'written') {
       routePath = '/examiner'
     } else {
-      routePath = '/flashcards' // default
+      routePath = '/flashcards' // default for unknown review meta
     }
+  } else {
+    // Unknown action type: surface feedback and fall back to dashboard
+    const display = task.action_type || '(empty)'
+    console.warn(`Unknown task action: ${display} for task ${task.id}. Redirecting to dashboard.`)
+    routePath = '/dashboard'
   }
 
   router.push({ path: routePath, query })
