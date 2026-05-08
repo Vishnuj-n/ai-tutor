@@ -74,18 +74,6 @@
               <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
               <p class="meta">{{ notebook.chunk_count }} chunks</p>
               <p class="meta">Status: {{ formatStatus(notebook.status) }}</p>
-              <p v-if="notebook.indexing_status === 'PENDING'" class="meta pending-index">
-                Semantic indexing pending
-              </p>
-              <p v-if="notebook.indexing_status === 'INDEXING'" class="meta indexing-status">
-                Semantic indexing in progress...
-              </p>
-              <p v-if="notebook.indexing_status === 'READY'" class="meta ready-status">
-                ✓ Semantic indexing ready
-              </p>
-              <p v-if="notebook.indexing_status === 'FAILED'" class="meta failed-status">
-                ✗ Semantic indexing failed
-              </p>
             </div>
           </div>
 
