@@ -63,7 +63,7 @@
 
       <div v-if="!loading && notebooks.length > 0" class="notebook-grid">
         <div v-for="notebook in notebooks" :key="notebook.id" class="notebook-card">
-          <button class="btn-edit-pen" @click="openSyllabusDraft(notebook.id, notebook.title)" title="Edit notebook and chapters">
+          <button class="btn-edit-pen" title="Edit notebook and chapters" @click="openSyllabusDraft(notebook.id, notebook.title)">
             ✎
           </button>
           <div class="notebook-header-card">

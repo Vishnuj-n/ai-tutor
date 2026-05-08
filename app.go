@@ -420,7 +420,28 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	if taskID == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
-	if err := db.CompleteReading(taskID); err != nil {
+	task, err := db.GetReadingTask(taskID)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	chunkIDs, err := db.GetChunkIDsForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	quizPayload, err := a.studyService.GenerateQuizSync(task.TopicID, chunkIDs, nil)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	quizTaskID, err := db.CompleteReadingWithGeneratedQuiz(taskID, quizPayload)
+	if err != nil {
 		switch err {
 		case db.ErrTaskNotFound:
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
@@ -430,7 +451,58 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 			return map[string]interface{}{"error": err.Error()}
 		}
 	}
-	return map[string]interface{}{"ok": true}
+	return map[string]interface{}{"ok": true, "quiz_task_id": quizTaskID}
+}
+
+func (a *App) GetTask(taskID string) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	task, err := db.GetTaskByID(taskID)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"task": task}
+}
+
+func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	return a.studyService.GenerateQuizForPageRange(notebookID, startPage, endPage)
+}
+
+func (a *App) GenerateQuizSync(topicID string, chunkIDs []string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	payload, err := a.studyService.GenerateQuizSync(topicID, chunkIDs, nil)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"quiz_task": payload}
+}
+
+func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	result, err := a.studyService.SubmitQuizAttempt(taskID, answers)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"result": result}
 }
 
 func (a *App) GetDailyStudySettings() map[string]interface{} {

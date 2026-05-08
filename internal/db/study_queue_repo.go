@@ -3,6 +3,7 @@ package db
 import (
 	"ai-tutor/internal/models"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,6 +43,33 @@ func InsertStudyTask(task models.StudyQueueTask) error {
 		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
 	`, task.ID, task.NotebookID, task.TopicID, string(task.TaskType), string(task.Status), task.Priority, task.PayloadJSON, task.StartPage, task.EndPage)
 	return err
+}
+
+// GetTaskByID returns one queue task by id.
+func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+	task := &models.StudyQueueTask{}
+	err := conn.QueryRow(`
+		SELECT
+			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
+			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
+			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
+		FROM study_queue
+		WHERE id = ?
+	`, taskID).Scan(
+		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
+		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
 }
 
 // GetNextTask returns the next pending task ordered by deterministic queue rules.
@@ -435,4 +463,126 @@ func CompleteReading(taskID string) error {
 			},
 		},
 	})
+}
+
+// CompleteReadingWithGeneratedQuiz completes ACTIVE READING task and inserts a QUIZ follow-up with payload.
+func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTaskPayload) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return "", fmt.Errorf("task id is required")
+	}
+	if len(quizPayload.Questions) == 0 {
+		return "", fmt.Errorf("quiz payload must include questions")
+	}
+	if quizPayload.PassingScore <= 0 {
+		quizPayload.PassingScore = 70
+	}
+	payloadBytes, err := json.Marshal(quizPayload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal quiz payload: %w", err)
+	}
+
+	type completionSeed struct {
+		ID         string
+		NotebookID string
+		TopicID    string
+		StartPage  int
+		EndPage    int
+	}
+	seed := completionSeed{}
+	var currentPage int
+	var status string
+
+	err = conn.QueryRow(`
+		SELECT
+			sq.id,
+			sq.notebook_id,
+			COALESCE(sq.topic_id, ''),
+			COALESCE(sq.start_page, 0),
+			COALESCE(sq.end_page, 0),
+			sq.status,
+			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
+		FROM study_queue sq
+		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
+		WHERE sq.id = ? AND sq.task_type = 'READING'
+	`, taskID).Scan(
+		&seed.ID,
+		&seed.NotebookID,
+		&seed.TopicID,
+		&seed.StartPage,
+		&seed.EndPage,
+		&status,
+		&currentPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrTaskNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if status != string(models.StudyTaskStatusActive) {
+		return "", ErrTaskNotActive
+	}
+	if currentPage < seed.EndPage {
+		return "", fmt.Errorf("cannot complete reading before reaching end page")
+	}
+
+	quizTaskID := uuid.NewString()
+	err = CompleteTask(seed.ID, models.CompletionResult{
+		Status: models.StudyTaskStatusCompleted,
+		FollowUps: []models.StudyQueueTask{
+			{
+				ID:          quizTaskID,
+				NotebookID:  seed.NotebookID,
+				TopicID:     seed.TopicID,
+				TaskType:    models.StudyTaskTypeQuiz,
+				Status:      models.StudyTaskStatusPending,
+				Priority:    0,
+				PayloadJSON: string(payloadBytes),
+				StartPage:   seed.StartPage,
+				EndPage:     seed.EndPage,
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return quizTaskID, nil
+}
+
+func GetChunkIDsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+	rows, err := conn.Query(`
+		SELECT id
+		FROM chunks
+		WHERE topic_id = ? AND page_num BETWEEN ? AND ?
+		ORDER BY page_num ASC, id ASC
+	`, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }

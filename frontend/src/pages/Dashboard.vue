@@ -104,6 +104,7 @@ function startTask(task) {
   let routePath = '/dashboard'
   const query = {
     topicId: task.topic_id,
+    notebookId: task.notebook_id,
     startPage: task.start_page,
     endPage: task.end_page,
     taskId: task.id,
@@ -131,6 +132,8 @@ function startTask(task) {
     console.warn(`Unknown task action: ${display} for task ${task.id}. Redirecting to dashboard.`)
     routePath = '/dashboard'
   }
+
+  console.log('[Dashboard] startTask route', routePath, query)
 
   router.push({ path: routePath, query })
 }

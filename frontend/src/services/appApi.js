@@ -47,6 +47,22 @@ export function completeReading(taskID) {
   return appBridge().CompleteReading(taskID)
 }
 
+export function getTask(taskID) {
+  return appBridge().GetTask(taskID)
+}
+
+export function generateQuizForPageRange(notebookID, startPage, endPage) {
+  return appBridge().GenerateQuizForPageRange(notebookID, startPage, endPage)
+}
+
+export function generateQuizSync(topicID, chunkIDs) {
+  return appBridge().GenerateQuizSync(topicID, chunkIDs)
+}
+
+export function submitQuizAttempt(taskID, answers) {
+  return appBridge().SubmitQuizAttempt(taskID, answers)
+}
+
 export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }

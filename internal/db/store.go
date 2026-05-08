@@ -732,3 +732,22 @@ func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 	}
 	return saveWrittenAnswerRepoTx(tx, answer)
 }
+
+func SaveQuizAttempt(attempt models.QuizAttemptRecord) error {
+	attempt.ID = strings.TrimSpace(attempt.ID)
+	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
+	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
+	if attempt.ID == "" {
+		return fmt.Errorf("attempt id is required")
+	}
+	if attempt.TaskID == "" {
+		return fmt.Errorf("task id is required")
+	}
+	if attempt.AnswersJSON == "" {
+		return fmt.Errorf("answers json is required")
+	}
+	if attempt.CompletedAt <= 0 {
+		return fmt.Errorf("completed at is required")
+	}
+	return saveQuizAttemptRepo(attempt)
+}

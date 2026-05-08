@@ -393,26 +393,30 @@ func GetTopicCurrentPageCursor(topicID string) (int, error) {
 // QueryNextReadingTopic returns the next reading topic with deterministic page bounds and cursor.
 func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	var topic models.ReadingTopicCursor
+	var notebookID sql.NullString
 	err := conn.QueryRow(`
 		SELECT
-			id,
-			title,
-			COALESCE(start_page, 0),
-			COALESCE(end_page, 0),
-			COALESCE(current_page_cursor, 0)
-		FROM topics
-		WHERE status IN ('unseen', 'reading')
-		  AND COALESCE(end_page, 0) > 0
-		  AND COALESCE(current_page_cursor, 0) < COALESCE(end_page, 0)
-		ORDER BY updated_at ASC, created_at ASC
+			t.id,
+			t.title,
+			COALESCE(t.start_page, 0),
+			COALESCE(t.end_page, 0),
+			COALESCE(t.current_page_cursor, 0),
+			COALESCE(nt.notebook_id, '')
+		FROM topics t
+		LEFT JOIN notebook_topics nt ON nt.topic_id = t.id
+		WHERE t.status IN ('unseen', 'reading')
+		  AND COALESCE(t.end_page, 0) > 0
+		  AND COALESCE(t.current_page_cursor, 0) < COALESCE(t.end_page, 0)
+		ORDER BY t.updated_at ASC, t.created_at ASC
 		LIMIT 1
-	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor)
+	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &notebookID)
 	if err == sql.ErrNoRows {
 		return models.ReadingTopicCursor{}, false, nil
 	}
 	if err != nil {
 		return models.ReadingTopicCursor{}, false, err
 	}
+	topic.NotebookID = notebookID.String
 	return topic, true, nil
 }
 
