@@ -126,6 +126,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 				ActionType:      "read",
 				Title:           fmt.Sprintf("Read: %s (Pages %d to %d)", readingTopic.Title, startPage, endPage),
 				TopicID:         readingTopic.ID,
+				NotebookID:      readingTopic.NotebookID,
 				StartPage:       startPage,
 				EndPage:         endPage,
 				EstimateMinutes: actualTaskMinutes,

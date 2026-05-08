@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 
 	"ai-tutor/internal/models"
@@ -13,7 +14,9 @@ import (
 func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopicBundle, error) {
 	topicID = strings.TrimSpace(topicID)
 	selectedNotebookID := strings.TrimSpace(notebookID)
+	log.Printf("[GetReaderTopicBundle] Called with topicID=%q notebookID=%q", topicID, selectedNotebookID)
 	if topicID == "" {
+		log.Printf("[GetReaderTopicBundle] ERROR: topic ID is required")
 		return nil, fmt.Errorf("topic ID is required")
 	}
 
@@ -23,8 +26,10 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 	}
 
 	if err := conn.QueryRow(`SELECT title FROM topics WHERE id = ?`, topicID).Scan(&bundle.TopicTitle); err != nil {
+		log.Printf("[GetReaderTopicBundle] ERROR: Failed to query topic title for topicID=%q: %v", topicID, err)
 		return nil, err
 	}
+	log.Printf("[GetReaderTopicBundle] Found topic title: %q for topicID=%q", bundle.TopicTitle, topicID)
 
 	var notebookIDRow sql.NullString
 	var notebookTitle sql.NullString
@@ -87,6 +92,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 		`, topicID, topicID).Scan(&notebookIDRow, &notebookTitle, &filePath, &fileType, &pageCount)
 	}
 	if err != nil && err != sql.ErrNoRows {
+		log.Printf("[GetReaderTopicBundle] ERROR: Failed to query notebook: %v", err)
 		return nil, err
 	}
 
@@ -105,6 +111,9 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 	if pageCount.Valid {
 		bundle.PageCount = int(pageCount.Int64)
 	}
+
+	log.Printf("[GetReaderTopicBundle] Selected notebook: id=%q title=%q filePath=%q fileType=%q pageCount=%d",
+		bundle.NotebookID, bundle.NotebookTitle, bundle.NotebookURL, bundle.FileType, bundle.PageCount)
 
 	var rows *sql.Rows
 	if bundle.NotebookID != "" {
@@ -160,8 +169,10 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 	}
 
 	if err := rows.Err(); err != nil {
+		log.Printf("[GetReaderTopicBundle] ERROR: Failed to iterate sections: %v", err)
 		return nil, err
 	}
 
+	log.Printf("[GetReaderTopicBundle] Returning bundle with %d sections", len(bundle.Sections))
 	return bundle, nil
 }

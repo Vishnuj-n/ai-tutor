@@ -20,6 +20,7 @@ type ScheduledTask struct {
 	ActionType      string `json:"action_type"`
 	Title           string `json:"title"`
 	TopicID         string `json:"topic_id,omitempty"`
+	NotebookID      string `json:"notebook_id,omitempty"`
 	StartPage       int    `json:"start_page,omitempty"`
 	EndPage         int    `json:"end_page,omitempty"`
 	EstimateMinutes int    `json:"estimate_minutes"`
@@ -77,6 +78,46 @@ type CompletionResult struct {
 	FollowUps []StudyQueueTask `json:"follow_ups,omitempty"`
 }
 
+type QuizTaskPayload struct {
+	Questions    []QuizTaskQuestion `json:"questions"`
+	PassingScore int                `json:"passing_score"`
+}
+
+type QuizTaskQuestion struct {
+	ID            string   `json:"id"`
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	SourceChunkID string   `json:"source_chunk_id,omitempty"`
+}
+
+type QuizAnswer struct {
+	QuestionID string `json:"question_id"`
+	Selected   string `json:"selected"`
+}
+
+type QuizAttemptRecord struct {
+	ID          string `json:"id"`
+	TaskID      string `json:"task_id"`
+	Score       int    `json:"score"`
+	Passed      bool   `json:"passed"`
+	AnswersJSON string `json:"answers_json"`
+	Feedback    string `json:"feedback"`
+	CompletedAt int64  `json:"completed_at"`
+}
+
+type QuizResult struct {
+	TaskID        string `json:"task_id"`
+	Score         int    `json:"score"`
+	Passed        bool   `json:"passed"`
+	CorrectCount  int    `json:"correct_count"`
+	TotalCount    int    `json:"total_count"`
+	PassingScore  int    `json:"passing_score"`
+	Feedback      string `json:"feedback"`
+	RereadTaskID  string `json:"reread_task_id,omitempty"`
+	AttemptRecord string `json:"attempt_id,omitempty"`
+}
+
 // ReadingTask is the task payload required by the page-locked reader flow.
 type ReadingTask struct {
 	TaskID      string `json:"task_id"`
@@ -113,6 +154,7 @@ type ReadingTopicCursor struct {
 	StartPage         int
 	EndPage           int
 	CurrentPageCursor int
+	NotebookID        string
 }
 
 // Chunk represents a retrieval chunk with metadata and future scoring hooks.

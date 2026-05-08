@@ -50,7 +50,7 @@
         <div v-if="loadingBundle" class="empty">Loading document...</div>
         <div v-else-if="!pdfVisible" class="empty">PDF not available for selected notebook/topic.</div>
         <div v-else class="pdf-wrap">
-          <iframe class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
+          <iframe :key="iframeKey" class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
         </div>
 
         <article class="complete-session">
@@ -74,7 +74,7 @@
             <span v-if="selectedNotebookTitle">from {{ selectedNotebookTitle }}</span>
           </p>
 
-          <div class="messages" ref="messagesPane">
+          <div ref="messagesPane" class="messages">
             <article v-for="(msg, idx) in chatMessages" :key="idx" class="msg" :class="msg.role">
               <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
               <p v-if="msg.role === 'user'">{{ msg.text }}</p>
@@ -121,8 +121,11 @@ import { renderMarkdown } from '../services/markdown'
 const route = useRoute()
 
 const notebookTree = ref([])
-const selectedNotebookID = ref('')
-const selectedTopicID = ref(typeof route.query.topic === 'string' ? route.query.topic : '')
+const selectedNotebookID = ref(typeof route.query.notebookId === 'string' ? route.query.notebookId : '')
+const selectedTopicID = ref(
+  typeof route.query.topic === 'string' ? route.query.topic :
+  typeof route.query.topicId === 'string' ? route.query.topicId : ''
+)
 let routeStartPage = parsePageQueryValue(route.query.start)
 let routeEndPage = parsePageQueryValue(route.query.end)
 const routeTaskID = computed(() => {
@@ -140,6 +143,7 @@ const notebookUrl = ref('')
 const fileType = ref('')
 const pageCount = ref(1)
 const currentPage = ref(1)
+const iframeKey = ref(0)
 const sections = ref([])
 const activeSection = ref(null)
 const lockedStartPage = ref(0)
@@ -189,7 +193,11 @@ const availableTopics = computed(() => {
 const isTaskFlow = computed(() => routeTaskID.value !== '')
 
 const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
-const pdfSource = computed(() => `${notebookUrl.value}#page=${currentPage.value}&zoom=page-fit`)
+const pdfSource = computed(() => {
+  const src = `${notebookUrl.value}#page=${currentPage.value}&zoom=page-fit`
+  console.log('[Reader] pdfSource computed:', { currentPage: currentPage.value, src })
+  return src
+})
 const canGoPrev = computed(() => {
   if (!pdfVisible.value) return false
   if (hasLockedWindow.value) {
@@ -213,12 +221,14 @@ const canCompleteSession = computed(() =>
 )
 
 onMounted(async () => {
-  if (isTaskFlow.value) {
-    await loadTaskFlow()
-    return
-  }
+  console.log('[Reader] onMounted: isTaskFlow', isTaskFlow.value, 'routeTaskID', routeTaskID.value)
+  console.log('[Reader] onMounted: routeStartPage', routeStartPage, 'routeEndPage', routeEndPage)
+  console.log('[Reader] onMounted: selectedNotebookID', selectedNotebookID.value, 'selectedTopicID', selectedTopicID.value)
   await loadNotebookTree()
   await loadBundle()
+  if (isTaskFlow.value) {
+    await loadTaskFlowContext()
+  }
 })
 
 async function loadNotebookTree() {
@@ -227,8 +237,11 @@ async function loadNotebookTree() {
   try {
     const data = await getNotebookTopicTree()
     notebookTree.value = Array.isArray(data) ? data : []
+    console.log('[Reader] loadNotebookTree: loaded', notebookTree.value.length, 'notebooks')
+    console.log('[Reader] loadNotebookTree: notebookTree', JSON.stringify(notebookTree.value))
     applyInitialSelection()
   } catch (err) {
+    console.error('[Reader] loadNotebookTree error:', err)
     globalError.value = err?.message || 'Failed to load notebook/topic options'
   } finally {
     loadingTree.value = false
@@ -236,13 +249,16 @@ async function loadNotebookTree() {
 }
 
 function applyInitialSelection() {
+  console.log('[Reader] applyInitialSelection: selectedTopicID from route', selectedTopicID.value)
   if (notebookTree.value.length === 0) {
     selectedNotebookID.value = ''
     selectedTopicID.value = ''
+    console.log('[Reader] applyInitialSelection: no notebooks, cleared selection')
     return
   }
 
   const preferred = selectedTopicID.value
+  console.log('[Reader] applyInitialSelection: looking for preferred topic', preferred)
   if (preferred) {
     for (const notebook of notebookTree.value) {
       const hit = Array.isArray(notebook.topics)
@@ -251,6 +267,7 @@ function applyInitialSelection() {
       if (hit) {
         selectedNotebookID.value = notebook.notebook_id
         selectedTopicID.value = hit.topic_id
+        console.log('[Reader] applyInitialSelection: found preferred topic in notebook', notebook.notebook_id)
         return
       }
     }
@@ -260,6 +277,7 @@ function applyInitialSelection() {
   const fallback = firstWithTopics || notebookTree.value[0]
   selectedNotebookID.value = fallback?.notebook_id || ''
   selectedTopicID.value = fallback?.topics?.[0]?.topic_id || ''
+  console.log('[Reader] applyInitialSelection: fallback selection - notebookID', selectedNotebookID.value, 'topicID', selectedTopicID.value)
 }
 
 function extractChapterNumber(title) {
@@ -288,7 +306,8 @@ function onTopicChange() {
   void loadBundle()
 }
 
-async function loadBundle() {
+async function loadBundle(skipPageSetting = false) {
+  console.log('[Reader] loadBundle: selectedTopicID', selectedTopicID.value, 'selectedNotebookID', selectedNotebookID.value, 'skipPageSetting', skipPageSetting)
   if (!selectedTopicID.value) {
     topicTitle.value = 'Reader'
     notebookUrl.value = ''
@@ -298,6 +317,7 @@ async function loadBundle() {
     sections.value = []
     activeSection.value = null
     globalError.value = 'Select topic to open Reader.'
+    console.log('[Reader] loadBundle: no topicID selected, showing error')
     return
   }
 
@@ -305,7 +325,9 @@ async function loadBundle() {
   globalError.value = ''
 
   try {
+    console.log('[Reader] loadBundle: calling getReaderTopicBundle with topicID', selectedTopicID.value, 'notebookID', selectedNotebookID.value)
     const result = await getReaderTopicBundle(selectedTopicID.value, selectedNotebookID.value)
+    console.log('[Reader] loadBundle: result from backend', result)
     if (result?.error) {
       topicTitle.value = 'Reader'
       notebookUrl.value = ''
@@ -337,7 +359,14 @@ async function loadBundle() {
     if (lockedTargetPage.value < lockedStartPage.value) {
       lockedTargetPage.value = lockedStartPage.value
     }
-    currentPage.value = hasLockedWindow.value ? lockedStartPage.value : normalizedTopicStart
+
+    // Only set currentPage if not in task flow (task flow sets it before calling loadBundle)
+    if (!skipPageSetting) {
+      console.log('[Reader] loadBundle: setting currentPage to', hasLockedWindow.value ? lockedStartPage.value : normalizedTopicStart, 'hasLockedWindow', hasLockedWindow.value)
+      currentPage.value = hasLockedWindow.value ? lockedStartPage.value : normalizedTopicStart
+    } else {
+      console.log('[Reader] loadBundle: skipping page setting (task flow)')
+    }
   } catch (err) {
     topicTitle.value = 'Reader'
     notebookUrl.value = ''
@@ -354,57 +383,67 @@ async function loadBundle() {
   }
 }
 
-async function loadTaskFlow() {
+async function loadTaskFlowContext() {
   const taskID = routeTaskID.value
   if (!taskID) {
     return
   }
 
-  loadingBundle.value = true
-  globalError.value = ''
   completionMessage.value = ''
   completionError.value = ''
   reachedEndPage.value = false
 
   try {
+    // Try to activate task and get additional context if task exists in database
     const activate = await activateTask(taskID)
     if (activate?.error && activate.error !== 'ErrTaskNotPending') {
-      globalError.value = activate.error
-      return
+      // If activation fails for reasons other than task not pending, use route context
+      console.warn('[Reader] loadTaskFlowContext: activateTask error, using route context:', activate.error)
     }
 
+    // Try to get reading task for progress tracking, but don't fail if it doesn't exist
     const response = await getReadingTask(taskID)
-    if (response?.error) {
-      globalError.value = response.error
-      return
-    }
-    const task = response?.task
-    if (!task) {
-      globalError.value = 'Reading task payload missing'
-      return
-    }
-    selectedNotebookID.value = task.notebook_id || ''
-    selectedTopicID.value = task.topic_id || ''
-    if (!selectedTopicID.value) {
-      globalError.value = 'Reading task is missing topic context'
-      return
-    }
+    if (response?.task) {
+      const task = response.task
+      // Override with database values if available
+      if (task.notebook_id && !selectedNotebookID.value) {
+        selectedNotebookID.value = task.notebook_id
+      }
+      if (task.topic_id && !selectedTopicID.value) {
+        selectedTopicID.value = task.topic_id
+      }
+      if (!selectedTopicID.value) {
+        globalError.value = 'Reading task is missing topic context'
+        return
+      }
 
-    await loadNotebookTree()
-    await loadBundle()
+      console.log('[Reader] loadTaskFlowContext: task exists in DB, overriding page locks from bundle')
+      // Override page locks with task data (bundle already set them from route params)
+      lockedStartPage.value = clampPage(Number(task.start_page) || 1, pageCount.value)
+      lockedTargetPage.value = clampPage(Number(task.end_page) || lockedStartPage.value, pageCount.value)
+      if (lockedTargetPage.value < lockedStartPage.value) {
+        lockedTargetPage.value = lockedStartPage.value
+      }
+      const progressPage = clampPage(Number(task.current_page) || lockedStartPage.value, pageCount.value)
+      currentPage.value = Math.max(lockedStartPage.value, Math.min(progressPage, lockedTargetPage.value))
+      console.log('[Reader] loadTaskFlowContext: set currentPage to', currentPage.value, 'from task progress')
+      // Force iframe re-render to ensure it loads with correct page from start
+      iframeKey.value++
 
-    lockedStartPage.value = clampPage(Number(task.start_page) || 1, pageCount.value)
-    lockedTargetPage.value = clampPage(Number(task.end_page) || lockedStartPage.value, pageCount.value)
-    if (lockedTargetPage.value < lockedStartPage.value) {
-      lockedTargetPage.value = lockedStartPage.value
+      await refreshCompletionGate()
+    } else {
+      // Task doesn't exist in database (virtual task from scheduler), route context already used by canonical flow
+      console.log('[Reader] loadTaskFlowContext: task not in database, using route context from canonical flow')
+      if (!selectedTopicID.value) {
+        globalError.value = 'Topic context missing from route'
+        return
+      }
+
+      // Page locks already set by canonical loadBundle from route params
+      console.log('[Reader] loadTaskFlowContext: page locks already set by canonical flow')
     }
-    const progressPage = clampPage(Number(task.current_page) || lockedStartPage.value, pageCount.value)
-    currentPage.value = Math.max(lockedStartPage.value, Math.min(progressPage, lockedTargetPage.value))
-    await refreshCompletionGate()
   } catch (err) {
-    globalError.value = err?.message || 'Failed to load reading task'
-  } finally {
-    loadingBundle.value = false
+    globalError.value = err?.message || 'Failed to load reading task context'
   }
 }
 
@@ -542,6 +581,11 @@ function clampPage(page, maxPageCount) {
   return Math.floor(normalized)
 }
 
+// Watch notebookUrl to track iframe src changes
+watch(notebookUrl, (newUrl, oldUrl) => {
+  console.log('[Reader] notebookUrl changed:', { oldUrl, newUrl, currentPage: currentPage.value })
+})
+
 // Watch route query parameters for start/end page changes
 watch(() => route.query.start, () => {
   if (isTaskFlow.value) {
@@ -567,7 +611,7 @@ watch(() => route.query.end, () => {
 
 watch(() => routeTaskID.value, () => {
   if (isTaskFlow.value) {
-    void loadTaskFlow()
+    void loadTaskFlowContext()
   }
 })
 </script>

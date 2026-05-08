@@ -13,7 +13,8 @@ import (
 )
 
 // CompleteReadingSession generates quiz questions for a locked page window and
-// advances the topic's page cursor.  Serves the Reader flow exclusively.
+// advances the topic's page cursor. It serves the Reader flow and any other
+// caller that uses the same canonical reading completion path.
 func (s *StudyService) CompleteReadingSession(topicID string, startPage int, targetPage int) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
