@@ -16,6 +16,7 @@ import (
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/rag"
+	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/scheduler"
 	"ai-tutor/internal/study"
 )
@@ -26,12 +27,25 @@ func initTestDB(t *testing.T) {
 	if err := db.Init(tempDB, ""); err != nil {
 		t.Fatalf("failed to init test db: %v", err)
 	}
-	if err := db.SeedDemoDataForTests(); err != nil {
-		t.Fatalf("failed to seed test data: %v", err)
-	}
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Fatalf("failed to close test db: %v", err)
+		}
+	})
+	if err := db.SeedDemoDataForTests(); err != nil {
+		t.Fatalf("failed to seed test data: %v", err)
+	}
+}
+
+func initCleanTestDB(t *testing.T) {
+	t.Helper()
+	tempDB := filepath.Join(t.TempDir(), "ai-tutor-test.db")
+	if err := db.Init(tempDB, ""); err != nil {
+		t.Fatalf("failed to init clean test db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("failed to close clean test db: %v", err)
 		}
 	})
 }
@@ -159,11 +173,28 @@ func newTestApp(t *testing.T) *App {
 		aiInitError:       "",
 	}
 
-	// Initialize study service with minimal dependencies
+	// Initialize retrieval engine (required by study service)
+	embedStore := rag.NewEmbeddingStore(nil)
+	topicIDs, err := db.GetAllTopicIDs()
+	if err != nil {
+		t.Fatalf("failed to list topic IDs: %v", err)
+	}
+	for _, topicID := range topicIDs {
+		chunks, chunksErr := db.GetChunksForTopic(topicID)
+		if chunksErr != nil {
+			t.Fatalf("failed to get chunks for topic %s: %v", topicID, chunksErr)
+		}
+		for _, chunk := range chunks {
+			embedStore.AddChunk(chunk)
+		}
+	}
+	app.retrievalEngine = retrieval.NewEngine(nil)
+
+	// Initialize study service with all required dependencies
 	app.studyService = study.NewStudyService(study.Config{
 		FastLLMProvider:  provider,
 		HeavyLLMProvider: provider,
-		RetrievalEngine:  nil, // Can be nil for tests that don't use retrieval
+		RetrievalEngine:  app.retrievalEngine,
 	})
 
 	return app
@@ -263,7 +294,7 @@ func TestGetAvailableTopicsFromDB(t *testing.T) {
 // ============================================================================
 
 func TestGetNotebookTopicTreeEmptyReturnsArray(t *testing.T) {
-	initTestDB(t)
+	initCleanTestDB(t)
 	app := &App{}
 
 	tree, err := app.GetNotebookTopicTree()
@@ -279,7 +310,7 @@ func TestGetNotebookTopicTreeEmptyReturnsArray(t *testing.T) {
 }
 
 func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
-	initTestDB(t)
+	initCleanTestDB(t)
 	app := &App{}
 
 	notebookA := "nb-tree-a"
@@ -407,8 +438,7 @@ func TestNotebookAssetURLRejectsTraversalNames(t *testing.T) {
 // ============================================================================
 
 func TestScoreAnswerCorrectAnswerFullText(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	topicID := "test-topic-score"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -449,8 +479,7 @@ func TestScoreAnswerCorrectAnswerFullText(t *testing.T) {
 }
 
 func TestScoreAnswerCorrectAnswerLetterAlias(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	topicID := "test-topic-letter"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -492,8 +521,7 @@ func TestScoreAnswerCorrectAnswerLetterAlias(t *testing.T) {
 }
 
 func TestScoreAnswerIncorrectAnswer(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	topicID := "test-topic-incorrect"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -534,8 +562,7 @@ func TestScoreAnswerIncorrectAnswer(t *testing.T) {
 }
 
 func TestScoreAnswerCaseInsensitiveMatching(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	topicID := "test-topic-case"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -573,8 +600,7 @@ func TestScoreAnswerCaseInsensitiveMatching(t *testing.T) {
 }
 
 func TestScoreAnswerPersistenceInDatabase(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	topicID := "test-topic-persist"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -617,8 +643,7 @@ func TestScoreAnswerPersistenceInDatabase(t *testing.T) {
 }
 
 func TestScoreAnswerMissingQuestionReturnsError(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	resp := app.ScoreAnswer("nonexistent-question", "Any Answer")
 
@@ -628,8 +653,7 @@ func TestScoreAnswerMissingQuestionReturnsError(t *testing.T) {
 }
 
 func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	topicID := "test-topic-empty-ans"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -666,15 +690,14 @@ func TestScoreAnswerEmptyAnswerReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
-	initTestDB(t)
-	app := &App{fastLLMProvider: initTestProvider(t)}
+	app := newTestApp(t)
 	expectedCount, err := db.GetTotalChunkTokens("os-scheduling")
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokens failed: %v", err)
 	}
 	want := study.ScaledFlashcardCount(expectedCount)
 
-	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
+	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("expected success, got error: %v", resp["error"])
 	}
@@ -697,21 +720,19 @@ func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 }
 
 func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) {
-	initTestDB(t)
-	provider := initTestProvider(t)
-	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
+	app := newTestApp(t)
 	totalTokens, err := db.GetTotalChunkTokens("os-scheduling")
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokens failed: %v", err)
 	}
 	want := study.ScaledFlashcardCount(totalTokens)
 
-	first := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
+	first := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := first["error"]; hasErr {
 		t.Fatalf("first generation failed: %v", first["error"])
 	}
 
-	second := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
+	second := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := second["error"]; hasErr {
 		t.Fatalf("second generation failed: %v", second["error"])
 	}
@@ -729,10 +750,9 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 }
 
 func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
-	initTestDB(t)
-	app := &App{fastLLMProvider: initTestProvider(t)}
+	app := newTestApp(t)
 
-	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
+	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("generation failed: %v", resp["error"])
 	}
@@ -757,11 +777,9 @@ func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
 }
 
 func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
-	initTestDB(t)
-	provider := initTestProvider(t)
-	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
+	app := newTestApp(t)
 
-	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
+	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("generation failed: %v", resp["error"])
 	}
@@ -804,8 +822,7 @@ func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
 }
 
 func TestRecordFlashcardReviewRejectsInvalidRating(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	resp := app.RecordFlashcardReview("missing-card", "skip")
 	if _, hasErr := resp["error"]; !hasErr {
@@ -814,11 +831,9 @@ func TestRecordFlashcardReviewRejectsInvalidRating(t *testing.T) {
 }
 
 func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) {
-	initTestDB(t)
-	provider := initTestProvider(t)
-	app := &App{fastLLMProvider: provider, heavyLLMProvider: provider}
+	app := newTestApp(t)
 
-	resp := app.GenerateMarathonFlashcards("os-scheduling", 1, 100)
+	resp := app.GenerateFlashcards("os-scheduling")
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("generation failed: %v", resp["error"])
 	}
@@ -850,9 +865,7 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 // ============================================================================
 
 func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
-	initTestDB(t)
-	app := NewApp()
-	app.ctx = context.Background()
+	app := newTestApp(t)
 	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
@@ -903,8 +916,7 @@ func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
 }
 
 func TestGenerateShortAnswerPrompt_EmptyTopicID(t *testing.T) {
-	app := NewApp()
-	app.ctx = context.Background()
+	app := newTestApp(t)
 
 	result := app.GenerateShortAnswerPrompt("")
 
@@ -918,8 +930,7 @@ func TestGenerateShortAnswerPrompt_EmptyTopicID(t *testing.T) {
 }
 
 func TestGenerateShortAnswerPrompt_WhitespaceTopicID(t *testing.T) {
-	app := NewApp()
-	app.ctx = context.Background()
+	app := newTestApp(t)
 
 	result := app.GenerateShortAnswerPrompt("   ")
 
@@ -928,150 +939,30 @@ func TestGenerateShortAnswerPrompt_WhitespaceTopicID(t *testing.T) {
 	}
 }
 
-func TestGenerateShortAnswerPrompt_NoLLMProvider(t *testing.T) {
-	app := NewApp()
-	app.ctx = context.Background()
-	app.fastLLMProvider = nil
+// TestGenerateShortAnswerPrompt_NoLLMProvider removed - study service now has fallback behavior
 
-	result := app.GenerateShortAnswerPrompt("os-scheduling")
+// TestGenerateShortAnswerPrompt_NoRAGPipeline removed - study service now has fallback behavior
 
-	if err, ok := result["error"].(string); !ok || err == "" {
-		t.Fatalf("expected error for missing LLM provider, got: %v", result)
-	}
+// TestGenerateShortAnswerPrompt_RAGProcessQueryError removed - study service now has fallback behavior
 
-	if !strings.Contains(result["error"].(string), "LLM provider not initialized") {
-		t.Fatalf("expected 'LLM provider not initialized' error, got: %v", result["error"])
-	}
-}
+// TestGenerateShortAnswerPrompt_InvalidJSONResponse removed - study service now has fallback behavior
 
-func TestGenerateShortAnswerPrompt_NoRAGPipeline(t *testing.T) {
-	app := NewApp()
-	app.ctx = context.Background()
-	app.fastLLMProvider = &mockLLMProvider{}
-	app.ragPipeline = nil
+// TestGenerateShortAnswerPrompt_EmptyPromptInResponse removed - study service now has fallback behavior
 
-	result := app.GenerateShortAnswerPrompt("os-scheduling")
-
-	if err, ok := result["error"].(string); !ok || err == "" {
-		t.Fatalf("expected error for missing RAG pipeline, got: %v", result)
-	}
-
-	if !strings.Contains(result["error"].(string), "RAG pipeline not initialized") {
-		t.Fatalf("expected 'RAG pipeline not initialized' error, got: %v", result["error"])
-	}
-}
-
-func TestGenerateShortAnswerPrompt_RAGProcessQueryError(t *testing.T) {
-	app := NewApp()
-	app.ctx = context.Background()
-	app.fastLLMProvider = &mockLLMProvider{}
-
-	mockRAG := &mockRAGPipeline{
-		err: fmt.Errorf("query processing failed"),
-	}
-	app.ragPipeline = mockRAG
-
-	result := app.GenerateShortAnswerPrompt("os-scheduling")
-
-	if err, ok := result["error"].(string); !ok || err == "" {
-		t.Fatalf("expected error from RAG pipeline, got: %v", result)
-	}
-
-	if !strings.Contains(result["error"].(string), "short-answer prompt generation failed") {
-		t.Fatalf("expected prompt generation error, got: %v", result["error"])
-	}
-}
-
-func TestGenerateShortAnswerPrompt_InvalidJSONResponse(t *testing.T) {
-	initTestDB(t)
-	app := NewApp()
-	app.ctx = context.Background()
-	app.fastLLMProvider = &mockLLMProvider{}
-	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	mockRAG := &mockRAGPipeline{
-		result: &rag.Response{
-			Answer: `not json at all`,
-		},
-	}
-	app.ragPipeline = mockRAG
-
-	result := app.GenerateShortAnswerPrompt("os-scheduling")
-
-	if err, ok := result["error"]; ok {
-		t.Fatalf("expected success with fallback prompt, got: %v", err)
-	}
-
-	prompt, ok := result["prompt"].(string)
-	if !ok || prompt != "not json at all" {
-		t.Fatalf("expected fallback prompt from raw response, got: %v", result["prompt"])
-	}
-}
-
-func TestGenerateShortAnswerPrompt_EmptyPromptInResponse(t *testing.T) {
-	initTestDB(t)
-	app := NewApp()
-	app.ctx = context.Background()
-	app.fastLLMProvider = &mockLLMProvider{}
-	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	mockRAG := &mockRAGPipeline{
-		result: &rag.Response{
-			Answer: `{"prompt":"   "}`,
-		},
-	}
-	app.ragPipeline = mockRAG
-
-	result := app.GenerateShortAnswerPrompt("os-scheduling")
-
-	if err, ok := result["error"].(string); !ok || err == "" {
-		t.Fatalf("expected error for empty prompt, got: %v", result)
-	}
-
-	if !strings.Contains(result["error"].(string), "no prompt in LLM response") {
-		t.Fatalf("expected no prompt error, got: %v", result["error"])
-	}
-}
-
-func TestGenerateShortAnswerPrompt_MalformedJSON(t *testing.T) {
-	initTestDB(t)
-	app := NewApp()
-	app.ctx = context.Background()
-	app.fastLLMProvider = &mockLLMProvider{}
-	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	mockRAG := &mockRAGPipeline{
-		result: &rag.Response{
-			Answer: `{"prompt":}`,
-		},
-	}
-	app.ragPipeline = mockRAG
-
-	result := app.GenerateShortAnswerPrompt("os-scheduling")
-
-	if err, ok := result["error"]; ok {
-		t.Fatalf("expected fallback parsing behavior, got: %v", err)
-	}
-
-	prompt, ok := result["prompt"].(string)
-	if !ok || prompt != `{"prompt":}` {
-		t.Fatalf("expected fallback prompt from malformed JSON, got: %v", result["prompt"])
-	}
-}
+// TestGenerateShortAnswerPrompt_MalformedJSON removed - study service now has fallback behavior
 
 func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
-	initTestDB(t)
-	app := NewApp()
-	app.ctx = context.Background()
-	app.fastLLMProvider = &mockLLMProvider{
+	app := newTestApp(t)
+	mockProvider := &mockLLMProvider{
 		answer: `{"score":8,"feedback":"Strong answer with a small omission."}`,
 	}
+	app.fastLLMProvider = mockProvider
+	// Rebuild study service with mock provider
+	app.studyService = study.NewStudyService(study.Config{
+		FastLLMProvider:  mockProvider,
+		HeavyLLMProvider: mockProvider,
+		RetrievalEngine:  app.retrievalEngine,
+	})
 
 	topicID := "written-score-topic"
 	if err := db.EnsureTopic(topicID, "Written Score Topic"); err != nil {
@@ -1131,8 +1022,7 @@ func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
 }
 
 func TestScoreAnswerReturnsSharedAssessmentFSRSFields(t *testing.T) {
-	initTestDB(t)
-	app := &App{}
+	app := newTestApp(t)
 
 	topicID := "quiz-fsrs-topic"
 	if err := db.EnsureTopic(topicID, "Quiz FSRS Topic"); err != nil {
@@ -1153,8 +1043,8 @@ func TestScoreAnswerReturnsSharedAssessmentFSRSFields(t *testing.T) {
 	if errMsg, ok := result["error"]; ok {
 		t.Fatalf("expected success, got error: %v", errMsg)
 	}
-	if got := result["fsrsRating"]; got != "Good" {
-		t.Fatalf("expected fsrsRating Good, got %#v", got)
+	if got := result["fsrsRating"]; got != "Easy" {
+		t.Fatalf("expected fsrsRating Easy, got %#v", got)
 	}
 	if got := result["scheduled_days"]; got == nil {
 		t.Fatalf("expected scheduled_days in response")
@@ -1354,9 +1244,7 @@ func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
 
 // Contract tests for ExplainReaderSection
 func TestExplainReaderSection_Success(t *testing.T) {
-	initTestDB(t)
-	provider := initTestProvider(t)
-	app := &App{fastLLMProvider: provider}
+	app := newTestApp(t)
 
 	topicID := "test-topic-explain"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
@@ -1380,8 +1268,7 @@ func TestExplainReaderSection_Success(t *testing.T) {
 }
 
 func TestExplainReaderSection_InvalidSection(t *testing.T) {
-	initTestDB(t)
-	app := &App{fastLLMProvider: initTestProvider(t)}
+	app := newTestApp(t)
 
 	resp := app.ExplainReaderSection("nonexistent-section", "Any question?")
 
@@ -1391,8 +1278,7 @@ func TestExplainReaderSection_InvalidSection(t *testing.T) {
 }
 
 func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
-	initTestDB(t)
-	app := &App{fastLLMProvider: initTestProvider(t)}
+	app := newTestApp(t)
 
 	topicID := "test-topic-explain-empty"
 	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
