@@ -35,6 +35,10 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
+export function getDailyAgenda() {
+  return appBridge().GetTodayPlan()
+}
+
 export function getDailyStudySettings() {
   return appBridge().GetDailyStudySettings()
 }
