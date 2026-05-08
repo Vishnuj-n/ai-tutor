@@ -74,9 +74,6 @@ func runPDFCPUBookmarksExport(filePath string, uploadDir string) ([]byte, error)
 			continue
 		}
 
-		// Ensure process is fully terminated and file handles are released
-		_ = cmd.Wait()
-
 		content, readErr := os.ReadFile(tmpPath)
 		if readErr != nil {
 			lastErr = readErr

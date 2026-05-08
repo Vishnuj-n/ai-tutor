@@ -15,24 +15,22 @@ The central queue that drives all application flow.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | TEXT PRIMARY KEY | Unique task identifier (UUID) |
+| `notebook_id` | TEXT NOT NULL | Reference to notebooks for priority biasing |
+| `topic_id` | TEXT | Reference to topic for task context |
 | `task_type` | TEXT NOT NULL | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
-| `block_id` | TEXT | Reference to content block (chunk, quiz_set, card_set) |
-| `related_id` | TEXT | Optional related entity (topic_id for grouping) |
-| `notebook_id` | TEXT | Reference to notebooks for priority biasing |
 | `status` | TEXT NOT NULL | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED` |
-| `priority` | INTEGER NOT NULL | Lower = higher priority (1 = urgent) |
-| `created_at` | INTEGER NOT NULL | Unix timestamp |
-| `activated_at` | INTEGER | When task became ACTIVE (NULL if never active) |
-| `completed_at` | INTEGER | Unix timestamp (NULL if pending) |
-| `reread_attempt` | INTEGER DEFAULT 0 | Count of reread cycles for this material |
-| `generation_status` | TEXT | `GENERATING`, `READY`, `FAILED` (for QUIZ tasks) |
+| `priority` | INTEGER DEFAULT 0 | Lower = higher priority (0 = urgent) |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | When task was created |
+| `activated_at` | TIMESTAMP | When task became ACTIVE (NULL if never active) |
+| `completed_at` | TIMESTAMP | When task was completed (NULL if pending) |
+| `payload_json` | TEXT | Optional JSON payload for task-specific data |
+| `start_page` | INTEGER | Start page for READING tasks |
+| `end_page` | INTEGER | End page for READING tasks |
 
 **Indexes:**
 ```sql
-CREATE INDEX idx_queue_status_priority ON study_queue(status, priority, created_at);
-CREATE INDEX idx_queue_related ON study_queue(related_id, status);
-CREATE INDEX idx_queue_notebook ON study_queue(notebook_id, status);
-CREATE INDEX idx_queue_active_timeout ON study_queue(status, activated_at);
+CREATE INDEX idx_study_queue_status_priority_created ON study_queue(status, priority, created_at);
+CREATE INDEX idx_study_queue_notebook_status ON study_queue(notebook_id, status);
 ```
 
 **Task Types:**
@@ -54,20 +52,6 @@ CREATE INDEX idx_queue_active_timeout ON study_queue(status, activated_at);
 | `COMPLETED` | Successfully finished | Terminal |
 | `SKIPPED` | User bypassed task | Terminal, auditable |
 | `FAILED` | Quiz generation failed or error | Terminal, can retry |
-
-**Generation Status (QUIZ tasks only):**
-
-| Status | Meaning |
-|--------|---------|
-| `GENERATING` | LLM call in progress |
-| `READY` | Quiz ready for user |
-| `FAILED` | Generation error, user-visible |
-
-**Reread Protection:**
-
-- `reread_attempt` tracks how many times material has been assigned for reread
-- Default max: 3 attempts per block
-- After max reached: stop auto-inserting reread tasks, show manual retry option
 
 ---
 

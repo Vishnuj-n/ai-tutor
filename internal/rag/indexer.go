@@ -172,10 +172,13 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 		// Continue anyway, we'll index by topic
 	}
 
-	// Set indexing status to INDEXING for pending notebooks
+	// Track notebook IDs that were transitioned to INDEXING
+	indexingNotebookIDs := make(map[string]struct{})
 	for _, nb := range notebooks {
 		if nb.IndexingStatus == "PENDING" {
-			_ = db.UpdateNotebookIndexingStatus(nb.ID, "INDEXING")
+			if err := db.UpdateNotebookIndexingStatus(nb.ID, "INDEXING"); err == nil {
+				indexingNotebookIDs[nb.ID] = struct{}{}
+			}
 		}
 	}
 
@@ -186,10 +189,8 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 	}
 
 	// Set indexing status to READY for notebooks that were being indexed
-	for _, nb := range notebooks {
-		if nb.IndexingStatus == "INDEXING" {
-			_ = db.UpdateNotebookIndexingStatus(nb.ID, "READY")
-		}
+	for notebookID := range indexingNotebookIDs {
+		_ = db.UpdateNotebookIndexingStatus(notebookID, "READY")
 	}
 
 	return nil

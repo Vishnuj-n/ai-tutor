@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	fsrs "github.com/open-spaced-repetition/go-fsrs/v4"
+	"github.com/open-spaced-repetition/go-fsrs/v4"
 )
 
 // safeUint64FromInt clamps negative ints to 0 before casting to uint64.
@@ -357,7 +357,7 @@ func CardToFlashcardState(card fsrs.Card) FlashcardState {
 	}
 }
 
-// Subtopic represents a logical section within a parent topic for micro-mission orchestration.
+// Subtopic represents a logical section within a parent topic for study task organization.
 type Subtopic struct {
 	ID            string `json:"id"`
 	ParentTopicID string `json:"parent_topic_id"`
