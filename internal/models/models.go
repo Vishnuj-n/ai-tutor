@@ -77,6 +77,16 @@ type CompletionResult struct {
 	FollowUps []StudyQueueTask `json:"follow_ups,omitempty"`
 }
 
+// ReadingTask is the task payload required by the page-locked reader flow.
+type ReadingTask struct {
+	TaskID      string `json:"task_id"`
+	NotebookID  string `json:"notebook_id"`
+	TopicID     string `json:"topic_id"`
+	StartPage   int    `json:"start_page"`
+	EndPage     int    `json:"end_page"`
+	CurrentPage int    `json:"current_page"`
+}
+
 // TodayPlan is the scheduler output consumed by the dashboard.
 type TodayPlan struct {
 	Date            string          `json:"date"`
@@ -126,15 +136,16 @@ type ChunkWithContext struct {
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
 type Notebook struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	FilePath   string `json:"file_path"`
-	FileType   string `json:"file_type"` // "pdf", "txt", "md"
-	TopicID    string `json:"topic_id,omitempty"`
-	Status     string `json:"status"`
-	UploadedAt string `json:"uploaded_at"`
-	PageCount  int    `json:"page_count,omitempty"`
-	ChunkCount int    `json:"chunk_count"`
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	FilePath       string `json:"file_path"`
+	FileType       string `json:"file_type"` // "pdf", "txt", "md"
+	TopicID        string `json:"topic_id,omitempty"`
+	Status         string `json:"status"`
+	IndexingStatus string `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
+	UploadedAt     string `json:"uploaded_at"`
+	PageCount      int    `json:"page_count,omitempty"`
+	ChunkCount     int    `json:"chunk_count"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)

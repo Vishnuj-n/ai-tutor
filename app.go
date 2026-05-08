@@ -120,7 +120,7 @@ func (a *App) startup(ctx context.Context) {
 			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
 				utils.Warnf("could not initialize vector table: %v", err)
 			} else {
-				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{RecomputeOnHashMismatch: true})
+				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
 				go func() {
 					if err := indexer.IndexAllTopics(); err != nil {
 						utils.Warnf("vector indexing failed: %v", err)
@@ -380,6 +380,57 @@ func (a *App) GetQueueState(notebookID string) map[string]interface{} {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"queue_state": state}
+}
+
+func (a *App) GetReadingTask(taskID string) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	task, err := db.GetReadingTask(taskID)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"task": task}
+}
+
+func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if finalPage <= 0 {
+		return map[string]interface{}{"error": "final page must be positive", "code": 400}
+	}
+	ok, err := db.ValidateReadingCompletion(taskID, finalPage)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": ok}
+}
+
+func (a *App) CompleteReading(taskID string) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.CompleteReading(taskID); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) GetDailyStudySettings() map[string]interface{} {

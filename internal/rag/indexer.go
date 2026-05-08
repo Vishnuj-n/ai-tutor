@@ -1,12 +1,15 @@
 package rag
 
 import (
+	"context"
 	"fmt"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // IndexerConfig holds indexing configuration
@@ -21,18 +24,21 @@ type IndexerConfig struct {
 type VectorIndexer struct {
 	embedder *embeddings.OnnxEmbedder
 	config   IndexerConfig
+	ctx      context.Context
 }
 
 // NewVectorIndexer creates a new vector indexer.
-func NewVectorIndexer(embedder *embeddings.OnnxEmbedder, config IndexerConfig) *VectorIndexer {
+func NewVectorIndexer(embedder *embeddings.OnnxEmbedder, config IndexerConfig, ctx context.Context) *VectorIndexer {
 	return &VectorIndexer{
 		embedder: embedder,
 		config:   config,
+		ctx:      ctx,
 	}
 }
 
 // IndexTopicChunks generates and stores embeddings for all chunks of a topic.
 // Uses hash-based incremental indexing: only recomputes vectors if source text has changed.
+// Emits progress events during processing.
 func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	if vi.embedder == nil {
 		return fmt.Errorf("embedder not initialized")
@@ -90,7 +96,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	embeddingBatch := make([]db.ChunkEmbeddingBatchItem, 0, len(chunksToReindex))
 	failedChunks := make(map[string]struct{})
 
-	for _, chunk := range chunksToReindex {
+	for i, chunk := range chunksToReindex {
 		// Generate new embedding
 		vector, err := vi.embedder.Embed(chunk.Text)
 		if err != nil {
@@ -110,6 +116,11 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 			ChunkID: chunk.ID,
 			Hash:    hash,
 		})
+
+		// Emit progress event every 10 chunks or at the end
+		if (i+1)%10 == 0 || i == len(chunksToReindex)-1 {
+			vi.emitIndexingProgress(topicID, i+1, len(chunksToReindex), len(failedChunks))
+		}
 	}
 
 	if len(vectorBatch) == 0 {
@@ -147,15 +158,37 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 }
 
 // IndexAllTopics reindexes all topics in the database.
+// Updates notebook indexing_status from PENDING -> INDEXING -> READY/FAILED.
 func (vi *VectorIndexer) IndexAllTopics() error {
 	topicIDs, err := db.GetAllTopicIDs()
 	if err != nil {
 		return fmt.Errorf("failed to get topic IDs: %w", err)
 	}
 
+	// Get all notebooks with PENDING indexing status
+	notebooks, err := db.GetNotebooks("")
+	if err != nil {
+		utils.Warnf("failed to fetch notebooks for indexing: %v", err)
+		// Continue anyway, we'll index by topic
+	}
+
+	// Set indexing status to INDEXING for pending notebooks
+	for _, nb := range notebooks {
+		if nb.IndexingStatus == "PENDING" {
+			_ = db.UpdateNotebookIndexingStatus(nb.ID, "INDEXING")
+		}
+	}
+
 	for _, topicID := range topicIDs {
 		if err := vi.IndexTopicChunks(topicID); err != nil {
 			utils.Warnf("indexing failed for topic %s: %v", topicID, err)
+		}
+	}
+
+	// Set indexing status to READY for notebooks that were being indexed
+	for _, nb := range notebooks {
+		if nb.IndexingStatus == "INDEXING" {
+			_ = db.UpdateNotebookIndexingStatus(nb.ID, "READY")
 		}
 	}
 
@@ -179,4 +212,20 @@ func doesHashMatch(chunk models.Chunk, chunkHashRefs map[string]string) bool {
 // computeTextHash computes MD5 hash of text for change detection.
 func computeTextHash(text string) string {
 	return utils.MD5Hex(text)
+}
+
+// emitIndexingProgress emits lightweight progress events for semantic indexing.
+func (vi *VectorIndexer) emitIndexingProgress(topicID string, processed, total, failed int) {
+	if vi.ctx == nil {
+		return
+	}
+	payload := map[string]interface{}{
+		"topic_id":         topicID,
+		"stage":            "indexing",
+		"processed_chunks": processed,
+		"total_chunks":     total,
+		"failed_chunks":    failed,
+		"percent":          int((float64(processed) / float64(total)) * 100),
+	}
+	wailsruntime.EventsEmit(vi.ctx, "ingestion-progress", payload)
 }
