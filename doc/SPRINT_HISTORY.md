@@ -247,30 +247,10 @@ Because:
     * Show next review using `scheduled_days` (e.g. "See you in 3 days!").
 * **Outcome:** Flashcards review session is wired end-to-end with FSRS.
 
+## 🏗️ Architecture Pivot Note
 
-## Deprecated Architectural Direction (Pre-Queue Architecture)
+The project previously experimented with a proactive orchestration model.
 
-## 📍 Sprint 7: The "Augmented Reader" (The Split-Screen Hub)
-**Goal:** Build the "Encoding" phase. This is where the student actually learns the PDF before FSRS tests them.
-* **1. PDF.js Integration:** Embed a PDF viewer in the left pane of `Reader.vue`.
-* **2. Linear Navigation:** Use the `parent` chunks from your RAG database to find the `page_num`. When a user clicks a Topic, tell the PDF viewer to jump to that exact page.
-* **3. The AI Companion (Right Pane):** Add the chat interface on the right side. When the student highlights a tricky paragraph in the PDF, let them click "Explain this" to trigger an LLM clarification without leaving the page.
-* **4. The "Mark Learned" Trigger:** At the end of the section, the user clicks "Mark as Learned", which generates the Flashcards and pushes them into your FSRS engine.
-* **Outcome:** A highly impressive, professional Split-Screen learning environment that doesn't hallucinate because the PDF is always visible.
+The architecture has now been simplified into a deterministic SQLite-driven Persistent Queue Architecture.
 
-## 📍 Sprint 8: The "AI Examiner" (Written Testing)
-**Goal:** Replace the old Socratic Tutor with a graded, short-answer assessment tool.
-* **1. Prompt Engineering:** Build an LLM prompt that asks a question based on the topic, reads the student's typed answer, and grades it out of 10.
-* **2. FSRS Hook:** Translate that 1-10 score into an FSRS rating (1=Again, 4=Easy).
-* **3. Generic Logging:** Save this interaction using your newly built `fsrs_review_log` with `activity_type = "short_answer"`.
-* **Outcome:** You prove your FSRS engine is extensible beyond just flashcards.
-
-## 📍 Sprint 9: Scalability & Polish (The Backlog)
-**Goal:** Clean up the rough edges for a production-ready feel.
-* **1. SQLite Connection Fix:** Implement WAL mode and connection pooling to stop the UI from locking during heavy 100-page PDF ingestion.
-* **2. Multi-Notebook Support:** Add the UI routing to switch between "Physics 101" and "Computer Architecture" databases.
-* **Outcome:** The app is ready for massive textbooks and multiple subjects.
-
----
----
-> For sprint planning and operational playbooks, see `doc/SPRINT.md`.
+Current sprint planning and implementation should follow the queue model exclusively
