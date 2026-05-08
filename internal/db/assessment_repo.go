@@ -182,7 +182,7 @@ func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceCh
 		INSERT INTO assessment_fsrs (
 			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
+		ON CONFLICT(activity_type, reference_id, source_chunk_id) DO UPDATE SET
 			topic_id = excluded.topic_id,
 			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,
@@ -246,7 +246,7 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 		INSERT INTO assessment_fsrs (
 			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id, COALESCE(source_chunk_id, '')) DO UPDATE SET
+		ON CONFLICT(activity_type, reference_id, source_chunk_id) DO UPDATE SET
 			topic_id = excluded.topic_id,
 			source_chunk_id = excluded.source_chunk_id,
 			state_json = excluded.state_json,

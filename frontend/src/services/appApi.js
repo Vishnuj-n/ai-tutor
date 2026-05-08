@@ -31,7 +31,27 @@ export function completeReadingSession(topicID, startPage, targetPage) {
   return appBridge().CompleteReadingSession(topicID, startPage, targetPage)
 }
 
+export function activateTask(taskID) {
+  return appBridge().ActivateTask(taskID)
+}
+
+export function getReadingTask(taskID) {
+  return appBridge().GetReadingTask(taskID)
+}
+
+export function validateReadingCompletion(taskID, finalPage) {
+  return appBridge().ValidateReadingCompletion(taskID, finalPage)
+}
+
+export function completeReading(taskID) {
+  return appBridge().CompleteReading(taskID)
+}
+
 export function getTodayPlan() {
+  return appBridge().GetTodayPlan()
+}
+
+export function getDailyAgenda() {
   return appBridge().GetTodayPlan()
 }
 

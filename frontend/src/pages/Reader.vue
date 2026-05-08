@@ -9,7 +9,7 @@
       </p>
     </header>
 
-    <article class="panel controls">
+    <article v-if="!isTaskFlow" class="panel controls">
       <label class="field">
         <span>Notebook</span>
         <select v-model="selectedNotebookID" :disabled="loadingTree || notebookTree.length === 0 || loadingBundle" @change="onNotebookChange">
@@ -105,7 +105,17 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { askAI, completeReadingSession, explainReaderSection, getNotebookTopicTree, getReaderTopicBundle } from '../services/appApi'
+import {
+  activateTask,
+  askAI,
+  completeReading,
+  completeReadingSession,
+  explainReaderSection,
+  getNotebookTopicTree,
+  getReaderTopicBundle,
+  getReadingTask,
+  validateReadingCompletion,
+} from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
@@ -115,6 +125,15 @@ const selectedNotebookID = ref('')
 const selectedTopicID = ref(typeof route.query.topic === 'string' ? route.query.topic : '')
 let routeStartPage = parsePageQueryValue(route.query.start)
 let routeEndPage = parsePageQueryValue(route.query.end)
+const routeTaskID = computed(() => {
+  if (typeof route.query.taskId === 'string' && route.query.taskId.trim() !== '') {
+    return route.query.taskId.trim()
+  }
+  if (typeof route.query.task_id === 'string' && route.query.task_id.trim() !== '') {
+    return route.query.task_id.trim()
+  }
+  return ''
+})
 
 const topicTitle = ref('Reader')
 const notebookUrl = ref('')
@@ -128,6 +147,7 @@ const lockedTargetPage = ref(0)
 const completingSession = ref(false)
 const completionMessage = ref('')
 const completionError = ref('')
+const reachedEndPage = ref(false)
 
 const chatCollapsed = ref(false)
 const chatMessages = ref([])
@@ -166,6 +186,7 @@ const availableTopics = computed(() => {
     return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
   })
 })
+const isTaskFlow = computed(() => routeTaskID.value !== '')
 
 const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
 const pdfSource = computed(() => `${notebookUrl.value}#page=${currentPage.value}&zoom=page-fit`)
@@ -187,11 +208,15 @@ const hasLockedWindow = computed(() => lockedStartPage.value > 0 && lockedTarget
 const canCompleteSession = computed(() =>
   !loadingBundle.value &&
   !completingSession.value &&
-  Boolean(selectedTopicID.value) &&
-  hasLockedWindow.value
+  hasLockedWindow.value &&
+  (isTaskFlow.value ? reachedEndPage.value : Boolean(selectedTopicID.value))
 )
 
 onMounted(async () => {
+  if (isTaskFlow.value) {
+    await loadTaskFlow()
+    return
+  }
   await loadNotebookTree()
   await loadBundle()
 })
@@ -329,6 +354,60 @@ async function loadBundle() {
   }
 }
 
+async function loadTaskFlow() {
+  const taskID = routeTaskID.value
+  if (!taskID) {
+    return
+  }
+
+  loadingBundle.value = true
+  globalError.value = ''
+  completionMessage.value = ''
+  completionError.value = ''
+  reachedEndPage.value = false
+
+  try {
+    const activate = await activateTask(taskID)
+    if (activate?.error && activate.error !== 'ErrTaskNotPending') {
+      globalError.value = activate.error
+      return
+    }
+
+    const response = await getReadingTask(taskID)
+    if (response?.error) {
+      globalError.value = response.error
+      return
+    }
+    const task = response?.task
+    if (!task) {
+      globalError.value = 'Reading task payload missing'
+      return
+    }
+    selectedNotebookID.value = task.notebook_id || ''
+    selectedTopicID.value = task.topic_id || ''
+    if (!selectedTopicID.value) {
+      globalError.value = 'Reading task is missing topic context'
+      return
+    }
+
+    await loadNotebookTree()
+    await loadBundle()
+
+    lockedStartPage.value = clampPage(Number(task.start_page) || 1, pageCount.value)
+    lockedTargetPage.value = clampPage(Number(task.end_page) || lockedStartPage.value, pageCount.value)
+    if (lockedTargetPage.value < lockedStartPage.value) {
+      lockedTargetPage.value = lockedStartPage.value
+    }
+    const progressPage = clampPage(Number(task.current_page) || lockedStartPage.value, pageCount.value)
+    currentPage.value = Math.max(lockedStartPage.value, Math.min(progressPage, lockedTargetPage.value))
+    await refreshCompletionGate()
+  } catch (err) {
+    globalError.value = err?.message || 'Failed to load reading task'
+  } finally {
+    loadingBundle.value = false
+  }
+}
+
 function selectSection(section) {
   activeSection.value = section
   const page = Number(section?.page_num)
@@ -340,12 +419,14 @@ function selectSection(section) {
 function goPrev() {
   if (canGoPrev.value) {
     currentPage.value -= 1
+    void refreshCompletionGate()
   }
 }
 
 function goNext() {
   if (canGoNext.value) {
     currentPage.value += 1
+    void refreshCompletionGate()
   }
 }
 
@@ -362,6 +443,16 @@ async function completeSession() {
   completionMessage.value = ''
   completingSession.value = true
   try {
+    if (isTaskFlow.value) {
+      const done = await completeReading(routeTaskID.value)
+      if (done?.error) {
+        completionError.value = done.error
+        return
+      }
+      completionMessage.value = 'Reading completed. Quiz task inserted into the queue.'
+      return
+    }
+
     const result = await completeReadingSession(
       selectedTopicID.value,
       lockedStartPage.value,
@@ -379,6 +470,19 @@ async function completeSession() {
   } finally {
     completingSession.value = false
   }
+}
+
+async function refreshCompletionGate() {
+  if (!isTaskFlow.value || !routeTaskID.value) {
+    reachedEndPage.value = hasLockedWindow.value && currentPage.value >= lockedTargetPage.value
+    return
+  }
+  const result = await validateReadingCompletion(routeTaskID.value, currentPage.value)
+  if (result?.error) {
+    completionError.value = result.error
+    return
+  }
+  reachedEndPage.value = Boolean(result?.ok)
 }
 
 async function sendChat() {
@@ -440,6 +544,9 @@ function clampPage(page, maxPageCount) {
 
 // Watch route query parameters for start/end page changes
 watch(() => route.query.start, () => {
+  if (isTaskFlow.value) {
+    return
+  }
   const newStartPage = parsePageQueryValue(route.query.start)
   if (newStartPage !== routeStartPage) {
     routeStartPage = newStartPage
@@ -448,10 +555,19 @@ watch(() => route.query.start, () => {
 })
 
 watch(() => route.query.end, () => {
+  if (isTaskFlow.value) {
+    return
+  }
   const newEndPage = parsePageQueryValue(route.query.end)
   if (newEndPage !== routeEndPage) {
     routeEndPage = newEndPage
     void loadBundle()
+  }
+})
+
+watch(() => routeTaskID.value, () => {
+  if (isTaskFlow.value) {
+    void loadTaskFlow()
   }
 })
 </script>

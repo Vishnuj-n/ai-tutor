@@ -3,24 +3,32 @@
 
 ## Purpose
 
-Provide a local-first desktop assistant for studying and knowledge work that lets users upload documents (PDF, TXT, Markdown), index them, and use LLM-powered features (search, Q&A, flashcards, quizzes, Socratic tutoring) with per-notebook scope.
+A **Persistent Guided Study Queue** - local-first desktop assistant for studying. Users upload documents, the system creates a deterministic queue of learning tasks (reading → quiz → review), and users work through the queue.
+
+**NOT:** An autonomous AI tutor, hidden orchestration engine, or proactive scheduling system.
+
+---
 
 ## Goals
 
-- Allow users to add and manage notebooks (uploaded documents) and topics.
-- Make notebooks the primary organizing unit: each notebook can contain one or many PDFs and text sources.
-- Provide reliable local storage for raw files and metadata (SQLite + uploads directory).
-- Ingest documents into chunked text, generate embeddings, and support RAG-style retrieval.
-- Offer a consistent, usable UI across Reader, Flashcards, Quiz, and Socratic tutor pages.
-- Provide global scheduling so tasks are generated and prioritized across all notebooks/topics.
-- Keep user data local by default and excluded from version control.
+- Allow users to upload documents (PDF, TXT, Markdown)
+- **Sliding window chunking** creates deterministic content blocks (2500 words, 200 overlap)
+- **Persistent queue**: `study_queue` table drives all user flows
+- SQLite is the source of truth - no runtime-only state
+- Synchronous LLM calls for quiz generation
+- Queue-driven flashcard reviews (FSRS creates tasks, not orchestrates)
+- Simple, inspectable, debuggable architecture
+- Keep user data local by default
 
 ## Non-Goals
 
-- Not a hosted, multi-user service (default behavior is single-user, local-only).
-- Not a full replacement for enterprise content management systems.
-- Not a chatbot product with free-form conversation memory.
-- Not a LangChain/agent-orchestration based architecture.
+- Not a hosted, multi-user service (single-user, local-only)
+- Not a full enterprise CMS
+- Not a chatbot with conversation memory
+- **Not LangChain/agent-orchestration based**
+- **Not async/background job based** (synchronous MVP)
+- **Not semantic chunking** (sliding window is sufficient)
+- **Not proactive scheduling** (queue query is the scheduler)
 
 ## Users & Personas
 
@@ -38,19 +46,21 @@ Provide a local-first desktop assistant for studying and knowledge work that let
 	- Allow notebook/topic priority input with a user-friendly rating (for example 1-5 stars) and store it for scheduling.
 
 2. Ingestion & Indexing
-	- Parse uploaded files to extract text and basic metadata (page counts for PDFs).
-	- Chunk documents into token-aware pieces suitable for embeddings.
-	- Persist chunk metadata in SQLite (`notebook_chunks`) and write vectors to `sqlite-vec` (`vec0`) using stable chunk IDs.
-	- Generate embeddings locally from `asset/tokenizer.json` + `asset/model_int8.onnx` via ONNX Runtime.
-	- Include a background worker to perform chunking/embedding asynchronously with progress reporting.
+	- Parse uploaded files to extract text and metadata (page counts for PDFs)
+	- **Sliding window chunking**: 2500-word chunks with 200-word overlap
+	- **NO semantic chunking** - deterministic boundaries only
+	- Persist blocks in `blocks` table with `block_type = CHUNK`
+	- Write embeddings to `block_vectors` via `sqlite-vec`
+	- **Insert READING tasks** into `study_queue` during ingestion
+	- **Synchronous processing** - no background workers for MVP
 
 3. RAG and LLM Features
-	- Provide an Ask/Reader view that retrieves relevant chunks and composes prompts with context.
-	- Generate flashcards and quizzes from notebook content.
-	- Offer a Socratic tutor mode that guides learning via multi-step questioning.
-	- Enforce topic-scoped retrieval only (active `topic_id`), with parent-document expansion from matched child chunks.
-	- Enforce strict token budgets during prompt assembly before any model call.
-	- Keep all LLM calls stateless (single-turn request/response, no conversation memory).
+	- Provide Reader view with Ask AI panel for contextual questions
+	- **Synchronous quiz generation**: User clicks Complete → LLM called → Quiz returned directly
+	- Generate flashcards from content (queue-driven reviews, not autonomous)
+	- **Topic-scoped retrieval only** via `block_id` from current task
+	- Enforce strict token budgets during prompt assembly
+	- **All LLM calls stateless and synchronous**
 
 4. Frontend
 	- Vue-based pages: Notebook (upload/list), Reader, Flashcards, Quiz, Socratic, Settings.
@@ -78,15 +88,15 @@ Provide a local-first desktop assistant for studying and knowledge work that let
 	- Code must pass formatter and `golangci-lint` checks; run linter as part of development workflow.
 	- Unit tests for DB layer, chunker/tokenizer, and ingestion logic; integration tests for end-to-end ingestion and retrieval.
 
-9. Learning Workflow & Scheduling
-	- Scheduling is global across all notebooks and topics.
-	- Dashboard must surface daily priorities: due reviews first, then new reading tasks.
-	- Topics follow lifecycle states (`unseen` -> `reading` -> `learned`) with explicit transitions.
-	- Flashcard reviews use FSRS grading actions (Again, Hard, Good, Easy) and persist scheduling state locally.
-	- Quiz generation is topic-scoped and derived from learned content.
-	- Task generation must account for priority rating and learner state when ranking what to do next.
-	- Every generated task must be one-click actionable and deep-link to the exact destination context.
-	- Example: clicking a task like "Quiz for Topic X from Notebook Y" opens Quiz page with Notebook Y and Topic X preselected.
+9. Queue-Driven Learning Workflow
+	- **SQLite `study_queue` is the scheduler** - no separate scheduling engine
+	- Dashboard queries queue: `SELECT * FROM study_queue WHERE status = 'PENDING' ORDER BY priority`
+	- Task types: `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`
+	- **Orchestrator is thin**: fetches task, mounts module, marks complete, inserts follow-ups
+	- Modules are **stateless**: no orchestration logic
+	- Flashcard reviews: FSRS calculates due dates, orchestrator inserts `FLASHCARD_REVIEW` tasks
+	- Remediation: Failed quiz inserts `REREAD` task (optional, user can skip)
+	- Every task is one-click actionable with `block_id` context preloaded
 
 ## Non-Functional Requirements
 
@@ -98,30 +108,58 @@ Provide a local-first desktop assistant for studying and knowledge work that let
 
 ## Architecture Guardrails (Mandatory)
 
-- Keep implementation simple and explicit.
-- Do not use LangChain or similar orchestration frameworks.
-- Use OpenAI-compatible APIs with a minimal provider interface.
-- Keep AI calls stateless.
-- Always scope retrieval to the current `topic_id`.
-- Use parent-document retrieval (child hit -> parent context).
-- Enforce token limits strictly at prompt build time.
-- In Go code: avoid unnecessary interfaces; use structs only when needed; use pointers only when mutation is required.
-- UX guardrail: no chatbot mode; Ask AI is contextual inside reading/review flows.
+- **SQLite `study_queue` is the source of truth** - no runtime-only queues
+- **Orchestrator is thin** - only routes tasks, no flow control
+- **Modules are stateless** - no orchestration logic in Reader/Quiz/Flashcards
+- Do not use LangChain or similar orchestration frameworks
+- Use OpenAI-compatible APIs with minimal provider interface
+- Keep AI calls **stateless and synchronous** (no async workers)
+- Scope retrieval to current `block_id` (from task context)
+- Enforce token limits strictly at prompt build time
+- **Sliding window chunking only** - no semantic chunking
+- In Go: avoid unnecessary interfaces, use structs, pointers only when needed
+- UX guardrail: no chatbot mode; Ask AI is contextual inside reading/review flows
+- **Deterministic MVP > premature optimization**
 
 ## Acceptance Criteria
 
-- Uploading a PDF/TXT/MD via the Notebook UI saves the file to `uploads/` and inserts a `notebooks` row in SQLite.
-- Uploading a group of PDFs to a notebook stores all files, creates/updates notebook mappings, and shows those files under that notebook.
-- The ingestion worker can chunk and create `notebook_chunks` rows for a notebook and write vectors to `sqlite-vec`.
-- Embeddings are generated with ONNX Runtime using `asset/tokenizer.json` and `asset/model_int8.onnx`.
-- Embedding/vector rows are synchronized to SQLite chunk records via shared chunk IDs.
-- The frontend shows uploaded notebooks in the sidebar and allows selecting active notebook/topic across pages.
-- Scheduler produces a single global queue of tasks across notebooks/topics and respects priority ratings.
-- Clicking a scheduled task opens the exact target flow (for example Quiz) with notebook/topic context already set.
-- Retrieval requests never cross topic boundaries unless explicitly enabled by a future feature flag.
-- RAG answers are generated from parent-expanded, topic-scoped context and adhere to token budget limits.
-- Repo remains clean: database and uploads are excluded from VCS by `.gitignore`.
-- All modified/added Go code passes `golangci-lint` and `go build` succeeds.
+### Queue System
+- `study_queue` table exists with correct schema
+- Dashboard queries `study_queue` for pending tasks
+- Clicking task mounts correct module with `block_id` context
+- Completing task updates status to `COMPLETED`
+- Follow-up tasks insert correctly based on completion rules
+
+### Ingestion
+- PDF upload creates blocks via sliding window (2500 words, 200 overlap)
+- No semantic chunking or AI-generated boundaries
+- READING tasks auto-inserted into `study_queue` during ingestion
+- Embeddings generated with ONNX Runtime and stored in `block_vectors`
+
+### Quiz Flow (Synchronous)
+- User clicks Complete → loading spinner shown
+- Backend calls LLM synchronously
+- Quiz returned directly in response
+- QUIZ task inserted into queue
+- Dashboard shows quiz task next
+
+### Remediation
+- Failed quiz (score < threshold) inserts REREAD task
+- User can complete OR skip REREAD task
+- No forced remediation loops
+
+### Flashcards & FSRS
+- FSRS calculates due dates only (not orchestrator)
+- When cards due, `FLASHCARD_REVIEW` task inserted
+- Dashboard shows flashcard task
+- User ratings update FSRS state
+
+### General
+- Repo clean: database/uploads in `.gitignore`
+- All Go code passes `golangci-lint`
+- No runtime-only queues
+- No background workers for MVP
+- SQLite is source of truth
 
 ## Implementation Notes & Next Steps
 

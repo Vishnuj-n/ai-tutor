@@ -247,6 +247,9 @@ Because:
     * Show next review using `scheduled_days` (e.g. "See you in 3 days!").
 * **Outcome:** Flashcards review session is wired end-to-end with FSRS.
 
+
+## Deprecated Architectural Direction (Pre-Queue Architecture)
+
 ## 📍 Sprint 7: The "Augmented Reader" (The Split-Screen Hub)
 **Goal:** Build the "Encoding" phase. This is where the student actually learns the PDF before FSRS tests them.
 * **1. PDF.js Integration:** Embed a PDF viewer in the left pane of `Reader.vue`.

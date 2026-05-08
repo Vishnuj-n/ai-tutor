@@ -120,7 +120,7 @@ func (a *App) startup(ctx context.Context) {
 			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
 				utils.Warnf("could not initialize vector table: %v", err)
 			} else {
-				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{RecomputeOnHashMismatch: true})
+				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
 				go func() {
 					if err := indexer.IndexAllTopics(); err != nil {
 						utils.Warnf("vector indexing failed: %v", err)
@@ -303,6 +303,134 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
 		"insights_available": false, "plan_source": "scheduler-v2-context-locked",
 	}
+}
+
+func (a *App) GetNextTask(notebookID string) map[string]interface{} {
+	if strings.TrimSpace(notebookID) == "" {
+		return map[string]interface{}{"error": "notebook ID is required", "code": 400}
+	}
+	task, err := db.GetNextTask(notebookID)
+	if err != nil {
+		if err == db.ErrNoPendingTasks {
+			return map[string]interface{}{
+				"error": "ErrNoPendingTasks",
+				"code":  204,
+			}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"task": task}
+}
+
+func (a *App) ActivateTask(taskID string) map[string]interface{} {
+	if strings.TrimSpace(taskID) == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.ActivateTask(taskID); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotPending:
+			return map[string]interface{}{"error": "ErrTaskNotPending", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) CompleteTask(taskID string, result models.CompletionResult) map[string]interface{} {
+	if strings.TrimSpace(taskID) == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.CompleteTask(taskID, result); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) SkipTask(taskID string) map[string]interface{} {
+	if strings.TrimSpace(taskID) == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.SkipTask(taskID); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) GetQueueState(notebookID string) map[string]interface{} {
+	if strings.TrimSpace(notebookID) == "" {
+		return map[string]interface{}{"error": "notebook ID is required", "code": 400}
+	}
+	state, err := db.GetQueueState(notebookID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"queue_state": state}
+}
+
+func (a *App) GetReadingTask(taskID string) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	task, err := db.GetReadingTask(taskID)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"task": task}
+}
+
+func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if finalPage <= 0 {
+		return map[string]interface{}{"error": "final page must be positive", "code": 400}
+	}
+	ok, err := db.ValidateReadingCompletion(taskID, finalPage)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": ok}
+}
+
+func (a *App) CompleteReading(taskID string) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if err := db.CompleteReading(taskID); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) GetDailyStudySettings() map[string]interface{} {

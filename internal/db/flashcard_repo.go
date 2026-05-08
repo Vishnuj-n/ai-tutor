@@ -30,7 +30,7 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 
 		result, execErr := tx.Exec(`
 			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 		`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 		if execErr != nil {
 			return execErr
@@ -320,7 +320,7 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 
 		result, execErr := tx.Exec(`
 			INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 		`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 		if execErr != nil {
 			return nil, false, execErr

@@ -337,14 +337,15 @@ func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
 	var result []map[string]interface{}
 	for _, nb := range notebooks {
 		result = append(result, map[string]interface{}{
-			"id":          nb.ID,
-			"title":       nb.Title,
-			"file_type":   nb.FileType,
-			"topic_id":    nb.TopicID,
-			"status":      nb.Status,
-			"page_count":  nb.PageCount,
-			"chunk_count": nb.ChunkCount,
-			"uploaded_at": nb.UploadedAt,
+			"id":              nb.ID,
+			"title":           nb.Title,
+			"file_type":       nb.FileType,
+			"topic_id":        nb.TopicID,
+			"status":          nb.Status,
+			"indexing_status": nb.IndexingStatus,
+			"page_count":      nb.PageCount,
+			"chunk_count":     nb.ChunkCount,
+			"uploaded_at":     nb.UploadedAt,
 		})
 	}
 
