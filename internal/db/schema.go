@@ -142,6 +142,15 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS notebook_topics (
+			notebook_id TEXT NOT NULL,
+			topic_id TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (notebook_id, topic_id),
+			FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+
 		`CREATE TABLE IF NOT EXISTS notebook_chunks (
 			id TEXT PRIMARY KEY,
 			notebook_id TEXT NOT NULL,

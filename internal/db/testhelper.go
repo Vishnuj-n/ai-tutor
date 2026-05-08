@@ -44,6 +44,33 @@ func SeedDemoDataForTests() error {
 		return err
 	}
 
+	if _, err = tx.Exec(`
+		UPDATE topics
+		SET start_page = ?, end_page = ?, current_page_cursor = ?
+		WHERE id = ?
+	`, 1, 10, 0, topic1); err != nil {
+		return err
+	}
+
+	// Insert notebook for topic (required by flashcard generation in Sprint 1+)
+	notebook1 := "os-notebook"
+	_, err = tx.Exec(`
+		INSERT INTO notebooks (id, title, file_path, file_type, status, page_count)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, notebook1, "OS Notebook", "/tmp/os.pdf", "pdf", "uploaded", 10)
+	if err != nil {
+		return err
+	}
+
+	// Link topic to notebook
+	_, err = tx.Exec(`
+		INSERT INTO notebook_topics (notebook_id, topic_id)
+		VALUES (?, ?)
+	`, notebook1, topic1)
+	if err != nil {
+		return err
+	}
+
 	// Insert parent sections for topic 1
 	parent1 := "parent-1"
 	parent2 := "parent-2"
@@ -125,10 +152,52 @@ Disadvantages of Round Robin:
 	}
 
 	for _, chunk := range chunks {
+		pageNum := 0
+		switch chunk.id {
+		case "chunk-1":
+			pageNum = 1
+		case "chunk-2":
+			pageNum = 2
+		case "chunk-3":
+			pageNum = 3
+		case "chunk-4":
+			pageNum = 4
+		case "chunk-5":
+			pageNum = 5
+		case "chunk-6":
+			pageNum = 6
+		}
 		_, err = tx.Exec(`
-			INSERT INTO chunks (id, topic_id, parent_id, chunk_text, token_count, importance_score, weakness_score)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, chunk.id, topic1, chunk.pID, chunk.text, len(chunk.text)/4, 0.0, 0.0)
+			INSERT INTO chunks (id, topic_id, parent_id, chunk_text, page_num, token_count, importance_score, weakness_score)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, chunk.id, topic1, chunk.pID, chunk.text, pageNum, len(chunk.text)/4, 0.0, 0.0)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Link chunks to notebook via notebook_chunks table
+	for _, chunk := range chunks {
+		pageNum := 0
+		switch chunk.id {
+		case "chunk-1":
+			pageNum = 1
+		case "chunk-2":
+			pageNum = 2
+		case "chunk-3":
+			pageNum = 3
+		case "chunk-4":
+			pageNum = 4
+		case "chunk-5":
+			pageNum = 5
+		case "chunk-6":
+			pageNum = 6
+		}
+		notebookChunkID := fmt.Sprintf("notebook-%s", chunk.id)
+		_, err = tx.Exec(`
+			INSERT INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
+			VALUES (?, ?, ?, ?)
+		`, notebookChunkID, notebook1, chunk.id, pageNum)
 		if err != nil {
 			return err
 		}

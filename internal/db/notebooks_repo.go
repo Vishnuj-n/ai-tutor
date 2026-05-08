@@ -272,8 +272,16 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 	args := []interface{}{}
 
 	if topicID != "" {
-		query += " WHERE topic_id = ?"
-		args = append(args, topicID)
+		query += `
+			WHERE topic_id = ?
+			   OR EXISTS (
+				SELECT 1
+				FROM notebook_topics nt
+				WHERE nt.notebook_id = notebooks.id
+				  AND nt.topic_id = ?
+			)
+		`
+		args = append(args, topicID, topicID)
 	}
 	query += " ORDER BY uploaded_at DESC"
 
