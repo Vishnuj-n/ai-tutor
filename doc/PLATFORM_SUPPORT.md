@@ -1,44 +1,66 @@
-Creating a dedicated roadmap file is a smart way to document your "Windows-First" decision. It keeps your current tasks focused while letting anyone else (or your future self) know that you haven't forgotten about other platforms.
+# Platform Support
 
-I recommend creating this as `doc/PLATFORM_SUPPORT.md`. 
+## Current Status: Windows-First
 
-### Proposed Content for `doc/PLATFORM_SUPPORT.md`
+**Primary Target:** Windows 10/11 (x64)
 
----
+Windows is the exclusive build target for the MVP phase. This constraint eliminates cross-platform native library complexity while the core RAG pipeline and queue architecture stabilize.
 
-## 🗺️ Platform Support Roadmap
+### Windows-Specific Dependencies
 
-### **Current Status: Windows (Primary Target)**
-The AI Tutor is currently optimized and tested exclusively for **Windows 10/11 (x64)**. This decision was made to stabilize the core RAG (Retrieval-Augmented Generation) pipeline and "Auto-Syllabus" logic without the overhead of managing cross-platform native binaries during the MVP phase.
+| Component | File | Purpose |
+|-----------|------|---------|
+| ONNX Runtime | `onnxruntime.dll` | Local embedding inference |
+| Vector Storage | `vec0.dll` | SQLite vector search extension |
+| Build Scripts | `sync-deps.sh`, `windows-sync-deps.ps1` | Dependency management |
 
-**Current Windows-Specific Dependencies:**
-* **ONNX Runtime**: Utilizes `onnxruntime.dll` for local embedding inference.
-* **Vector Storage**: Utilizes `vec0.dll` for SQLite vector search capabilities.
-* **Build System**: Scripts and environment variables are currently tailored for CMD/PowerShell and MSVC/MinGW toolchains.
+### Build Requirements
 
----
-
-### **Planned Support: macOS & Linux**
-While not currently supported, the architecture has been designed with future portability in mind. The following steps are planned for future releases:
-
-* **macOS (Intel/Apple Silicon)**: 
-    * Integration of `libonnxruntime.dylib`.
-    * Compilation of `vec0.dylib` for Darwin.
-    * Handling of macOS-specific app-data directories in `app.go`.
-* **Linux (x64/ARM64)**: 
-    * Integration of `libonnxruntime.so`.
-    * Compilation of `vec0.so`.
-    * Validation of local CGO build requirements for various distributions.
+- Go 1.21+ with CGO enabled (MSYS2/MinGW on Windows)
+- MSVC or MinGW toolchain
+- PowerShell for dependency sync scripts
 
 ---
 
-### **Why the Delay?**
-Local-first AI requires tightly coupled native libraries. Focusing on a single OS allowed for:
-1.  **Faster Feature Rollout**: Completing the automated textbook parsing and indexing logic.
-2.  **Deterministic Testing**: Ensuring the ONNX-to-SQLite pipeline is mathematically stable before dealing with OS-specific memory or driver issues.
-3.  **Simplified Asset Management**: Using a single `sync-deps.sh` flow for Windows-only binaries.
+## Future Platforms
+
+### macOS (Intel/Apple Silicon)
+
+**Required Changes:**
+- Replace `onnxruntime.dll` with `libonnxruntime.dylib`
+- Compile `vec0.dylib` for Darwin
+- Update `app.go` app-data directory handling for macOS paths
+- Add macOS-specific build constraints
+
+### Linux (x64/ARM64)
+
+**Required Changes:**
+- Replace `onnxruntime.dll` with `libonnxruntime.so`
+- Compile `vec0.so` for target architecture
+- Validate CGO build requirements across distributions
+- Handle Linux-specific path conventions
 
 ---
 
-### Implementation Note
-By adding this file, you can now safely remove the half-finished `switch runtime.GOOS` blocks in `internal/embeddings/onnx.go` and the generic library name guessing in `internal/runtime/assets.go`. It turns a "missing feature" into a "documented plan."
+## Rationale
+
+Single-platform focus during MVP enables:
+
+1. **Deterministic Testing:** ONNX-to-SQLite pipeline stabilizes without OS-specific memory/driver variables
+2. **Simplified Asset Management:** Single `asset/` folder with Windows-only binaries
+3. **Faster Iteration:** No conditional compilation paths or abstraction layers required
+
+---
+
+## Implementation Notes
+
+Platform-specific code should use Go build constraints:
+
+```go
+//go:build windows
+// +build windows
+
+package embeddings
+```
+
+Remove half-finished `runtime.GOOS` switches. Platform support is either implemented or documented as future work—no intermediate states.

@@ -104,7 +104,7 @@ func (s *StudyService) GenerateMarathonFlashcardsWithTopic(topicID, notebookID s
 		return map[string]interface{}{"error": fmt.Sprintf("failed to ensure topic %s: %s", topicID, err.Error())}
 	}
 
-	cards, _, err = db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
+	cards, existing, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to persist flashcards: " + err.Error()}
 	}
@@ -127,6 +127,7 @@ func (s *StudyService) GenerateMarathonFlashcardsWithTopic(topicID, notebookID s
 		"cards":       cards,
 		"states":      persistedStates,
 		"card_count":  len(cards),
+		"existing":    existing,
 	}
 }
 
@@ -212,7 +213,7 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 	if err != nil {
 		return map[string]interface{}{"error": fmt.Sprintf("failed to ensure topic %s (notebookID: %s, pages %d-%d): %s", syntheticTopicID, notebookID, startPage, endPage, err.Error())}
 	}
-	cards, _, err = db.GetOrCreateFlashcardsForTopic(syntheticTopicID, cards, states)
+	cards, existing, err := db.GetOrCreateFlashcardsForTopic(syntheticTopicID, cards, states)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to persist marathon flashcards: " + err.Error()}
 	}
@@ -229,6 +230,7 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 
 	return map[string]interface{}{
 		"notebook_id":       notebookID,
+		"existing":          existing,
 		"start_page":        startPage,
 		"end_page":          endPage,
 		"topic_id":          syntheticTopicID,

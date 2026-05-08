@@ -1,5 +1,19 @@
 package models
 
+import (
+	"time"
+
+	"github.com/open-spaced-repetition/go-fsrs/v4"
+)
+
+// safeUint64FromInt clamps negative ints to 0 before casting to uint64.
+func safeUint64FromInt(v int) uint64 {
+	if v < 0 {
+		return 0
+	}
+	return uint64(v)
+}
+
 // ScheduledTask represents one actionable study task for the day.
 type ScheduledTask struct {
 	ID              string `json:"id"`
@@ -11,6 +25,66 @@ type ScheduledTask struct {
 	EstimateMinutes int    `json:"estimate_minutes"`
 	Priority        int    `json:"priority"`
 	Meta            string `json:"meta,omitempty"`
+}
+
+type StudyTaskType string
+
+const (
+	StudyTaskTypeFlashcardReview StudyTaskType = "FLASHCARD_REVIEW"
+	StudyTaskTypeReread          StudyTaskType = "REREAD"
+	StudyTaskTypeQuiz            StudyTaskType = "QUIZ"
+	StudyTaskTypeReading         StudyTaskType = "READING"
+	StudyTaskTypeExaminer        StudyTaskType = "EXAMINER"
+)
+
+type StudyTaskStatus string
+
+const (
+	StudyTaskStatusPending   StudyTaskStatus = "PENDING"
+	StudyTaskStatusActive    StudyTaskStatus = "ACTIVE"
+	StudyTaskStatusCompleted StudyTaskStatus = "COMPLETED"
+	StudyTaskStatusSkipped   StudyTaskStatus = "SKIPPED"
+	StudyTaskStatusFailed    StudyTaskStatus = "FAILED"
+)
+
+// StudyQueueTask is the persisted queue task driving guided study progression.
+type StudyQueueTask struct {
+	ID          string          `json:"id"`
+	NotebookID  string          `json:"notebook_id"`
+	TopicID     string          `json:"topic_id,omitempty"`
+	TaskType    StudyTaskType   `json:"task_type"`
+	Status      StudyTaskStatus `json:"status"`
+	Priority    int             `json:"priority"`
+	CreatedAt   string          `json:"created_at"`
+	ActivatedAt string          `json:"activated_at,omitempty"`
+	CompletedAt string          `json:"completed_at,omitempty"`
+	PayloadJSON string          `json:"payload_json,omitempty"`
+	StartPage   int             `json:"start_page,omitempty"`
+	EndPage     int             `json:"end_page,omitempty"`
+}
+
+// QueueState provides pending counts grouped by task type for dashboard summaries.
+type QueueState struct {
+	NotebookID string         `json:"notebook_id,omitempty"`
+	Pending    map[string]int `json:"pending"`
+	Total      int            `json:"total"`
+}
+
+// CompletionResult captures explicit completion outcome and optional explicit follow-up inserts.
+type CompletionResult struct {
+	Status    StudyTaskStatus  `json:"status"`
+	Payload   string           `json:"payload_json,omitempty"`
+	FollowUps []StudyQueueTask `json:"follow_ups,omitempty"`
+}
+
+// ReadingTask is the task payload required by the page-locked reader flow.
+type ReadingTask struct {
+	TaskID      string `json:"task_id"`
+	NotebookID  string `json:"notebook_id"`
+	TopicID     string `json:"topic_id"`
+	StartPage   int    `json:"start_page"`
+	EndPage     int    `json:"end_page"`
+	CurrentPage int    `json:"current_page"`
 }
 
 // TodayPlan is the scheduler output consumed by the dashboard.
@@ -62,15 +136,16 @@ type ChunkWithContext struct {
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
 type Notebook struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	FilePath   string `json:"file_path"`
-	FileType   string `json:"file_type"` // "pdf", "txt", "md"
-	TopicID    string `json:"topic_id,omitempty"`
-	Status     string `json:"status"`
-	UploadedAt string `json:"uploaded_at"`
-	PageCount  int    `json:"page_count,omitempty"`
-	ChunkCount int    `json:"chunk_count"`
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	FilePath       string `json:"file_path"`
+	FileType       string `json:"file_type"` // "pdf", "txt", "md"
+	TopicID        string `json:"topic_id,omitempty"`
+	Status         string `json:"status"`
+	IndexingStatus string `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
+	UploadedAt     string `json:"uploaded_at"`
+	PageCount      int    `json:"page_count,omitempty"`
+	ChunkCount     int    `json:"chunk_count"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)
@@ -127,6 +202,7 @@ type ReaderTopicBundle struct {
 	FileType      string          `json:"file_type,omitempty"`
 	PageCount     int             `json:"page_count"`
 	Sections      []ReaderSection `json:"sections"`
+	Subtopics     []Subtopic      `json:"subtopics,omitempty"`
 }
 
 // QuizQuestion is a generated question persisted per topic.
@@ -214,4 +290,110 @@ type FSRSReviewLog struct {
 	ScheduledDays   int    `json:"scheduled_days"`
 	StateBeforeJSON string `json:"state_before_json"`
 	StateAfterJSON  string `json:"state_after_json"`
+}
+
+// FlashcardStateToCard converts our FlashcardState to go-fsrs Card
+func FlashcardStateToCard(state FlashcardState, dueAt, lastReviewedAt int64) fsrs.Card {
+	var dueTime, lastReviewTime time.Time
+	if dueAt > 0 {
+		dueTime = time.Unix(dueAt, 0)
+	}
+	if lastReviewedAt > 0 {
+		lastReviewTime = time.Unix(lastReviewedAt, 0)
+	}
+
+	// Map StateCode to fsrs.State
+	var fsrsState fsrs.State
+	switch state.StateCode {
+	case 0:
+		fsrsState = fsrs.New
+	case 1:
+		fsrsState = fsrs.Learning
+	case 2:
+		fsrsState = fsrs.Review
+	case 3:
+		fsrsState = fsrs.Relearning
+	default:
+		fsrsState = fsrs.New
+	}
+
+	return fsrs.Card{
+		Due:            dueTime,
+		Stability:      state.Stability,
+		Difficulty:     state.Difficulty,
+		ElapsedDays:    safeUint64FromInt(state.ElapsedDays),
+		ScheduledDays:  safeUint64FromInt(state.ScheduledDays),
+		Reps:           safeUint64FromInt(state.Reps),
+		Lapses:         safeUint64FromInt(state.Lapses),
+		State:          fsrsState,
+		LastReview:     lastReviewTime,
+		RemainingSteps: 0, // Not tracked in our current implementation
+	}
+}
+
+// CardToFlashcardState converts go-fsrs Card to our FlashcardState
+func CardToFlashcardState(card fsrs.Card) FlashcardState {
+	// Map fsrs.State to StateCode
+	stateCode := 0
+	switch card.State {
+	case fsrs.New:
+		stateCode = 0
+	case fsrs.Learning:
+		stateCode = 1
+	case fsrs.Review:
+		stateCode = 2
+	case fsrs.Relearning:
+		stateCode = 3
+	}
+
+	return FlashcardState{
+		Stability:     card.Stability,
+		Difficulty:    card.Difficulty,
+		ElapsedDays:   int(card.ElapsedDays),
+		ScheduledDays: int(card.ScheduledDays),
+		Reps:          int(card.Reps),
+		Lapses:        int(card.Lapses),
+		StateCode:     stateCode,
+	}
+}
+
+// Subtopic represents a logical section within a parent topic for study task organization.
+type Subtopic struct {
+	ID            string `json:"id"`
+	ParentTopicID string `json:"parent_topic_id"`
+	Title         string `json:"title"`
+	StartPage     int    `json:"start_page"`
+	EndPage       int    `json:"end_page"`
+	SearchSnippet string `json:"search_snippet,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+}
+
+// SubtopicExtractionResult is the structured output from LLM subtopic extraction.
+type SubtopicExtractionResult struct {
+	Subtopics []ExtractedSubtopic `json:"subtopics"`
+}
+
+// ExtractedSubtopic is one subtopic identified by the LLM with page boundaries.
+type ExtractedSubtopic struct {
+	Title         string                `json:"title"`
+	StartPage     int                   `json:"start_page"`
+	EndPage       int                   `json:"end_page"`
+	SearchSnippet string                `json:"search_snippet"`
+	Flashcards    []GeneratedFlashcard  `json:"flashcards"`
+	QuizQuestion  GeneratedQuizQuestion `json:"quiz_question"`
+}
+
+// GeneratedFlashcard is a flashcard generated during subtopic extraction.
+type GeneratedFlashcard struct {
+	Prompt string `json:"prompt"`
+	Answer string `json:"answer"`
+}
+
+// GeneratedQuizQuestion is a quiz question generated during subtopic extraction.
+type GeneratedQuizQuestion struct {
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	Explanation   string   `json:"explanation"`
 }

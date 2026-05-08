@@ -46,24 +46,43 @@ func runPDFCPUBookmarksExport(filePath string, uploadDir string) ([]byte, error)
 		_ = os.Remove(tmpPath)
 	}()
 
-	// Create context with timeout to prevent hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Retry logic to handle Windows file locking issues
+	maxRetries := 3
+	retryDelay := 100 * time.Millisecond
 
-	cmd := exec.CommandContext(ctx, pdfcpuPath, "bookmarks", "export", absFilePath, tmpPath)
-	if _, runErr := cmd.Output(); runErr != nil {
-		// Check if the error was due to timeout
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("pdfcpu command timed out after 30 seconds")
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // Exponential backoff
 		}
-		return nil, runErr
+
+		// Create context with timeout to prevent hanging
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
+		cmd := exec.CommandContext(ctx, pdfcpuPath, "bookmarks", "export", absFilePath, tmpPath)
+		_, runErr := cmd.Output()
+		cancel() // Cancel context to release resources
+
+		if runErr != nil {
+			// Check if the error was due to timeout
+			if ctx.Err() == context.DeadlineExceeded {
+				lastErr = fmt.Errorf("pdfcpu command timed out after 30 seconds")
+				continue
+			}
+			lastErr = runErr
+			continue
+		}
+
+		content, readErr := os.ReadFile(tmpPath)
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		return content, nil
 	}
 
-	content, readErr := os.ReadFile(tmpPath)
-	if readErr != nil {
-		return nil, readErr
-	}
-	return content, nil
+	return nil, fmt.Errorf("pdfcpu bookmark extraction failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // validatePDFCPUInputFilePath validates that the file path is safe and within allowed directory.

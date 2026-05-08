@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // InitSchema creates all tables and indexes with a single clean schema.
@@ -132,11 +133,22 @@ func InitSchema(tx *sql.Tx) error {
 			file_path TEXT NOT NULL,
 			file_type TEXT DEFAULT 'pdf',
 			topic_id TEXT,
+			priority INTEGER DEFAULT 5,
 			status TEXT DEFAULT 'uploaded',
+			indexing_status TEXT DEFAULT 'PENDING',
 			page_count INTEGER,
 			chunk_count INTEGER DEFAULT 0,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS notebook_topics (
+			notebook_id TEXT NOT NULL,
+			topic_id TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (notebook_id, topic_id),
+			FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS notebook_chunks (
@@ -190,9 +202,34 @@ func InitSchema(tx *sql.Tx) error {
 			last_reviewed_at INTEGER,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (activity_type, reference_id, COALESCE(source_chunk_id, '')),
+			PRIMARY KEY (activity_type, reference_id, source_chunk_id),
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
 			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
+		)`,
+
+		// Study queue (Sprint 1 foundation)
+		`CREATE TABLE IF NOT EXISTS study_queue (
+			id TEXT PRIMARY KEY,
+			notebook_id TEXT NOT NULL,
+			topic_id TEXT,
+			task_type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			priority INTEGER DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			activated_at TIMESTAMP,
+			completed_at TIMESTAMP,
+			payload_json TEXT,
+			start_page INTEGER,
+			end_page INTEGER,
+			FOREIGN KEY (notebook_id) REFERENCES notebooks(id),
+			FOREIGN KEY (topic_id) REFERENCES topics(id)
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS reading_progress (
+			task_id TEXT PRIMARY KEY,
+			current_page INTEGER DEFAULT 0,
+			last_accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (task_id) REFERENCES study_queue(id)
 		)`,
 	}
 
@@ -200,6 +237,20 @@ func InitSchema(tx *sql.Tx) error {
 	for _, stmt := range schema {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to create table: %w", err)
+		}
+	}
+
+	// Backward-compat: add notebooks.priority for DBs created before this column existed.
+	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN priority INTEGER DEFAULT 5`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("failed to add notebooks.priority column: %w", err)
+		}
+	}
+
+	// Backward-compat: add notebooks.indexing_status for DBs created before this column existed.
+	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN indexing_status TEXT DEFAULT 'PENDING'`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("failed to add notebooks.indexing_status column: %w", err)
 		}
 	}
 
@@ -214,6 +265,8 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_chunks_topic_page_num ON chunks(topic_id, page_num)`,
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_updated_at ON topics(status, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_created_at ON topics(status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_study_queue_status_priority_created ON study_queue(status, priority, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_study_queue_notebook_status ON study_queue(notebook_id, status)`,
 	}
 
 	for _, stmt := range indexes {

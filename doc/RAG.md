@@ -39,9 +39,9 @@ The app is a guided tutor, not a chatbot. Retrieval must support the learning fl
 
 The pipeline consumes:
 
-- Active topic context (using `current_page_cursor` for pacing)
+- Active `block_id` from current task context
 - User question or explain request
-- Topic content stored as parent sections and child chunks
+- Topic content from `blocks` table (sliding window chunks)
 - Token budget and output constraints
 
 ### Why
@@ -50,34 +50,57 @@ RAG must be deterministic about what it can see and how much it can send to the 
 
 ### How
 
-- The UI sends the active topic identifier with the request
-- Backend validates that the topic exists and is eligible for retrieval
-- Retrieval queries only the embeddings associated with that topic and its specific `page_num` bounds
-- Each chunk uses one canonical string `id` in relational tables, mapped to integer SQLite rowids for `sqlite-vec` storage.
+- The UI sends the active `block_id` with the request (from current task)
+- Backend validates that the block exists
+- Retrieval queries the `block_vectors` table filtered by `block_id` scope
+- Return full block content for context (no parent expansion needed with sliding window)
 
 ## 4. Content Structure
 
 ### What
 
-Source material is stored in a parent-child retrieval layout within a Context-Locked Session Architecture:
+Source material is stored in **blocks** created by **sliding window chunking**:
 
-- Parent section: section-level content block (now using LLM-drafted boundaries instead of regex extraction)
-- Child chunk: smaller embedded unit used for similarity search, retaining exact `page_num` provenance
+- **Block**: Content unit of ~2500 words with 200-word overlap
+- **Storage**: `blocks` table with `block_type = CHUNK`
+- **Retrieval**: Top-k blocks from `block_vectors` within `block_id` scope
 
 ### Why
 
-- LLM-drafted boundaries provide higher quality parent section boundaries than automated regex tools
-- `page_num` provenance enforces strict pacing and contextual boundaries
-- Parent expansion prevents awkward fragment-only answers
+We intentionally simplified from semantic chunking:
+
+- **Deterministic**: No AI involvement in boundary decisions
+- **Inspectable**: Easy to verify chunk contents
+- **Sufficient**: MVP does not require semantic boundaries
+- **Removed**: LLM-drafted boundaries, parent-child hierarchy, semantic chunking
 
 ### How
 
-- Parse content into parent sections utilizing LLM-drafted boundaries
-- Create chunks with strict adherence to `page_num` bounds
-- Split oversized sections with token-aware fallback chunking
-- Assign a stable, unique `id` to every child chunk at ingest time
-- Store embeddings on child chunks
-- Keep parent and topic references so retrieval can return original section text and enforce scope
+**Sliding Window Chunking:**
+```
+Text → [2500 words] → [2500 words with 200 overlap] → [next 2500 words]...
+```
+
+**Storage in `blocks` table:**
+
+| Field | Purpose |
+|-------|---------|
+| `id` | Unique block identifier |
+| `topic_id` | Parent topic reference |
+| `block_type` | `CHUNK` |
+| `content` | Text content |
+| `word_count` | For progress tracking |
+| `order_index` | Sequence within topic |
+| `start_page`, `end_page` | Page provenance |
+
+**Retrieval scope:**
+- Retrieve from `block_vectors` table
+- Filter by `block_id` (from active task context)
+- Expand to full block content before prompt assembly
+
+**What changed:**
+- Removed: parent-child hierarchy, semantic boundaries, LLM-drafted sections
+- Added: sliding window, uniform block storage, simpler retrieval
 
 ## 5. Retrieval Pipeline
 
@@ -114,38 +137,34 @@ Heuristic scoring contract:
 
 ### What
 
-Embeddings are stored in a `sqlite-vec` virtual table with integer rowids and JSON serialization. A "Two-Step Fast Retrieval" process is utilized for efficiency.
+Embeddings are stored in a `sqlite-vec` virtual table. Retrieval is simplified with block-based scope.
 
 ### Why
 
-- SQLite extensions are connection-scoped, so a single persistent connection is required.
-- The `sqlite-vec` virtual table requires integer rowids, not string IDs.
-- Virtual table join penalties are high. Pre-filtering before distance calculation avoids them.
-- `database/sql` parameter binding requires concrete Go types; float32 slices must be serialized.
+- SQLite extensions are connection-scoped, single persistent connection required
+- The `sqlite-vec` virtual table requires integer rowids
+- Simplified retrieval: no parent expansion needed with sliding window chunks
 
 ### How
 
 **Storage:**
-- Application maintains a single SQLite connection with vec0 extension loaded (via `db.Init()` and connection pool constraints).
-- Each chunk has a stable string `id` stored in the `chunks` table, alongside its `page_num`. The `id` is the stable primary identifier stored on the `chunks` table.
-- The `chunk_vectors` table stores the mapping to SQLite `rowid`s while referencing the canonical chunk identifier, storing embeddings as JSON strings.
-- On insert, `UpsertChunkVector()` resolves the string `id` to its integer rowid before inserting into vec0.
+- Single SQLite connection with vec0 extension loaded (`db.Init()`)
+- `block_vectors` table maps blocks to embeddings
+- Embeddings stored as JSON strings for database/sql compatibility
 
-**Serialization:**
-- `vectorToJSON()` converts float32 slices to compact JSON strings before passing to database parameters.
-- This avoids database/sql type binding errors and keeps the storage format compatible with direct SQL inspection.
+**Retrieval (Simplified):**
+1. Get `block_id` from current task context
+2. Query `block_vectors` for that specific block's embedding
+3. Calculate similarity to query embedding
+4. Return block content directly (no parent expansion)
 
-**Retrieval (Two-Step Fast Retrieval):**
-1. Pre-filter target rowids by querying the `chunks` table directly, strictly bounded by the active `topic_id` and the relevant `page_num` scope. This yields the vector `rowid`s for the `chunk_vectors` mapping table.
-2. Execute the `sqlite-vec` cosine-distance calculation explicitly restricted to that pre-filtered set of `rowid`s in the `chunk_vectors` table.
-- This two-step process explicitly avoids complex JOINs against the virtual table during distance calculation.
-- Results are joined with chunks/parents to populate context for prompt assembly.
-- Integer rowid-to-`id` mapping is transparent to the RAG pipeline layer.
+**Changes from previous architecture:**
+- Removed: two-step pre-filtering, parent expansion, page_num bounds checking
+- Simpler: direct block lookup by `block_id`
 
 **Architectural Constraints:**
-- Connection pool is fixed at 1 active connection (`SetMaxOpenConns(1)`). Do not change this.
-- String chunk IDs must always be resolved to integer rowids before vec0 operations.
-- Embeddings must always be JSON-serialized before SQL binding.
+- Connection pool fixed at 1 (`SetMaxOpenConns(1)`)
+- Embeddings JSON-serialized before SQL binding
 
 ## 6. Prompt Assembly
 
@@ -255,7 +274,7 @@ The app stays simpler, more predictable, and easier to maintain.
 
 ### What
 
-The retrieval layer depends on the topic, parent, and chunk records stored locally.
+The retrieval layer depends on `blocks` and `block_vectors` tables.
 
 ### Why
 
@@ -263,18 +282,34 @@ RAG should be traceable back to the source material and the current study state.
 
 ### How
 
-- Topic records identify the active scope
-- Parent records store human-readable section text
-- Chunk records store identifiers, retrieval metadata, and scoring hooks
-- The UI uses the returned section labels to show where the answer came from
+- `blocks` table stores content with `block_type = CHUNK`
+- `block_vectors` stores embeddings by `block_id`
+- Current task provides `block_id` for scoped retrieval
+- UI shows block reference for traceability
 
-SQLite schema hooks (required now to avoid later migrations):
+**Schema:**
 
-- Keep scoring columns on chunk-level records, including:
-  - `importance_score`
-  - `weakness_score`
-- Keep `topic_id` and `parent_id` persisted with each chunk row
-- Treat these fields as forward-compatible hooks in V1 (they may be default/unused initially)
+```sql
+-- Content blocks (sliding window chunks)
+CREATE TABLE blocks (
+  id TEXT PRIMARY KEY,
+  topic_id TEXT NOT NULL,
+  block_type TEXT NOT NULL,  -- 'CHUNK', 'QUIZ', 'FLASHCARD'
+  content TEXT,
+  word_count INTEGER,
+  order_index INTEGER,
+  start_page INTEGER,
+  end_page INTEGER,
+  created_at INTEGER
+);
+
+-- Embeddings via sqlite-vec
+CREATE VIRTUAL TABLE block_vectors USING vec0(
+  embedding float[384]
+);
+```
+
+**Note:** Previous `importance_score` and `weakness_score` hooks removed. Scoring now handled by FSRS state on cards or quiz results.
 
 ## 12. Local Embedding Pipeline (Implementation Plan)
 
