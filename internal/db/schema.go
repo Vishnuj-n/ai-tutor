@@ -135,6 +135,7 @@ func InitSchema(tx *sql.Tx) error {
 			topic_id TEXT,
 			priority INTEGER DEFAULT 5,
 			status TEXT DEFAULT 'uploaded',
+			indexing_status TEXT DEFAULT 'PENDING',
 			page_count INTEGER,
 			chunk_count INTEGER DEFAULT 0,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -214,6 +215,13 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (notebook_id) REFERENCES notebooks(id),
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
+
+		`CREATE TABLE IF NOT EXISTS reading_progress (
+			task_id TEXT PRIMARY KEY,
+			current_page INTEGER DEFAULT 0,
+			last_accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (task_id) REFERENCES study_queue(id)
+		)`,
 	}
 
 	// Execute all table creation statements
@@ -227,6 +235,13 @@ func InitSchema(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN priority INTEGER DEFAULT 5`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("failed to add notebooks.priority column: %w", err)
+		}
+	}
+
+	// Backward-compat: add notebooks.indexing_status for DBs created before this column existed.
+	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN indexing_status TEXT DEFAULT 'PENDING'`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("failed to add notebooks.indexing_status column: %w", err)
 		}
 	}
 

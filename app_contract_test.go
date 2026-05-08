@@ -895,6 +895,7 @@ func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
 	}
 	if writtenQuestion == nil {
 		t.Fatalf("expected persisted written question for id=%s", questionID)
+		return // Explicit return to satisfy staticcheck SA5011
 	}
 	if writtenQuestion.TopicID != "os-scheduling" {
 		t.Fatalf("expected persisted topicID os-scheduling, got: %s", writtenQuestion.TopicID)
@@ -2017,27 +2018,3 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 // ============================================================================
 // LIGHTWEIGHT TEST BUILDERS
 // ============================================================================
-
-// createTestNotebook is a lightweight helper to reduce notebook creation repetition.
-func createTestNotebook(t *testing.T, notebookID, title string) {
-	t.Helper()
-	if err := db.CreateNotebook(notebookID, title, "/tmp/"+notebookID+".txt", "txt", "", 1); err != nil {
-		t.Fatalf("CreateNotebook failed: %v", err)
-	}
-}
-
-// createTestTopic is a lightweight helper to reduce topic creation repetition.
-func createTestTopic(t *testing.T, topicID, title string) {
-	t.Helper()
-	if err := db.EnsureTopic(topicID, title); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-}
-
-// createQueueTask is a lightweight helper to reduce queue task insertion repetition.
-func createQueueTask(t *testing.T, task models.StudyQueueTask) {
-	t.Helper()
-	if err := db.InsertStudyTask(task); err != nil {
-		t.Fatalf("InsertStudyTask failed: %v", err)
-	}
-}

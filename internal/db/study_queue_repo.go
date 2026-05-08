@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -289,4 +291,148 @@ func GetQueueState(notebookID string) (models.QueueState, error) {
 		return state, err
 	}
 	return state, nil
+}
+
+// GetReadingTask returns one READING task with locked bounds and persisted cursor.
+func GetReadingTask(taskID string) (*models.ReadingTask, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+
+	task := &models.ReadingTask{}
+	err := conn.QueryRow(`
+		SELECT
+			sq.id,
+			sq.notebook_id,
+			COALESCE(sq.topic_id, ''),
+			COALESCE(sq.start_page, 0),
+			COALESCE(sq.end_page, 0),
+			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
+		FROM study_queue sq
+		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
+		WHERE sq.id = ? AND sq.task_type = 'READING'
+	`, taskID).Scan(
+		&task.TaskID,
+		&task.NotebookID,
+		&task.TopicID,
+		&task.StartPage,
+		&task.EndPage,
+		&task.CurrentPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if task.StartPage <= 0 || task.EndPage <= 0 || task.EndPage < task.StartPage {
+		return nil, fmt.Errorf("reading task has invalid page bounds")
+	}
+	if task.CurrentPage < task.StartPage {
+		task.CurrentPage = task.StartPage
+	}
+	if task.CurrentPage > task.EndPage {
+		task.CurrentPage = task.EndPage
+	}
+	return task, nil
+}
+
+// ValidateReadingCompletion persists page progress and returns true when final page is reached.
+func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
+	task, err := GetReadingTask(taskID)
+	if err != nil {
+		return false, err
+	}
+	if finalPage < task.StartPage {
+		finalPage = task.StartPage
+	}
+	if finalPage > task.EndPage {
+		finalPage = task.EndPage
+	}
+
+	_, err = conn.Exec(`
+		INSERT INTO reading_progress (task_id, current_page, last_accessed_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(task_id) DO UPDATE
+		SET current_page = excluded.current_page,
+		    last_accessed_at = CURRENT_TIMESTAMP
+	`, task.TaskID, finalPage)
+	if err != nil {
+		return false, err
+	}
+
+	return finalPage >= task.EndPage, nil
+}
+
+// CompleteReading completes an ACTIVE READING task only if user reached end_page and inserts QUIZ follow-up.
+func CompleteReading(taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return fmt.Errorf("task id is required")
+	}
+
+	type completionSeed struct {
+		ID         string
+		NotebookID string
+		TopicID    string
+		StartPage  int
+		EndPage    int
+	}
+	seed := completionSeed{}
+	var currentPage int
+	var status string
+
+	err := conn.QueryRow(`
+		SELECT
+			sq.id,
+			sq.notebook_id,
+			COALESCE(sq.topic_id, ''),
+			COALESCE(sq.start_page, 0),
+			COALESCE(sq.end_page, 0),
+			sq.status,
+			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
+		FROM study_queue sq
+		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
+		WHERE sq.id = ? AND sq.task_type = 'READING'
+	`, taskID).Scan(
+		&seed.ID,
+		&seed.NotebookID,
+		&seed.TopicID,
+		&seed.StartPage,
+		&seed.EndPage,
+		&status,
+		&currentPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrTaskNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status != string(models.StudyTaskStatusActive) {
+		return ErrTaskNotActive
+	}
+	if seed.StartPage <= 0 || seed.EndPage <= 0 || seed.EndPage < seed.StartPage {
+		return fmt.Errorf("reading task has invalid page bounds")
+	}
+	if currentPage < seed.EndPage {
+		return fmt.Errorf("cannot complete reading before reaching end page")
+	}
+
+	return CompleteTask(seed.ID, models.CompletionResult{
+		Status: models.StudyTaskStatusCompleted,
+		FollowUps: []models.StudyQueueTask{
+			{
+				ID:         uuid.NewString(),
+				NotebookID: seed.NotebookID,
+				TopicID:    seed.TopicID,
+				TaskType:   models.StudyTaskTypeQuiz,
+				Status:     models.StudyTaskStatusPending,
+				Priority:   0,
+				StartPage:  seed.StartPage,
+				EndPage:    seed.EndPage,
+			},
+		},
+	})
 }

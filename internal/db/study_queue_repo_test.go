@@ -142,3 +142,85 @@ func TestStudyQueueDeterministicOrdering(t *testing.T) {
 		t.Fatalf("expected higher notebook priority task first, got %s", next.ID)
 	}
 }
+
+func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-r", "Topic R"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateNotebook("nb-r", "NB R", "/tmp/r.pdf", "pdf", "topic-r", 12); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := InsertStudyTask(models.StudyQueueTask{
+		ID:         "task-reading",
+		NotebookID: "nb-r",
+		TopicID:    "topic-r",
+		TaskType:   models.StudyTaskTypeReading,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+		StartPage:  5,
+		EndPage:    8,
+	}); err != nil {
+		t.Fatalf("InsertStudyTask reading failed: %v", err)
+	}
+
+	task, err := GetReadingTask("task-reading")
+	if err != nil {
+		t.Fatalf("GetReadingTask failed: %v", err)
+	}
+	if task.CurrentPage != 5 {
+		t.Fatalf("expected current page to initialize at start page, got %d", task.CurrentPage)
+	}
+
+	ok, err := ValidateReadingCompletion("task-reading", 7)
+	if err != nil {
+		t.Fatalf("ValidateReadingCompletion failed: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected completion gate false before end page")
+	}
+
+	task, err = GetReadingTask("task-reading")
+	if err != nil {
+		t.Fatalf("GetReadingTask after progress failed: %v", err)
+	}
+	if task.CurrentPage != 7 {
+		t.Fatalf("expected persisted current page 7, got %d", task.CurrentPage)
+	}
+
+	if err := ActivateTask("task-reading"); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+	if err := CompleteReading("task-reading"); err == nil {
+		t.Fatalf("expected CompleteReading to fail before end page")
+	}
+
+	ok, err = ValidateReadingCompletion("task-reading", 8)
+	if err != nil {
+		t.Fatalf("ValidateReadingCompletion at end page failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected completion gate true at end page")
+	}
+
+	if err := CompleteReading("task-reading"); err != nil {
+		t.Fatalf("CompleteReading failed: %v", err)
+	}
+
+	var status string
+	if err := conn.QueryRow(`SELECT status FROM study_queue WHERE id = ?`, "task-reading").Scan(&status); err != nil {
+		t.Fatalf("query reading task status failed: %v", err)
+	}
+	if status != "COMPLETED" {
+		t.Fatalf("expected reading task status COMPLETED, got %s", status)
+	}
+
+	var quizCount int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE topic_id = ? AND task_type = 'QUIZ' AND status = 'PENDING'`, "topic-r").Scan(&quizCount); err != nil {
+		t.Fatalf("query quiz follow-up failed: %v", err)
+	}
+	if quizCount != 1 {
+		t.Fatalf("expected one pending QUIZ follow-up, got %d", quizCount)
+	}
+}

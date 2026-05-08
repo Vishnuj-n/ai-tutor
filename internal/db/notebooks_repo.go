@@ -25,9 +25,9 @@ func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int
 	}
 
 	_, err = conn.Exec(`
-		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, status, page_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, validatedID, title, filePath, fileType, topicValue, "uploaded", pageCount)
+		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, status, indexing_status, page_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, validatedID, title, filePath, fileType, topicValue, "uploaded", "PENDING", pageCount)
 	return err
 }
 
@@ -101,6 +101,28 @@ func UpdateNotebookStatus(notebookID string, status string) error {
 	result, err := conn.Exec(`
 		UPDATE notebooks
 		SET status = ?
+		WHERE id = ?
+	`, status, notebookID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// UpdateNotebookIndexingStatus updates the notebook semantic indexing status.
+func UpdateNotebookIndexingStatus(notebookID string, status string) error {
+	result, err := conn.Exec(`
+		UPDATE notebooks
+		SET indexing_status = ?
 		WHERE id = ?
 	`, status, notebookID)
 	if err != nil {
@@ -246,7 +268,7 @@ func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicInges
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
 func GetNotebooks(topicID string) ([]models.Notebook, error) {
-	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), page_count, chunk_count, uploaded_at FROM notebooks"
+	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, uploaded_at FROM notebooks"
 	args := []interface{}{}
 
 	if topicID != "" {
@@ -266,7 +288,7 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 	var notebooks []models.Notebook
 	for rows.Next() {
 		var nb models.Notebook
-		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt); err != nil {
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt); err != nil {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
@@ -281,10 +303,10 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
 	err := conn.QueryRow(`
-		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), page_count, chunk_count, uploaded_at
+		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, uploaded_at
 		FROM notebooks
 		WHERE id = ?
-	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
+	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil

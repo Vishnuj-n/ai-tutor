@@ -39,10 +39,8 @@
           <p v-if="ingestionStatusMessage" class="progress-label">{{ ingestionStatusMessage }}</p>
         </div>
 
-        <div v-if="indexingProgress > 0 && indexingProgress < 100" class="progress indexing-progress">
-          <div class="progress-bar" :style="{ width: indexingProgress + '%' }"></div>
-          <span>{{ indexingProgress }}%</span>
-          <p v-if="indexingStatusMessage" class="progress-label">{{ indexingStatusMessage }}</p>
+        <div v-if="indexingStatusMessage" class="progress indexing-progress">
+          <p class="progress-label">{{ indexingStatusMessage }}</p>
         </div>
 
         <div v-if="uploadError" class="error-message">
@@ -76,8 +74,17 @@
               <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
               <p class="meta">{{ notebook.chunk_count }} chunks</p>
               <p class="meta">Status: {{ formatStatus(notebook.status) }}</p>
-              <p v-if="notebook.chunk_count === 0" class="meta pending-index">
-                Not indexed for RAG yet
+              <p v-if="notebook.indexing_status === 'PENDING'" class="meta pending-index">
+                Semantic indexing pending
+              </p>
+              <p v-if="notebook.indexing_status === 'INDEXING'" class="meta indexing-status">
+                Semantic indexing in progress...
+              </p>
+              <p v-if="notebook.indexing_status === 'READY'" class="meta ready-status">
+                ✓ Semantic indexing ready
+              </p>
+              <p v-if="notebook.indexing_status === 'FAILED'" class="meta failed-status">
+                ✗ Semantic indexing failed
               </p>
             </div>
           </div>
@@ -283,37 +290,17 @@ function handleIngestionProgress(payload) {
     ingestionStatusMessage.value = payload.message
   }
 
-  // Handle indexing progress (RAG indexing phase)
-  if (payload.stage === 'indexing' || payload.message?.toLowerCase().includes('indexing')) {
-    if (!indexingNotebookID.value && payload.notebook_id) {
-      indexingNotebookID.value = payload.notebook_id
-    }
-
-    if (indexingNotebookID.value && payload.notebook_id && payload.notebook_id !== indexingNotebookID.value) {
-      return
-    }
-
-    if (typeof payload.percent === 'number') {
-      indexingProgress.value = payload.percent
-    }
-
-    if (payload.message) {
-      indexingStatusMessage.value = payload.message
+  // Handle indexing progress (RAG indexing phase - background)
+  if (payload.stage === 'indexing') {
+    if (typeof payload.processed_chunks === 'number' && typeof payload.total_chunks === 'number') {
+      const percent = Math.round((payload.processed_chunks / payload.total_chunks) * 100)
+      indexingStatusMessage.value = `Semantic indexing: ${percent}% (${payload.processed_chunks}/${payload.total_chunks} chunks)`
     }
   }
 
   const terminalStates = new Set(['failed', 'chunked', 'indexed'])
   if (typeof payload.status === 'string' && terminalStates.has(payload.status)) {
     void loadNotebooks()
-    
-    // Clear indexing progress when indexing is complete
-    if (payload.status === 'indexed' && indexingNotebookID.value) {
-      setTimeout(() => {
-        indexingProgress.value = 0
-        indexingStatusMessage.value = ''
-        indexingNotebookID.value = ''
-      }, 2000)
-    }
   }
 }
 
@@ -581,9 +568,6 @@ async function confirmSyllabusDraft() {
 
   draftError.value = ''
   isConfirmingDraft.value = true
-  indexingStatusMessage.value = 'Starting notebook indexing for RAG...'
-  indexingProgress.value = 10
-  indexingNotebookID.value = draftNotebookID.value
 
   try {
     if (titleChanged) {
@@ -603,16 +587,12 @@ async function confirmSyllabusDraft() {
     }
     await loadTopics()
     await loadNotebooks()
-    indexingStatusMessage.value = 'Indexing in progress...'
-    indexingProgress.value = 50
     closeSyllabusModal()
+    showToast('Notebook ready! Semantic indexing running in background...')
   } catch (error) {
     draftError.value = `Failed to confirm syllabus: ${error.message}`
     uploadError.value = `Failed to confirm syllabus: ${error.message}`
     showToast(`Failed to confirm syllabus: ${error.message}`)
-    indexingProgress.value = 0
-    indexingStatusMessage.value = ''
-    indexingNotebookID.value = ''
   } finally {
     isConfirmingDraft.value = false
   }
@@ -912,6 +892,21 @@ function formatDate(dateString) {
 
 .pending-index {
   color: #b1532a;
+}
+
+.indexing-status {
+  color: #1976d2;
+  font-weight: 600;
+}
+
+.ready-status {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.failed-status {
+  color: #c62828;
+  font-weight: 600;
 }
 
 .notebook-topic {
