@@ -295,6 +295,36 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+
+	// Canonical queue recovery/materialization path for dashboard:
+	// if ACTIVE/PENDING queue tasks exist, surface those directly.
+	activeQueueTasks, err := db.GetAllActiveTasks()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	pendingQueueTasks, err := db.GetAllPendingTasks()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	queueTasks := make([]models.ScheduledTask, 0, len(activeQueueTasks)+len(pendingQueueTasks))
+	for _, q := range activeQueueTasks {
+		queueTasks = append(queueTasks, queueTaskToScheduledTask(q))
+	}
+	for _, q := range pendingQueueTasks {
+		queueTasks = append(queueTasks, queueTaskToScheduledTask(q))
+	}
+	utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
+	if len(queueTasks) > 0 {
+		plan.Tasks = queueTasks
+		plan.IsEstimate = false
+		learningMinutes := 0
+		for _, task := range plan.Tasks {
+			learningMinutes += task.EstimateMinutes
+		}
+		plan.LearningMinutes = learningMinutes
+	}
+
 	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
 	for idx, task := range plan.Tasks {
 		utils.Warnf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
@@ -306,6 +336,50 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
 		"insights_available": false, "plan_source": "scheduler-v2-context-locked",
+	}
+}
+
+func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
+	actionType := strings.ToLower(string(task.TaskType))
+	titleBase := strings.TrimSpace(task.Title)
+	if titleBase == "" {
+		titleBase = "Task"
+	}
+
+	titlePrefix := "Task"
+	switch task.TaskType {
+	case models.StudyTaskTypeReading:
+		titlePrefix = "Read"
+	case models.StudyTaskTypeQuiz:
+		titlePrefix = "Quiz"
+	case models.StudyTaskTypeReread:
+		titlePrefix = "Reread"
+	case models.StudyTaskTypeFlashcardReview:
+		titlePrefix = "Flashcard Review"
+	case models.StudyTaskTypeExaminer:
+		titlePrefix = "Examiner"
+	}
+
+	meta := ""
+	if task.StartPage > 0 && task.EndPage > 0 {
+		meta = fmt.Sprintf("Pages %d-%d", task.StartPage, task.EndPage)
+	}
+	estimateMinutes := 10
+	if task.StartPage > 0 && task.EndPage >= task.StartPage {
+		estimateMinutes = int(float64(task.EndPage-task.StartPage+1) * scheduler.MinutesPerPage)
+	}
+
+	return models.ScheduledTask{
+		ID:              task.ID,
+		ActionType:      actionType,
+		Title:           fmt.Sprintf("%s: %s", titlePrefix, titleBase),
+		TopicID:         task.TopicID,
+		NotebookID:      task.NotebookID,
+		StartPage:       task.StartPage,
+		EndPage:         task.EndPage,
+		EstimateMinutes: estimateMinutes,
+		Priority:        task.Priority,
+		Meta:            meta,
 	}
 }
 

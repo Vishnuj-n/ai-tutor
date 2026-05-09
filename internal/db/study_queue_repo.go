@@ -770,15 +770,20 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 		return "", ErrTaskNotActive
 	}
 
-	// Synchronize topics.current_page_cursor to keep both cursor systems aligned
-	// This ensures sidebar flow (which uses topics cursor) sees up-to-date progress
+	// Synchronize topics.current_page_cursor to keep both cursor systems aligned.
+	// Completion is authoritative for the assigned reading window, so cursor must
+	// advance to at least end_page to prevent scheduler rematerializing the same window.
 	if seed.TopicID != "" {
+		cursorAfterCompletion := currentPage
+		if seed.EndPage > cursorAfterCompletion {
+			cursorAfterCompletion = seed.EndPage
+		}
 		_, err = conn.Exec(`
 			UPDATE topics
 			SET current_page_cursor = ?,
 			    updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND current_page_cursor < ?
-		`, currentPage, seed.TopicID, currentPage)
+		`, cursorAfterCompletion, seed.TopicID, cursorAfterCompletion)
 		if err != nil {
 			return "", fmt.Errorf("failed to synchronize topic cursor: %w", err)
 		}
