@@ -23,9 +23,11 @@ A **Persistent Guided Study Queue** application built with Go (Wails backend) an
 
 ## Core Architecture Principles
 
-### 1. Queue-Driven Everything
+### 1. Queue-Guided Progression
 
-All progression flows through `study_queue`. Task lifecycle:
+The queue drives deterministic progression. Manual and exploratory study entry points are valid, but they must reuse the same canonical initialization, retrieval, and notebook/topic ownership semantics.
+
+Task lifecycle:
 ```
 PENDING → ACTIVE → COMPLETED
            ↓
@@ -58,7 +60,7 @@ Priority hierarchy (in order):
 
 These must NEVER be violated:
 
-1. **All progression flows through `study_queue`** — No side channels, no direct module-to-module signaling
+1. **Queue controls progression** — No side channels, no direct module-to-module signaling for lifecycle flow
 2. **SQLite is source of truth** — No in-memory state machines, no hidden orchestration
 3. **Queue mutations are explicit** — Every state change is a database write with clear audit trail
 4. **No hidden orchestration state** — No event buses, no background schedulers, no autonomous flows
@@ -116,6 +118,7 @@ These must NEVER be violated:
 ### ✅ Always Do
 
 - Query `study_queue` for next task
+- Keep manual and queue entry points on the same canonical init path
 - Mark tasks with explicit status transitions
 - Persist all state to SQLite immediately
 - Validate reading completion at final page only

@@ -403,6 +403,61 @@ func UpdateNotebookPriority(notebookID string, priority int) error {
 	return nil
 }
 
+// GetNotebookSyllabusDraft retrieves the persisted syllabus draft JSON for a notebook
+func GetNotebookSyllabusDraft(notebookID string) (string, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return "", fmt.Errorf("notebook id is required")
+	}
+
+	var draftJSON sql.NullString
+	err := conn.QueryRow(`
+		SELECT syllabus_draft_json
+		FROM notebooks
+		WHERE id = ?
+	`, notebookID).Scan(&draftJSON)
+
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	if !draftJSON.Valid {
+		return "", nil
+	}
+
+	return draftJSON.String, nil
+}
+
+// UpdateNotebookSyllabusDraft persists the syllabus draft JSON for a notebook
+func UpdateNotebookSyllabusDraft(notebookID, draftJSON string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+
+	result, err := conn.Exec(`
+		UPDATE notebooks
+		SET syllabus_draft_json = ?
+		WHERE id = ?
+	`, draftJSON, notebookID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
 // DeleteNotebook removes a notebook and its chunk links
 func DeleteNotebook(notebookID string) error {
 	notebookID = strings.TrimSpace(notebookID)

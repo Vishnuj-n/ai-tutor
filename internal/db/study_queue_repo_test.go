@@ -192,20 +192,9 @@ func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 	if err := ActivateTask("task-reading"); err != nil {
 		t.Fatalf("ActivateTask failed: %v", err)
 	}
-	if err := CompleteReading("task-reading"); err == nil {
-		t.Fatalf("expected CompleteReading to fail before end page")
-	}
-
-	ok, err = ValidateReadingCompletion("task-reading", 8)
-	if err != nil {
-		t.Fatalf("ValidateReadingCompletion at end page failed: %v", err)
-	}
-	if !ok {
-		t.Fatalf("expected completion gate true at end page")
-	}
-
+	// Manual completion now allowed even before end page
 	if err := CompleteReading("task-reading"); err != nil {
-		t.Fatalf("CompleteReading failed: %v", err)
+		t.Fatalf("CompleteReading expected to succeed for manual completion, got: %v", err)
 	}
 
 	var status string

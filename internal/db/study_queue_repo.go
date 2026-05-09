@@ -379,7 +379,15 @@ func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
 		finalPage = task.EndPage
 	}
 
-	_, err = conn.Exec(`
+	tx, err := conn.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	_, err = tx.Exec(`
 		INSERT INTO reading_progress (task_id, current_page, last_accessed_at)
 		VALUES (?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(task_id) DO UPDATE
@@ -387,6 +395,24 @@ func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
 		    last_accessed_at = CURRENT_TIMESTAMP
 	`, task.TaskID, finalPage)
 	if err != nil {
+		return false, err
+	}
+
+	// Synchronize topics.current_page_cursor to keep both cursor systems aligned
+	// This ensures sidebar flow (which uses topics cursor) sees up-to-date progress
+	if task.TopicID != "" {
+		_, err = tx.Exec(`
+			UPDATE topics
+			SET current_page_cursor = ?,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND current_page_cursor < ?
+		`, finalPage, task.TopicID, finalPage)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
 		return false, err
 	}
 
@@ -443,9 +469,6 @@ func CompleteReading(taskID string) error {
 	}
 	if seed.StartPage <= 0 || seed.EndPage <= 0 || seed.EndPage < seed.StartPage {
 		return fmt.Errorf("reading task has invalid page bounds")
-	}
-	if currentPage < seed.EndPage {
-		return fmt.Errorf("cannot complete reading before reaching end page")
 	}
 
 	return CompleteTask(seed.ID, models.CompletionResult{
@@ -523,8 +546,19 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	if status != string(models.StudyTaskStatusActive) {
 		return "", ErrTaskNotActive
 	}
-	if currentPage < seed.EndPage {
-		return "", fmt.Errorf("cannot complete reading before reaching end page")
+
+	// Synchronize topics.current_page_cursor to keep both cursor systems aligned
+	// This ensures sidebar flow (which uses topics cursor) sees up-to-date progress
+	if seed.TopicID != "" {
+		_, err = conn.Exec(`
+			UPDATE topics
+			SET current_page_cursor = ?,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND current_page_cursor < ?
+		`, currentPage, seed.TopicID, currentPage)
+		if err != nil {
+			return "", fmt.Errorf("failed to synchronize topic cursor: %w", err)
+		}
 	}
 
 	quizTaskID := uuid.NewString()

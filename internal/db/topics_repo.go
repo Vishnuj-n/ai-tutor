@@ -120,10 +120,10 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
 		(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
 
-	// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
+	// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
 	var newCursor int
 	if currentCursor == 0 {
-		newCursor = startPage - 1
+		newCursor = startPage
 		if newCursor < 0 {
 			newCursor = 0
 		}
@@ -220,10 +220,10 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 		shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
 			(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
 
-		// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
+		// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
 		var newCursor int
 		if currentCursor == 0 {
-			newCursor = startPage - 1
+			newCursor = startPage
 			if newCursor < 0 {
 				newCursor = 0
 			}

@@ -4,7 +4,7 @@
 
 **Reference:** `ARCHITECTURE.md` for complete system design, queue ordering rules, and architectural philosophy.
 
-This document describes **runtime flow, user interaction sequence, and lifecycle behavior**. All flows are deterministic and queue-driven, with SQLite as the source of truth.
+This document describes **runtime flow, user interaction sequence, and lifecycle behavior**. Queue-driven progression is deterministic and recommended, and manual study entry points are also supported. Both paths use SQLite as the source of truth and must converge on the same canonical bootstrap and ownership semantics.
 
 ---
 
@@ -64,6 +64,8 @@ Runtime benefits:
 5. **User completes task** → Module calls `CompleteTask(taskID, result)`
 6. **Backend marks** task `COMPLETED`/`SKIPPED`/`FAILED`, inserts follow-up tasks
 7. **Dashboard refreshes** showing next pending task
+
+Manual study actions, such as opening Quiz, Flashcards, Reader, or Written Assessment directly, are valid when they call the same backend initialization and retrieval helpers instead of re-implementing them per route.
 
 ### Task Lifecycle Semantics
 

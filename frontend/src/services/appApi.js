@@ -39,6 +39,10 @@ export function getReadingTask(taskID) {
   return appBridge().GetReadingTask(taskID)
 }
 
+export function initializeReadingSession(taskID) {
+  return appBridge().InitializeReadingSession(taskID)
+}
+
 export function validateReadingCompletion(taskID, finalPage) {
   return appBridge().ValidateReadingCompletion(taskID, finalPage)
 }
@@ -132,8 +136,8 @@ export function uploadNotebookFromPath(filePath) {
   return appBridge().UploadNotebookFromPath(filePath)
 }
 
-export function draftNotebookSyllabus(notebookID) {
-  return appBridge().DraftNotebookSyllabus(notebookID)
+export function draftNotebookSyllabus(notebookID, regenerate = false) {
+  return appBridge().DraftNotebookSyllabus(notebookID, regenerate)
 }
 
 export function confirmNotebookSyllabus(notebookID, chapters) {

@@ -397,6 +397,82 @@ func (a *App) GetReadingTask(taskID string) map[string]interface{} {
 	return map[string]interface{}{"task": task}
 }
 
+// InitializeReadingSession consolidates task activation, reading task loading,
+// and page bounds resolution into a single canonical backend call.
+// This replaces the frontend's loadTaskFlowContext() orchestration.
+func (a *App) InitializeReadingSession(taskID string) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+
+	// Activate task (idempotent if already active)
+	_ = db.ActivateTask(taskID)
+
+	// Load reading task with all context
+	task, err := db.GetReadingTask(taskID)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	// Get topic bundle for additional metadata
+	bundle, err := db.GetReaderTopicBundle(task.TopicID, task.NotebookID)
+	if err != nil {
+		// Return task-only response if bundle fails
+		return map[string]interface{}{
+			"ok":   true,
+			"task": task,
+			"page_bounds": map[string]interface{}{
+				"start_page":   task.StartPage,
+				"end_page":     task.EndPage,
+				"current_page": task.StartPage,
+				"page_count":   0,
+			},
+			"navigation": map[string]interface{}{
+				"can_go_prev":  false,
+				"can_go_next":  task.StartPage < task.EndPage,
+				"can_complete": task.StartPage >= task.EndPage,
+			},
+		}
+	}
+
+	// Get current progress from reading_progress table
+	var currentPage int
+	err = db.GetConnection().QueryRow(`
+		SELECT COALESCE(current_page, 0) FROM reading_progress WHERE task_id = ?
+	`, taskID).Scan(&currentPage)
+	if err != nil || currentPage == 0 {
+		currentPage = task.StartPage
+	}
+	// Clamp to bounds
+	if currentPage < task.StartPage {
+		currentPage = task.StartPage
+	}
+	if currentPage > task.EndPage {
+		currentPage = task.EndPage
+	}
+
+	return map[string]interface{}{
+		"ok":     true,
+		"task":   task,
+		"bundle": bundle,
+		"page_bounds": map[string]interface{}{
+			"start_page":   task.StartPage,
+			"end_page":     task.EndPage,
+			"current_page": currentPage,
+			"page_count":   bundle.PageCount,
+		},
+		"navigation": map[string]interface{}{
+			"can_go_prev":  currentPage > task.StartPage,
+			"can_go_next":  currentPage < task.EndPage,
+			"can_complete": currentPage >= task.EndPage,
+		},
+	}
+}
+
 func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
