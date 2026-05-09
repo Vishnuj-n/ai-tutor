@@ -128,15 +128,15 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 	}
 
 	return map[string]interface{}{
-		"notebook_id":      notebookID,
-		"existing":         existing,
-		"start_page":       startPage,
-		"end_page":         endPage,
-		"topic_id":         topicID,
-		"cards":            cards,
-		"states":           persistedStates,
-		"card_count":       len(cards),
-		"llm_tier":         tier,
+		"notebook_id":       notebookID,
+		"existing":          existing,
+		"start_page":        startPage,
+		"end_page":          endPage,
+		"topic_id":          topicID,
+		"cards":             cards,
+		"states":            persistedStates,
+		"card_count":        len(cards),
+		"llm_tier":          tier,
 		"generated_at_unix": now,
 	}
 }

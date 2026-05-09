@@ -181,6 +181,15 @@
         </div>
       </div>
     </transition>
+    <transition name="toast-fade">
+      <div v-if="isDraftingSyllabus" class="drafting-toast">
+        <div class="drafting-toast-inner">
+          <div class="spinner"></div>
+          <span class="drafting-title">Preparing chapter draft...</span>
+          <p>{{ draftingNotebookTitle }}</p>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -227,6 +236,8 @@ const showActionToast = ref(false)
 const actionToastMessage = ref('')
 const fallbackToastTimer = ref(null)
 const actionToastTimer = ref(null)
+const isDraftingSyllabus = ref(false)
+const draftingNotebookTitle = ref('')
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
@@ -437,8 +448,13 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
   draftNotebookID.value = notebookID
   draftNotebookTitle.value = String(notebookTitle || '').trim()
   draftError.value = ''
+
+  // Set loading state immediately for UI responsiveness
+  isDraftingSyllabus.value = true
+  draftingNotebookTitle.value = String(notebookTitle || '').trim()
+
   try {
-    const draft = await apiDraftNotebookSyllabus(notebookID)
+    const draft = await apiDraftNotebookSyllabus(notebookID, false) // Load from DB, don't regenerate
     if (draft?.error) {
       throw new Error(draft.error)
     }
@@ -452,6 +468,8 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
         end_page: Number(ch?.end_page) || 1,
       }))
       : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
+
+    showSyllabusModal.value = true
 
     if (draft?.fallback_used) {
       fallbackToastMessage.value = 'PDF bookmark extraction failed, using fallback chapter draft.'
@@ -469,11 +487,13 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
       start_page: Number(ch.start_page) || 1,
       end_page: Number(ch.end_page) || 1,
     }))
-
-    showSyllabusModal.value = true
+    draftError.value = ''
   } catch (error) {
-    showSyllabusModal.value = true
+    console.error('[Notebook] openSyllabusDraft error:', error)
     draftError.value = `Could not draft syllabus: ${error.message}`
+  } finally {
+    isDraftingSyllabus.value = false
+    draftingNotebookTitle.value = ''
   }
 }
 
@@ -985,6 +1005,8 @@ function formatDate(dateString) {
   border: 1px solid var(--outline-variant);
   border-radius: 14px;
   padding: 18px;
+  z-index: 1300;
+  position: relative;
 }
 
 .modal-header {
@@ -1110,7 +1132,8 @@ function formatDate(dateString) {
 }
 
 .action-toast,
-.fallback-toast {
+.fallback-toast,
+.drafting-toast {
   position: fixed;
   right: 20px;
   bottom: 20px;
@@ -1130,6 +1153,49 @@ function formatDate(dateString) {
 
 .fallback-toast-inner {
   background: #b33939;
+}
+
+.drafting-toast-inner {
+  max-width: 320px;
+  padding: 16px 20px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--outline-variant);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--outline-variant);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.drafting-title {
+  display: block;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--on-surface);
+  margin-bottom: 2px;
+}
+
+.drafting-toast-inner p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
 }
 
 .fallback-toast-title {

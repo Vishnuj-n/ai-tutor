@@ -9,43 +9,23 @@
       </p>
     </header>
 
-    <article v-if="!isTaskFlow" class="panel controls">
-      <label class="field">
-        <span>Notebook</span>
-        <select v-model="selectedNotebookID" :disabled="loadingTree || notebookTree.length === 0 || loadingBundle" @change="onNotebookChange">
-          <option disabled value="">Select notebook</option>
-          <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
-            {{ notebook.title }}
-          </option>
-        </select>
-      </label>
-
-      <label class="field">
-        <span>Topic</span>
-        <select v-model="selectedTopicID" :disabled="loadingTree || availableTopics.length === 0 || loadingBundle" @change="onTopicChange">
-          <option disabled value="">
-            {{ availableTopics.length === 0 ? 'No topics available' : 'Select topic' }}
-          </option>
-          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
-            {{ topic.title }}
-          </option>
-        </select>
-      </label>
-    </article>
-
     <article v-if="globalError" class="panel error">{{ globalError }}</article>
 
     <div class="layout" :class="{ collapsed: chatCollapsed }">
       <article class="panel stage">
-        <div class="stage-head">
+        <div class="stage-head" :class="{ 'stage-head-complete': reachedEndPage }">
           <h2>Document Stage</h2>
           <div class="pager">
             <button class="secondary" :disabled="!canGoPrev" @click="goPrev">Prev</button>
             <span>Page {{ currentPage }} / {{ pageCount }}</span>
             <button class="secondary" :disabled="!canGoNext" @click="goNext">Next</button>
+            <button class="primary" :class="{ 'end-cta': reachedEndPage }" :disabled="!canComplete" @click="completeSession">
+              {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
+            </button>
           </div>
         </div>
         <p v-if="hasLockedWindow" class="lock-meta">Locked Session: Pages {{ lockedStartPage }}-{{ lockedTargetPage }}</p>
+        <p v-if="reachedEndPage" class="completion-callout">You reached the end of this reading window.</p>
 
         <div v-if="loadingBundle" class="empty">Loading document...</div>
         <div v-else-if="!pdfVisible" class="empty">PDF not available for selected notebook/topic.</div>
@@ -53,13 +33,8 @@
           <iframe :key="iframeKey" class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
         </div>
 
-        <article class="complete-session">
-          <button class="primary" :disabled="!canCompleteSession" @click="completeSession">
-            {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
-          </button>
-          <p v-if="completionMessage" class="completion-message">{{ completionMessage }}</p>
-          <p v-if="completionError" class="error">{{ completionError }}</p>
-        </article>
+        <p v-if="completionMessage" class="completion-message">{{ completionMessage }}</p>
+        <p v-if="completionError" class="error">{{ completionError }}</p>
       </article>
 
       <aside class="panel chat" :class="{ closed: chatCollapsed }">
@@ -104,7 +79,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   activateTask,
   askAI,
@@ -119,6 +94,7 @@ import {
 import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
+const router = useRouter()
 
 const notebookTree = ref([])
 const selectedNotebookID = ref(typeof route.query.notebookId === 'string' ? route.query.notebookId : '')
@@ -126,8 +102,8 @@ const selectedTopicID = ref(
   typeof route.query.topic === 'string' ? route.query.topic :
   typeof route.query.topicId === 'string' ? route.query.topicId : ''
 )
-let routeStartPage = parsePageQueryValue(route.query.start)
-let routeEndPage = parsePageQueryValue(route.query.end)
+let routeStartPage = readPageQuery(['start', 'startPage', 'start_page'])
+let routeEndPage = readPageQuery(['end', 'endPage', 'end_page'])
 const routeTaskID = computed(() => {
   if (typeof route.query.taskId === 'string' && route.query.taskId.trim() !== '') {
     return route.query.taskId.trim()
@@ -152,8 +128,9 @@ const completingSession = ref(false)
 const completionMessage = ref('')
 const completionError = ref('')
 const reachedEndPage = ref(false)
+const showCompletionDebugPopup = ref(false)
 
-const chatCollapsed = ref(false)
+const chatCollapsed = ref(true)
 const chatMessages = ref([])
 const chatInput = ref('')
 const chatLoading = ref(false)
@@ -216,8 +193,7 @@ const hasLockedWindow = computed(() => lockedStartPage.value > 0 && lockedTarget
 const canCompleteSession = computed(() =>
   !loadingBundle.value &&
   !completingSession.value &&
-  hasLockedWindow.value &&
-  (isTaskFlow.value ? reachedEndPage.value : Boolean(selectedTopicID.value))
+  (isTaskFlow.value || Boolean(selectedTopicID.value))
 )
 
 onMounted(async () => {
@@ -478,33 +454,39 @@ async function completeSession() {
     return
   }
 
+  console.log('[Reader] completeSession triggered. isTaskFlow:', isTaskFlow.value)
   completionError.value = ''
   completionMessage.value = ''
   completingSession.value = true
   try {
     if (isTaskFlow.value) {
+      console.log('[Reader] Completing task:', routeTaskID.value)
       const done = await completeReading(routeTaskID.value)
       if (done?.error) {
+        console.error('[Reader] completeReading error:', done.error)
         completionError.value = done.error
         return
       }
-      completionMessage.value = 'Reading completed. Quiz task inserted into the queue.'
+      console.log('[Reader] Task complete, navigating...')
+      await router.push('/dashboard')
       return
     }
 
+    console.log('[Reader] Completing manual session topic:', selectedTopicID.value)
     const result = await completeReadingSession(
       selectedTopicID.value,
       lockedStartPage.value,
       lockedTargetPage.value
     )
     if (result?.error) {
+      console.error('[Reader] completeReadingSession error:', result.error)
       completionError.value = result.error
       return
     }
-    const generated = Number(result?.questions_generated) || 0
-    const nextCursor = Number(result?.current_page_cursor) || lockedTargetPage.value + 1
-    completionMessage.value = `Saved ${generated} questions. Cursor advanced to page ${nextCursor}.`
+    console.log('[Reader] Manual session complete, navigating...')
+    await router.push('/dashboard')
   } catch (err) {
+    console.error('[Reader] completeSession exception:', err)
     completionError.value = err?.message || 'Failed to complete session'
   } finally {
     completingSession.value = false
@@ -522,6 +504,11 @@ async function refreshCompletionGate() {
     return
   }
   reachedEndPage.value = Boolean(result?.ok)
+  
+  // Debug: Show popup if user reached end page but validation failed
+  if (hasLockedWindow.value && currentPage.value >= lockedTargetPage.value && !reachedEndPage.value) {
+    showCompletionDebugPopup.value = true
+  }
 }
 
 async function sendChat() {
@@ -558,11 +545,23 @@ async function sendChat() {
   }
 }
 
+function readPageQuery(keys) {
+  for (const key of keys) {
+    const value = route.query[key]
+    const parsed = parsePageQueryValue(value)
+    if (parsed > 0) {
+      return parsed
+    }
+  }
+  return 0
+}
+
 function parsePageQueryValue(value) {
-  if (typeof value !== 'string') {
+  const normalized = Array.isArray(value) ? value[0] : value
+  if (typeof normalized !== 'string' && typeof normalized !== 'number') {
     return 0
   }
-  const parsed = Number(value)
+  const parsed = Number(normalized)
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return 0
   }
@@ -587,23 +586,14 @@ watch(notebookUrl, (newUrl, oldUrl) => {
 })
 
 // Watch route query parameters for start/end page changes
-watch(() => route.query.start, () => {
+watch(() => route.query, () => {
   if (isTaskFlow.value) {
     return
   }
-  const newStartPage = parsePageQueryValue(route.query.start)
-  if (newStartPage !== routeStartPage) {
+  const newStartPage = readPageQuery(['start', 'startPage', 'start_page'])
+  const newEndPage = readPageQuery(['end', 'endPage', 'end_page'])
+  if (newStartPage !== routeStartPage || newEndPage !== routeEndPage) {
     routeStartPage = newStartPage
-    void loadBundle()
-  }
-})
-
-watch(() => route.query.end, () => {
-  if (isTaskFlow.value) {
-    return
-  }
-  const newEndPage = parsePageQueryValue(route.query.end)
-  if (newEndPage !== routeEndPage) {
     routeEndPage = newEndPage
     void loadBundle()
   }
@@ -728,10 +718,23 @@ h3 {
   background: #fff;
 }
 
-.complete-session {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
+.completion-callout {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.stage-head-complete {
+  border-radius: 12px;
+  padding: 8px 10px;
+  border: 1px dashed color-mix(in srgb, var(--primary) 35%, var(--surface-container-low));
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface-container-lowest));
+}
+
+.end-cta {
+  transform: translateZ(0) scale(1.02);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
 }
 
 .completion-message {
@@ -969,6 +972,63 @@ button:disabled {
   border-radius: 10px;
   padding: 12px;
   font-size: 14px;
+}
+
+.debug-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.debug-popup {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--surface-container-low);
+  border-radius: 14px;
+  padding: 20px;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.debug-popup h3 {
+  margin: 0 0 12px 0;
+  font-size: 20px;
+}
+
+.debug-popup p {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.debug-info {
+  font-weight: 700;
+  margin: 16px 0 8px 0;
+}
+
+.debug-popup ul {
+  margin: 0 0 12px 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.debug-popup li {
+  margin: 4px 0;
+  font-family: monospace;
+}
+
+.debug-note {
+  color: var(--muted-text);
+  font-style: italic;
+  font-size: 13px;
 }
 
 @media (max-width: 1180px) {

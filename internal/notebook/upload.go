@@ -336,6 +336,79 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 	return doc, nil
 }
 
+// ExtractDocumentSample extracts only a lightweight sample of the document for syllabus drafting.
+// This is much faster than full extraction as it only reads a small subset of pages.
+func (s *Service) ExtractDocumentSample(filePath string, fileType string, maxPages int) (*ExtractedDocument, error) {
+	fileType = strings.ToLower(fileType)
+
+	doc := &ExtractedDocument{
+		Title: filepath.Base(filePath),
+	}
+
+	switch fileType {
+	case "txt":
+		raw, err := s.readFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read txt file: %w", err)
+		}
+		content := embeddings.NormalizeWhitespace(string(raw))
+		if content == "" {
+			return nil, fmt.Errorf("document has no readable content")
+		}
+		doc.PageCount = 1
+		doc.WordCount = len(strings.Fields(content))
+		doc.Sections = []ExtractedSection{{
+			Heading: "Document",
+			Text:    content,
+			PageNum: 1,
+		}}
+
+	case "md":
+		raw, err := s.readFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read markdown file: %w", err)
+		}
+		content := string(raw)
+		if strings.TrimSpace(content) == "" {
+			return nil, fmt.Errorf("document has no readable content")
+		}
+		sections := splitMarkdownByHeadings(content)
+		if len(sections) == 0 {
+			doc.PageCount = 1
+			doc.Sections = []ExtractedSection{{
+				Heading: "Document",
+				Text:    content,
+				PageNum: 1,
+			}}
+		} else {
+			limit := min(maxPages, len(sections))
+			doc.PageCount = len(sections)
+			doc.Sections = make([]ExtractedSection, limit)
+			for i := 0; i < limit; i++ {
+				doc.Sections[i] = ExtractedSection{
+					Heading: sections[i].Heading,
+					Text:    sections[i].Text,
+					PageNum: i + 1,
+				}
+			}
+		}
+
+	case "pdf":
+		if err := s.extractPDFSample(filePath, doc, maxPages); err != nil {
+			return nil, err
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported file type: %s", fileType)
+	}
+
+	if doc.PageCount <= 0 {
+		doc.PageCount = 1
+	}
+
+	return doc, nil
+}
+
 // sanitizeFileName removes potentially dangerous characters
 func sanitizeFileName(name string) string {
 	// Remove extension for processing
@@ -394,6 +467,67 @@ func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetada
 		return nil, fmt.Errorf("unsupported file type: %s", fileType)
 	}
 
+}
+
+func (s *Service) extractPDFSample(filePath string, doc *ExtractedDocument, maxPages int) error {
+	file, reader, err := s.openPDF(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read pdf: %w", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	totalPages := reader.NumPage()
+	doc.PageCount = totalPages
+
+	// Extract only a sample of pages for syllabus drafting
+	limit := min(maxPages, totalPages)
+
+	for pageIndex := 1; pageIndex <= limit; pageIndex++ {
+		page := reader.Page(pageIndex)
+		if page.V.IsNull() {
+			continue
+		}
+		text, pageErr := page.GetPlainText(nil)
+		if pageErr != nil {
+			return fmt.Errorf("failed to read pdf page %d: %w", pageIndex, pageErr)
+		}
+
+		normalized := embeddings.NormalizeWhitespace(text)
+		if normalized == "" {
+			continue
+		}
+
+		doc.Sections = append(doc.Sections, ExtractedSection{
+			Heading: fmt.Sprintf("Page %d", pageIndex),
+			Text:    normalized,
+			PageNum: pageIndex,
+		})
+	}
+
+	if len(doc.Sections) > 0 {
+		return nil
+	}
+
+	plainReader, plainErr := reader.GetPlainText()
+	if plainErr != nil {
+		return fmt.Errorf("pdf did not contain extractable text: %w", plainErr)
+	}
+
+	var buf bytes.Buffer
+	if _, copyErr := io.Copy(&buf, plainReader); copyErr != nil {
+		return fmt.Errorf("failed to read plain pdf text: %w", copyErr)
+	}
+
+	normalized := embeddings.NormalizeWhitespace(buf.String())
+	doc.Sections = append(doc.Sections, ExtractedSection{
+		Heading: "Document",
+		Text:    normalized,
+		PageNum: 1,
+	})
+
+	return nil
 }
 
 func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) error {

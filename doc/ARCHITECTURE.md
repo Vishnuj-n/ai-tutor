@@ -4,7 +4,7 @@
 
 ### What
 
-A **Persistent Guided Study Queue** - NOT an autonomous AI tutor, hidden orchestration engine, or proactive scheduling system.
+A **Persistent Guided Study Queue** - NOT an autonomous AI tutor, hidden orchestration engine, or proactive scheduling system. The queue is the recommended guided progression path, but manual and exploratory entry points are intentionally supported when they reuse the same canonical bootstrap and topic ownership semantics.
 
 Advanced learning systems (quizzes, FSRS, remediation) are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
 
@@ -43,11 +43,13 @@ Advanced learning systems (quizzes, FSRS, remediation) are treated as **"Data, n
                     └──────────────┘     └─────────────┘
 ```
 
-The queue router ONLY:
+The queue router ONLY, for queue-driven progression:
 - Fetches next pending task from `study_queue` (deterministic ordering)
 - Mounts correct module/view based on `task_type`
 - Marks tasks complete
 - Inserts follow-up queue tasks (explicit rules only)
+
+Manual study entry points may invoke the same module bootstrap and retrieval helpers directly. They must not introduce separate lifecycle implementations.
 
 The router does NOT:
 - Manage hidden state machines
@@ -91,6 +93,8 @@ Sidebar sections:
 5. Socratic Tutor
 6. Settings (bottom)
 7. Sync button (bottom)
+
+These pages can be opened either from a queue task or from a manual exploratory action; both paths should converge on the same initialization pipeline.
 
 ### Why
 

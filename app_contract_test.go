@@ -1432,7 +1432,7 @@ func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
-	resp := app.DraftNotebookSyllabus(uploadResult.ID)
+	resp := app.DraftNotebookSyllabus(uploadResult.ID, false)
 	if _, hasErr := resp["error"]; hasErr {
 		t.Fatalf("expected successful draft response, got error: %v", resp["error"])
 	}
@@ -1443,6 +1443,35 @@ func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 	}
 	if len(chapters) == 0 {
 		t.Fatalf("expected at least one chapter in draft")
+	}
+
+	// Verify draft is persisted to DB
+	draftJSON, err := db.GetNotebookSyllabusDraft(uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetNotebookSyllabusDraft failed: %v", err)
+	}
+	if draftJSON == "" {
+		t.Fatalf("expected draft to be persisted to DB, but got empty string")
+	}
+
+	// Verify that loading with regenerate=false returns the persisted draft without re-running extraction
+	resp2 := app.DraftNotebookSyllabus(uploadResult.ID, false)
+	if _, hasErr := resp2["error"]; hasErr {
+		t.Fatalf("expected successful draft response on reload, got error: %v", resp2["error"])
+	}
+
+	chapters2, ok := resp2["chapters"].([]models.SyllabusChapterDraft)
+	if !ok {
+		t.Fatalf("expected typed chapters slice on reload, got %#v", resp2["chapters"])
+	}
+	if len(chapters2) != len(chapters) {
+		t.Fatalf("expected same number of chapters on reload, got %d vs %d", len(chapters2), len(chapters))
+	}
+
+	// Verify that regenerate=true forces re-generation (should still work)
+	resp3 := app.DraftNotebookSyllabus(uploadResult.ID, true)
+	if _, hasErr := resp3["error"]; hasErr {
+		t.Fatalf("expected successful draft response on regenerate, got error: %v", resp3["error"])
 	}
 	if chapters[0].StartPage < 1 || chapters[0].EndPage < chapters[0].StartPage {
 		t.Fatalf("invalid chapter page bounds: %#v", chapters[0])

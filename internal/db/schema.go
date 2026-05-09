@@ -266,6 +266,13 @@ func InitSchema(tx *sql.Tx) error {
 		}
 	}
 
+	// Backward-compat: add notebooks.syllabus_draft_json for DBs created before this column existed.
+	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN syllabus_draft_json TEXT`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("failed to add notebooks.syllabus_draft_json column: %w", err)
+		}
+	}
+
 	// Create indexes
 	indexes := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt)`,
