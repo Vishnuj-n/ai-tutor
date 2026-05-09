@@ -2,6 +2,7 @@ package db
 
 import (
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -74,6 +75,7 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
 func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
+	utils.Warnf("[QUEUE] GetAllPendingTasks filter status=PENDING order=task_type, notebook_priority desc, task_priority asc, created_at asc")
 	query := `
 		SELECT
 			sq.id,
@@ -137,9 +139,8 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Store topic title in PayloadJSON for now to pass to frontend
 		if topicTitle != "" {
-			task.PayloadJSON = topicTitle
+			task.Title = topicTitle
 		}
 		tasks = append(tasks, task)
 	}
@@ -147,6 +148,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	utils.Warnf("[QUEUE] GetAllPendingTasks result count=%d", len(tasks))
 	return tasks, nil
 }
 
@@ -204,9 +206,8 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Store topic title in PayloadJSON for now to pass to frontend
 		if topicTitle != "" {
-			task.PayloadJSON = topicTitle
+			task.Title = topicTitle
 		}
 		tasks = append(tasks, task)
 	}
@@ -220,6 +221,7 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 // GetNextTask returns the next pending task ordered by deterministic queue rules.
 func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	notebookID = strings.TrimSpace(notebookID)
+	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q order=task_type, notebook_priority desc, task_priority asc, created_at asc", notebookID)
 
 	query := `
 		SELECT
@@ -281,6 +283,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	if err != nil {
 		return nil, err
 	}
+	utils.Warnf("[QUEUE] GetNextTask result taskID=%s status=%s type=%s notebookID=%s topicID=%s", task.ID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
 	return task, nil
 }
 
@@ -289,6 +292,12 @@ func ActivateTask(taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return fmt.Errorf("task id is required")
+	}
+	var beforeStatus string
+	if err := conn.QueryRow(`SELECT COALESCE(status, '') FROM study_queue WHERE id = ?`, taskID).Scan(&beforeStatus); err == nil {
+		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s status=%s", taskID, beforeStatus)
+	} else {
+		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s statusLoadErr=%v", taskID, err)
 	}
 	res, err := conn.Exec(`
 		UPDATE study_queue
@@ -303,24 +312,29 @@ func ActivateTask(taskID string) error {
 		return err
 	}
 	if affected == 1 {
+		utils.Warnf("[QUEUE] ActivateTask transition taskID=%s from=PENDING to=ACTIVE", taskID)
 		return nil
 	}
 	var exists int
 	if err := conn.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
+		utils.Warnf("[QUEUE] ActivateTask existence check error taskID=%s err=%v", taskID, err)
 		return err
 	}
 	if exists == 0 {
+		utils.Warnf("[QUEUE] ActivateTask rejected taskID=%s reason=not_found", taskID)
 		return ErrTaskNotFound
 	}
+	utils.Warnf("[QUEUE] ActivateTask rejected taskID=%s reason=not_pending status=%s", taskID, beforeStatus)
 	return ErrTaskNotPending
 }
 
-// CompleteTask marks ACTIVE task as terminal and inserts explicit follow-up tasks transactionally.
-func CompleteTask(taskID string, result models.CompletionResult) error {
+// CompleteTaskTx marks ACTIVE task as terminal and inserts explicit follow-up tasks transactionally.
+func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return fmt.Errorf("task id is required")
 	}
+	utils.Warnf("[QUEUE] CompleteTaskTx reading task completion update start taskID=%s", taskID)
 	status := strings.TrimSpace(string(result.Status))
 	if status == "" {
 		status = string(models.StudyTaskStatusCompleted)
@@ -328,14 +342,6 @@ func CompleteTask(taskID string, result models.CompletionResult) error {
 	if status != string(models.StudyTaskStatusCompleted) && status != string(models.StudyTaskStatusFailed) {
 		return fmt.Errorf("completion status must be COMPLETED or FAILED")
 	}
-
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
 
 	// Note: Empty string payload preserves existing payload (sentinel value)
 	// To clear payload, use a non-empty sentinel value in application logic
@@ -345,22 +351,28 @@ func CompleteTask(taskID string, result models.CompletionResult) error {
 		WHERE id = ? AND status = 'ACTIVE'
 	`, status, strings.TrimSpace(result.Payload), strings.TrimSpace(result.Payload), taskID)
 	if err != nil {
+		utils.Warnf("[QUEUE] CompleteTaskTx reading task completion update error taskID=%s err=%v", taskID, err)
 		return err
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {
+		utils.Warnf("[QUEUE] CompleteTaskTx reading task completion rows affected error taskID=%s err=%v", taskID, err)
 		return err
 	}
 	if affected == 0 {
 		var exists int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
+			utils.Warnf("[QUEUE] CompleteTaskTx reading task completion existence check error taskID=%s err=%v", taskID, err)
 			return err
 		}
 		if exists == 0 {
+			utils.Warnf("[QUEUE] CompleteTaskTx reading task completion task not found taskID=%s", taskID)
 			return ErrTaskNotFound
 		}
+		utils.Warnf("[QUEUE] CompleteTaskTx reading task completion task not active taskID=%s", taskID)
 		return ErrTaskNotActive
 	}
+	utils.Warnf("[QUEUE] CompleteTaskTx reading task completion update success taskID=%s", taskID)
 
 	for _, followUp := range result.FollowUps {
 		followUp.ID = strings.TrimSpace(followUp.ID)
@@ -380,16 +392,46 @@ func CompleteTask(taskID string, result models.CompletionResult) error {
 			followUp.Status = models.StudyTaskStatusPending
 		}
 
+		utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion start taskID=%s followUpID=%s taskType=%s", taskID, followUp.ID, followUp.TaskType)
 		if _, err := tx.Exec(`
 			INSERT INTO study_queue (
 				id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
 			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
 		`, followUp.ID, followUp.NotebookID, followUp.TopicID, string(followUp.TaskType), string(followUp.Status), followUp.Priority, followUp.PayloadJSON, followUp.StartPage, followUp.EndPage); err != nil {
+			utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion error taskID=%s followUpID=%s err=%v", taskID, followUp.ID, err)
 			return err
 		}
+		utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion success taskID=%s followUpID=%s", taskID, followUp.ID)
 	}
 
-	return tx.Commit()
+	return nil
+}
+
+// CompleteTask marks ACTIVE task as terminal and inserts explicit follow-up tasks transactionally.
+func CompleteTask(taskID string, result models.CompletionResult) error {
+	utils.Warnf("[QUEUE] CompleteTask transaction start taskID=%s", strings.TrimSpace(taskID))
+	tx, err := conn.Begin()
+	if err != nil {
+		utils.Warnf("[QUEUE] CompleteTask transaction begin error taskID=%s err=%v", strings.TrimSpace(taskID), err)
+		return err
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			utils.Warnf("[QUEUE] CompleteTask rollback error taskID=%s err=%v", strings.TrimSpace(taskID), err)
+		}
+	}()
+
+	if err := CompleteTaskTx(tx, taskID, result); err != nil {
+		utils.Warnf("[QUEUE] CompleteTask transaction error taskID=%s err=%v", strings.TrimSpace(taskID), err)
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		utils.Warnf("[QUEUE] CompleteTask tx commit error taskID=%s err=%v", strings.TrimSpace(taskID), err)
+		return err
+	}
+	utils.Warnf("[QUEUE] CompleteTask tx commit success taskID=%s", strings.TrimSpace(taskID))
+	return nil
 }
 
 // SkipTask marks one task as SKIPPED.
@@ -541,6 +583,7 @@ func PersistReadingProgress(taskID string, finalPage int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	reachedEnd := finalPage >= task.EndPage
 	if finalPage < task.StartPage {
 		finalPage = task.StartPage
 	}
@@ -584,7 +627,7 @@ func PersistReadingProgress(taskID string, finalPage int) (bool, error) {
 		return false, err
 	}
 
-	return true, nil
+	return reachedEnd, nil
 }
 
 // ValidateReadingCompletion persists page progress and returns true when final page is reached.

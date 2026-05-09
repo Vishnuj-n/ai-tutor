@@ -340,6 +340,9 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 // This is much faster than full extraction as it only reads a small subset of pages.
 func (s *Service) ExtractDocumentSample(filePath string, fileType string, maxPages int) (*ExtractedDocument, error) {
 	fileType = strings.ToLower(fileType)
+	if maxPages <= 0 {
+		return nil, fmt.Errorf("max pages must be positive")
+	}
 
 	doc := &ExtractedDocument{
 		Title: filepath.Base(filePath),
@@ -521,6 +524,9 @@ func (s *Service) extractPDFSample(filePath string, doc *ExtractedDocument, maxP
 	}
 
 	normalized := embeddings.NormalizeWhitespace(buf.String())
+	if normalized == "" {
+		return fmt.Errorf("pdf did not contain extractable text")
+	}
 	doc.Sections = append(doc.Sections, ExtractedSection{
 		Heading: "Document",
 		Text:    normalized,

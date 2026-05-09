@@ -8,6 +8,11 @@ A **Persistent Guided Study Queue** - NOT an autonomous AI tutor, hidden orchest
 
 Advanced learning systems (quizzes, FSRS, remediation) are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
 
+Canonical checkpoint flow:
+Dashboard -> Reader -> Quiz -> Dashboard
+
+Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation. A Reader -> Quiz transition is allowed only for generated follow-up quiz tasks and only through the queue loop.
+
 **SQLite is the source of truth.**
 
 ### Why
@@ -48,6 +53,8 @@ The queue router ONLY, for queue-driven progression:
 - Mounts correct module/view based on `task_type`
 - Marks tasks complete
 - Inserts follow-up queue tasks (explicit rules only)
+
+If a reading task produces a quiz checkpoint, the generated QUIZ task may be activated immediately as the next queue item. That is a queue transition, not direct module-to-module orchestration.
 
 Manual study entry points may invoke the same module bootstrap and retrieval helpers directly. They must not introduce separate lifecycle implementations.
 
@@ -95,6 +102,8 @@ Sidebar sections:
 7. Sync button (bottom)
 
 These pages can be opened either from a queue task or from a manual exploratory action; both paths should converge on the same initialization pipeline.
+
+Reader can be followed immediately by Quiz when the backend generates the follow-up quiz task. This is the only Reader -> Quiz path that is allowed.
 
 ### Why
 
@@ -397,10 +406,11 @@ Explicit generation lifecycle for QUIZ tasks:
 
 **Flow:**
 1. User signals reading complete (trust-based)
-2. QUIZ task inserted with `GENERATING` state
-3. LLM called synchronously
-4. On success: `generation_status = READY`
-5. On failure: `generation_status = FAILED` (dashboard surfaces explicitly)
+2. Reading completion closes the reading task only; it does not determine mastery or remediation quality
+3. QUIZ task inserted with `GENERATING` state
+4. LLM called synchronously
+5. On success: `generation_status = READY`
+6. On failure: `generation_status = FAILED` (dashboard surfaces explicitly)
 
 **MVP Simplification Note:**
 Generation status is colocated on the QUIZ task row. This intentionally mixes:
@@ -448,6 +458,8 @@ Reading tasks use trust-based completion:
 - No enforced page-completion validation
 - No surveillance logic, reading timers, or engagement tracking
 - Lightweight MVP approach
+
+Reading completion does not measure quality or mastery. It only closes the reading task and allows the backend to generate the follow-up quiz checkpoint.
 
 ### Skip Semantics
 
@@ -579,6 +591,8 @@ The router ONLY:
 4. **Mark tasks complete** when module signals completion
 5. **Insert follow-up tasks** based on explicit completion rules
 
+Generated follow-up quiz tasks may be mounted immediately after Reader completion if they are the next pending queue item. The router still owns the transition; the Reader does not.
+
 ### What It Does NOT Do
 
 - Manage hidden state machines
@@ -609,8 +623,8 @@ All queue mutations MUST originate from:
 ```
 Quiz Module reports score: 60% (below threshold)
 → Queue router marks QUIZ task COMPLETED
-→ Queue router inserts REREAD task
-→ Dashboard shows REREAD as next pending
+→ Queue router inserts REREAD task and other follow-up tasks as needed
+→ Dashboard regains ownership and shows the next pending task
 ```
 
 User can complete or skip the REREAD task. The queue router does NOT force loops.
@@ -665,6 +679,8 @@ A guided tutor must convert queue tasks into immediate action.
 3. User clicks task → Router navigates to module
 4. Module receives `block_id` and `related_id` from task
 5. Module loads content and renders
+
+Reader completion may immediately surface a generated Quiz task as the next queue item. That is a Dashboard/queue-router handoff, not a direct Reader-to-Quiz module route.
 
 **Example:**
 - Task: `QUIZ` with `block_id: "quiz-set-123"`

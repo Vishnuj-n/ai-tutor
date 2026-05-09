@@ -1,5 +1,5 @@
 # DOCUMENT GOD FILE
-Generated: 2026-05-09T16:51:01.995592
+Generated: 2026-05-09T18:27:18.708098
 
 Purpose:
 - Aggregate all documentation files from /doc
@@ -25,6 +25,11 @@ ABSOLUTE: C:\Users\vishn\PROJECT\ai-tutor\doc\AGENT_MAP.md
 
 Strict module boundaries for the Persistent Queue Architecture. Each module has exactly one responsibility. The queue router is intentionally thin—task routing only, no orchestration engine.
 
+Canonical checkpoint flow:
+Dashboard -> Reader -> Quiz -> Dashboard
+
+Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation. Any Reader -> Quiz handoff is queue-owned and applies only to generated follow-up quiz tasks.
+
 **Orchestration Constraints:** See Queue Router section (below) for comprehensive list of prohibited orchestration behaviors. Individual modules focus on their specific responsibilities only.
 
 ---
@@ -43,6 +48,7 @@ Strict module boundaries for the Persistent Queue Architecture. Each module has 
 - Mark tasks `COMPLETED`, `SKIPPED`, or `FAILED` on module signal
 - Insert follow-up tasks per explicit rules (respecting max reread attempts)
 - Crash recovery: reset stale ACTIVE tasks on startup (30-min timeout)
+- Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when they are the next pending queue item
 
 **Explicitly Deterministic:**
 - No adaptive scheduling
@@ -56,6 +62,7 @@ Strict module boundaries for the Persistent Queue Architecture. Each module has 
 - Run autonomous pipelines
 - Control dual timers
 - Manage event buses
+- Route arbitrary module-to-module transitions
 
 **API:**
 ```go
@@ -70,21 +77,29 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 
 **File:** `frontend/src/pages/Reader.vue` + `internal/reader/`
 
-**Responsibility:** Render PDF content for reading
+**Responsibility:** Render PDF content for reading (execution surface only)
 
 **Does:**
 - Display content from `block_id`
-- Enforce page range boundaries
-- Track reading progress (`current_page_cursor`)
-- Validate user reached final page before allowing completion
-- Call "Complete" only when validation passes
+- Open to `start_page` (authoritative entry point)
+- Show assigned page range (`start_page` to `end_page`)
+- Track reading progress (`current_page_cursor` for information only)
+- Provide "Complete Session" button (always enabled during active task)
+- Call "Complete" when user signals completion (trust-based)
 - Provide "Ask AI" panel (RAG)
+- Complete the reading task only
 
 **Does NOT:**
 - Generate quizzes
 - Schedule next tasks
 - Know about other modules
-- Allow completion before reaching final page
+- Validate or gate completion
+- Own progression semantics
+- Enforce page-completion validation
+- Route to other modules
+- Require returning to Dashboard before a generated QUIZ task is mounted
+
+Generated follow-up QUIZ tasks may be activated immediately after Reader completion through the queue loop only.
 
 **API:**
 ```go
@@ -95,6 +110,8 @@ func MarkBlockRead(blockID string, progress int) error
 **Props from Queue Router:**
 - `block_id`: Content to display
 - `related_id`: Topic context
+- `start_page`: Page to open (authoritative)
+- `end_page`: Informational page bound
 
 ---
 
@@ -112,12 +129,14 @@ func MarkBlockRead(blockID string, progress int) error
 - Return pass/fail
 - Handle `GENERATING`, `READY`, `FAILED` generation states
 - Show explicit error for `FAILED` generation
+- Drive queue follow-up outcomes after submission/evaluation
 
 **Does NOT:**
 - Generate quizzes (synchronous LLM call happens before task creation)
 - Insert follow-up tasks
 - Know about Reader module
 - Silently handle generation failures
+- Own workflow orchestration
 
 **API:**
 ```go
@@ -263,6 +282,7 @@ func InsertReadingTasks(blocks []Block) error
 - Show empty state when queue is clear
 - Apply starvation protection (after N reviews, show reading)
 - Surface quiz generation failures explicitly
+- Regain ownership after quiz submission and evaluation
 
 **Does NOT:**
 - Calculate priorities (follows queue ordering rules)
@@ -356,6 +376,8 @@ func RetrieveContext(topicID string, query string, limit int) ([]Context, error)
                    │  follow-up) │
                    └─────────────┘
 ```
+
+Generated Reader -> Quiz handoffs flow through the queue router only; they are not direct module-to-module routes.
 
 ---
 
@@ -567,6 +589,12 @@ ABSOLUTE: C:\Users\vishn\PROJECT\ai-tutor\doc\APP_FLOW.md
 
 This document describes **runtime flow, user interaction sequence, and lifecycle behavior**. Queue-driven progression is deterministic and recommended, and manual study entry points are also supported. Both paths use SQLite as the source of truth and must converge on the same canonical bootstrap and ownership semantics.
 
+Canonical checkpoint flow:
+
+Dashboard -> Reader -> Quiz -> Dashboard
+
+Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard owns progression again after quiz submission and evaluation.
+
 ---
 
 ## 1. The Queue Loop (Primary Flow)
@@ -626,7 +654,7 @@ Runtime benefits:
 6. **Backend marks** task `COMPLETED`/`SKIPPED`/`FAILED`, inserts follow-up tasks
 7. **Dashboard refreshes** showing next pending task
 
-Manual study actions, such as opening Quiz, Flashcards, Reader, or Written Assessment directly, are valid when they call the same backend initialization and retrieval helpers instead of re-implementing them per route.
+Manual study actions, such as opening Quiz, Flashcards, Reader, or Written Assessment directly, are valid when they call the same backend initialization and retrieval helpers instead of re-implementing them per route. Generated QUIZ follow-up tasks may be activated immediately after Reader completion as part of the same checkpoint chain, but that remains a queue transition rather than arbitrary module-to-module routing.
 
 ### Task Lifecycle Semantics
 
@@ -672,28 +700,29 @@ PDF upload → Chapter selection → Sliding window chunking → READING tasks i
 
 ### What
 
-User completes reading task → Synchronous quiz generation
+User completes reading task → Backend generates follow-up QUIZ task
 
 ### Why
 
 **Reference:** `ARCHITECTURE.md` Section 8 for synchronous generation rationale.
 
-### Reading Validation
+### Reading Completion (Trust-Based)
 
-Minimal validation before allowing completion:
+Reading tasks use trust-based completion:
 
-- User must reach final assigned page (`current_page_cursor >= end_page`)
-- Complete button disabled until validation passes
-- No surveillance logic, timers, or engagement tracking
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- No enforced page-completion validation
+- No engagement surveillance, timers, or tracking
 
 ### How
 
-1. User clicks **Complete** on Reader page (button enabled after validation)
+1. User clicks **Complete Session** when they feel ready (button always enabled)
 2. Frontend shows **loading spinner**
 3. Backend calls LLM synchronously
-4. Quiz returned directly in response
-5. Backend inserts **QUIZ task** into `study_queue`
-6. Dashboard now shows quiz as next pending task
+4. Reading completion closes the reading task only; it does not measure mastery or progression quality
+5. Backend inserts and activates the generated **QUIZ task** in `study_queue`
+6. Dashboard may immediately surface the quiz as the next pending checkpoint
 
 ### Quiz Generation States
 
@@ -711,13 +740,15 @@ QUIZ tasks have explicit generation lifecycle:
 3. Success → `generation_status = READY`
 4. Failure → `generation_status = FAILED` (user sees explicit error)
 
+The Reader does not route itself to Quiz. Only generated follow-up quiz tasks may transition immediately through the queue loop.
+
 ---
 
 ## 4. Quiz Flow & Remediation
 
 ### What
 
-Quiz submission → Pass/Fail → Queue-driven follow-up
+Quiz submission/evaluation → Queue-driven follow-up
 
 ### Why
 
@@ -734,14 +765,14 @@ The app only **recommends** revisiting material.
 **IF PASS:**
 ```
 QUIZ task → mark COMPLETED
-→ Optionally insert FLASHCARD_REVIEW task
+→ Optionally insert FLASHCARD_REVIEW task or move to next queued task
 → Dashboard shows next pending task
 ```
 
 **IF FAIL (below threshold):**
 ```
 QUIZ task → mark COMPLETED
-→ Insert REREAD task for the material (if under max attempts)
+→ Insert REREAD task for the material or other remediation follow-ups (if under max attempts)
 → Generate lightweight AI feedback
 → Dashboard shows REREAD as next pending task
 ```
@@ -750,6 +781,8 @@ User can:
 - Complete the REREAD task
 - Skip it (mark SKIPPED - auditable, can resurface)
 - The system does NOT force remediation loops
+
+Dashboard regains orchestration ownership after quiz submission and evaluation.
 
 ### Reread Loop Protection
 
@@ -876,14 +909,21 @@ Skipped tasks are auditable and can resurface if needed. Do NOT silently mark sk
 
 ### Reader Module
 - Renders PDF pages
-- Enforces page range from task context
-- Validates user reached final page before allowing completion
-- Tracks `current_page_cursor` for validation
+- Displays content from assigned page range
+- StartPage is authoritative for opening context
+- EndPage is informational only
+- Trust-based completion (user signals when done)
+- Reader only completes the reading task
 - No orchestration logic
+- No completion validation or gating
+- No arbitrary routing to other modules
+
+Generated follow-up QUIZ tasks may be activated immediately after Reader completion through the queue loop only.
 
 ### Quiz Module
 - Displays quiz
 - Returns score
+- Drives mastery/remediation follow-up through queue results
 - No orchestration logic
 
 ### Flashcard Module
@@ -914,6 +954,11 @@ ABSOLUTE: C:\Users\vishn\PROJECT\ai-tutor\doc\ARCHITECTURE.md
 A **Persistent Guided Study Queue** - NOT an autonomous AI tutor, hidden orchestration engine, or proactive scheduling system. The queue is the recommended guided progression path, but manual and exploratory entry points are intentionally supported when they reuse the same canonical bootstrap and topic ownership semantics.
 
 Advanced learning systems (quizzes, FSRS, remediation) are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
+
+Canonical checkpoint flow:
+Dashboard -> Reader -> Quiz -> Dashboard
+
+Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation. A Reader -> Quiz transition is allowed only for generated follow-up quiz tasks and only through the queue loop.
 
 **SQLite is the source of truth.**
 
@@ -955,6 +1000,8 @@ The queue router ONLY, for queue-driven progression:
 - Mounts correct module/view based on `task_type`
 - Marks tasks complete
 - Inserts follow-up queue tasks (explicit rules only)
+
+If a reading task produces a quiz checkpoint, the generated QUIZ task may be activated immediately as the next queue item. That is a queue transition, not direct module-to-module orchestration.
 
 Manual study entry points may invoke the same module bootstrap and retrieval helpers directly. They must not introduce separate lifecycle implementations.
 
@@ -1002,6 +1049,8 @@ Sidebar sections:
 7. Sync button (bottom)
 
 These pages can be opened either from a queue task or from a manual exploratory action; both paths should converge on the same initialization pipeline.
+
+Reader can be followed immediately by Quiz when the backend generates the follow-up quiz task. This is the only Reader -> Quiz path that is allowed.
 
 ### Why
 
@@ -1303,11 +1352,12 @@ Explicit generation lifecycle for QUIZ tasks:
 | `FAILED` | Generation error |
 
 **Flow:**
-1. User completes reading
-2. QUIZ task inserted with `GENERATING` state
-3. LLM called synchronously
-4. On success: `generation_status = READY`
-5. On failure: `generation_status = FAILED` (dashboard surfaces explicitly)
+1. User signals reading complete (trust-based)
+2. Reading completion closes the reading task only; it does not determine mastery or remediation quality
+3. QUIZ task inserted with `GENERATING` state
+4. LLM called synchronously
+5. On success: `generation_status = READY`
+6. On failure: `generation_status = FAILED` (dashboard surfaces explicitly)
 
 **MVP Simplification Note:**
 Generation status is colocated on the QUIZ task row. This intentionally mixes:
@@ -1344,14 +1394,19 @@ EXAMINER tasks:
 
 Prevents starvation: EXAMINER tasks are tier 5 in priority hierarchy, ensuring reviews and reading are not blocked.
 
-### Reading Validation
+### Reading Completion (Trust-Based)
 
-Minimal validation before allowing task completion:
+Reading tasks use trust-based completion:
 
-- User must reach final assigned page (`current_page_cursor >= end_page`)
-- Complete button disabled until validation passes
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- StartPage is authoritative for opening context
+- EndPage is informational only
+- No enforced page-completion validation
 - No surveillance logic, reading timers, or engagement tracking
 - Lightweight MVP approach
+
+Reading completion does not measure quality or mastery. It only closes the reading task and allows the backend to generate the follow-up quiz checkpoint.
 
 ### Skip Semantics
 
@@ -1483,6 +1538,8 @@ The router ONLY:
 4. **Mark tasks complete** when module signals completion
 5. **Insert follow-up tasks** based on explicit completion rules
 
+Generated follow-up quiz tasks may be mounted immediately after Reader completion if they are the next pending queue item. The router still owns the transition; the Reader does not.
+
 ### What It Does NOT Do
 
 - Manage hidden state machines
@@ -1513,8 +1570,8 @@ All queue mutations MUST originate from:
 ```
 Quiz Module reports score: 60% (below threshold)
 → Queue router marks QUIZ task COMPLETED
-→ Queue router inserts REREAD task
-→ Dashboard shows REREAD as next pending
+→ Queue router inserts REREAD task and other follow-up tasks as needed
+→ Dashboard regains ownership and shows the next pending task
 ```
 
 User can complete or skip the REREAD task. The queue router does NOT force loops.
@@ -1569,6 +1626,8 @@ A guided tutor must convert queue tasks into immediate action.
 3. User clicks task → Router navigates to module
 4. Module receives `block_id` and `related_id` from task
 5. Module loads content and renders
+
+Reader completion may immediately surface a generated Quiz task as the next queue item. That is a Dashboard/queue-router handoff, not a direct Reader-to-Quiz module route.
 
 **Example:**
 - Task: `QUIZ` with `block_id: "quiz-set-123"`
@@ -1665,7 +1724,7 @@ Marks a task complete and triggers follow-up logic.
 | Type | Use Case | Data Fields |
 |------|----------|-------------|
 | `quiz_result` | Quiz completion | `score`, `passed` |
-| `read_complete` | Reading completion | `pages_read`, `reached_end` |
+| `read_complete` | Reading completion | `pages_read` (informational only; not a mastery signal) |
 | `flashcard_review` | Flashcard session | `cards_reviewed`, `ratings` |
 | `skip` | User skips task | `reason` (optional) |
 
@@ -1674,6 +1733,9 @@ Marks a task complete and triggers follow-up logic.
 **Side Effects:**
 - Updates task status to `COMPLETED`, `SKIPPED`, or `FAILED`
 - May insert follow-up tasks based on result
+- Reading completion only closes the reading task; it does not determine mastery or remediation quality
+- Quiz submission/evaluation may insert reread, retry, next task, spaced repetition follow-ups, or mastery progression tasks
+- Dashboard regains ownership after quiz evaluation
 - Skipped tasks preserve audit trail and can resurface
 
 ### SkipTask
@@ -1824,6 +1886,8 @@ Submits answers and returns score.
   "feedback": "Good understanding of concepts..."
 }
 ```
+
+Quiz results are evaluated by the backend to determine follow-up behavior such as reread, retry, next task, spaced repetition follow-ups, or mastery progression.
 
 ---
 
@@ -2046,7 +2110,6 @@ type FlashcardReviewResult struct {
 | ErrLLMUnavailable | 503 | LLM service down |
 | ErrQuizGenerationFailed | 500 | Quiz generation error |
 | ErrMaxRereadsReached | 409 | Max reread attempts exceeded |
-| ErrReadingIncomplete | 400 | User has not reached final page |
 | ErrTaskNotActive | 409 | Task is not in ACTIVE status |
 
 ### Error Response Format
@@ -2075,6 +2138,8 @@ type FlashcardReviewResult struct {
 7. Queue router marks complete, inserts follow-ups
 8. Dashboard refreshes, shows next task
 ```
+
+Reader completion may immediately lead to a generated Quiz task becoming the next pending queue item. That transition is queue-owned, not a direct module-to-module route.
 
 ### No Async Patterns
 
@@ -3269,9 +3334,9 @@ A **Persistent Guided Study Queue** - local-first desktop assistant for studying
 ### Quiz Flow (Synchronous)
 - User clicks Complete → loading spinner shown
 - Backend calls LLM synchronously
-- Quiz returned directly in response
-- QUIZ task inserted into queue
-- Dashboard shows quiz task next
+- Reading completion closes the reading task only
+- Backend generates and activates the QUIZ follow-up task
+- Dashboard may immediately surface the quiz task next
 
 ### Remediation
 - Failed quiz (score < threshold) inserts REREAD task
@@ -3658,12 +3723,17 @@ This is a lightweight query-time bias, NOT autonomous orchestration.
 
 **Balancing rules are static SQL ordering constraints, not adaptive runtime systems.**
 
-### 9. Reading Validation
+### 9. Reading Completion (Trust-Based)
 
-Minimal validation: user must reach final assigned page before Complete button activates.
+Reading tasks use trust-based completion:
 
-- `current_page_cursor` tracked during reading
-- Complete button disabled until `current_page_cursor >= end_page`
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- `start_page` is authoritative for opening context
+- `end_page` is informational only (for reference)
+- `current_page_cursor` tracked for informational progress only
+- No enforced page-completion validation
+- No `currentPage >= endPage` gating
 - No surveillance logic, timers, or engagement tracking
 
 ### 10. Flashcard Review Granularity
@@ -3868,28 +3938,36 @@ CREATE INDEX idx_study_queue_notebook_status
 
 ---
 
-### Sprint 2: Reading Flow & Page Locking
+### Sprint 2: Reading Flow (Trust-Based)
 
-**Goal:** Implement deterministic reading tasks with page-range locking.
+**Goal:** Implement trust-based reading tasks with simple completion flow.
 
 **Required Context:**
 
 - **Documentation:** SCHEMA.md, APP_FLOW.md
 - **Agent Instructions:** /AGENTS.md, /internal/AGENTS.md
 - **Relevant Packages:** internal/db/, frontend/src/pages/
-- **Important Constraints:** No engagement surveillance, reading completion only requires reaching final page
+- **Important Constraints:** Trust-based completion, no engagement surveillance, no enforced validation
 
 **Reading Task Flow:**
 1. User opens reading task from queue
-2. PDF viewer locked to assigned page range (`start_page` to `end_page`)
-3. User navigates within bounds
-4. On reaching `end_page`, completion button activates
-5. User clicks Complete → QUIZ task inserted
+2. PDF viewer opens to `start_page` (authoritative entry point)
+3. User reads freely within assigned range
+4. User clicks Complete Session when ready (button always enabled)
+5. Backend marks task complete → QUIZ task inserted
+
+**Trust-Based Completion:**
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- `start_page` is authoritative for opening context
+- `end_page` is informational only
+- No enforced page-completion validation
+- No `currentPage >= endPage` gating
+- No `can_complete` enforcement logic
 
 **API Surface:**
 - `GetReadingTask(taskID string) ReadingTask` — Get task with page bounds
-- `ValidateReadingCompletion(taskID string, finalPage int) bool` — Verify user reached end page
-- `CompleteReading(taskID string) error` — Complete task, trigger quiz insertion
+- `CompleteReading(taskID string) error` — Complete task (trust-based), trigger quiz insertion
 
 **Schema Additions:**
 ```sql
@@ -3903,15 +3981,17 @@ CREATE TABLE reading_progress (
 ```
 
 **Rules:**
+- Trust-based completion (user decides when done)
 - NO engagement surveillance (no timers, no scroll tracking)
-- Completion requires reaching `end_page` — nothing else
-- PDF locked to assigned range — user cannot read ahead
+- NO completion validation or gating
+- Reader module does NOT own progression semantics
+- Dashboard owns workflow routing
 
 **Deliverables:**
 - [ ] Reading task payload with page bounds
-- [ ] PDF viewer page locking (frontend)
-- [ ] Reading progress persistence
-- [ ] Completion validation (reach final page)
+- [ ] PDF viewer with start_page opening
+- [ ] Reading progress persistence (optional)
+- [ ] Trust-based completion (always-enabled Complete button)
 - [ ] Quiz task auto-insertion on completion
 
 ---

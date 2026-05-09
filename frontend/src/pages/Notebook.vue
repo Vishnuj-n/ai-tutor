@@ -502,7 +502,9 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
     draftError.value = ''
   } catch (error) {
     console.error('[Notebook] openSyllabusDraft error:', error)
-    draftError.value = `Could not draft syllabus: ${error.message}`
+    const message = error instanceof Error ? error.message : String(error)
+    draftError.value = `Could not draft syllabus: ${message}`
+    throw error instanceof Error ? error : new Error(message)
   } finally {
     isDraftingSyllabus.value = false
     draftingNotebookTitle.value = ''

@@ -139,9 +139,9 @@ A **Persistent Guided Study Queue** - local-first desktop assistant for studying
 ### Quiz Flow (Synchronous)
 - User clicks Complete → loading spinner shown
 - Backend calls LLM synchronously
-- Quiz returned directly in response
-- QUIZ task inserted into queue
-- Dashboard shows quiz task next
+- Reading completion closes the reading task only
+- Backend generates and activates the QUIZ follow-up task
+- Dashboard may immediately surface the quiz task next
 
 ### Remediation
 - Failed quiz (score < threshold) inserts REREAD task

@@ -62,7 +62,7 @@ Marks a task complete and triggers follow-up logic.
 | Type | Use Case | Data Fields |
 |------|----------|-------------|
 | `quiz_result` | Quiz completion | `score`, `passed` |
-| `read_complete` | Reading completion | `pages_read` (informational) |
+| `read_complete` | Reading completion | `pages_read` (informational only; not a mastery signal) |
 | `flashcard_review` | Flashcard session | `cards_reviewed`, `ratings` |
 | `skip` | User skips task | `reason` (optional) |
 
@@ -71,6 +71,9 @@ Marks a task complete and triggers follow-up logic.
 **Side Effects:**
 - Updates task status to `COMPLETED`, `SKIPPED`, or `FAILED`
 - May insert follow-up tasks based on result
+- Reading completion only closes the reading task; it does not determine mastery or remediation quality
+- Quiz submission/evaluation may insert reread, retry, next task, spaced repetition follow-ups, or mastery progression tasks
+- Dashboard regains ownership after quiz evaluation
 - Skipped tasks preserve audit trail and can resurface
 
 ### SkipTask
@@ -221,6 +224,8 @@ Submits answers and returns score.
   "feedback": "Good understanding of concepts..."
 }
 ```
+
+Quiz results are evaluated by the backend to determine follow-up behavior such as reread, retry, next task, spaced repetition follow-ups, or mastery progression.
 
 ---
 
@@ -471,6 +476,8 @@ type FlashcardReviewResult struct {
 7. Queue router marks complete, inserts follow-ups
 8. Dashboard refreshes, shows next task
 ```
+
+Reader completion may immediately lead to a generated Quiz task becoming the next pending queue item. That transition is queue-owned, not a direct module-to-module route.
 
 ### No Async Patterns
 

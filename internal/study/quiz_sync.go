@@ -229,18 +229,6 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		return models.QuizResult{}, fmt.Errorf("failed to encode answers: %w", err)
 	}
 	attemptID := uuid.NewString()
-	if err := db.SaveQuizAttempt(models.QuizAttemptRecord{
-		ID:          attemptID,
-		TaskID:      task.ID,
-		Score:       score,
-		Passed:      passed,
-		AnswersJSON: string(answersJSONBytes),
-		Feedback:    feedback,
-		CompletedAt: time.Now().Unix(),
-	}); err != nil {
-		return models.QuizResult{}, fmt.Errorf("failed to save quiz attempt: %w", err)
-	}
-
 	followUps := make([]models.StudyQueueTask, 0, 1)
 	rereadTaskID := ""
 	if !passed {
@@ -264,12 +252,40 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		"correct_count": correctCount,
 		"total_count":   totalCount,
 	})
-	if err := db.CompleteTask(task.ID, models.CompletionResult{
+
+	conn := db.GetConnection()
+	if conn == nil {
+		return models.QuizResult{}, fmt.Errorf("database not initialized")
+	}
+	tx, err := conn.Begin()
+	if err != nil {
+		return models.QuizResult{}, fmt.Errorf("failed to begin quiz transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	attempt := models.QuizAttemptRecord{
+		ID:          attemptID,
+		TaskID:      task.ID,
+		Score:       score,
+		Passed:      passed,
+		AnswersJSON: string(answersJSONBytes),
+		Feedback:    feedback,
+		CompletedAt: time.Now().Unix(),
+	}
+	if err := db.SaveQuizAttemptTx(tx, attempt); err != nil {
+		return models.QuizResult{}, fmt.Errorf("failed to save quiz attempt: %w", err)
+	}
+	if err := db.CompleteTaskTx(tx, task.ID, models.CompletionResult{
 		Status:    models.StudyTaskStatusCompleted,
 		Payload:   string(resultPayload),
 		FollowUps: followUps,
 	}); err != nil {
 		return models.QuizResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.QuizResult{}, fmt.Errorf("failed to commit quiz transaction: %w", err)
 	}
 
 	return models.QuizResult{
