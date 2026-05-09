@@ -6,7 +6,10 @@
 
 A **Persistent Guided Study Queue** - NOT an autonomous AI tutor, hidden orchestration engine, or proactive scheduling system. The queue is the recommended guided progression path, but manual and exploratory entry points are intentionally supported when they reuse the same canonical bootstrap and topic ownership semantics.
 
-Advanced learning systems (quizzes, FSRS, remediation) are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
+Advanced learning systems are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
+
+- **Reading Layer**: Validates immediate comprehension and progression readiness (Reading → Quiz → pass/fail → reread or progress).
+- **Retention Layer**: Optimizes long-term retention using spaced retrieval (Flashcards / Examiner → FSRS update → adaptive review scheduling).
 
 Canonical checkpoint flow:
 Dashboard -> Reader -> Quiz -> Dashboard
@@ -75,7 +78,7 @@ Core components:
 - Frontend pages and sidebar navigation
 - Local data layer (SQLite + embedding index)
 - LLM provider adapter
-- Scheduler services (reading + FSRS)
+- Scheduler services (Reading follow-up + Retention/FSRS)
 
 ### Why
 
@@ -310,11 +313,11 @@ Explicit priority hierarchy with notebook biasing:
 
 | Order | Task Type | Rationale |
 |-------|-----------|-----------|
-| 1 | `FLASHCARD_REVIEW` (due reviews) | Time-sensitive spaced repetition |
-| 2 | `REREAD` (remediation) | Timely follow-up on failed material |
-| 3 | `QUIZ` | Assessment after reading |
-| 4 | `READING` | New material after obligations |
-| 5 | `EXAMINER` | Optional advanced assessment |
+| 1 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
+| 2 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
+| 3 | `QUIZ` | Assessment after reading (Reading Layer) |
+| 4 | `READING` | New material after obligations (Reading Layer) |
+| 5 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
 
 **Deterministic Query-Time Rules:**
 - Same `study_queue` state always produces same task order
@@ -340,7 +343,9 @@ ORDER BY
   sq.created_at ASC;
 ```
 
-### How FSRS Integrates with Queue
+### How Retention Layer (FSRS) Integrates with Queue
+
+**Important**: FSRS is for long-term retention (Flashcards, Examiner). Quizzes are for short-term comprehension and do NOT update FSRS state.
 
 1. When cards become **due** (per FSRS calculation):
    - Insert `FLASHCARD_REVIEW` task into `study_queue` (one task per block)

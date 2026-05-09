@@ -15,8 +15,8 @@ A **Persistent Guided Study Queue** - local-first desktop assistant for studying
 - **Sliding window chunking** creates deterministic content blocks (2500 words, 200 overlap)
 - **Persistent queue**: `study_queue` table drives all user flows
 - SQLite is the source of truth - no runtime-only state
-- Synchronous LLM calls for quiz generation
-- Queue-driven flashcard reviews (FSRS creates tasks, not orchestrates)
+- **Synchronous quiz generation**: Immediate comprehension validation (Reading Layer)
+- **Retention Layer**: Queue-driven flashcard reviews (FSRS creates tasks for long-term retention)
 - Simple, inspectable, debuggable architecture
 - Keep user data local by default
 
@@ -94,8 +94,8 @@ A **Persistent Guided Study Queue** - local-first desktop assistant for studying
 	- Task types: `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`
 	- **Orchestrator is thin**: fetches task, mounts module, marks complete, inserts follow-ups
 	- Modules are **stateless**: no orchestration logic
-	- Flashcard reviews: FSRS calculates due dates, orchestrator inserts `FLASHCARD_REVIEW` tasks
-	- Remediation: Failed quiz inserts `REREAD` task (optional, user can skip)
+	- Flashcard reviews: FSRS calculates due dates for long-term retention; orchestrator inserts `FLASHCARD_REVIEW` tasks
+	- Remediation: Failed quiz inserts `REREAD` task (Reading Layer: immediate comprehension validation)
 	- Every task is one-click actionable with `block_id` context preloaded
 
 ## Non-Functional Requirements
