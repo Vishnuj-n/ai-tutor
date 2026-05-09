@@ -177,8 +177,9 @@ func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateReadingCompletion failed: %v", err)
 	}
-	if ok {
-		t.Fatalf("expected completion gate false before end page")
+	// Trust-based model: completion is always allowed; ValidateReadingCompletion only persists progress.
+	if !ok {
+		t.Fatalf("expected ValidateReadingCompletion to return true (trust-based, no page gate)")
 	}
 
 	task, err = GetReadingTask("task-reading")

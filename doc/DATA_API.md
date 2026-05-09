@@ -62,7 +62,7 @@ Marks a task complete and triggers follow-up logic.
 | Type | Use Case | Data Fields |
 |------|----------|-------------|
 | `quiz_result` | Quiz completion | `score`, `passed` |
-| `read_complete` | Reading completion | `pages_read`, `reached_end` |
+| `read_complete` | Reading completion | `pages_read` (informational) |
 | `flashcard_review` | Flashcard session | `cards_reviewed`, `ratings` |
 | `skip` | User skips task | `reason` (optional) |
 
@@ -443,7 +443,6 @@ type FlashcardReviewResult struct {
 | ErrLLMUnavailable | 503 | LLM service down |
 | ErrQuizGenerationFailed | 500 | Quiz generation error |
 | ErrMaxRereadsReached | 409 | Max reread attempts exceeded |
-| ErrReadingIncomplete | 400 | User has not reached final page |
 | ErrTaskNotActive | 409 | Task is not in ACTIVE status |
 
 ### Error Response Format

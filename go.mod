@@ -7,7 +7,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mattn/go-sqlite3 v1.14.18
-	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0-20260505214920-4bf3ee3a2edc
+	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0-20260508143813-8a8cfc36f1a8
 	github.com/sugarme/tokenizer v0.3.0
 	github.com/wailsapp/wails/v2 v2.11.0
 	github.com/yalue/onnxruntime_go v1.27.0

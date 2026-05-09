@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/open-spaced-repetition/go-fsrs/v4"
@@ -188,6 +189,7 @@ type Notebook struct {
 	UploadedAt     string `json:"uploaded_at"`
 	PageCount      int    `json:"page_count,omitempty"`
 	ChunkCount     int    `json:"chunk_count"`
+	Priority       int    `json:"priority"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)
@@ -363,7 +365,6 @@ func FlashcardStateToCard(state FlashcardState, dueAt, lastReviewedAt int64) fsr
 		Due:            dueTime,
 		Stability:      state.Stability,
 		Difficulty:     state.Difficulty,
-		ElapsedDays:    safeUint64FromInt(state.ElapsedDays),
 		ScheduledDays:  safeUint64FromInt(state.ScheduledDays),
 		Reps:           safeUint64FromInt(state.Reps),
 		Lapses:         safeUint64FromInt(state.Lapses),
@@ -391,7 +392,6 @@ func CardToFlashcardState(card fsrs.Card) FlashcardState {
 	return FlashcardState{
 		Stability:     card.Stability,
 		Difficulty:    card.Difficulty,
-		ElapsedDays:   int(card.ElapsedDays),
 		ScheduledDays: int(card.ScheduledDays),
 		Reps:          int(card.Reps),
 		Lapses:        int(card.Lapses),
@@ -438,4 +438,52 @@ type GeneratedQuizQuestion struct {
 	Options       []string `json:"options"`
 	CorrectAnswer string   `json:"correct_answer"`
 	Explanation   string   `json:"explanation"`
+}
+
+// PageBounds defines the locked reading window for a task.
+type PageBounds struct {
+	StartPage   int `json:"start_page"`
+	EndPage     int `json:"end_page"`
+	CurrentPage int `json:"current_page"`
+	PageCount   int `json:"page_count"`
+}
+
+// NavigationState indicates what actions are available.
+type NavigationState struct {
+	CanGoPrev   bool `json:"can_go_prev"`
+	CanGoNext   bool `json:"can_go_next"`
+	CanComplete bool `json:"can_complete"`
+}
+
+// ReadingSessionResponse is returned by InitializeReadingSession.
+// Provides complete context needed for Reader UI initialization.
+type ReadingSessionResponse struct {
+	OK         bool               `json:"ok"`
+	Error      string             `json:"error,omitempty"`
+	Code       int                `json:"code,omitempty"`
+	Task       *ReadingTask       `json:"task,omitempty"`
+	Bundle     *ReaderTopicBundle `json:"bundle,omitempty"`
+	PageBounds PageBounds         `json:"page_bounds"`
+	Navigation NavigationState    `json:"navigation"`
+}
+
+// Validate ensures all required fields for a successful reading session are present.
+// It returns an error if OK is true but critical data is missing.
+func (r *ReadingSessionResponse) Validate() error {
+	if !r.OK {
+		return nil // Error already reported via OK=false
+	}
+	if r.Task == nil {
+		return fmt.Errorf("missing required field: task")
+	}
+	if r.Bundle == nil {
+		return fmt.Errorf("missing required field: bundle")
+	}
+	if len(r.Bundle.Sections) == 0 {
+		return fmt.Errorf("missing required field: bundle.sections")
+	}
+	if r.PageBounds.StartPage <= 0 {
+		return fmt.Errorf("missing required field: page_bounds (start_page must be > 0)")
+	}
+	return nil
 }

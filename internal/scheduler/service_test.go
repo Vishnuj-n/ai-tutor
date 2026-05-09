@@ -39,8 +39,8 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	}
 
 	task := plan.Tasks[0]
-	if task.ActionType != "read" {
-		t.Fatalf("expected read task, got %s", task.ActionType)
+	if task.ActionType != "reading" {
+		t.Fatalf("expected reading task, got %s", task.ActionType)
 	}
 	if task.StartPage != 1 || task.EndPage != 34 {
 		t.Fatalf("expected pages 1-34, got %d-%d", task.StartPage, task.EndPage)

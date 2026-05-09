@@ -111,21 +111,17 @@ function startTask(task) {
   }
 
   const action = (task.action_type || '').toLowerCase()
-  const meta = String(task.meta || '').toLowerCase()
 
-  if (action === 'read') {
+  if (action === 'reading') {
     routePath = '/reader'
-  } else if (action === 'review') {
-    // Route based on review subtype in meta
-    if (meta === 'flashcard') {
-      routePath = '/flashcards'
-    } else if (meta === 'quiz') {
-      routePath = '/quiz'
-    } else if (meta === 'written') {
-      routePath = '/examiner'
-    } else {
-      routePath = '/flashcards' // default for unknown review meta
-    }
+  } else if (action === 'flashcard_review') {
+    routePath = '/flashcards'
+  } else if (action === 'quiz') {
+    routePath = '/quiz'
+  } else if (action === 'examiner' || action === 'written') {
+    routePath = '/examiner'
+  } else if (action === 'reread') {
+    routePath = '/reader'
   } else {
     // Unknown action type: surface feedback and fall back to dashboard
     const display = task.action_type || '(empty)'

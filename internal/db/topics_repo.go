@@ -391,9 +391,9 @@ func GetTopicCurrentPageCursor(topicID string) (int, error) {
 }
 
 // QueryNextReadingTopic returns the next reading topic with deterministic page bounds and cursor.
+// Joins with notebooks table to ensure topics have a valid notebook source.
 func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	var topic models.ReadingTopicCursor
-	var notebookID sql.NullString
 	err := conn.QueryRow(`
 		SELECT
 			t.id,
@@ -401,22 +401,23 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 			COALESCE(t.start_page, 0),
 			COALESCE(t.end_page, 0),
 			COALESCE(t.current_page_cursor, 0),
-			COALESCE(nt.notebook_id, '')
+			n.id
 		FROM topics t
-		LEFT JOIN notebook_topics nt ON nt.topic_id = t.id
+		INNER JOIN notebooks n ON n.topic_id = t.id
 		WHERE t.status IN ('unseen', 'reading')
 		  AND COALESCE(t.end_page, 0) > 0
 		  AND COALESCE(t.current_page_cursor, 0) < COALESCE(t.end_page, 0)
+		  AND n.id IS NOT NULL
+		  AND n.id != ''
 		ORDER BY t.updated_at ASC, t.created_at ASC
 		LIMIT 1
-	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &notebookID)
+	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
 	if err == sql.ErrNoRows {
 		return models.ReadingTopicCursor{}, false, nil
 	}
 	if err != nil {
 		return models.ReadingTopicCursor{}, false, err
 	}
-	topic.NotebookID = notebookID.String
 	return topic, true, nil
 }
 

@@ -123,7 +123,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 			actualTaskMinutes := int(float64(endPage-startPage+1) * MinutesPerPage)
 			tasks = append(tasks, models.ScheduledTask{
 				ID:              "task-read-" + readingTopic.ID,
-				ActionType:      "read",
+				ActionType:      "reading",
 				Title:           fmt.Sprintf("Read: %s (Pages %d to %d)", readingTopic.Title, startPage, endPage),
 				TopicID:         readingTopic.ID,
 				NotebookID:      readingTopic.NotebookID,

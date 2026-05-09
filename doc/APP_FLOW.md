@@ -117,17 +117,18 @@ User completes reading task → Synchronous quiz generation
 
 **Reference:** `ARCHITECTURE.md` Section 8 for synchronous generation rationale.
 
-### Reading Validation
+### Reading Completion (Trust-Based)
 
-Minimal validation before allowing completion:
+Reading tasks use trust-based completion:
 
-- User must reach final assigned page (`current_page_cursor >= end_page`)
-- Complete button disabled until validation passes
-- No surveillance logic, timers, or engagement tracking
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- No enforced page-completion validation
+- No engagement surveillance, timers, or tracking
 
 ### How
 
-1. User clicks **Complete** on Reader page (button enabled after validation)
+1. User clicks **Complete Session** when they feel ready (button always enabled)
 2. Frontend shows **loading spinner**
 3. Backend calls LLM synchronously
 4. Quiz returned directly in response
@@ -315,10 +316,12 @@ Skipped tasks are auditable and can resurface if needed. Do NOT silently mark sk
 
 ### Reader Module
 - Renders PDF pages
-- Enforces page range from task context
-- Validates user reached final page before allowing completion
-- Tracks `current_page_cursor` for validation
+- Displays content from assigned page range
+- StartPage is authoritative for opening context
+- EndPage is informational only
+- Trust-based completion (user signals when done)
 - No orchestration logic
+- No completion validation or gating
 
 ### Quiz Module
 - Displays quiz

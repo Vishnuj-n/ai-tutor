@@ -39,8 +39,8 @@ export function getReadingTask(taskID) {
   return appBridge().GetReadingTask(taskID)
 }
 
-export function initializeReadingSession(taskID) {
-  return appBridge().InitializeReadingSession(taskID)
+export function initializeReadingSession(taskID, notebookID, topicID, startPage, endPage) {
+  return appBridge().InitializeReadingSession(taskID, notebookID || '', topicID || '', startPage || 0, endPage || 0)
 }
 
 export function validateReadingCompletion(taskID, finalPage) {
@@ -146,6 +146,10 @@ export function confirmNotebookSyllabus(notebookID, chapters) {
 
 export function updateNotebookTitle(notebookID, title) {
   return appBridge().UpdateNotebookTitle(notebookID, title)
+}
+
+export function updateNotebookPriority(notebookID, priority) {
+  return appBridge().UpdateNotebookPriority(notebookID, priority)
 }
 
 export function deleteNotebook(notebookID) {

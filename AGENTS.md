@@ -121,7 +121,7 @@ These must NEVER be violated:
 - Keep manual and queue entry points on the same canonical init path
 - Mark tasks with explicit status transitions
 - Persist all state to SQLite immediately
-- Validate reading completion at final page only
+- Use trust-based reading completion (user decides when done)
 - Use synchronous LLM calls with loading states
 - Return explicit errors (no silent failures)
 
