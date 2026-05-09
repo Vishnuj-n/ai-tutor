@@ -108,7 +108,7 @@ export function useReaderBase(taskID) {
   async function initializeSession(query = {}) {
     if (!taskID.value) {
       globalError.value = 'Task ID required for reading session'
-      return false
+      return null
     }
 
     loadingBundle.value = true
@@ -123,19 +123,19 @@ export function useReaderBase(taskID) {
 
       if (!notebookId || !topicId) {
         globalError.value = 'Missing notebookId or topicId for reading session'
-        return false
+        return null
       }
       // In backend-authoritative session model, 0 means "unspecified / hydrate from DB session state"
       // Reject only: negative values, or invalid ordering when both are specified
       if (startPage < 0 || endPage < 0) {
         console.error('[useReaderBase] Invalid page bounds: negative values not allowed', { startPage, endPage })
         globalError.value = `Invalid page bounds: negative values not allowed (startPage=${startPage}, endPage=${endPage})`
-        return false
+        return null
       }
       if (startPage > 0 && endPage > 0 && endPage < startPage) {
         console.error('[useReaderBase] Invalid page bounds: endPage must be >= startPage when both specified', { startPage, endPage })
         globalError.value = `Invalid page bounds: endPage=${endPage} must be >= startPage=${startPage} when both specified`
-        return false
+        return null
       }
 
       const result = await initializeReadingSession(taskID.value, notebookId, topicId, startPage, endPage)
@@ -143,29 +143,29 @@ export function useReaderBase(taskID) {
       // Defensive: check ok flag first (backend contract)
       if (!result?.ok) {
         globalError.value = result?.error || 'Failed to initialize reading session: backend returned not ok'
-        return false
+        return null
       }
 
       // STRICT VALIDATION: Fail-loud if backend contract is violated
       if (!result.task) {
         globalError.value = 'Contract violation: missing task data'
-        return false
+        return null
       }
       if (!result.bundle) {
         globalError.value = 'Contract violation: missing bundle data'
-        return false
+        return null
       }
       if (!Array.isArray(result.bundle.sections) || result.bundle.sections.length === 0) {
         globalError.value = 'Contract violation: missing or empty bundle sections'
-        return false
+        return null
       }
       if (!result.page_bounds || typeof result.page_bounds !== 'object') {
         globalError.value = 'Contract violation: missing page_bounds'
-        return false
+        return null
       }
       if (!result.navigation || typeof result.navigation !== 'object') {
         globalError.value = 'Contract violation: missing navigation data'
-        return false
+        return null
       }
 
       // Apply initialized state
@@ -178,7 +178,7 @@ export function useReaderBase(taskID) {
       // Validate task has required fields
       if (!task.notebook_id || !task.topic_id) {
         globalError.value = 'Invalid task data: missing notebook_id or topic_id'
-        return false
+        return null
       }
 
       selectedNotebookID.value = task.notebook_id
@@ -213,7 +213,7 @@ export function useReaderBase(taskID) {
     } catch (err) {
       console.error('[useReaderBase] initializeSession error:', err)
       globalError.value = err?.message || 'Failed to initialize reading session'
-      return false
+      return null
     } finally {
       loadingBundle.value = false
     }
@@ -222,7 +222,7 @@ export function useReaderBase(taskID) {
   async function loadBundle() {
     if (!selectedTopicID.value) {
       globalError.value = 'Select topic to open Reader.'
-      return
+      return false
     }
 
     loadingBundle.value = true
@@ -233,7 +233,12 @@ export function useReaderBase(taskID) {
 
       if (result?.error) {
         globalError.value = result.error
-        return
+        return false
+      }
+
+      // In task flow, do not clobber state initialized by locked-window session setup.
+      if (hasLockedWindow.value) {
+        return true
       }
 
       topicTitle.value = result?.topic_title || selectedTopicTitle.value || 'Reader'
@@ -244,15 +249,15 @@ export function useReaderBase(taskID) {
       activeSection.value = sections.value[0] || null
 
       // Set page bounds from topic if not locked
-      if (!hasLockedWindow.value) {
-        const topicStart = Number(result?.topic_start_page) || 1
-        const topicEnd = Number(result?.topic_end_page) || pageCount.value
-        lockedStartPage.value = topicStart
-        lockedTargetPage.value = Math.max(topicEnd, topicStart)
-        currentPage.value = topicStart
-      }
+      const topicStart = Number(result?.topic_start_page) || 1
+      const topicEnd = Number(result?.topic_end_page) || pageCount.value
+      lockedStartPage.value = topicStart
+      lockedTargetPage.value = Math.max(topicEnd, topicStart)
+      currentPage.value = topicStart
+      return true
     } catch (err) {
       globalError.value = err?.message || 'Failed to load reader data'
+      return false
     } finally {
       loadingBundle.value = false
     }
@@ -278,7 +283,13 @@ export function useReaderBase(taskID) {
     activeSection.value = section
     const page = Number(section?.page_num)
     if (Number.isFinite(page) && page > 0) {
-      currentPage.value = Math.min(Math.max(1, page), pageCount.value)
+      if (hasLockedWindow.value) {
+        const lockedMin = Math.max(1, Number(lockedStartPage.value) || 1)
+        const lockedMax = Math.max(lockedMin, Number(lockedTargetPage.value) || lockedMin)
+        currentPage.value = Math.min(Math.max(lockedMin, page), lockedMax)
+      } else {
+        currentPage.value = Math.min(Math.max(1, page), pageCount.value)
+      }
     }
   }
 

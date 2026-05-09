@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -101,7 +102,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 		// Convert filesystem path to URL path for the file server
 		// The notebookHandler in main.go serves files at /notebooks/<filename>
 		filename := filepath.Base(filePath.String)
-		bundle.NotebookURL = "/notebooks/" + filename
+		bundle.NotebookURL = "/notebooks/" + url.PathEscape(filename)
 	}
 	if fileType.Valid {
 		bundle.FileType = fileType.String

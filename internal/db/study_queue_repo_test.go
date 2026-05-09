@@ -302,3 +302,63 @@ func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 		t.Fatalf("expected one pending QUIZ follow-up, got %d", quizCount)
 	}
 }
+
+func TestCompleteReadingWithGeneratedQuizAdvancesTopicCursorToTaskEnd(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-cursor", "Topic Cursor"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateNotebook("nb-cursor", "NB Cursor", "/tmp/cursor.pdf", "pdf", "topic-cursor", 60); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := UpdateTopicPageBounds("topic-cursor", 1, 60); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+	if err := InsertStudyTask(models.StudyQueueTask{
+		ID:         "task-cursor",
+		NotebookID: "nb-cursor",
+		TopicID:    "topic-cursor",
+		TaskType:   models.StudyTaskTypeReading,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+		StartPage:  21,
+		EndPage:    49,
+	}); err != nil {
+		t.Fatalf("InsertStudyTask reading failed: %v", err)
+	}
+	if err := ActivateTask("task-cursor"); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+
+	// Persist partial progress to simulate trust-based completion without explicit final-page sync.
+	if _, err := PersistReadingProgress("task-cursor", 21); err != nil {
+		t.Fatalf("PersistReadingProgress failed: %v", err)
+	}
+
+	quizTaskID, err := CompleteReadingWithGeneratedQuiz("task-cursor", models.QuizTaskPayload{
+		Questions: []models.QuizTaskQuestion{
+			{
+				ID:            "q1",
+				Prompt:        "Prompt",
+				Options:       []string{"A", "B"},
+				CorrectAnswer: "A",
+			},
+		},
+		PassingScore: 70,
+	})
+	if err != nil {
+		t.Fatalf("CompleteReadingWithGeneratedQuiz failed: %v", err)
+	}
+	if quizTaskID == "" {
+		t.Fatalf("expected quiz task id to be returned")
+	}
+
+	var cursor int
+	if err := conn.QueryRow(`SELECT COALESCE(current_page_cursor, 0) FROM topics WHERE id = ?`, "topic-cursor").Scan(&cursor); err != nil {
+		t.Fatalf("query topic cursor failed: %v", err)
+	}
+	if cursor != 49 {
+		t.Fatalf("expected cursor advanced to task end page 49, got %d", cursor)
+	}
+}

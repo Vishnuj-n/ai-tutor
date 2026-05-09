@@ -47,10 +47,10 @@ export function validateReadingCompletion(taskID, finalPage) {
   return appBridge().ValidateReadingCompletion(taskID, finalPage)
 }
 
-export function completeReading(taskID) {
+export async function completeReading(taskID) {
   console.warn('[COMPLETE_SESSION] appApi.completeReading request', { taskID })
   try {
-    const response = appBridge().CompleteReading(taskID)
+    const response = await appBridge().CompleteReading(taskID)
     console.warn('[COMPLETE_SESSION] appApi.completeReading raw backend response', response)
     return response
   } catch (err) {
