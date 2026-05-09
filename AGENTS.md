@@ -42,12 +42,12 @@ PENDING → ACTIVE → COMPLETED
 ### 2. Data, Not Engines
 
 Learning systems create tasks — they don't orchestrate:
-- Quizzes create QUIZ tasks
-- FSRS creates FLASHCARD_REVIEW tasks  
+- Quizzes create QUIZ tasks (short-term comprehension)
+- FSRS creates FLASHCARD_REVIEW tasks (long-term retention)
 - Remediation creates REREAD tasks
-- Examiner creates ASSESSMENT tasks
+- Examiner creates ASSESSMENT tasks (long-term retention)
 
-Reading completion is only a task completion signal. It does not decide mastery or remediation quality; quiz outcome determines whether the queue inserts reread, retry, next task, spaced repetition follow-ups, or mastery progression.
+Reading completion is only a task completion signal. It does not decide mastery or remediation quality; quiz outcome determines whether the queue inserts reread, retry, next task, or mastery progression. Quizzes validate immediate comprehension and progression readiness. Flashcards and Examiner sessions provide long-term retention signals and integrate with FSRS scheduling.
 
 ### 3. SQLite is Source of Truth
 
