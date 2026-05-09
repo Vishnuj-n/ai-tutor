@@ -6,6 +6,12 @@
 
 This document describes **runtime flow, user interaction sequence, and lifecycle behavior**. Queue-driven progression is deterministic and recommended, and manual study entry points are also supported. Both paths use SQLite as the source of truth and must converge on the same canonical bootstrap and ownership semantics.
 
+Canonical checkpoint flow:
+
+Dashboard -> Reader -> Quiz -> Dashboard
+
+Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard owns progression again after quiz submission and evaluation.
+
 ---
 
 ## 1. The Queue Loop (Primary Flow)
@@ -65,7 +71,7 @@ Runtime benefits:
 6. **Backend marks** task `COMPLETED`/`SKIPPED`/`FAILED`, inserts follow-up tasks
 7. **Dashboard refreshes** showing next pending task
 
-Manual study actions, such as opening Quiz, Flashcards, Reader, or Written Assessment directly, are valid when they call the same backend initialization and retrieval helpers instead of re-implementing them per route.
+Manual study actions, such as opening Quiz, Flashcards, Reader, or Written Assessment directly, are valid when they call the same backend initialization and retrieval helpers instead of re-implementing them per route. Generated QUIZ follow-up tasks may be activated immediately after Reader completion as part of the same checkpoint chain, but that remains a queue transition rather than arbitrary module-to-module routing.
 
 ### Task Lifecycle Semantics
 
@@ -111,7 +117,7 @@ PDF upload → Chapter selection → Sliding window chunking → READING tasks i
 
 ### What
 
-User completes reading task → Synchronous quiz generation
+User completes reading task → Backend generates follow-up QUIZ task
 
 ### Why
 
@@ -131,9 +137,9 @@ Reading tasks use trust-based completion:
 1. User clicks **Complete Session** when they feel ready (button always enabled)
 2. Frontend shows **loading spinner**
 3. Backend calls LLM synchronously
-4. Quiz returned directly in response
-5. Backend inserts **QUIZ task** into `study_queue`
-6. Dashboard now shows quiz as next pending task
+4. Reading completion closes the reading task only; it does not measure mastery or progression quality
+5. Backend inserts and activates the generated **QUIZ task** in `study_queue`
+6. Dashboard may immediately surface the quiz as the next pending checkpoint
 
 ### Quiz Generation States
 
@@ -151,13 +157,15 @@ QUIZ tasks have explicit generation lifecycle:
 3. Success → `generation_status = READY`
 4. Failure → `generation_status = FAILED` (user sees explicit error)
 
+The Reader does not route itself to Quiz. Only generated follow-up quiz tasks may transition immediately through the queue loop.
+
 ---
 
 ## 4. Quiz Flow & Remediation
 
 ### What
 
-Quiz submission → Pass/Fail → Queue-driven follow-up
+Quiz submission/evaluation → Queue-driven follow-up
 
 ### Why
 
@@ -174,14 +182,14 @@ The app only **recommends** revisiting material.
 **IF PASS:**
 ```
 QUIZ task → mark COMPLETED
-→ Optionally insert FLASHCARD_REVIEW task
+→ Optionally insert FLASHCARD_REVIEW task or move to next queued task
 → Dashboard shows next pending task
 ```
 
 **IF FAIL (below threshold):**
 ```
 QUIZ task → mark COMPLETED
-→ Insert REREAD task for the material (if under max attempts)
+→ Insert REREAD task for the material or other remediation follow-ups (if under max attempts)
 → Generate lightweight AI feedback
 → Dashboard shows REREAD as next pending task
 ```
@@ -190,6 +198,8 @@ User can:
 - Complete the REREAD task
 - Skip it (mark SKIPPED - auditable, can resurface)
 - The system does NOT force remediation loops
+
+Dashboard regains orchestration ownership after quiz submission and evaluation.
 
 ### Reread Loop Protection
 
@@ -320,12 +330,17 @@ Skipped tasks are auditable and can resurface if needed. Do NOT silently mark sk
 - StartPage is authoritative for opening context
 - EndPage is informational only
 - Trust-based completion (user signals when done)
+- Reader only completes the reading task
 - No orchestration logic
 - No completion validation or gating
+- No arbitrary routing to other modules
+
+Generated follow-up QUIZ tasks may be activated immediately after Reader completion through the queue loop only.
 
 ### Quiz Module
 - Displays quiz
 - Returns score
+- Drives mastery/remediation follow-up through queue results
 - No orchestration logic
 
 ### Flashcard Module

@@ -143,6 +143,87 @@ func TestStudyQueueDeterministicOrdering(t *testing.T) {
 	}
 }
 
+func TestStudyQueueTaskQueriesPreservePayloadAndExposeTitle(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-title", "Display Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateNotebook("nb-title", "Title Notebook", "/tmp/title.pdf", "pdf", "topic-title", 10); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	pendingPayload := `{"kind":"pending"}`
+	activePayload := `{"kind":"active"}`
+	if err := InsertStudyTask(models.StudyQueueTask{
+		ID:          "task-pending",
+		NotebookID:  "nb-title",
+		TopicID:     "topic-title",
+		TaskType:    models.StudyTaskTypeQuiz,
+		Status:      models.StudyTaskStatusPending,
+		Priority:    1,
+		PayloadJSON: pendingPayload,
+	}); err != nil {
+		t.Fatalf("Insert pending task failed: %v", err)
+	}
+	if err := InsertStudyTask(models.StudyQueueTask{
+		ID:          "task-active",
+		NotebookID:  "nb-title",
+		TopicID:     "topic-title",
+		TaskType:    models.StudyTaskTypeQuiz,
+		Status:      models.StudyTaskStatusPending,
+		Priority:    2,
+		PayloadJSON: activePayload,
+	}); err != nil {
+		t.Fatalf("Insert active task failed: %v", err)
+	}
+	if err := ActivateTask("task-active"); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+
+	pendingTasks, err := GetAllPendingTasks()
+	if err != nil {
+		t.Fatalf("GetAllPendingTasks failed: %v", err)
+	}
+	var pendingTask *models.StudyQueueTask
+	for i := range pendingTasks {
+		if pendingTasks[i].ID == "task-pending" {
+			pendingTask = &pendingTasks[i]
+			break
+		}
+	}
+	if pendingTask == nil {
+		t.Fatalf("pending task not found in GetAllPendingTasks result: %#v", pendingTasks)
+	}
+	if pendingTask.PayloadJSON != pendingPayload {
+		t.Fatalf("expected pending payload to remain intact, got %q", pendingTask.PayloadJSON)
+	}
+	if pendingTask.Title != "Display Topic" {
+		t.Fatalf("expected pending task title to use topic title, got %q", pendingTask.Title)
+	}
+
+	activeTasks, err := GetAllActiveTasks()
+	if err != nil {
+		t.Fatalf("GetAllActiveTasks failed: %v", err)
+	}
+	var activeTask *models.StudyQueueTask
+	for i := range activeTasks {
+		if activeTasks[i].ID == "task-active" {
+			activeTask = &activeTasks[i]
+			break
+		}
+	}
+	if activeTask == nil {
+		t.Fatalf("active task not found in GetAllActiveTasks result: %#v", activeTasks)
+	}
+	if activeTask.PayloadJSON != activePayload {
+		t.Fatalf("expected active payload to remain intact, got %q", activeTask.PayloadJSON)
+	}
+	if activeTask.Title != "Display Topic" {
+		t.Fatalf("expected active task title to use topic title, got %q", activeTask.Title)
+	}
+}
+
 func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 	initDBForTest(t, false, 0)
 
@@ -177,9 +258,8 @@ func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateReadingCompletion failed: %v", err)
 	}
-	// Trust-based model: completion is always allowed; ValidateReadingCompletion only persists progress.
-	if !ok {
-		t.Fatalf("expected ValidateReadingCompletion to return true (trust-based, no page gate)")
+	if ok {
+		t.Fatalf("expected ValidateReadingCompletion to return false before end page")
 	}
 
 	task, err = GetReadingTask("task-reading")
@@ -188,6 +268,14 @@ func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 	}
 	if task.CurrentPage != 7 {
 		t.Fatalf("expected persisted current page 7, got %d", task.CurrentPage)
+	}
+
+	ok, err = ValidateReadingCompletion("task-reading", 8)
+	if err != nil {
+		t.Fatalf("ValidateReadingCompletion at end page failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected ValidateReadingCompletion to return true at end page")
 	}
 
 	if err := ActivateTask("task-reading"); err != nil {

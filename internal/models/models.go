@@ -60,6 +60,7 @@ type StudyQueueTask struct {
 	CreatedAt   string          `json:"created_at"`
 	ActivatedAt string          `json:"activated_at,omitempty"`
 	CompletedAt string          `json:"completed_at,omitempty"`
+	Title       string          `json:"title,omitempty"`
 	PayloadJSON string          `json:"payload_json,omitempty"`
 	StartPage   int             `json:"start_page,omitempty"`
 	EndPage     int             `json:"end_page,omitempty"`

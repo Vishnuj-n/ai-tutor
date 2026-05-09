@@ -27,6 +27,11 @@ A **Persistent Guided Study Queue** application built with Go (Wails backend) an
 
 The queue drives deterministic progression. Manual and exploratory study entry points are valid, but they must reuse the same canonical initialization, retrieval, and notebook/topic ownership semantics.
 
+Canonical checkpoint flow:
+Dashboard -> Reader -> Quiz -> Dashboard
+
+Reader only completes the reading task. It does not own workflow orchestration. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation.
+
 Task lifecycle:
 ```
 PENDING → ACTIVE → COMPLETED
@@ -41,6 +46,8 @@ Learning systems create tasks — they don't orchestrate:
 - FSRS creates FLASHCARD_REVIEW tasks  
 - Remediation creates REREAD tasks
 - Examiner creates ASSESSMENT tasks
+
+Reading completion is only a task completion signal. It does not decide mastery or remediation quality; quiz outcome determines whether the queue inserts reread, retry, next task, spaced repetition follow-ups, or mastery progression.
 
 ### 3. SQLite is Source of Truth
 

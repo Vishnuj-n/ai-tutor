@@ -135,6 +135,7 @@ const completingSession = ref(false)
 const completionMessage = ref('')
 const completionError = ref('')
 const iframeKey = ref(0)
+const activeTaskID = ref('')
 
 // Computed: can complete session (trust-based, user decides when done)
 const isTaskFlow = computed(() => !!routeTaskID.value)
@@ -170,9 +171,25 @@ onMounted(async () => {
     endPage: parseInt(route.query.endPage || route.query.end_page) || 0
   }
   console.log('[Reader] Task flow - extracted query:', JSON.stringify(query))
+  console.warn('[Reader] Task flow - pre-init state', {
+    routeTaskID: routeTaskID.value,
+    fullPath: route.fullPath,
+    query,
+    isTaskFlow: isTaskFlow.value
+  })
 
   const init = await reader.initializeSession(query)
   console.log('[Reader] initializeSession result:', init)
+  console.warn('[READER_INIT_CLIENT] initializeSession payload ids', {
+    routeQueryTaskId: route.query.taskId,
+    routeQueryTask_id: route.query.task_id,
+    canonicalTaskIDFromInit: init?.task?.task_id || init?.task?.id || null
+  })
+  activeTaskID.value = init?.task?.task_id || init?.task?.id || routeTaskID.value
+  console.warn('[READER_INIT_CLIENT] activeTaskID assigned', {
+    assignedActiveTaskID: activeTaskID.value,
+    routeTaskID: routeTaskID.value
+  })
   console.log('[Reader] After init - reader state:', {
     lockedStartPage: reader.lockedStartPage.value,
     lockedTargetPage: reader.lockedTargetPage.value,
@@ -183,6 +200,10 @@ onMounted(async () => {
   if (init) {
     iframeKey.value++
   }
+})
+
+watch(activeTaskID, (next, prev) => {
+  console.warn('[READER_STATE] activeTaskID changed', { previous: prev, next })
 })
 
 // Navigation methods
@@ -212,18 +233,27 @@ async function completeSession() {
   completingSession.value = true
 
   try {
-    const done = await completeReading(routeTaskID.value)
+    const taskIDForCompletion = activeTaskID.value || routeTaskID.value
+    console.warn('[COMPLETE_SESSION] pre-completeReading ids', {
+      routeQueryTaskId: route.query.taskId,
+      routeQueryTask_id: route.query.task_id,
+      routeTaskIDComputed: routeTaskID.value,
+      activeTaskID: activeTaskID.value,
+      actualArg: taskIDForCompletion
+    })
+    const done = await completeReading(taskIDForCompletion)
+    console.warn('[COMPLETE_SESSION] completeSession() completeReading response', done)
     if (done?.error) {
       completionError.value = done.error
       return
     }
-    // Route to quiz if a quiz task was generated, otherwise go to dashboard
-    if (done?.quiz_task_id) {
-      router.push(`/quiz?taskId=${done.quiz_task_id}`)
-    } else {
-      router.push('/dashboard')
-    }
+    const nextRoute = done?.quiz_task_id ? `/quiz?taskId=${done.quiz_task_id}` : '/dashboard'
+    // Completion writes the follow-up quiz into the queue; navigation follows the existing route behavior.
+    console.warn('[COMPLETE_SESSION] completeSession() before router.push', { nextRoute, quizTaskID: done?.quiz_task_id || null })
+    await router.push(nextRoute)
+    console.warn('[COMPLETE_SESSION] completeSession() router.push resolved', { nextRoute })
   } catch (err) {
+    console.error('[COMPLETE_SESSION] completeSession() catch', err)
     completionError.value = err?.message || 'Failed to complete session'
   } finally {
     completingSession.value = false

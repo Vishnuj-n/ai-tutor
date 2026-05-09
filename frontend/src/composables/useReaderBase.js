@@ -174,12 +174,6 @@ export function useReaderBase(taskID) {
       const nav = result.navigation
       const bundle = result.bundle
 
-      console.log('[useReaderBase] Backend response:', {
-        task,
-        bounds,
-        nav,
-        bundle
-      })
 
       // Validate task has required fields
       if (!task.notebook_id || !task.topic_id) {
@@ -195,26 +189,12 @@ export function useReaderBase(taskID) {
       const validEnd = Number(bounds.end_page) || validStart
       const validCurrent = Number(bounds.current_page) || validStart
 
-      console.log('[useReaderBase] Setting page bounds:', {
-        validStart,
-        validEnd,
-        validCurrent,
-        taskStartPage: task.start_page,
-        taskEndPage: task.end_page
-      })
 
       lockedStartPage.value = validStart
       lockedTargetPage.value = validEnd
       currentPage.value = Math.min(Math.max(validCurrent, validStart), validEnd)
       navigation.value = nav
 
-      console.log('[useReaderBase] After initialization:', {
-        lockedStartPage: lockedStartPage.value,
-        lockedTargetPage: lockedTargetPage.value,
-        currentPage: currentPage.value,
-        hasLockedWindow: hasLockedWindow.value,
-        navigation: navigation.value
-      })
 
       // Apply bundle data (guaranteed by strict validation above)
       topicTitle.value = bundle.topic_title || task.topic_title || 'Reader'

@@ -1,14 +1,11 @@
 package db
 
 import (
-	"log"
-
 	"ai-tutor/internal/models"
 )
 
 // GetNotebookTopicTree returns notebooks with their discovered topics derived from linked chunks.
 func GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
-	log.Printf("[GetNotebookTopicTree] Starting query")
 	rows, err := conn.Query(`
 		SELECT
 			n.id,
@@ -73,12 +70,5 @@ func GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
 		return nil, err
 	}
 
-	log.Printf("[GetNotebookTopicTree] Returning %d notebooks with topics", len(tree))
-	for i, nb := range tree {
-		log.Printf("[GetNotebookTopicTree] Notebook[%d]: id=%s title=%s topics=%d", i, nb.NotebookID, nb.Title, len(nb.Topics))
-		for j, topic := range nb.Topics {
-			log.Printf("[GetNotebookTopicTree]   Topic[%d]: id=%s title=%s", j, topic.TopicID, topic.Title)
-		}
-	}
 	return tree, nil
 }

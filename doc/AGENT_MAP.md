@@ -4,6 +4,11 @@
 
 Strict module boundaries for the Persistent Queue Architecture. Each module has exactly one responsibility. The queue router is intentionally thin—task routing only, no orchestration engine.
 
+Canonical checkpoint flow:
+Dashboard -> Reader -> Quiz -> Dashboard
+
+Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation. Any Reader -> Quiz handoff is queue-owned and applies only to generated follow-up quiz tasks.
+
 **Orchestration Constraints:** See Queue Router section (below) for comprehensive list of prohibited orchestration behaviors. Individual modules focus on their specific responsibilities only.
 
 ---
@@ -22,6 +27,7 @@ Strict module boundaries for the Persistent Queue Architecture. Each module has 
 - Mark tasks `COMPLETED`, `SKIPPED`, or `FAILED` on module signal
 - Insert follow-up tasks per explicit rules (respecting max reread attempts)
 - Crash recovery: reset stale ACTIVE tasks on startup (30-min timeout)
+- Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when they are the next pending queue item
 
 **Explicitly Deterministic:**
 - No adaptive scheduling
@@ -35,6 +41,7 @@ Strict module boundaries for the Persistent Queue Architecture. Each module has 
 - Run autonomous pipelines
 - Control dual timers
 - Manage event buses
+- Route arbitrary module-to-module transitions
 
 **API:**
 ```go
@@ -59,6 +66,7 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 - Provide "Complete Session" button (always enabled during active task)
 - Call "Complete" when user signals completion (trust-based)
 - Provide "Ask AI" panel (RAG)
+- Complete the reading task only
 
 **Does NOT:**
 - Generate quizzes
@@ -68,6 +76,9 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 - Own progression semantics
 - Enforce page-completion validation
 - Route to other modules
+- Require returning to Dashboard before a generated QUIZ task is mounted
+
+Generated follow-up QUIZ tasks may be activated immediately after Reader completion through the queue loop only.
 
 **API:**
 ```go
@@ -97,12 +108,14 @@ func MarkBlockRead(blockID string, progress int) error
 - Return pass/fail
 - Handle `GENERATING`, `READY`, `FAILED` generation states
 - Show explicit error for `FAILED` generation
+- Drive queue follow-up outcomes after submission/evaluation
 
 **Does NOT:**
 - Generate quizzes (synchronous LLM call happens before task creation)
 - Insert follow-up tasks
 - Know about Reader module
 - Silently handle generation failures
+- Own workflow orchestration
 
 **API:**
 ```go
@@ -248,6 +261,7 @@ func InsertReadingTasks(blocks []Block) error
 - Show empty state when queue is clear
 - Apply starvation protection (after N reviews, show reading)
 - Surface quiz generation failures explicitly
+- Regain ownership after quiz submission and evaluation
 
 **Does NOT:**
 - Calculate priorities (follows queue ordering rules)
@@ -341,6 +355,8 @@ func RetrieveContext(topicID string, query string, limit int) ([]Context, error)
                    │  follow-up) │
                    └─────────────┘
 ```
+
+Generated Reader -> Quiz handoffs flow through the queue router only; they are not direct module-to-module routes.
 
 ---
 
