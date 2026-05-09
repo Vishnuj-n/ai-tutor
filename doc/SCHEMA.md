@@ -345,12 +345,17 @@ This is a lightweight query-time bias, NOT autonomous orchestration.
 
 **Balancing rules are static SQL ordering constraints, not adaptive runtime systems.**
 
-### 9. Reading Validation
+### 9. Reading Completion (Trust-Based)
 
-Minimal validation: user must reach final assigned page before Complete button activates.
+Reading tasks use trust-based completion:
 
-- `current_page_cursor` tracked during reading
-- Complete button disabled until `current_page_cursor >= end_page`
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- `start_page` is authoritative for opening context
+- `end_page` is informational only (for reference)
+- `current_page_cursor` tracked for informational progress only
+- No enforced page-completion validation
+- No `currentPage >= endPage` gating
 - No surveillance logic, timers, or engagement tracking
 
 ### 10. Flashcard Review Granularity

@@ -49,21 +49,25 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 
 **File:** `frontend/src/pages/Reader.vue` + `internal/reader/`
 
-**Responsibility:** Render PDF content for reading
+**Responsibility:** Render PDF content for reading (execution surface only)
 
 **Does:**
 - Display content from `block_id`
-- Enforce page range boundaries
-- Track reading progress (`current_page_cursor`)
-- Validate user reached final page before allowing completion
-- Call "Complete" only when validation passes
+- Open to `start_page` (authoritative entry point)
+- Show assigned page range (`start_page` to `end_page`)
+- Track reading progress (`current_page_cursor` for information only)
+- Provide "Complete Session" button (always enabled during active task)
+- Call "Complete" when user signals completion (trust-based)
 - Provide "Ask AI" panel (RAG)
 
 **Does NOT:**
 - Generate quizzes
 - Schedule next tasks
 - Know about other modules
-- Allow completion before reaching final page
+- Validate or gate completion
+- Own progression semantics
+- Enforce page-completion validation
+- Route to other modules
 
 **API:**
 ```go
@@ -74,6 +78,8 @@ func MarkBlockRead(blockID string, progress int) error
 **Props from Queue Router:**
 - `block_id`: Content to display
 - `related_id`: Topic context
+- `start_page`: Page to open (authoritative)
+- `end_page`: Informational page bound
 
 ---
 

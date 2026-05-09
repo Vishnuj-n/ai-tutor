@@ -85,6 +85,17 @@
             <span class="badge muted">No topic linked</span>
           </div>
 
+          <div class="notebook-priority">
+            <label class="priority-label">Priority:</label>
+            <select
+              :value="notebook.priority || 5"
+              class="priority-select"
+              @change="(e) => updatePriority(notebook.id, parseInt(e.target.value))"
+            >
+              <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </div>
+
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
 
           <div class="notebook-actions">
@@ -203,6 +214,7 @@ import {
   draftNotebookSyllabus as apiDraftNotebookSyllabus,
   confirmNotebookSyllabus as apiConfirmNotebookSyllabus,
   updateNotebookTitle as apiUpdateNotebookTitle,
+  updateNotebookPriority as apiUpdateNotebookPriority,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
 import { CanResolveFilePaths, EventsOff, EventsOn, ResolveFilePaths } from '../../wailsjs/runtime/runtime'
@@ -589,14 +601,23 @@ async function confirmSyllabusDraft() {
       }
     }
 
-    const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
-    if (result?.error) {
-      throw new Error(result.error)
+    // Only call ConfirmNotebookSyllabus if chapters actually changed
+    // This avoids expensive re-ingestion when only notebook title changed
+    if (chaptersChanged) {
+      const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
+      if (result?.error) {
+        throw new Error(result.error)
+      }
+      await loadTopics()
+      await loadNotebooks()
+      closeSyllabusModal()
+      showToast('Notebook ready! Semantic indexing running in background...')
+    } else {
+      // Chapters didn't change, just update notebook title if needed
+      await loadNotebooks()
+      closeSyllabusModal()
+      showToast('Notebook metadata updated')
     }
-    await loadTopics()
-    await loadNotebooks()
-    closeSyllabusModal()
-    showToast('Notebook ready! Semantic indexing running in background...')
   } catch (error) {
     draftError.value = `Failed to confirm syllabus: ${error.message}`
     uploadError.value = `Failed to confirm syllabus: ${error.message}`
@@ -625,6 +646,23 @@ async function deleteNotebook(notebookId) {
   } catch (error) {
     console.error('Failed to delete notebook:', error)
     uploadError.value = `Delete failed: ${error.message}`
+  }
+}
+
+async function updatePriority(notebookId, priority) {
+  try {
+    const result = await apiUpdateNotebookPriority(notebookId, priority)
+    if (result?.error) {
+      throw new Error(result.error)
+    }
+    // Update local state
+    const notebook = notebooks.value.find((n) => n.id === notebookId)
+    if (notebook) {
+      notebook.priority = priority
+    }
+  } catch (error) {
+    console.error('Failed to update priority:', error)
+    uploadError.value = `Failed to update priority: ${error.message}`
   }
 }
 
@@ -939,6 +977,32 @@ function formatDate(dateString) {
   font-size: 12px;
   color: var(--muted-text);
   margin-bottom: 12px;
+}
+
+.notebook-priority {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.priority-label {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.priority-select {
+  padding: 4px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.priority-select:hover {
+  border-color: var(--primary);
 }
 
 .notebook-actions {

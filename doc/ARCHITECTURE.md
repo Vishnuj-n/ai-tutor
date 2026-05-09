@@ -396,7 +396,7 @@ Explicit generation lifecycle for QUIZ tasks:
 | `FAILED` | Generation error |
 
 **Flow:**
-1. User completes reading
+1. User signals reading complete (trust-based)
 2. QUIZ task inserted with `GENERATING` state
 3. LLM called synchronously
 4. On success: `generation_status = READY`
@@ -437,12 +437,15 @@ EXAMINER tasks:
 
 Prevents starvation: EXAMINER tasks are tier 5 in priority hierarchy, ensuring reviews and reading are not blocked.
 
-### Reading Validation
+### Reading Completion (Trust-Based)
 
-Minimal validation before allowing task completion:
+Reading tasks use trust-based completion:
 
-- User must reach final assigned page (`current_page_cursor >= end_page`)
-- Complete button disabled until validation passes
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- StartPage is authoritative for opening context
+- EndPage is informational only
+- No enforced page-completion validation
 - No surveillance logic, reading timers, or engagement tracking
 - Lightweight MVP approach
 

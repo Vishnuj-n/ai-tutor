@@ -89,14 +89,52 @@ func deleteNotebookRepo(notebookID string) error {
 		_ = tx.Rollback()
 	}()
 
+	// Delete reading_progress for tasks associated with this notebook first
+	// (reading_progress references study_queue, which references notebooks)
+	if _, err := tx.Exec(`
+		DELETE FROM reading_progress
+		WHERE task_id IN (
+			SELECT id FROM study_queue WHERE notebook_id = ?
+		)
+	`, notebookID); err != nil {
+		return err
+	}
+
+	// Delete quiz_attempts for tasks associated with this notebook
+	if _, err := tx.Exec(`
+		DELETE FROM quiz_attempts
+		WHERE task_id IN (
+			SELECT id FROM study_queue WHERE notebook_id = ?
+		)
+	`, notebookID); err != nil {
+		return err
+	}
+
+	// Delete study_queue entries for this notebook (foreign key to notebooks)
+	if _, err := tx.Exec(`
+		DELETE FROM study_queue WHERE notebook_id = ?
+	`, notebookID); err != nil {
+		return err
+	}
+
+	// Delete notebook_chunks entries (foreign key to notebooks)
+	if _, err := tx.Exec(`
+		DELETE FROM notebook_chunks WHERE notebook_id = ?
+	`, notebookID); err != nil {
+		return err
+	}
+
 	parentIDs := make(map[string]struct{})
 	chunkIDs := make([]string, 0)
 	parentRows, err := tx.Query(`
 		SELECT DISTINCT c.parent_id, c.id
 		FROM chunks c
-		JOIN notebook_chunks nc ON nc.chunk_id = c.id
-		WHERE nc.notebook_id = ?
-	`, notebookID)
+		WHERE c.topic_id IN (
+			SELECT topic_id FROM notebook_topics WHERE notebook_id = ?
+			UNION
+			SELECT id FROM topics WHERE id LIKE ?
+		)
+	`, notebookID, "nb-"+notebookID+"-%")
 	if err != nil {
 		return err
 	}

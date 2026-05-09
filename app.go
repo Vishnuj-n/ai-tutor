@@ -399,11 +399,35 @@ func (a *App) GetReadingTask(taskID string) map[string]interface{} {
 
 // InitializeReadingSession consolidates task activation, reading task loading,
 // and page bounds resolution into a single canonical backend call.
-// This replaces the frontend's loadTaskFlowContext() orchestration.
-func (a *App) InitializeReadingSession(taskID string) map[string]interface{} {
+// Accepts the full routing context so scheduler-suggested tasks (not yet in study_queue)
+// can be materialized as real queue rows on first open.
+func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, startPage, endPage int) map[string]interface{} {
 	taskID = strings.TrimSpace(taskID)
+	notebookID = strings.TrimSpace(notebookID)
+	topicID = strings.TrimSpace(topicID)
 	if taskID == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+
+	// If task doesn't exist yet (e.g. scheduler-generated synthetic ID),
+	// insert it as a real READING task so the queue lifecycle can proceed.
+	if _, err := db.GetTaskByID(taskID); err == db.ErrTaskNotFound {
+		if notebookID == "" || topicID == "" {
+			return map[string]interface{}{"error": "task not found and notebookID/topicID required to create it", "code": 400}
+		}
+		insertErr := db.InsertStudyTask(models.StudyQueueTask{
+			ID:         taskID,
+			NotebookID: notebookID,
+			TopicID:    topicID,
+			TaskType:   models.StudyTaskTypeReading,
+			Status:     models.StudyTaskStatusPending,
+			Priority:   1,
+			StartPage:  startPage,
+			EndPage:    endPage,
+		})
+		if insertErr != nil {
+			return map[string]interface{}{"error": "failed to create reading task: " + insertErr.Error()}
+		}
 	}
 
 	// Activate task (idempotent if already active)
@@ -432,9 +456,8 @@ func (a *App) InitializeReadingSession(taskID string) map[string]interface{} {
 				"page_count":   0,
 			},
 			"navigation": map[string]interface{}{
-				"can_go_prev":  false,
-				"can_go_next":  task.StartPage < task.EndPage,
-				"can_complete": task.StartPage >= task.EndPage,
+				"can_go_prev": task.StartPage > 1,
+				"can_go_next": true,
 			},
 		}
 	}
@@ -466,29 +489,30 @@ func (a *App) InitializeReadingSession(taskID string) map[string]interface{} {
 			"page_count":   bundle.PageCount,
 		},
 		"navigation": map[string]interface{}{
-			"can_go_prev":  currentPage > task.StartPage,
-			"can_go_next":  currentPage < task.EndPage,
-			"can_complete": currentPage >= task.EndPage,
+			"can_go_prev": currentPage > task.StartPage,
+			"can_go_next": currentPage < task.EndPage,
+			// Note: can_complete removed - trust-based completion, user decides when done
 		},
 	}
 }
 
+// ValidateReadingCompletion - DEPRECATED/LEGACY
+// Trust-based completion model: user decides when reading is complete.
+// This endpoint only persists reading progress, it does NOT validate page completion.
 func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
-	if finalPage <= 0 {
-		return map[string]interface{}{"error": "final page must be positive", "code": 400}
-	}
-	ok, err := db.ValidateReadingCompletion(taskID, finalPage)
+	// Persist progress only, no validation
+	_, err := db.PersistReadingProgress(taskID, finalPage)
 	if err != nil {
 		if err == db.ErrTaskNotFound {
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
 		}
 		return map[string]interface{}{"error": err.Error()}
 	}
-	return map[string]interface{}{"ok": ok}
+	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) CompleteReading(taskID string) map[string]interface{} {
@@ -496,6 +520,8 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	if taskID == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
+
+	// Trust-based completion: just validate task exists and is active
 	task, err := db.GetReadingTask(taskID)
 	if err != nil {
 		switch err {
@@ -505,17 +531,24 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 			return map[string]interface{}{"error": err.Error()}
 		}
 	}
+
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+
+	// Generate quiz from full assigned chunk range (no page validation)
 	chunkIDs, err := db.GetChunkIDsForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
+
 	quizPayload, err := a.studyService.GenerateQuizSync(task.TopicID, chunkIDs, nil)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+
+	// Complete reading task and generate follow-up quiz
+	// No page completion validation required - user decides when done
 	quizTaskID, err := db.CompleteReadingWithGeneratedQuiz(taskID, quizPayload)
 	if err != nil {
 		switch err {

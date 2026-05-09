@@ -214,6 +214,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "notebook not found"}
 	}
 
+	// Check if notebook is already chunked - if so, we might be able to skip full re-ingestion
+	// for metadata-only updates (title changes, chapter title changes without page boundary changes)
+	// For now, we always do full re-ingestion to maintain consistency
+	// TODO: Optimize for metadata-only updates
 	doc, err := a.notebookService.ExtractDocument(nb.FilePath, nb.FileType)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -382,6 +386,7 @@ func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
 			"indexing_status": nb.IndexingStatus,
 			"page_count":      nb.PageCount,
 			"chunk_count":     nb.ChunkCount,
+			"priority":        nb.Priority,
 			"uploaded_at":     nb.UploadedAt,
 		})
 	}
@@ -418,6 +423,27 @@ func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]in
 	}
 
 	if err := db.UpdateNotebookTitle(notebookID, title); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	return map[string]interface{}{"success": true}
+}
+
+// UpdateNotebookPriority updates the notebook priority level (1-10).
+func (a *App) UpdateNotebookPriority(notebookID string, priority int) map[string]interface{} {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return map[string]interface{}{"error": "notebook id is required"}
+	}
+	// Clamp priority to valid range 1-10
+	if priority < 1 {
+		priority = 1
+	}
+	if priority > 10 {
+		priority = 10
+	}
+
+	if err := db.UpdateNotebookPriority(notebookID, priority); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 

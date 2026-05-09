@@ -72,6 +72,151 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 	return task, nil
 }
 
+// GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
+func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
+	query := `
+		SELECT
+			sq.id,
+			sq.notebook_id,
+			COALESCE(sq.topic_id, ''),
+			sq.task_type,
+			sq.status,
+			sq.priority,
+			COALESCE(sq.created_at, ''),
+			COALESCE(sq.activated_at, ''),
+			COALESCE(sq.completed_at, ''),
+			COALESCE(sq.payload_json, ''),
+			COALESCE(sq.start_page, 0),
+			COALESCE(sq.end_page, 0),
+			COALESCE(t.title, '')
+		FROM study_queue sq
+		LEFT JOIN notebooks n ON sq.notebook_id = n.id
+		LEFT JOIN topics t ON sq.topic_id = t.id
+		WHERE sq.status = 'PENDING'
+		ORDER BY
+			CASE sq.task_type
+				WHEN 'FLASHCARD_REVIEW' THEN 1
+				WHEN 'REREAD' THEN 2
+				WHEN 'QUIZ' THEN 3
+				WHEN 'READING' THEN 4
+				WHEN 'EXAMINER' THEN 5
+				ELSE 6
+			END,
+			COALESCE(n.priority, 5) DESC,
+			sq.priority ASC,
+			sq.created_at ASC
+	`
+
+	rows, err := conn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	tasks := make([]models.StudyQueueTask, 0)
+	for rows.Next() {
+		var task models.StudyQueueTask
+		var topicTitle string
+		err := rows.Scan(
+			&task.ID,
+			&task.NotebookID,
+			&task.TopicID,
+			&task.TaskType,
+			&task.Status,
+			&task.Priority,
+			&task.CreatedAt,
+			&task.ActivatedAt,
+			&task.CompletedAt,
+			&task.PayloadJSON,
+			&task.StartPage,
+			&task.EndPage,
+			&topicTitle,
+		)
+		if err != nil {
+			return nil, err
+		}
+		// Store topic title in PayloadJSON for now to pass to frontend
+		if topicTitle != "" {
+			task.PayloadJSON = topicTitle
+		}
+		tasks = append(tasks, task)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+// GetAllActiveTasks returns all active tasks ordered by activation time.
+func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
+	query := `
+		SELECT
+			sq.id,
+			sq.notebook_id,
+			COALESCE(sq.topic_id, ''),
+			sq.task_type,
+			sq.status,
+			sq.priority,
+			COALESCE(sq.created_at, ''),
+			COALESCE(sq.activated_at, ''),
+			COALESCE(sq.completed_at, ''),
+			COALESCE(sq.payload_json, ''),
+			COALESCE(sq.start_page, 0),
+			COALESCE(sq.end_page, 0),
+			COALESCE(t.title, '')
+		FROM study_queue sq
+		LEFT JOIN notebooks n ON sq.notebook_id = n.id
+		LEFT JOIN topics t ON sq.topic_id = t.id
+		WHERE sq.status = 'ACTIVE'
+		ORDER BY sq.activated_at ASC
+	`
+
+	rows, err := conn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	tasks := make([]models.StudyQueueTask, 0)
+	for rows.Next() {
+		var task models.StudyQueueTask
+		var topicTitle string
+		err := rows.Scan(
+			&task.ID,
+			&task.NotebookID,
+			&task.TopicID,
+			&task.TaskType,
+			&task.Status,
+			&task.Priority,
+			&task.CreatedAt,
+			&task.ActivatedAt,
+			&task.CompletedAt,
+			&task.PayloadJSON,
+			&task.StartPage,
+			&task.EndPage,
+			&topicTitle,
+		)
+		if err != nil {
+			return nil, err
+		}
+		// Store topic title in PayloadJSON for now to pass to frontend
+		if topicTitle != "" {
+			task.PayloadJSON = topicTitle
+		}
+		tasks = append(tasks, task)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
 // GetNextTask returns the next pending task ordered by deterministic queue rules.
 func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	notebookID = strings.TrimSpace(notebookID)
@@ -354,9 +499,32 @@ func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 	if err != nil {
 		return nil, err
 	}
-	if task.StartPage <= 0 || task.EndPage <= 0 || task.EndPage < task.StartPage {
-		return nil, fmt.Errorf("reading task has invalid page bounds")
+	// If task was inserted without explicit page bounds, fall back to topic page bounds.
+	// This allows READING tasks created without bounds to still be initialized and completed.
+	if (task.StartPage <= 0 || task.EndPage <= 0) && task.TopicID != "" {
+		var topicStart, topicEnd int
+		boundsErr := conn.QueryRow(`
+			SELECT COALESCE(start_page, 1), COALESCE(end_page, start_page)
+			FROM topics WHERE id = ?
+		`, task.TopicID).Scan(&topicStart, &topicEnd)
+		if boundsErr == nil && topicStart > 0 && topicEnd >= topicStart {
+			if task.StartPage <= 0 {
+				task.StartPage = topicStart
+			}
+			if task.EndPage <= 0 {
+				task.EndPage = topicEnd
+			}
+		}
 	}
+	// After fallback: if bounds are still missing or invalid, return an explicit error.
+	if task.StartPage <= 0 || task.EndPage <= 0 {
+		return nil, fmt.Errorf("reading task has no valid page bounds: startPage=%d, endPage=%d — set start_page/end_page on the task or ensure topic has page bounds", task.StartPage, task.EndPage)
+	}
+	if task.EndPage < task.StartPage {
+		return nil, fmt.Errorf("reading task has invalid page bounds: endPage=%d must be >= startPage=%d", task.EndPage, task.StartPage)
+	}
+
+	// Clamp current page to bounds
 	if task.CurrentPage < task.StartPage {
 		task.CurrentPage = task.StartPage
 	}
@@ -366,8 +534,9 @@ func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 	return task, nil
 }
 
-// ValidateReadingCompletion persists page progress and returns true when final page is reached.
-func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
+// PersistReadingProgress persists page progress without validating completion.
+// Used in trust-based completion model where user decides when reading is complete.
+func PersistReadingProgress(taskID string, finalPage int) (bool, error) {
 	task, err := GetReadingTask(taskID)
 	if err != nil {
 		return false, err
@@ -399,7 +568,6 @@ func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
 	}
 
 	// Synchronize topics.current_page_cursor to keep both cursor systems aligned
-	// This ensures sidebar flow (which uses topics cursor) sees up-to-date progress
 	if task.TopicID != "" {
 		_, err = tx.Exec(`
 			UPDATE topics
@@ -416,7 +584,14 @@ func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
 		return false, err
 	}
 
-	return finalPage >= task.EndPage, nil
+	return true, nil
+}
+
+// ValidateReadingCompletion persists page progress and returns true when final page is reached.
+// DEPRECATED: Use PersistReadingProgress for trust-based completion.
+func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
+	// Delegate to PersistReadingProgress - trust-based model
+	return PersistReadingProgress(taskID, finalPage)
 }
 
 // CompleteReading completes an ACTIVE READING task only if user reached end_page and inserts QUIZ follow-up.
@@ -467,8 +642,13 @@ func CompleteReading(taskID string) error {
 	if status != string(models.StudyTaskStatusActive) {
 		return ErrTaskNotActive
 	}
-	if seed.StartPage <= 0 || seed.EndPage <= 0 || seed.EndPage < seed.StartPage {
-		return fmt.Errorf("reading task has invalid page bounds")
+	// In backend-authoritative session model, 0 means "unspecified / hydrate from DB session state
+	// Reject only: negative values, or invalid ordering when both are specified
+	if seed.StartPage < 0 || seed.EndPage < 0 {
+		return fmt.Errorf("reading task has invalid page bounds: negative values not allowed")
+	}
+	if seed.StartPage > 0 && seed.EndPage > 0 && seed.EndPage < seed.StartPage {
+		return fmt.Errorf("reading task has invalid page bounds: endPage must be >= startPage when both specified")
 	}
 
 	return CompleteTask(seed.ID, models.CompletionResult{

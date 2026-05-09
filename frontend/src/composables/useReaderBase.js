@@ -27,6 +27,7 @@ export function useReaderBase(taskID) {
   // Locked window state (task flow only)
   const lockedStartPage = ref(0)
   const lockedTargetPage = ref(0)
+  const navigation = ref(null)
 
   // Computed
   const selectedNotebook = computed(() =>
@@ -104,7 +105,7 @@ export function useReaderBase(taskID) {
     }
   }
 
-  async function initializeSession() {
+  async function initializeSession(query = {}) {
     if (!taskID.value) {
       globalError.value = 'Task ID required for reading session'
       return false
@@ -114,10 +115,56 @@ export function useReaderBase(taskID) {
     globalError.value = ''
 
     try {
-      const result = await initializeReadingSession(taskID.value)
+      // Extract parameters with explicit null/undefined checks (0 is a valid page number)
+      const notebookId = query.notebookId ?? query.notebook_id ?? ''
+      const topicId = query.topicId ?? query.topic_id ?? ''
+      const startPage = query.startPage ?? query.start_page ?? 0
+      const endPage = query.endPage ?? query.end_page ?? 0
 
-      if (result?.error) {
-        globalError.value = result.error
+      if (!notebookId || !topicId) {
+        globalError.value = 'Missing notebookId or topicId for reading session'
+        return false
+      }
+      // In backend-authoritative session model, 0 means "unspecified / hydrate from DB session state"
+      // Reject only: negative values, or invalid ordering when both are specified
+      if (startPage < 0 || endPage < 0) {
+        console.error('[useReaderBase] Invalid page bounds: negative values not allowed', { startPage, endPage })
+        globalError.value = `Invalid page bounds: negative values not allowed (startPage=${startPage}, endPage=${endPage})`
+        return false
+      }
+      if (startPage > 0 && endPage > 0 && endPage < startPage) {
+        console.error('[useReaderBase] Invalid page bounds: endPage must be >= startPage when both specified', { startPage, endPage })
+        globalError.value = `Invalid page bounds: endPage=${endPage} must be >= startPage=${startPage} when both specified`
+        return false
+      }
+
+      const result = await initializeReadingSession(taskID.value, notebookId, topicId, startPage, endPage)
+
+      // Defensive: check ok flag first (backend contract)
+      if (!result?.ok) {
+        globalError.value = result?.error || 'Failed to initialize reading session: backend returned not ok'
+        return false
+      }
+
+      // STRICT VALIDATION: Fail-loud if backend contract is violated
+      if (!result.task) {
+        globalError.value = 'Contract violation: missing task data'
+        return false
+      }
+      if (!result.bundle) {
+        globalError.value = 'Contract violation: missing bundle data'
+        return false
+      }
+      if (!Array.isArray(result.bundle.sections) || result.bundle.sections.length === 0) {
+        globalError.value = 'Contract violation: missing or empty bundle sections'
+        return false
+      }
+      if (!result.page_bounds || typeof result.page_bounds !== 'object') {
+        globalError.value = 'Contract violation: missing page_bounds'
+        return false
+      }
+      if (!result.navigation || typeof result.navigation !== 'object') {
+        globalError.value = 'Contract violation: missing navigation data'
         return false
       }
 
@@ -127,25 +174,55 @@ export function useReaderBase(taskID) {
       const nav = result.navigation
       const bundle = result.bundle
 
-      selectedNotebookID.value = task.notebook_id || ''
-      selectedTopicID.value = task.topic_id || ''
+      console.log('[useReaderBase] Backend response:', {
+        task,
+        bounds,
+        nav,
+        bundle
+      })
 
-      lockedStartPage.value = bounds?.start_page || 1
-      lockedTargetPage.value = bounds?.end_page || 1
-      currentPage.value = bounds?.current_page || lockedStartPage.value
-
-      // Load bundle data if available
-      if (bundle) {
-        topicTitle.value = bundle.topic_title || task.topic_title || 'Reader'
-        notebookUrl.value = bundle.notebook_url || ''
-        fileType.value = (bundle.file_type || '').toLowerCase()
-        pageCount.value = Math.max(1, Number(bundle.page_count) || 1)
-        sections.value = Array.isArray(bundle.sections) ? bundle.sections : []
-        activeSection.value = sections.value[0] || null
-      } else {
-        // Fallback: load bundle separately
-        await loadBundle()
+      // Validate task has required fields
+      if (!task.notebook_id || !task.topic_id) {
+        globalError.value = 'Invalid task data: missing notebook_id or topic_id'
+        return false
       }
+
+      selectedNotebookID.value = task.notebook_id
+      selectedTopicID.value = task.topic_id
+
+      // Validate bounds have valid values
+      const validStart = Number(bounds.start_page) || 1
+      const validEnd = Number(bounds.end_page) || validStart
+      const validCurrent = Number(bounds.current_page) || validStart
+
+      console.log('[useReaderBase] Setting page bounds:', {
+        validStart,
+        validEnd,
+        validCurrent,
+        taskStartPage: task.start_page,
+        taskEndPage: task.end_page
+      })
+
+      lockedStartPage.value = validStart
+      lockedTargetPage.value = validEnd
+      currentPage.value = Math.min(Math.max(validCurrent, validStart), validEnd)
+      navigation.value = nav
+
+      console.log('[useReaderBase] After initialization:', {
+        lockedStartPage: lockedStartPage.value,
+        lockedTargetPage: lockedTargetPage.value,
+        currentPage: currentPage.value,
+        hasLockedWindow: hasLockedWindow.value,
+        navigation: navigation.value
+      })
+
+      // Apply bundle data (guaranteed by strict validation above)
+      topicTitle.value = bundle.topic_title || task.topic_title || 'Reader'
+      notebookUrl.value = bundle.notebook_url || ''
+      fileType.value = (bundle.file_type || '').toLowerCase()
+      pageCount.value = Math.max(1, Number(bundle.page_count) || 1)
+      sections.value = bundle.sections
+      activeSection.value = sections.value[0] || null
 
       return {
         task,
@@ -250,6 +327,7 @@ export function useReaderBase(taskID) {
     activeSection,
     lockedStartPage,
     lockedTargetPage,
+    navigation,
 
     // Computed
     selectedNotebook,

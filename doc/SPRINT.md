@@ -131,28 +131,36 @@ CREATE INDEX idx_study_queue_notebook_status
 
 ---
 
-### Sprint 2: Reading Flow & Page Locking
+### Sprint 2: Reading Flow (Trust-Based)
 
-**Goal:** Implement deterministic reading tasks with page-range locking.
+**Goal:** Implement trust-based reading tasks with simple completion flow.
 
 **Required Context:**
 
 - **Documentation:** SCHEMA.md, APP_FLOW.md
 - **Agent Instructions:** /AGENTS.md, /internal/AGENTS.md
 - **Relevant Packages:** internal/db/, frontend/src/pages/
-- **Important Constraints:** No engagement surveillance, reading completion only requires reaching final page
+- **Important Constraints:** Trust-based completion, no engagement surveillance, no enforced validation
 
 **Reading Task Flow:**
 1. User opens reading task from queue
-2. PDF viewer locked to assigned page range (`start_page` to `end_page`)
-3. User navigates within bounds
-4. On reaching `end_page`, completion button activates
-5. User clicks Complete → QUIZ task inserted
+2. PDF viewer opens to `start_page` (authoritative entry point)
+3. User reads freely within assigned range
+4. User clicks Complete Session when ready (button always enabled)
+5. Backend marks task complete → QUIZ task inserted
+
+**Trust-Based Completion:**
+- User decides when reading is complete
+- Complete Session button stays enabled during active reading task
+- `start_page` is authoritative for opening context
+- `end_page` is informational only
+- No enforced page-completion validation
+- No `currentPage >= endPage` gating
+- No `can_complete` enforcement logic
 
 **API Surface:**
 - `GetReadingTask(taskID string) ReadingTask` — Get task with page bounds
-- `ValidateReadingCompletion(taskID string, finalPage int) bool` — Verify user reached end page
-- `CompleteReading(taskID string) error` — Complete task, trigger quiz insertion
+- `CompleteReading(taskID string) error` — Complete task (trust-based), trigger quiz insertion
 
 **Schema Additions:**
 ```sql
@@ -166,15 +174,17 @@ CREATE TABLE reading_progress (
 ```
 
 **Rules:**
+- Trust-based completion (user decides when done)
 - NO engagement surveillance (no timers, no scroll tracking)
-- Completion requires reaching `end_page` — nothing else
-- PDF locked to assigned range — user cannot read ahead
+- NO completion validation or gating
+- Reader module does NOT own progression semantics
+- Dashboard owns workflow routing
 
 **Deliverables:**
 - [ ] Reading task payload with page bounds
-- [ ] PDF viewer page locking (frontend)
-- [ ] Reading progress persistence
-- [ ] Completion validation (reach final page)
+- [ ] PDF viewer with start_page opening
+- [ ] Reading progress persistence (optional)
+- [ ] Trust-based completion (always-enabled Complete button)
 - [ ] Quiz task auto-insertion on completion
 
 ---
