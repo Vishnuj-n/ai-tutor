@@ -295,6 +295,40 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+
+	// Canonical queue recovery/materialization path for dashboard:
+	// if ACTIVE/PENDING queue tasks exist, surface those directly.
+	activeQueueTasks, err := db.GetAllActiveTasks()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	pendingQueueTasks, err := db.GetAllPendingTasks()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	queueTasks := make([]models.ScheduledTask, 0, len(activeQueueTasks)+len(pendingQueueTasks))
+	for _, q := range activeQueueTasks {
+		queueTasks = append(queueTasks, queueTaskToScheduledTask(q))
+	}
+	for _, q := range pendingQueueTasks {
+		queueTasks = append(queueTasks, queueTaskToScheduledTask(q))
+	}
+	utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
+	if len(queueTasks) > 0 {
+		plan.Tasks = queueTasks
+		plan.IsEstimate = false
+		learningMinutes := 0
+		for _, task := range plan.Tasks {
+			learningMinutes += task.EstimateMinutes
+		}
+		plan.LearningMinutes = learningMinutes
+	}
+
+	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
+	for idx, task := range plan.Tasks {
+		utils.Warnf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
+	}
 	return map[string]interface{}{
 		"date": plan.Date, "total_minutes": plan.TotalMinutes,
 		"review_minutes": plan.ReviewMinutes, "learning_minutes": plan.LearningMinutes,
@@ -302,6 +336,50 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
 		"insights_available": false, "plan_source": "scheduler-v2-context-locked",
+	}
+}
+
+func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
+	actionType := strings.ToLower(string(task.TaskType))
+	titleBase := strings.TrimSpace(task.Title)
+	if titleBase == "" {
+		titleBase = "Task"
+	}
+
+	titlePrefix := "Task"
+	switch task.TaskType {
+	case models.StudyTaskTypeReading:
+		titlePrefix = "Read"
+	case models.StudyTaskTypeQuiz:
+		titlePrefix = "Quiz"
+	case models.StudyTaskTypeReread:
+		titlePrefix = "Reread"
+	case models.StudyTaskTypeFlashcardReview:
+		titlePrefix = "Flashcard Review"
+	case models.StudyTaskTypeExaminer:
+		titlePrefix = "Examiner"
+	}
+
+	meta := ""
+	if task.StartPage > 0 && task.EndPage > 0 {
+		meta = fmt.Sprintf("Pages %d-%d", task.StartPage, task.EndPage)
+	}
+	estimateMinutes := 10
+	if task.StartPage > 0 && task.EndPage >= task.StartPage {
+		estimateMinutes = int(float64(task.EndPage-task.StartPage+1) * scheduler.MinutesPerPage)
+	}
+
+	return models.ScheduledTask{
+		ID:              task.ID,
+		ActionType:      actionType,
+		Title:           fmt.Sprintf("%s: %s", titlePrefix, titleBase),
+		TopicID:         task.TopicID,
+		NotebookID:      task.NotebookID,
+		StartPage:       task.StartPage,
+		EndPage:         task.EndPage,
+		EstimateMinutes: estimateMinutes,
+		Priority:        task.Priority,
+		Meta:            meta,
 	}
 }
 
@@ -325,6 +403,11 @@ func (a *App) GetNextTask(notebookID string) map[string]interface{} {
 func (a *App) ActivateTask(taskID string) map[string]interface{} {
 	if strings.TrimSpace(taskID) == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	if task, err := db.GetTaskByID(taskID); err == nil {
+		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
+	} else {
+		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s loadError=%v", taskID, err)
 	}
 	if err := db.ActivateTask(taskID); err != nil {
 		switch err {
@@ -397,30 +480,300 @@ func (a *App) GetReadingTask(taskID string) map[string]interface{} {
 	return map[string]interface{}{"task": task}
 }
 
-func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
+// InitializeReadingSession consolidates task activation, reading task loading,
+// and page bounds resolution into a single canonical backend call.
+// Accepts the full routing context so scheduler-suggested tasks (not yet in study_queue)
+// can be materialized as real queue rows on first open.
+func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, startPage, endPage int) map[string]interface{} {
 	taskID = strings.TrimSpace(taskID)
+	notebookID = strings.TrimSpace(notebookID)
+	topicID = strings.TrimSpace(topicID)
 	if taskID == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
-	if finalPage <= 0 {
-		return map[string]interface{}{"error": "final page must be positive", "code": 400}
+	utils.Warnf("[READER_INIT] InitializeReadingSession entry taskID=%s notebookID=%s topicID=%s startPage=%d endPage=%d", taskID, notebookID, topicID, startPage, endPage)
+
+	seedTaskID := taskID
+	rematerialized := false
+	rematerializedFrom := ""
+	rematerializedTo := ""
+	existingTask, existingErr := db.GetTaskByID(seedTaskID)
+
+	// If task doesn't exist yet (e.g. scheduler-generated synthetic ID),
+	// insert it as a real READING task so the queue lifecycle can proceed.
+	if existingErr == db.ErrTaskNotFound {
+		utils.Warnf("[READER_INIT] InitializeReadingSession task missing, creating pending reading task taskID=%s notebookID=%s topicID=%s", taskID, notebookID, topicID)
+		if notebookID == "" || topicID == "" {
+			return map[string]interface{}{"error": "task not found and notebookID/topicID required to create it", "code": 400}
+		}
+		insertErr := db.InsertStudyTask(models.StudyQueueTask{
+			ID:         seedTaskID,
+			NotebookID: notebookID,
+			TopicID:    topicID,
+			TaskType:   models.StudyTaskTypeReading,
+			Status:     models.StudyTaskStatusPending,
+			Priority:   1,
+			StartPage:  startPage,
+			EndPage:    endPage,
+		})
+		if insertErr != nil {
+			return map[string]interface{}{"error": "failed to create reading task: " + insertErr.Error()}
+		}
+		existingTask = &models.StudyQueueTask{
+			ID:       seedTaskID,
+			Status:   models.StudyTaskStatusPending,
+			TaskType: models.StudyTaskTypeReading,
+		}
+	} else if existingErr != nil {
+		return map[string]interface{}{"error": existingErr.Error()}
 	}
-	ok, err := db.ValidateReadingCompletion(taskID, finalPage)
+
+	// Never reopen terminal queue rows. If deterministic scheduler ID collides with
+	// an already completed/failed/skipped task, materialize a fresh queue row identity.
+	if existingTask != nil && existingTask.Status != models.StudyTaskStatusPending && existingTask.Status != models.StudyTaskStatusActive {
+		if notebookID == "" {
+			notebookID = existingTask.NotebookID
+		}
+		if topicID == "" {
+			topicID = existingTask.TopicID
+		}
+		if notebookID == "" || topicID == "" {
+			return map[string]interface{}{"error": "terminal task cannot be reused and notebookID/topicID were not available", "code": 409}
+		}
+		taskID = uuid.NewString()
+		rematerialized = true
+		rematerializedFrom = seedTaskID
+		rematerializedTo = taskID
+		utils.Warnf("[READER_INIT] InitializeReadingSession task terminal, creating new queue row oldTaskID=%s newTaskID=%s oldStatus=%s notebookID=%s topicID=%s", seedTaskID, taskID, existingTask.Status, notebookID, topicID)
+		insertErr := db.InsertStudyTask(models.StudyQueueTask{
+			ID:         taskID,
+			NotebookID: notebookID,
+			TopicID:    topicID,
+			TaskType:   models.StudyTaskTypeReading,
+			Status:     models.StudyTaskStatusPending,
+			Priority:   1,
+			StartPage:  startPage,
+			EndPage:    endPage,
+		})
+		if insertErr != nil {
+			return map[string]interface{}{"error": "failed to create replacement reading task: " + insertErr.Error()}
+		}
+	}
+
+	// Activate task (idempotent if already active)
+	if task, err := db.GetTaskByID(taskID); err == nil {
+		utils.Warnf("[READER_INIT] InitializeReadingSession queue task before activate taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
+	} else {
+		utils.Warnf("[READER_INIT] InitializeReadingSession queue task pre-activate load error taskID=%s err=%v", taskID, err)
+	}
+	if err := db.ActivateTask(taskID); err != nil {
+		utils.Warnf("[READER_INIT] InitializeReadingSession activate result taskID=%s err=%v", taskID, err)
+	} else {
+		utils.Warnf("[READER_INIT] InitializeReadingSession activate result taskID=%s ok=true", taskID)
+	}
+
+	// Load reading task with all context
+	task, err := db.GetReadingTask(taskID)
 	if err != nil {
 		if err == db.ErrTaskNotFound {
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
 		}
 		return map[string]interface{}{"error": err.Error()}
 	}
-	return map[string]interface{}{"ok": ok}
+
+	// Get topic bundle for additional metadata
+	bundle, err := db.GetReaderTopicBundle(task.TopicID, task.NotebookID)
+	if err != nil {
+		// Return task-only response if bundle fails
+		return map[string]interface{}{
+			"ok":   true,
+			"task": task,
+			"page_bounds": map[string]interface{}{
+				"start_page":   task.StartPage,
+				"end_page":     task.EndPage,
+				"current_page": task.StartPage,
+				"page_count":   0,
+			},
+			"navigation": map[string]interface{}{
+				"can_go_prev": task.StartPage > 1,
+				"can_go_next": true,
+			},
+		}
+	}
+
+	// Get current progress from reading_progress table
+	var currentPage int
+	err = db.GetConnection().QueryRow(`
+		SELECT COALESCE(current_page, 0) FROM reading_progress WHERE task_id = ?
+	`, taskID).Scan(&currentPage)
+	if err != nil || currentPage == 0 {
+		currentPage = task.StartPage
+	}
+	// Clamp to bounds
+	if currentPage < task.StartPage {
+		currentPage = task.StartPage
+	}
+	if currentPage > task.EndPage {
+		currentPage = task.EndPage
+	}
+	utils.Warnf("[READER_INIT] InitializeReadingSession response payload canonicalTaskID=%s rematerialized=%t oldTaskID=%s newTaskID=%s", task.TaskID, rematerialized, rematerializedFrom, rematerializedTo)
+
+	return map[string]interface{}{
+		"ok":     true,
+		"task":   task,
+		"bundle": bundle,
+		"page_bounds": map[string]interface{}{
+			"start_page":   task.StartPage,
+			"end_page":     task.EndPage,
+			"current_page": currentPage,
+			"page_count":   bundle.PageCount,
+		},
+		"navigation": map[string]interface{}{
+			"can_go_prev": currentPage > task.StartPage,
+			"can_go_next": currentPage < task.EndPage,
+			// Note: can_complete removed - trust-based completion, user decides when done
+		},
+	}
+}
+
+// ValidateReadingCompletion - DEPRECATED/LEGACY
+// Trust-based completion model: user decides when reading is complete.
+// This endpoint only persists reading progress, it does NOT validate page completion.
+func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	// Persist progress only, no validation
+	_, err := db.PersistReadingProgress(taskID, finalPage)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading entry rejected: taskID empty")
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
-	if err := db.CompleteReading(taskID); err != nil {
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading entry taskID=%s", taskID)
+
+	// Trust-based completion: just validate task exists and is active
+	task, err := db.GetReadingTask(taskID)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading GetReadingTask error: task not found taskID=%s", taskID)
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		default:
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading GetReadingTask error taskID=%s err=%v", taskID, err)
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading loaded reading task taskID=%s startPage=%d endPage=%d currentPage=%d", taskID, task.StartPage, task.EndPage, task.CurrentPage)
+
+	if a.studyService == nil {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading error: study service not initialized taskID=%s", taskID)
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+
+	queueTask, err := db.GetTaskByID(taskID)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading GetTaskByID error: task not found taskID=%s", taskID)
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		default:
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading GetTaskByID error taskID=%s err=%v", taskID, err)
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading queue task loaded taskID=%s status=%s type=%s", taskID, queueTask.Status, queueTask.TaskType)
+	if queueTask.Status != models.StudyTaskStatusActive {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading rejected non-active task taskID=%s status=%s", taskID, queueTask.Status)
+		return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+	}
+
+	// Generate quiz from full assigned chunk range (no page validation)
+	chunkIDs, err := db.GetChunkIDsForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
+	if err != nil {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup error taskID=%s err=%v", taskID, err)
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	utils.Warnf("[QUIZ] CompleteReading before GenerateQuizSync taskID=%s topicID=%s chunkCount=%d", taskID, task.TopicID, len(chunkIDs))
+	quizPayload, err := a.studyService.GenerateQuizSync(task.TopicID, chunkIDs, nil)
+	if err != nil {
+		utils.Warnf("[QUIZ] CompleteReading GenerateQuizSync error taskID=%s err=%v", taskID, err)
+		return map[string]interface{}{"error": err.Error()}
+	}
+	utils.Warnf("[QUIZ] CompleteReading after GenerateQuizSync taskID=%s questionCount=%d", taskID, len(quizPayload.Questions))
+
+	// Complete reading task and generate follow-up quiz
+	// No page completion validation required - user decides when done
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading before CompleteReadingWithGeneratedQuiz taskID=%s", taskID)
+	quizTaskID, err := db.CompleteReadingWithGeneratedQuiz(taskID, quizPayload)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading CompleteReadingWithGeneratedQuiz error: task not found taskID=%s", taskID)
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading CompleteReadingWithGeneratedQuiz error: task not active taskID=%s", taskID)
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading CompleteReadingWithGeneratedQuiz error taskID=%s err=%v", taskID, err)
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading CompleteReadingWithGeneratedQuiz result taskID=%s quizTaskID=%s", taskID, quizTaskID)
+	return map[string]interface{}{"ok": true, "quiz_task_id": quizTaskID}
+}
+
+func (a *App) GetTask(taskID string) map[string]interface{} {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	task, err := db.GetTaskByID(taskID)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"task": task}
+}
+
+func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	return a.studyService.GenerateQuizForPageRange(notebookID, startPage, endPage)
+}
+
+func (a *App) GenerateQuizSync(topicID string, chunkIDs []string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	payload, err := a.studyService.GenerateQuizSync(topicID, chunkIDs, nil)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"quiz_task": payload}
+}
+
+func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	result, err := a.studyService.SubmitQuizAttempt(taskID, answers)
+	if err != nil {
 		switch err {
 		case db.ErrTaskNotFound:
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
@@ -430,7 +783,7 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 			return map[string]interface{}{"error": err.Error()}
 		}
 	}
-	return map[string]interface{}{"ok": true}
+	return map[string]interface{}{"result": result}
 }
 
 func (a *App) GetDailyStudySettings() map[string]interface{} {

@@ -34,7 +34,8 @@
           <p class="prompt">{{ question.prompt }}</p>
           <span class="badge">Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span>
         </div>
-        <textarea v-model="userAnswer" rows="6" class="answer-input"
+        <textarea
+v-model="userAnswer" rows="6" class="answer-input"
           placeholder="Write your answer here…" :disabled="scoring" />
         <div class="actions">
           <BaseButton :disabled="!userAnswer.trim() || scoring" :loading="scoring" @click="submitAnswer">Submit Answer</BaseButton>
@@ -49,7 +50,7 @@
         </div>
         <div class="result-body">
           <p class="feedback">{{ result.feedback }}</p>
-          <div class="fsrs" v-if="result.fsrsRating">
+          <div v-if="result.fsrsRating" class="fsrs">
             <span class="label">{{ result.fsrsRating }}</span>
             <span class="days">Next: {{ result.scheduledDays }}d</span>
           </div>

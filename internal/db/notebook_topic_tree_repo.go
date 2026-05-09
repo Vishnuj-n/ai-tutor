@@ -1,6 +1,8 @@
 package db
 
-import "ai-tutor/internal/models"
+import (
+	"ai-tutor/internal/models"
+)
 
 // GetNotebookTopicTree returns notebooks with their discovered topics derived from linked chunks.
 func GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {

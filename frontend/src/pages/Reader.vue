@@ -2,19 +2,22 @@
   <section class="page">
     <header class="head">
       <p class="eyebrow">Reader</p>
-      <h1>{{ topicTitle }}</h1>
+      <h1>{{ reader.topicTitle.value }}</h1>
       <p class="meta">
-        <span>{{ sections.length }} sections</span>
-        <span v-if="selectedNotebookTitle">Notebook: {{ selectedNotebookTitle }}</span>
+        <span>{{ reader.sections.value.length }} sections</span>
+        <span v-if="reader.selectedNotebookTitle.value">Notebook: {{ reader.selectedNotebookTitle.value }}</span>
+        <span v-if="isTaskFlow" class="task-badge">Task Mode</span>
+        <span v-else class="browse-badge">Browse Mode</span>
       </p>
     </header>
 
+    <!-- Browse Mode: Notebook/Topic Selection -->
     <article v-if="!isTaskFlow" class="panel controls">
       <label class="field">
         <span>Notebook</span>
-        <select v-model="selectedNotebookID" :disabled="loadingTree || notebookTree.length === 0 || loadingBundle" @change="onNotebookChange">
+        <select v-model="reader.selectedNotebookID.value" :disabled="reader.loadingTree.value || reader.notebookTree.value.length === 0 || reader.loadingBundle.value" @change="onNotebookChange()">
           <option disabled value="">Select notebook</option>
-          <option v-for="notebook in notebookTree" :key="notebook.notebook_id" :value="notebook.notebook_id">
+          <option v-for="notebook in reader.notebookTree.value" :key="notebook.notebook_id" :value="notebook.notebook_id">
             {{ notebook.title }}
           </option>
         </select>
@@ -22,79 +25,84 @@
 
       <label class="field">
         <span>Topic</span>
-        <select v-model="selectedTopicID" :disabled="loadingTree || availableTopics.length === 0 || loadingBundle" @change="onTopicChange">
+        <select v-model="reader.selectedTopicID.value" :disabled="reader.loadingTree.value || reader.availableTopics.value.length === 0 || reader.loadingBundle.value" @change="reader.loadBundle()">
           <option disabled value="">
-            {{ availableTopics.length === 0 ? 'No topics available' : 'Select topic' }}
+            {{ reader.availableTopics.value.length === 0 ? 'No topics available' : 'Select topic' }}
           </option>
-          <option v-for="topic in availableTopics" :key="topic.topic_id" :value="topic.topic_id">
+          <option v-for="topic in reader.availableTopics.value" :key="topic.topic_id" :value="topic.topic_id">
             {{ topic.title }}
           </option>
         </select>
       </label>
     </article>
 
-    <article v-if="globalError" class="panel error">{{ globalError }}</article>
+    <article v-if="reader.globalError.value" class="panel error fatal-error">
+      <h3>Reader Initialization Error</h3>
+      <p>{{ reader.globalError.value }}</p>
+      <div class="error-actions">
+        <button class="secondary" @click="router.push('/dashboard')">Back to Dashboard</button>
+        <button class="primary" @click="window.location.reload()">Retry</button>
+      </div>
+    </article>
 
-    <div class="layout" :class="{ collapsed: chatCollapsed }">
+    <div v-else class="layout" :class="{ collapsed: chat.chatCollapsed.value }">
       <article class="panel stage">
         <div class="stage-head">
           <h2>Document Stage</h2>
           <div class="pager">
-            <button class="secondary" :disabled="!canGoPrev" @click="goPrev">Prev</button>
-            <span>Page {{ currentPage }} / {{ pageCount }}</span>
-            <button class="secondary" :disabled="!canGoNext" @click="goNext">Next</button>
+            <button class="secondary" :disabled="!reader.canGoPrev.value" @click="goPrev">Prev</button>
+            <span>Page {{ reader.currentPage.value }} / {{ reader.pageCount.value }}</span>
+            <button class="secondary" :disabled="!reader.canGoNext.value" @click="goNext">Next</button>
+            <button v-if="isTaskFlow" class="primary" :disabled="!canComplete" @click="completeSession">
+              {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
+            </button>
           </div>
         </div>
-        <p v-if="hasLockedWindow" class="lock-meta">Locked Session: Pages {{ lockedStartPage }}-{{ lockedTargetPage }}</p>
+        <p v-if="isTaskFlow && reader.hasLockedWindow.value" class="lock-meta">Reading Window: Pages {{ reader.lockedStartPage.value }}-{{ reader.lockedTargetPage.value }}</p>
 
-        <div v-if="loadingBundle" class="empty">Loading document...</div>
-        <div v-else-if="!pdfVisible" class="empty">PDF not available for selected notebook/topic.</div>
+        <div v-if="reader.loadingBundle.value" class="empty">Loading document...</div>
+        <div v-else-if="!reader.pdfVisible.value" class="empty">PDF not available for selected notebook/topic.</div>
         <div v-else class="pdf-wrap">
-          <iframe class="pdf-frame" :src="pdfSource" title="Notebook PDF"></iframe>
+          <iframe :key="iframeKey" class="pdf-frame" :src="reader.pdfSource.value" title="Notebook PDF"></iframe>
         </div>
 
-        <article class="complete-session">
-          <button class="primary" :disabled="!canCompleteSession" @click="completeSession">
-            {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
-          </button>
-          <p v-if="completionMessage" class="completion-message">{{ completionMessage }}</p>
-          <p v-if="completionError" class="error">{{ completionError }}</p>
-        </article>
+        <p v-if="isTaskFlow && completionMessage" class="completion-message">{{ completionMessage }}</p>
+        <p v-if="isTaskFlow && completionError" class="error">{{ completionError }}</p>
       </article>
 
-      <aside class="panel chat" :class="{ closed: chatCollapsed }">
+      <aside class="panel chat" :class="{ closed: chat.chatCollapsed.value }">
         <div class="chat-head">
           <h2>AI Chat</h2>
-          <button class="ghost" @click="toggleChat">{{ chatCollapsed ? 'Expand' : 'Collapse' }}</button>
+          <button class="ghost" @click="chat.toggleChat">{{ chat.chatCollapsed.value ? 'Expand' : 'Collapse' }}</button>
         </div>
 
-        <template v-if="!chatCollapsed">
+        <template v-if="!chat.chatCollapsed.value">
           <p class="chat-context">
-            Using topic <strong>{{ selectedTopicTitle || 'None' }}</strong>
-            <span v-if="selectedNotebookTitle">from {{ selectedNotebookTitle }}</span>
+            Using topic <strong>{{ reader.selectedTopicTitle.value || 'None' }}</strong>
+            <span v-if="reader.selectedNotebookTitle.value">from {{ reader.selectedNotebookTitle.value }}</span>
           </p>
 
-          <div class="messages" ref="messagesPane">
-            <article v-for="(msg, idx) in chatMessages" :key="idx" class="msg" :class="msg.role">
+          <div ref="chat.messagesPane" class="messages">
+            <article v-for="(msg, idx) in chat.chatMessages.value" :key="idx" class="msg" :class="msg.role">
               <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
               <p v-if="msg.role === 'user'">{{ msg.text }}</p>
-              <div v-else class="markdown-body" v-html="renderMarkdown(msg.text)"></div>
+              <div v-else class="markdown-body" v-html="chat.renderMarkdown(msg.text)"></div>
             </article>
           </div>
 
-          <article v-if="chatError" class="error">{{ chatError }}</article>
+          <article v-if="chat.chatError.value" class="error">{{ chat.chatError.value }}</article>
 
           <label class="field">
             <span>Ask AI</span>
             <textarea
-              v-model="chatInput"
-              :disabled="chatLoading || !selectedTopicID"
+              v-model="chat.chatInput.value"
+              :disabled="chat.chatLoading.value || !reader.selectedTopicID.value"
               placeholder="Ask based on selected notebook/topic..."
             ></textarea>
           </label>
 
-          <button class="primary" :disabled="chatLoading || !chatInput.trim() || !selectedTopicID" @click="sendChat">
-            {{ chatLoading ? 'Thinking...' : 'Send' }}
+          <button class="primary" :disabled="chat.chatLoading.value || !chat.chatInput.value.trim() || !reader.selectedTopicID.value" @click="sendChat">
+            {{ chat.chatLoading.value ? 'Thinking...' : 'Send' }}
           </button>
         </template>
       </aside>
@@ -103,473 +111,159 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import {
-  activateTask,
-  askAI,
-  completeReading,
-  completeReadingSession,
-  explainReaderSection,
-  getNotebookTopicTree,
-  getReaderTopicBundle,
-  getReadingTask,
-  validateReadingCompletion,
-} from '../services/appApi'
-import { renderMarkdown } from '../services/markdown'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { completeReading } from '../services/appApi'
+import { useReaderBase } from '../composables/useReaderBase'
+import { useChat } from '../composables/useChat'
 
 const route = useRoute()
+const router = useRouter()
 
-const notebookTree = ref([])
-const selectedNotebookID = ref('')
-const selectedTopicID = ref(typeof route.query.topic === 'string' ? route.query.topic : '')
-let routeStartPage = parsePageQueryValue(route.query.start)
-let routeEndPage = parsePageQueryValue(route.query.end)
+// Get task ID from route (task flow only - manual flow deprecated)
 const routeTaskID = computed(() => {
-  if (typeof route.query.taskId === 'string' && route.query.taskId.trim() !== '') {
-    return route.query.taskId.trim()
-  }
-  if (typeof route.query.task_id === 'string' && route.query.task_id.trim() !== '') {
-    return route.query.task_id.trim()
-  }
-  return ''
+  const id = route.query.taskId || route.query.task_id
+  return typeof id === 'string' ? id.trim() : ''
 })
 
-const topicTitle = ref('Reader')
-const notebookUrl = ref('')
-const fileType = ref('')
-const pageCount = ref(1)
-const currentPage = ref(1)
-const sections = ref([])
-const activeSection = ref(null)
-const lockedStartPage = ref(0)
-const lockedTargetPage = ref(0)
+// Initialize composables
+const reader = useReaderBase(routeTaskID)
+const chat = useChat()
+
+// Local state for completion
 const completingSession = ref(false)
 const completionMessage = ref('')
 const completionError = ref('')
-const reachedEndPage = ref(false)
+const iframeKey = ref(0)
+const activeTaskID = ref('')
 
-const chatCollapsed = ref(false)
-const chatMessages = ref([])
-const chatInput = ref('')
-const chatLoading = ref(false)
-const chatError = ref('')
-const messagesPane = ref(null)
-
-const loadingTree = ref(true)
-const loadingBundle = ref(false)
-const globalError = ref('')
-
-const selectedNotebook = computed(() => notebookTree.value.find((n) => n.notebook_id === selectedNotebookID.value) || null)
-const selectedNotebookTitle = computed(() => selectedNotebook.value?.title || '')
-const selectedTopicTitle = computed(() => {
-  const match = availableTopics.value.find((t) => t.topic_id === selectedTopicID.value)
-  return match?.title || ''
+// Computed: can complete session (trust-based, user decides when done)
+const isTaskFlow = computed(() => !!routeTaskID.value)
+const canComplete = computed(() => {
+  // Trust-based: completable any time task flow is active and session is loaded.
+  // hasLockedWindow is a navigation constraint only — not a completion gate.
+  return isTaskFlow.value &&
+    !reader.loadingBundle.value &&
+    !completingSession.value &&
+    !reader.globalError.value
 })
 
-const availableTopics = computed(() => {
-  const topics = selectedNotebook.value?.topics || []
-  return [...topics].sort((a, b) => {
-    const aNum = extractChapterNumber(a.title)
-    const bNum = extractChapterNumber(b.title)
-    if (aNum !== null || bNum !== null) {
-      if (aNum !== null && bNum !== null) {
-        if (aNum !== bNum) {
-          return aNum - bNum
-        }
-      } else if (aNum !== null) {
-        return -1
-      } else if (bNum !== null) {
-        return 1
-      }
-    }
-    return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
-  })
-})
-const isTaskFlow = computed(() => routeTaskID.value !== '')
+// Trust-based completion: user decides when reading is complete
+// Page navigation is for UI only, not gated
 
-const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
-const pdfSource = computed(() => `${notebookUrl.value}#page=${currentPage.value}&zoom=page-fit`)
-const canGoPrev = computed(() => {
-  if (!pdfVisible.value) return false
-  if (hasLockedWindow.value) {
-    return currentPage.value > Math.max(1, lockedStartPage.value)
-  }
-  return currentPage.value > 1
-})
-const canGoNext = computed(() => {
-  if (!pdfVisible.value) return false
-  if (hasLockedWindow.value) {
-    return currentPage.value < Math.min(pageCount.value, lockedTargetPage.value)
-  }
-  return currentPage.value < Math.max(1, pageCount.value)
-})
-const hasLockedWindow = computed(() => lockedStartPage.value > 0 && lockedTargetPage.value >= lockedStartPage.value)
-const canCompleteSession = computed(() =>
-  !loadingBundle.value &&
-  !completingSession.value &&
-  hasLockedWindow.value &&
-  (isTaskFlow.value ? reachedEndPage.value : Boolean(selectedTopicID.value))
-)
-
+// Initialize on mount
 onMounted(async () => {
-  if (isTaskFlow.value) {
-    await loadTaskFlow()
+  console.log('[Reader] Mounted. route.query:', JSON.stringify(route.query))
+  console.log('[Reader] routeTaskID:', routeTaskID.value)
+
+  if (!routeTaskID.value) {
+    // Browse mode: load notebook tree for manual selection
+    console.log('[Reader] Browse mode - loading notebook tree')
+    await reader.loadNotebookTree()
     return
   }
-  await loadNotebookTree()
-  await loadBundle()
+
+  // Task flow: extract query params properly
+  const query = {
+    notebookId: route.query.notebookId || route.query.notebook_id,
+    topicId: route.query.topicId || route.query.topic_id,
+    startPage: parseInt(route.query.startPage || route.query.start_page) || 0,
+    endPage: parseInt(route.query.endPage || route.query.end_page) || 0
+  }
+  console.log('[Reader] Task flow - extracted query:', JSON.stringify(query))
+  console.warn('[Reader] Task flow - pre-init state', {
+    routeTaskID: routeTaskID.value,
+    fullPath: route.fullPath,
+    query,
+    isTaskFlow: isTaskFlow.value
+  })
+
+  const init = await reader.initializeSession(query)
+  console.log('[Reader] initializeSession result:', init)
+  console.warn('[READER_INIT_CLIENT] initializeSession payload ids', {
+    routeQueryTaskId: route.query.taskId,
+    routeQueryTask_id: route.query.task_id,
+    canonicalTaskIDFromInit: init?.task?.task_id || init?.task?.id || null
+  })
+  activeTaskID.value = init?.task?.task_id || init?.task?.id || routeTaskID.value
+  console.warn('[READER_INIT_CLIENT] activeTaskID assigned', {
+    assignedActiveTaskID: activeTaskID.value,
+    routeTaskID: routeTaskID.value
+  })
+  console.log('[Reader] After init - reader state:', {
+    lockedStartPage: reader.lockedStartPage.value,
+    lockedTargetPage: reader.lockedTargetPage.value,
+    currentPage: reader.currentPage.value,
+    hasLockedWindow: reader.hasLockedWindow.value,
+    navigation: reader.navigation.value
+  })
+  if (init) {
+    iframeKey.value++
+  }
 })
 
-async function loadNotebookTree() {
-  loadingTree.value = true
-  globalError.value = ''
-  try {
-    const data = await getNotebookTopicTree()
-    notebookTree.value = Array.isArray(data) ? data : []
-    applyInitialSelection()
-  } catch (err) {
-    globalError.value = err?.message || 'Failed to load notebook/topic options'
-  } finally {
-    loadingTree.value = false
-  }
-}
+watch(activeTaskID, (next, prev) => {
+  console.warn('[READER_STATE] activeTaskID changed', { previous: prev, next })
+})
 
-function applyInitialSelection() {
-  if (notebookTree.value.length === 0) {
-    selectedNotebookID.value = ''
-    selectedTopicID.value = ''
-    return
-  }
-
-  const preferred = selectedTopicID.value
-  if (preferred) {
-    for (const notebook of notebookTree.value) {
-      const hit = Array.isArray(notebook.topics)
-        ? notebook.topics.find((topic) => topic.topic_id === preferred)
-        : null
-      if (hit) {
-        selectedNotebookID.value = notebook.notebook_id
-        selectedTopicID.value = hit.topic_id
-        return
-      }
-    }
-  }
-
-  const firstWithTopics = notebookTree.value.find((n) => Array.isArray(n.topics) && n.topics.length > 0)
-  const fallback = firstWithTopics || notebookTree.value[0]
-  selectedNotebookID.value = fallback?.notebook_id || ''
-  selectedTopicID.value = fallback?.topics?.[0]?.topic_id || ''
-}
-
-function extractChapterNumber(title) {
-  const matches = /^chapter\s*(\d+)\b/i.exec(String(title).trim())
-  if (!matches) {
-    return null
-  }
-  const num = Number(matches[1])
-  return Number.isFinite(num) ? num : null
-}
-
-function onNotebookChange() {
-  if (!availableTopics.value.some((topic) => topic.topic_id === selectedTopicID.value)) {
-    selectedTopicID.value = availableTopics.value[0]?.topic_id || ''
-  }
-  chatMessages.value = []
-  completionMessage.value = ''
-  completionError.value = ''
-  void loadBundle()
-}
-
-function onTopicChange() {
-  chatMessages.value = []
-  completionMessage.value = ''
-  completionError.value = ''
-  void loadBundle()
-}
-
-async function loadBundle() {
-  if (!selectedTopicID.value) {
-    topicTitle.value = 'Reader'
-    notebookUrl.value = ''
-    fileType.value = ''
-    pageCount.value = 1
-    currentPage.value = 1
-    sections.value = []
-    activeSection.value = null
-    globalError.value = 'Select topic to open Reader.'
-    return
-  }
-
-  loadingBundle.value = true
-  globalError.value = ''
-
-  try {
-    const result = await getReaderTopicBundle(selectedTopicID.value, selectedNotebookID.value)
-    if (result?.error) {
-      topicTitle.value = 'Reader'
-      notebookUrl.value = ''
-      fileType.value = ''
-      pageCount.value = 1
-      currentPage.value = 1
-      sections.value = []
-      activeSection.value = null
-      // Reset lock state on bundle error
-      lockedStartPage.value = 0
-      lockedTargetPage.value = 0
-      globalError.value = result.error
-      return
-    }
-
-    topicTitle.value = result?.topic_title || selectedTopicTitle.value || 'Reader'
-    notebookUrl.value = result?.notebook_url || ''
-    fileType.value = (result?.file_type || '').toLowerCase()
-    pageCount.value = Math.max(1, Number(result?.page_count) || 1)
-    sections.value = Array.isArray(result?.sections) ? result.sections : []
-    activeSection.value = sections.value[0] || null
-    const topicStart = Number(result?.topic_start_page) || 1
-    const topicEnd = Number(result?.topic_end_page) || pageCount.value
-    const normalizedTopicStart = clampPage(topicStart, pageCount.value)
-    const normalizedTopicEnd = clampPage(Math.max(topicEnd, normalizedTopicStart), pageCount.value)
-
-    lockedStartPage.value = routeStartPage > 0 ? clampPage(routeStartPage, pageCount.value) : normalizedTopicStart
-    lockedTargetPage.value = routeEndPage > 0 ? clampPage(routeEndPage, pageCount.value) : normalizedTopicEnd
-    if (lockedTargetPage.value < lockedStartPage.value) {
-      lockedTargetPage.value = lockedStartPage.value
-    }
-    currentPage.value = hasLockedWindow.value ? lockedStartPage.value : normalizedTopicStart
-  } catch (err) {
-    topicTitle.value = 'Reader'
-    notebookUrl.value = ''
-    fileType.value = ''
-    pageCount.value = 1
-    currentPage.value = 1
-    sections.value = []
-    activeSection.value = null
-    lockedStartPage.value = 0
-    lockedTargetPage.value = 0
-    globalError.value = err?.message || 'Failed to load reader data'
-  } finally {
-    loadingBundle.value = false
-  }
-}
-
-async function loadTaskFlow() {
-  const taskID = routeTaskID.value
-  if (!taskID) {
-    return
-  }
-
-  loadingBundle.value = true
-  globalError.value = ''
-  completionMessage.value = ''
-  completionError.value = ''
-  reachedEndPage.value = false
-
-  try {
-    const activate = await activateTask(taskID)
-    if (activate?.error && activate.error !== 'ErrTaskNotPending') {
-      globalError.value = activate.error
-      return
-    }
-
-    const response = await getReadingTask(taskID)
-    if (response?.error) {
-      globalError.value = response.error
-      return
-    }
-    const task = response?.task
-    if (!task) {
-      globalError.value = 'Reading task payload missing'
-      return
-    }
-    selectedNotebookID.value = task.notebook_id || ''
-    selectedTopicID.value = task.topic_id || ''
-    if (!selectedTopicID.value) {
-      globalError.value = 'Reading task is missing topic context'
-      return
-    }
-
-    await loadNotebookTree()
-    await loadBundle()
-
-    lockedStartPage.value = clampPage(Number(task.start_page) || 1, pageCount.value)
-    lockedTargetPage.value = clampPage(Number(task.end_page) || lockedStartPage.value, pageCount.value)
-    if (lockedTargetPage.value < lockedStartPage.value) {
-      lockedTargetPage.value = lockedStartPage.value
-    }
-    const progressPage = clampPage(Number(task.current_page) || lockedStartPage.value, pageCount.value)
-    currentPage.value = Math.max(lockedStartPage.value, Math.min(progressPage, lockedTargetPage.value))
-    await refreshCompletionGate()
-  } catch (err) {
-    globalError.value = err?.message || 'Failed to load reading task'
-  } finally {
-    loadingBundle.value = false
-  }
-}
-
-function selectSection(section) {
-  activeSection.value = section
-  const page = Number(section?.page_num)
-  if (Number.isFinite(page) && page > 0) {
-    currentPage.value = Math.min(Math.max(1, page), pageCount.value)
-  }
-}
-
+// Navigation methods
 function goPrev() {
-  if (canGoPrev.value) {
-    currentPage.value -= 1
-    void refreshCompletionGate()
+  if (reader.goPrev()) {
+    iframeKey.value++
   }
 }
 
 function goNext() {
-  if (canGoNext.value) {
-    currentPage.value += 1
-    void refreshCompletionGate()
+  if (reader.goNext()) {
+    iframeKey.value++
   }
 }
 
-function toggleChat() {
-  chatCollapsed.value = !chatCollapsed.value
+function onNotebookChange() {
+  // Clear topic selection when notebook changes to prevent stale topic IDs
+  reader.selectedTopicID.value = ''
+  // Don't call loadBundle() here - let user select a topic first
 }
 
 async function completeSession() {
-  if (!canCompleteSession.value) {
-    return
-  }
+  if (!canComplete.value) return
 
   completionError.value = ''
   completionMessage.value = ''
   completingSession.value = true
-  try {
-    if (isTaskFlow.value) {
-      const done = await completeReading(routeTaskID.value)
-      if (done?.error) {
-        completionError.value = done.error
-        return
-      }
-      completionMessage.value = 'Reading completed. Quiz task inserted into the queue.'
-      return
-    }
 
-    const result = await completeReadingSession(
-      selectedTopicID.value,
-      lockedStartPage.value,
-      lockedTargetPage.value
-    )
-    if (result?.error) {
-      completionError.value = result.error
+  try {
+    const taskIDForCompletion = activeTaskID.value || routeTaskID.value
+    console.warn('[COMPLETE_SESSION] pre-completeReading ids', {
+      routeQueryTaskId: route.query.taskId,
+      routeQueryTask_id: route.query.task_id,
+      routeTaskIDComputed: routeTaskID.value,
+      activeTaskID: activeTaskID.value,
+      actualArg: taskIDForCompletion
+    })
+    const done = await completeReading(taskIDForCompletion)
+    console.warn('[COMPLETE_SESSION] completeSession() completeReading response', done)
+    if (done?.error) {
+      completionError.value = done.error
       return
     }
-    const generated = Number(result?.questions_generated) || 0
-    const nextCursor = Number(result?.current_page_cursor) || lockedTargetPage.value + 1
-    completionMessage.value = `Saved ${generated} questions. Cursor advanced to page ${nextCursor}.`
+    const nextRoute = done?.quiz_task_id ? `/quiz?taskId=${done.quiz_task_id}` : '/dashboard'
+    // Completion writes the follow-up quiz into the queue; navigation follows the existing route behavior.
+    console.warn('[COMPLETE_SESSION] completeSession() before router.push', { nextRoute, quizTaskID: done?.quiz_task_id || null })
+    await router.push(nextRoute)
+    console.warn('[COMPLETE_SESSION] completeSession() router.push resolved', { nextRoute })
   } catch (err) {
+    console.error('[COMPLETE_SESSION] completeSession() catch', err)
     completionError.value = err?.message || 'Failed to complete session'
   } finally {
     completingSession.value = false
   }
 }
 
-async function refreshCompletionGate() {
-  if (!isTaskFlow.value || !routeTaskID.value) {
-    reachedEndPage.value = hasLockedWindow.value && currentPage.value >= lockedTargetPage.value
-    return
-  }
-  const result = await validateReadingCompletion(routeTaskID.value, currentPage.value)
-  if (result?.error) {
-    completionError.value = result.error
-    return
-  }
-  reachedEndPage.value = Boolean(result?.ok)
-}
-
+// Chat wrapper
 async function sendChat() {
-  if (!chatInput.value.trim() || !selectedTopicID.value) {
-    return
-  }
-
-  const question = chatInput.value.trim()
-  chatInput.value = ''
-  chatError.value = ''
-  chatMessages.value.push({ role: 'user', text: question })
-  chatLoading.value = true
-
-  try {
-    const sectionId = activeSection.value?.id || ''
-    const result = sectionId
-      ? await explainReaderSection(sectionId, question)
-      : await askAI(selectedTopicID.value, question)
-    
-    if (result?.error) {
-      chatError.value = result.error
-      return
-    }
-
-    chatMessages.value.push({ role: 'assistant', text: result?.answer || 'No answer returned.' })
-    await nextTick()
-    if (messagesPane.value) {
-      messagesPane.value.scrollTop = messagesPane.value.scrollHeight
-    }
-  } catch (err) {
-    chatError.value = err?.message || 'Failed to send message'
-  } finally {
-    chatLoading.value = false
-  }
+  await chat.sendMessage(reader.selectedTopicID.value, reader.activeSection.value?.id)
 }
-
-function parsePageQueryValue(value) {
-  if (typeof value !== 'string') {
-    return 0
-  }
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0
-  }
-  return Math.floor(parsed)
-}
-
-function clampPage(page, maxPageCount) {
-  const max = Math.max(1, Number(maxPageCount) || 1)
-  const normalized = Number(page)
-  if (!Number.isFinite(normalized) || normalized <= 0) {
-    return 1
-  }
-  if (normalized > max) {
-    return max
-  }
-  return Math.floor(normalized)
-}
-
-// Watch route query parameters for start/end page changes
-watch(() => route.query.start, () => {
-  if (isTaskFlow.value) {
-    return
-  }
-  const newStartPage = parsePageQueryValue(route.query.start)
-  if (newStartPage !== routeStartPage) {
-    routeStartPage = newStartPage
-    void loadBundle()
-  }
-})
-
-watch(() => route.query.end, () => {
-  if (isTaskFlow.value) {
-    return
-  }
-  const newEndPage = parsePageQueryValue(route.query.end)
-  if (newEndPage !== routeEndPage) {
-    routeEndPage = newEndPage
-    void loadBundle()
-  }
-})
-
-watch(() => routeTaskID.value, () => {
-  if (isTaskFlow.value) {
-    void loadTaskFlow()
-  }
-})
 </script>
 
 <style scoped>
@@ -619,6 +313,28 @@ h3 {
   color: var(--muted-text);
 }
 
+.task-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface-container-low));
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.browse-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-text);
+  background: var(--surface-container-low);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
 .panel {
   background: var(--surface-container-lowest);
   border: 1px solid var(--surface-container-low);
@@ -651,6 +367,10 @@ h3 {
   margin: 0;
   font-size: 13px;
   color: var(--muted-text);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .stage-head {
@@ -682,12 +402,6 @@ h3 {
   border: 0;
   display: block;
   background: #fff;
-}
-
-.complete-session {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
 }
 
 .completion-message {
@@ -919,6 +633,34 @@ button:disabled {
   font-size: 13px;
 }
 
+.fatal-error {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  border-style: solid;
+  border-width: 2px;
+  margin: 20px 0;
+}
+
+.fatal-error h3 {
+  color: #b42318;
+  margin: 0;
+}
+
+.fatal-error p {
+  margin: 0;
+  font-size: 15px;
+  color: var(--on-surface);
+}
+
+.error-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
 .empty {
   color: var(--muted-text);
   background: var(--surface-container-low);
@@ -927,11 +669,32 @@ button:disabled {
   font-size: 14px;
 }
 
-@media (max-width: 1180px) {
-  .controls {
-    grid-template-columns: 1fr;
-  }
+.fatal-error {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
 
+.fatal-error h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #b42318;
+}
+
+.fatal-error p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.error-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+@media (max-width: 1180px) {
   .layout,
   .layout.collapsed {
     grid-template-columns: 1fr;

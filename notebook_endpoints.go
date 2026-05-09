@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -105,7 +106,9 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 }
 
 // DraftNotebookSyllabus creates editable chapter ranges for HITL verification.
-func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
+// If regenerate=false and a draft exists in DB, returns the persisted draft without re-running extraction/LLM.
+// If regenerate=true or no draft exists, runs extraction/LLM and persists the result.
+func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[string]interface{} {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return map[string]interface{}{"error": "notebook id is required"}
@@ -122,7 +125,31 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 		return map[string]interface{}{"error": "notebook not found"}
 	}
 
-	doc, err := a.notebookService.ExtractDocument(nb.FilePath, nb.FileType)
+	// Try to load persisted draft if not regenerating
+	if !regenerate {
+		draftJSON, err := db.GetNotebookSyllabusDraft(notebookID)
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		if draftJSON != "" {
+			// Parse and return persisted draft
+			var persistedDraft models.SyllabusDraft
+			if err := json.Unmarshal([]byte(draftJSON), &persistedDraft); err == nil {
+				return map[string]interface{}{
+					"notebook_id":   notebookID,
+					"page_count":    persistedDraft.PageCount,
+					"chapters":      persistedDraft.Chapters,
+					"status":        "draft_ready",
+					"fallback_used": false,
+				}
+			}
+		}
+	}
+
+	// No persisted draft or regenerate=true: run extraction and LLM
+	// Use lightweight sample extraction for faster response time
+	// Only extract first 30 pages for LLM context instead of full document
+	doc, err := a.notebookService.ExtractDocumentSample(nb.FilePath, nb.FileType, 30)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -147,6 +174,16 @@ func (a *App) DraftNotebookSyllabus(notebookID string) map[string]interface{} {
 			EndPage:   endPage,
 		}}
 		fallbackUsed = true
+	}
+
+	// Persist the draft for future use
+	draftToPersist := models.SyllabusDraft{
+		PageCount: doc.PageCount,
+		Chapters:  chapters,
+	}
+	draftJSON, err := json.Marshal(draftToPersist)
+	if err == nil {
+		_ = db.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
 	}
 
 	_ = db.UpdateNotebookStatus(notebookID, "draft_ready")
@@ -177,6 +214,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "notebook not found"}
 	}
 
+	// Check if notebook is already chunked - if so, we might be able to skip full re-ingestion
+	// for metadata-only updates (title changes, chapter title changes without page boundary changes)
+	// For now, we always do full re-ingestion to maintain consistency
+	// TODO: Optimize for metadata-only updates
 	doc, err := a.notebookService.ExtractDocument(nb.FilePath, nb.FileType)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -345,6 +386,7 @@ func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
 			"indexing_status": nb.IndexingStatus,
 			"page_count":      nb.PageCount,
 			"chunk_count":     nb.ChunkCount,
+			"priority":        nb.Priority,
 			"uploaded_at":     nb.UploadedAt,
 		})
 	}
@@ -381,6 +423,27 @@ func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]in
 	}
 
 	if err := db.UpdateNotebookTitle(notebookID, title); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	return map[string]interface{}{"success": true}
+}
+
+// UpdateNotebookPriority updates the notebook priority level (1-10).
+func (a *App) UpdateNotebookPriority(notebookID string, priority int) map[string]interface{} {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return map[string]interface{}{"error": "notebook id is required"}
+	}
+	// Clamp priority to valid range 1-10
+	if priority < 1 {
+		priority = 1
+	}
+	if priority > 10 {
+		priority = 10
+	}
+
+	if err := db.UpdateNotebookPriority(notebookID, priority); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 

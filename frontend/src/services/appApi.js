@@ -39,12 +39,40 @@ export function getReadingTask(taskID) {
   return appBridge().GetReadingTask(taskID)
 }
 
+export function initializeReadingSession(taskID, notebookID, topicID, startPage, endPage) {
+  return appBridge().InitializeReadingSession(taskID, notebookID || '', topicID || '', startPage || 0, endPage || 0)
+}
+
 export function validateReadingCompletion(taskID, finalPage) {
   return appBridge().ValidateReadingCompletion(taskID, finalPage)
 }
 
-export function completeReading(taskID) {
-  return appBridge().CompleteReading(taskID)
+export async function completeReading(taskID) {
+  console.warn('[COMPLETE_SESSION] appApi.completeReading request', { taskID })
+  try {
+    const response = await appBridge().CompleteReading(taskID)
+    console.warn('[COMPLETE_SESSION] appApi.completeReading raw backend response', response)
+    return response
+  } catch (err) {
+    console.error('[COMPLETE_SESSION] appApi.completeReading thrown error', err)
+    throw err
+  }
+}
+
+export function getTask(taskID) {
+  return appBridge().GetTask(taskID)
+}
+
+export function generateQuizForPageRange(notebookID, startPage, endPage) {
+  return appBridge().GenerateQuizForPageRange(notebookID, startPage, endPage)
+}
+
+export function generateQuizSync(topicID, chunkIDs) {
+  return appBridge().GenerateQuizSync(topicID, chunkIDs)
+}
+
+export function submitQuizAttempt(taskID, answers) {
+  return appBridge().SubmitQuizAttempt(taskID, answers)
 }
 
 export function getTodayPlan() {
@@ -116,8 +144,8 @@ export function uploadNotebookFromPath(filePath) {
   return appBridge().UploadNotebookFromPath(filePath)
 }
 
-export function draftNotebookSyllabus(notebookID) {
-  return appBridge().DraftNotebookSyllabus(notebookID)
+export function draftNotebookSyllabus(notebookID, regenerate = false) {
+  return appBridge().DraftNotebookSyllabus(notebookID, regenerate)
 }
 
 export function confirmNotebookSyllabus(notebookID, chapters) {
@@ -126,6 +154,10 @@ export function confirmNotebookSyllabus(notebookID, chapters) {
 
 export function updateNotebookTitle(notebookID, title) {
   return appBridge().UpdateNotebookTitle(notebookID, title)
+}
+
+export function updateNotebookPriority(notebookID, priority) {
+  return appBridge().UpdateNotebookPriority(notebookID, priority)
 }
 
 export function deleteNotebook(notebookID) {

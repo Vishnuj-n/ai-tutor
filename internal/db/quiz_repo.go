@@ -268,3 +268,19 @@ func boolToInt(v bool) int {
 	}
 	return 0
 }
+
+func saveQuizAttemptRepo(attempt models.QuizAttemptRecord) error {
+	_, err := conn.Exec(`
+		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
+	return err
+}
+
+func saveQuizAttemptRepoTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
+	_, err := tx.Exec(`
+		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
+	return err
+}

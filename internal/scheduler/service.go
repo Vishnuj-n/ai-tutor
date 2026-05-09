@@ -118,14 +118,17 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	if foundReadingTopic {
 		startPage, endPage, ok := resolvePageWindow(readingTopic, pagesToRead)
 		if ok {
+			generatedTaskID := "task-read-" + readingTopic.ID
+			fmt.Printf("[TODAY_PLAN] BuildTodayPlan reading task generated taskID=%s topicID=%s notebookID=%s title=%s cursor=%d startPage=%d endPage=%d pagesToRead=%d\n", generatedTaskID, readingTopic.ID, readingTopic.NotebookID, readingTopic.Title, readingTopic.CurrentPageCursor, startPage, endPage, pagesToRead)
 			activeTopics = append(activeTopics, readingTopic.Title)
 			// Calculate actual task minutes based on page span
 			actualTaskMinutes := int(float64(endPage-startPage+1) * MinutesPerPage)
 			tasks = append(tasks, models.ScheduledTask{
-				ID:              "task-read-" + readingTopic.ID,
-				ActionType:      "read",
+				ID:              generatedTaskID,
+				ActionType:      "reading",
 				Title:           fmt.Sprintf("Read: %s (Pages %d to %d)", readingTopic.Title, startPage, endPage),
 				TopicID:         readingTopic.ID,
+				NotebookID:      readingTopic.NotebookID,
 				StartPage:       startPage,
 				EndPage:         endPage,
 				EstimateMinutes: actualTaskMinutes,

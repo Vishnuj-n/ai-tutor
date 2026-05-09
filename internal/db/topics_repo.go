@@ -120,10 +120,10 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
 		(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
 
-	// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
+	// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
 	var newCursor int
 	if currentCursor == 0 {
-		newCursor = startPage - 1
+		newCursor = startPage
 		if newCursor < 0 {
 			newCursor = 0
 		}
@@ -220,10 +220,10 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 		shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
 			(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
 
-		// Initialize cursor to startPage-1 if uninitialized (0), otherwise clamp to new bounds
+		// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
 		var newCursor int
 		if currentCursor == 0 {
-			newCursor = startPage - 1
+			newCursor = startPage
 			if newCursor < 0 {
 				newCursor = 0
 			}
@@ -391,22 +391,27 @@ func GetTopicCurrentPageCursor(topicID string) (int, error) {
 }
 
 // QueryNextReadingTopic returns the next reading topic with deterministic page bounds and cursor.
+// Joins with notebooks table to ensure topics have a valid notebook source.
 func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	var topic models.ReadingTopicCursor
 	err := conn.QueryRow(`
 		SELECT
-			id,
-			title,
-			COALESCE(start_page, 0),
-			COALESCE(end_page, 0),
-			COALESCE(current_page_cursor, 0)
-		FROM topics
-		WHERE status IN ('unseen', 'reading')
-		  AND COALESCE(end_page, 0) > 0
-		  AND COALESCE(current_page_cursor, 0) < COALESCE(end_page, 0)
-		ORDER BY updated_at ASC, created_at ASC
+			t.id,
+			t.title,
+			COALESCE(t.start_page, 0),
+			COALESCE(t.end_page, 0),
+			COALESCE(t.current_page_cursor, 0),
+			n.id
+		FROM topics t
+		INNER JOIN notebooks n ON n.topic_id = t.id
+		WHERE t.status IN ('unseen', 'reading')
+		  AND COALESCE(t.end_page, 0) > 0
+		  AND COALESCE(t.current_page_cursor, 0) < COALESCE(t.end_page, 0)
+		  AND n.id IS NOT NULL
+		  AND n.id != ''
+		ORDER BY t.updated_at ASC, t.created_at ASC
 		LIMIT 1
-	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor)
+	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
 	if err == sql.ErrNoRows {
 		return models.ReadingTopicCursor{}, false, nil
 	}

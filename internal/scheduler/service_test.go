@@ -18,6 +18,7 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 				StartPage:         1,
 				EndPage:           40,
 				CurrentPageCursor: 1,
+				NotebookID:        "nb-1",
 			}, true, nil
 		}),
 	)
@@ -38,8 +39,8 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	}
 
 	task := plan.Tasks[0]
-	if task.ActionType != "read" {
-		t.Fatalf("expected read task, got %s", task.ActionType)
+	if task.ActionType != "reading" {
+		t.Fatalf("expected reading task, got %s", task.ActionType)
 	}
 	if task.StartPage != 1 || task.EndPage != 34 {
 		t.Fatalf("expected pages 1-34, got %d-%d", task.StartPage, task.EndPage)
@@ -60,6 +61,7 @@ func TestBuildTodayPlanClampNearTopicEnd(t *testing.T) {
 				StartPage:         1,
 				EndPage:           20,
 				CurrentPageCursor: 13,
+				NotebookID:        "nb-1",
 			}, true, nil
 		}),
 	)
@@ -111,6 +113,7 @@ func TestResolvePageWindowRejectsZeroPagesToRead(t *testing.T) {
 		StartPage:         1,
 		EndPage:           20,
 		CurrentPageCursor: 3,
+		NotebookID:        "nb-1",
 	}, 0)
 
 	if ok {

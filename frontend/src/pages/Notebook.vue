@@ -63,7 +63,7 @@
 
       <div v-if="!loading && notebooks.length > 0" class="notebook-grid">
         <div v-for="notebook in notebooks" :key="notebook.id" class="notebook-card">
-          <button class="btn-edit-pen" @click="openSyllabusDraft(notebook.id, notebook.title)" title="Edit notebook and chapters">
+          <button class="btn-edit-pen" title="Edit notebook and chapters" @click="openSyllabusDraft(notebook.id, notebook.title)">
             ✎
           </button>
           <div class="notebook-header-card">
@@ -83,6 +83,17 @@
 
           <div v-else class="notebook-topic">
             <span class="badge muted">No topic linked</span>
+          </div>
+
+          <div class="notebook-priority">
+            <label class="priority-label">Priority:</label>
+            <select
+              :value="notebook.priority || 5"
+              class="priority-select"
+              @change="(e) => updatePriority(notebook.id, parseInt(e.target.value))"
+            >
+              <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
+            </select>
           </div>
 
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
@@ -181,6 +192,15 @@
         </div>
       </div>
     </transition>
+    <transition name="toast-fade">
+      <div v-if="isDraftingSyllabus" class="drafting-toast">
+        <div class="drafting-toast-inner">
+          <div class="spinner"></div>
+          <span class="drafting-title">Preparing chapter draft...</span>
+          <p>{{ draftingNotebookTitle }}</p>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -194,6 +214,7 @@ import {
   draftNotebookSyllabus as apiDraftNotebookSyllabus,
   confirmNotebookSyllabus as apiConfirmNotebookSyllabus,
   updateNotebookTitle as apiUpdateNotebookTitle,
+  updateNotebookPriority as apiUpdateNotebookPriority,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
 import { CanResolveFilePaths, EventsOff, EventsOn, ResolveFilePaths } from '../../wailsjs/runtime/runtime'
@@ -227,6 +248,8 @@ const showActionToast = ref(false)
 const actionToastMessage = ref('')
 const fallbackToastTimer = ref(null)
 const actionToastTimer = ref(null)
+const isDraftingSyllabus = ref(false)
+const draftingNotebookTitle = ref('')
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
@@ -437,8 +460,13 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
   draftNotebookID.value = notebookID
   draftNotebookTitle.value = String(notebookTitle || '').trim()
   draftError.value = ''
+
+  // Set loading state immediately for UI responsiveness
+  isDraftingSyllabus.value = true
+  draftingNotebookTitle.value = String(notebookTitle || '').trim()
+
   try {
-    const draft = await apiDraftNotebookSyllabus(notebookID)
+    const draft = await apiDraftNotebookSyllabus(notebookID, false) // Load from DB, don't regenerate
     if (draft?.error) {
       throw new Error(draft.error)
     }
@@ -452,6 +480,8 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
         end_page: Number(ch?.end_page) || 1,
       }))
       : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
+
+    showSyllabusModal.value = true
 
     if (draft?.fallback_used) {
       fallbackToastMessage.value = 'PDF bookmark extraction failed, using fallback chapter draft.'
@@ -469,11 +499,15 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
       start_page: Number(ch.start_page) || 1,
       end_page: Number(ch.end_page) || 1,
     }))
-
-    showSyllabusModal.value = true
+    draftError.value = ''
   } catch (error) {
-    showSyllabusModal.value = true
-    draftError.value = `Could not draft syllabus: ${error.message}`
+    console.error('[Notebook] openSyllabusDraft error:', error)
+    const message = error instanceof Error ? error.message : String(error)
+    draftError.value = `Could not draft syllabus: ${message}`
+    throw error instanceof Error ? error : new Error(message)
+  } finally {
+    isDraftingSyllabus.value = false
+    draftingNotebookTitle.value = ''
   }
 }
 
@@ -569,14 +603,23 @@ async function confirmSyllabusDraft() {
       }
     }
 
-    const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
-    if (result?.error) {
-      throw new Error(result.error)
+    // Only call ConfirmNotebookSyllabus if chapters actually changed
+    // This avoids expensive re-ingestion when only notebook title changed
+    if (chaptersChanged) {
+      const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
+      if (result?.error) {
+        throw new Error(result.error)
+      }
+      await loadTopics()
+      await loadNotebooks()
+      closeSyllabusModal()
+      showToast('Notebook ready! Semantic indexing running in background...')
+    } else {
+      // Chapters didn't change, just update notebook title if needed
+      await loadNotebooks()
+      closeSyllabusModal()
+      showToast('Notebook metadata updated')
     }
-    await loadTopics()
-    await loadNotebooks()
-    closeSyllabusModal()
-    showToast('Notebook ready! Semantic indexing running in background...')
   } catch (error) {
     draftError.value = `Failed to confirm syllabus: ${error.message}`
     uploadError.value = `Failed to confirm syllabus: ${error.message}`
@@ -605,6 +648,23 @@ async function deleteNotebook(notebookId) {
   } catch (error) {
     console.error('Failed to delete notebook:', error)
     uploadError.value = `Delete failed: ${error.message}`
+  }
+}
+
+async function updatePriority(notebookId, priority) {
+  try {
+    const result = await apiUpdateNotebookPriority(notebookId, priority)
+    if (result?.error) {
+      throw new Error(result.error)
+    }
+    // Update local state
+    const notebook = notebooks.value.find((n) => n.id === notebookId)
+    if (notebook) {
+      notebook.priority = priority
+    }
+  } catch (error) {
+    console.error('Failed to update priority:', error)
+    uploadError.value = `Failed to update priority: ${error.message}`
   }
 }
 
@@ -921,6 +981,32 @@ function formatDate(dateString) {
   margin-bottom: 12px;
 }
 
+.notebook-priority {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.priority-label {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.priority-select {
+  padding: 4px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.priority-select:hover {
+  border-color: var(--primary);
+}
+
 .notebook-actions {
   display: flex;
   gap: 8px;
@@ -985,6 +1071,8 @@ function formatDate(dateString) {
   border: 1px solid var(--outline-variant);
   border-radius: 14px;
   padding: 18px;
+  z-index: 1300;
+  position: relative;
 }
 
 .modal-header {
@@ -1110,7 +1198,8 @@ function formatDate(dateString) {
 }
 
 .action-toast,
-.fallback-toast {
+.fallback-toast,
+.drafting-toast {
   position: fixed;
   right: 20px;
   bottom: 20px;
@@ -1130,6 +1219,49 @@ function formatDate(dateString) {
 
 .fallback-toast-inner {
   background: #b33939;
+}
+
+.drafting-toast-inner {
+  max-width: 320px;
+  padding: 16px 20px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--outline-variant);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--outline-variant);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.drafting-title {
+  display: block;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--on-surface);
+  margin-bottom: 2px;
+}
+
+.drafting-toast-inner p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
 }
 
 .fallback-toast-title {
