@@ -13,14 +13,16 @@ import (
 )
 
 // CompleteReadingSession generates quiz questions for a locked page window and
-// advances the topic's page cursor.  Serves the Reader flow exclusively.
+// advances the topic's page cursor. It serves the Reader flow and any other
+// caller that uses the same canonical reading completion path.
 func (s *StudyService) CompleteReadingSession(topicID string, startPage int, targetPage int) map[string]interface{} {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return map[string]interface{}{"error": "topic ID is required"}
 	}
-	if targetPage <= 0 {
-		return map[string]interface{}{"error": "target page must be positive"}
+	if targetPage < 0 {
+		utils.Errorf("[CompleteReadingSession] Invalid targetPage: negative value not allowed (%d)", targetPage)
+		return map[string]interface{}{"error": "target page must be non-negative"}
 	}
 	if s.fastLLMProvider == nil {
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}

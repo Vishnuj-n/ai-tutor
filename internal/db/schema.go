@@ -91,6 +91,18 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS quiz_attempts (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			score INTEGER NOT NULL,
+			passed INTEGER NOT NULL,
+			answers_json TEXT NOT NULL,
+			feedback TEXT,
+			completed_at INTEGER NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (task_id) REFERENCES study_queue(id) ON DELETE CASCADE
+		)`,
+
 		// Written questions and user answers
 		`CREATE TABLE IF NOT EXISTS written_questions (
 			id TEXT PRIMARY KEY,
@@ -254,6 +266,13 @@ func InitSchema(tx *sql.Tx) error {
 		}
 	}
 
+	// Backward-compat: add notebooks.syllabus_draft_json for DBs created before this column existed.
+	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN syllabus_draft_json TEXT`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("failed to add notebooks.syllabus_draft_json column: %w", err)
+		}
+	}
+
 	// Create indexes
 	indexes := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt)`,
@@ -267,6 +286,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_created_at ON topics(status, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_study_queue_status_priority_created ON study_queue(status, priority, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_study_queue_notebook_status ON study_queue(notebook_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_task_completed_at ON quiz_attempts(task_id, completed_at DESC)`,
 	}
 
 	for _, stmt := range indexes {

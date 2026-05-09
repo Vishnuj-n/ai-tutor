@@ -268,7 +268,7 @@ func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicInges
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
 func GetNotebooks(topicID string) ([]models.Notebook, error) {
-	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, uploaded_at FROM notebooks"
+	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), uploaded_at FROM notebooks"
 	args := []interface{}{}
 
 	if topicID != "" {
@@ -296,7 +296,7 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 	var notebooks []models.Notebook
 	for rows.Next() {
 		var nb models.Notebook
-		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt); err != nil {
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.UploadedAt); err != nil {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
@@ -311,10 +311,10 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
 	err := conn.QueryRow(`
-		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, uploaded_at
+		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), uploaded_at
 		FROM notebooks
 		WHERE id = ?
-	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.UploadedAt)
+	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.UploadedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -388,6 +388,61 @@ func UpdateNotebookPriority(notebookID string, priority int) error {
 		SET priority = ?
 		WHERE id = ?
 	`, priority, notebookID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// GetNotebookSyllabusDraft retrieves the persisted syllabus draft JSON for a notebook
+func GetNotebookSyllabusDraft(notebookID string) (string, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return "", fmt.Errorf("notebook id is required")
+	}
+
+	var draftJSON sql.NullString
+	err := conn.QueryRow(`
+		SELECT syllabus_draft_json
+		FROM notebooks
+		WHERE id = ?
+	`, notebookID).Scan(&draftJSON)
+
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	if !draftJSON.Valid {
+		return "", nil
+	}
+
+	return draftJSON.String, nil
+}
+
+// UpdateNotebookSyllabusDraft persists the syllabus draft JSON for a notebook
+func UpdateNotebookSyllabusDraft(notebookID, draftJSON string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+
+	result, err := conn.Exec(`
+		UPDATE notebooks
+		SET syllabus_draft_json = ?
+		WHERE id = ?
+	`, draftJSON, notebookID)
 	if err != nil {
 		return err
 	}

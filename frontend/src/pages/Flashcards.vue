@@ -40,7 +40,7 @@
             <div class="card-back">
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
               <div class="rating-buttons">
-                <button v-for="r in ratings" :key="r.key" :class="['rating-btn', r.key]" @click="rate(r.key)" :disabled="isSubmittingReview">
+                <button v-for="r in ratings" :key="r.key" :class="['rating-btn', r.key]" :disabled="isSubmittingReview" @click="rate(r.key)">
                   {{ r.label }}
                 </button>
               </div>

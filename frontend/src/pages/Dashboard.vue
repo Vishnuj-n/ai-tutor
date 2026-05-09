@@ -71,21 +71,27 @@ const tasks = ref([])
 const hasActiveStudyContent = ref(false)
 
 onMounted(async () => {
+  console.warn('[DASHBOARD] onMounted loading queue')
   await loadAgenda()
 })
 
 async function loadAgenda() {
   try {
+    console.warn('[DASHBOARD] loadAgenda refetch start')
     loading.value = true
     error.value = ''
 
     const response = await getDailyAgenda()
+    console.warn('[DASHBOARD] loadAgenda backend response', response)
     if (response.error) {
       error.value = response.error
       return
     }
 
     tasks.value = response.tasks || []
+    console.warn('[DASHBOARD] loadAgenda task list length', tasks.value.length)
+    console.warn('[DASHBOARD] loadAgenda top pending task', tasks.value[0] || null)
+    console.warn('[DASHBOARD] loadAgenda task ids', tasks.value.map((task) => ({ id: task.id, action_type: task.action_type, status: task.status, topic_id: task.topic_id, notebook_id: task.notebook_id })))
     const notebooks = await getNotebooks('')
     const notebookList = Array.isArray(notebooks) ? notebooks.filter((nb) => !nb?.error) : []
     hasActiveStudyContent.value = notebookList.some((nb) => {
@@ -93,6 +99,7 @@ async function loadAgenda() {
       return status === 'active' || status === 'chunked' || status === 'indexed'
     })
   } catch (err) {
+    console.error('[DASHBOARD] loadAgenda catch', err)
     error.value = err.message || 'Failed to load daily agenda'
   } finally {
     loading.value = false
@@ -104,34 +111,34 @@ function startTask(task) {
   let routePath = '/dashboard'
   const query = {
     topicId: task.topic_id,
+    notebookId: task.notebook_id,
     startPage: task.start_page,
     endPage: task.end_page,
     taskId: task.id,
   }
 
   const action = (task.action_type || '').toLowerCase()
-  const meta = String(task.meta || '').toLowerCase()
 
-  if (action === 'read') {
+  if (action === 'reading') {
     routePath = '/reader'
-  } else if (action === 'review') {
-    // Route based on review subtype in meta
-    if (meta === 'flashcard') {
-      routePath = '/flashcards'
-    } else if (meta === 'quiz') {
-      routePath = '/quiz'
-    } else if (meta === 'written') {
-      routePath = '/examiner'
-    } else {
-      routePath = '/flashcards' // default for unknown review meta
-    }
+  } else if (action === 'flashcard_review') {
+    routePath = '/flashcards'
+  } else if (action === 'quiz') {
+    routePath = '/quiz'
+  } else if (action === 'examiner' || action === 'written') {
+    routePath = '/examiner'
+  } else if (action === 'reread') {
+    routePath = '/reader'
   } else {
     // Unknown action type: surface feedback and fall back to dashboard
     const display = task.action_type || '(empty)'
-    console.warn(`Unknown task action: ${display} for task ${task.id}. Redirecting to dashboard.`)
+    if (import.meta.env.DEV) {
+      console.warn(`Unknown task action: ${display} for task ${task.id}. Redirecting to dashboard.`)
+    }
     routePath = '/dashboard'
   }
 
+  console.warn('[DASHBOARD] startTask navigation', { routePath, query, task })
   router.push({ path: routePath, query })
 }
 </script>
