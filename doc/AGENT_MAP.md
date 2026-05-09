@@ -9,6 +9,9 @@ Dashboard -> Reader -> Quiz -> Dashboard
 
 Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation. Any Reader -> Quiz handoff is queue-owned and applies only to generated follow-up quiz tasks.
 
+- **Reading Layer**: Reading, Quiz, Reread (Immediate comprehension validation).
+- **Retention Layer**: Flashcards, Examiner, FSRS (Long-term retention scheduling).
+
 **Orchestration Constraints:** See Queue Router section (below) for comprehensive list of prohibited orchestration behaviors. Individual modules focus on their specific responsibilities only.
 
 ---
@@ -56,7 +59,7 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 
 **File:** `frontend/src/pages/Reader.vue` + `internal/reader/`
 
-**Responsibility:** Render PDF content for reading (execution surface only)
+**Responsibility:** Render PDF content for reading (execution surface only, Reading Layer)
 
 **Does:**
 - Display content from `block_id`
@@ -98,7 +101,7 @@ func MarkBlockRead(blockID string, progress int) error
 
 **File:** `frontend/src/pages/Quiz.vue` + `internal/quiz/`
 
-**Responsibility:** Display and score quizzes
+**Responsibility:** Display and score quizzes (execution surface only, Reading Layer)
 
 **Does:**
 - Load quiz from `block_id` (quiz_set reference)
@@ -108,7 +111,9 @@ func MarkBlockRead(blockID string, progress int) error
 - Return pass/fail
 - Handle `GENERATING`, `READY`, `FAILED` generation states
 - Show explicit error for `FAILED` generation
-- Drive queue follow-up outcomes after submission/evaluation
+- Drive queue follow-up outcomes after submission/evaluation (e.g., reread insertion)
+
+**Important**: Quizzes validate immediate comprehension and do NOT update FSRS memory state.
 
 **Does NOT:**
 - Generate quizzes (synchronous LLM call happens before task creation)
@@ -137,7 +142,7 @@ func SubmitQuiz(blockID string, answers []Answer) (*QuizResult, error)
 
 **File:** `frontend/src/pages/Flashcards.vue` + `internal/flashcards/`
 
-**Responsibility:** Render and rate flashcards
+**Responsibility:** Render and rate flashcards (execution surface only, Retention Layer)
 
 **Does:**
 - Load cards for review from `block_id` (one task = all due cards in block)
@@ -167,7 +172,7 @@ func RateCard(cardID string, rating Rating) error
 
 **File:** `internal/study/fsrs.go`
 
-**Responsibility:** Scheduling algorithm only
+**Responsibility:** Scheduling algorithm for long-term retention (Retention Layer)
 
 **Does:**
 - Calculate next review intervals
@@ -199,7 +204,7 @@ func LogReview(cardID string, rating int) error
 
 **File:** `frontend/src/pages/Examiner.vue` + `internal/examiner/`
 
-**Responsibility:** Written assessments
+**Responsibility:** Written assessments (Retention Layer)
 
 **Does:**
 - Display written assessment questions

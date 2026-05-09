@@ -18,10 +18,10 @@ NOT:
 
 **Core Principle:** Advanced learning systems are **Data, not Engines**.
 
-- Quizzes create queue tasks
-- FSRS creates review tasks
-- Remediation creates reread tasks  
-- Examiner creates assessment tasks
+- Quizzes create QUIZ tasks (Reading Layer: short-term comprehension)
+- FSRS creates review tasks (Retention Layer: long-term retention)
+- Remediation creates reread tasks (Reading Layer)
+- Examiner creates assessment tasks (Retention Layer)
 
 **None of these systems own orchestration.** SQLite is the single source of truth.
 
@@ -307,8 +307,8 @@ CREATE TABLE reread_attempts (
 - **Important Constraints:** FSRS is scheduling algorithm only, not orchestrator; one task per review session not per card
 
 **FSRS Role Clarification:**
-- FSRS is ONLY: scheduling algorithm + interval calculator
-- FSRS is NOT: orchestrator, mission engine, hidden scheduler
+- FSRS is ONLY: scheduling algorithm + interval calculator for long-term retention (Retention Layer)
+- FSRS is NOT: orchestrator, mission engine, hidden scheduler, or immediate comprehension validator
 
 **Review Task Model:**
 - One `FLASHCARD_REVIEW` task = one review session
