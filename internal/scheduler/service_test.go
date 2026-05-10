@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 
 func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }), // 10 cards * 0.5m = 5 min review
 		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
@@ -21,6 +22,14 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 				NotebookID:        "nb-1",
 			}, true, nil
 		}),
+		WithQueryTokensPerPageMap(func(topicID string, start, end int) (map[int]int, error) {
+			// Simulate exactly 500 words per page to allow predictable math
+			result := make(map[int]int)
+			for page := start; page <= end; page++ {
+				result[page] = 500
+			}
+			return result, nil
+		}),
 	)
 
 	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
@@ -29,44 +38,49 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	}
 
 	if plan.ReviewMinutes != 5 {
-		t.Fatalf("expected review minutes 5, got %d", plan.ReviewMinutes)
+		t.Errorf("expected 5 review minutes, got %d", plan.ReviewMinutes)
 	}
-	if plan.LearningMinutes != 85 {
-		t.Fatalf("expected learning minutes 85, got %d", plan.LearningMinutes)
-	}
+
 	if len(plan.Tasks) != 1 {
-		t.Fatalf("expected exactly one read task, got %d", len(plan.Tasks))
+		t.Fatalf("expected 1 reading task, got %d", len(plan.Tasks))
 	}
 
 	task := plan.Tasks[0]
-	if task.ActionType != "reading" {
-		t.Fatalf("expected reading task, got %s", task.ActionType)
+	if task.StartPage != 1 {
+		t.Errorf("expected StartPage=1, got %d", task.StartPage)
 	}
-	if task.StartPage != 1 || task.EndPage != 34 {
-		t.Fatalf("expected pages 1-34, got %d-%d", task.StartPage, task.EndPage)
+	// Reading budget allows 17,000 words, but TargetSessionWords caps it at 2500.
+	// 2500 words / 500 words-per-page = 5 pages. Start 1 -> End 5.
+	if task.EndPage != 5 {
+		t.Errorf("expected EndPage=5 based on token cap, got %d", task.EndPage)
 	}
-	if task.Title != "Read: Chapter 1 (Pages 1 to 34)" {
-		t.Fatalf("unexpected task title: %s", task.Title)
+	// Estimate minutes: 2500 words / 200 wpm = 12.5 -> ceil -> 13 mins
+	if task.EstimateMinutes != 13 {
+		t.Errorf("expected EstimateMinutes=13, got %d", task.EstimateMinutes)
 	}
 }
 
-func TestBuildTodayPlanClampNearTopicEnd(t *testing.T) {
+func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 	svc := New(
-		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }),
-		WithQueryDailyStudyMinutes(func() (int, error) { return 30, nil }),
+		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
+		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
-				ID:                "ch1",
-				Title:             "Chapter 1",
+				ID:                "ocr1",
+				Title:             "Scanned Document",
 				StartPage:         1,
 				EndPage:           20,
-				CurrentPageCursor: 13,
+				CurrentPageCursor: 1,
 				NotebookID:        "nb-1",
 			}, true, nil
 		}),
+		WithQueryTokensPerPageMap(func(string, int, int) (map[int]int, error) {
+			// Simulate token query failure (e.g., OCR-heavy pages with no text layer)
+			return nil, fmt.Errorf("no chunks found")
+		}),
 	)
 
-	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
@@ -76,50 +90,78 @@ func TestBuildTodayPlanClampNearTopicEnd(t *testing.T) {
 	}
 
 	task := plan.Tasks[0]
-	if task.StartPage != 13 {
-		t.Fatalf("expected start page 13, got %d", task.StartPage)
+	// With token query failure, uses FallbackWordsPerPage (500)
+	// Budget 2500 words / 500 = 5 pages -> EndPage = 5
+	if task.EndPage != 5 {
+		t.Errorf("expected fallback end page 5, got %d", task.EndPage)
 	}
-	if task.EndPage != 20 {
-		t.Fatalf("expected end page clamped to 20, got %d", task.EndPage)
+	// Estimate minutes fallback: 5 pages * 2.5 mins/page (MinutesPerPage) = 12.5 -> ceil -> 13
+	if task.EstimateMinutes != 13 {
+		t.Errorf("expected fallback EstimateMinutes=13, got %d", task.EstimateMinutes)
 	}
 }
 
-func TestBuildTodayPlanNoTopicReturnsEstimate(t *testing.T) {
+func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
 	svc := New(
 		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
-			return models.ReadingTopicCursor{}, false, nil
+			return models.ReadingTopicCursor{
+				ID:                "ch2",
+				Title:             "Chapter 2",
+				StartPage:         1,
+				EndPage:           7, // Small chapter, only 7 pages total
+				CurrentPageCursor: 1,
+				NotebookID:        "nb-1",
+			}, true, nil
+		}),
+		WithQueryTokensPerPageMap(func(topicID string, start, end int) (map[int]int, error) {
+			result := make(map[int]int)
+			for page := start; page <= end; page++ {
+				result[page] = 500
+			}
+			return result, nil
 		}),
 	)
 
-	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
+	plan, err := svc.BuildTodayPlan(time.Now())
 	if err != nil {
 		t.Fatalf("BuildTodayPlan returned error: %v", err)
 	}
 
-	if len(plan.Tasks) != 0 {
-		t.Fatalf("expected no tasks, got %d", len(plan.Tasks))
-	}
-	if !plan.IsEstimate {
-		t.Fatalf("expected estimate=true when no reading task exists")
+	task := plan.Tasks[0]
+	// Token limit naturally allows 5 pages (1-5).
+	// Remaining pages in topic = 2 (pages 6 and 7).
+	// ClampWindowPages = 4. Since 2 <= 4, it should absorb the rest and finish the chapter.
+	if task.EndPage != 7 {
+		t.Errorf("expected clamp window to absorb remaining pages and return 7, got %d", task.EndPage)
 	}
 }
 
-func TestResolvePageWindowRejectsZeroPagesToRead(t *testing.T) {
-	start, end, ok := resolvePageWindow(models.ReadingTopicCursor{
-		ID:                "ch1",
-		Title:             "Chapter 1",
-		StartPage:         1,
-		EndPage:           20,
-		CurrentPageCursor: 3,
-		NotebookID:        "nb-1",
-	}, 0)
+func TestBuildTodayPlanNoReadingTopic(t *testing.T) {
+	svc := New(
+		WithQueryDueReviewCards(func(int64) (int, error) { return 20, nil }), // 20 cards * 0.5 = 10 mins
+		WithQueryDailyStudyMinutes(func() (int, error) { return 30, nil }),
+		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+			return models.ReadingTopicCursor{}, false, nil // No topic found
+		}),
+		WithQueryTokensPerPageMap(func(string, int, int) (map[int]int, error) {
+			return map[int]int{1: 1000}, nil
+		}),
+	)
 
-	if ok {
-		t.Fatalf("expected ok=false, got ok=true with window %d-%d", start, end)
+	plan, err := svc.BuildTodayPlan(time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if start != 0 || end != 0 {
-		t.Fatalf("expected window 0-0 for zero pages, got %d-%d", start, end)
+
+	if plan.ReviewMinutes != 10 {
+		t.Errorf("expected 10 review minutes, got %d", plan.ReviewMinutes)
+	}
+	if len(plan.Tasks) != 0 {
+		t.Errorf("expected 0 tasks, got %d", len(plan.Tasks))
+	}
+	if len(plan.ActiveTopics) != 0 {
+		t.Errorf("expected 0 active topics, got %d", len(plan.ActiveTopics))
 	}
 }

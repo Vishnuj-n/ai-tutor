@@ -508,7 +508,7 @@ func GetQueueState(notebookID string) (models.QueueState, error) {
 	return state, nil
 }
 
-// GetReadingTask returns one READING task with locked bounds and persisted cursor.
+// GetReadingTask returns one reader-compatible task with locked bounds and persisted cursor.
 func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -526,7 +526,7 @@ func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
 		FROM study_queue sq
 		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
-		WHERE sq.id = ? AND sq.task_type = 'READING'
+		WHERE sq.id = ? AND sq.task_type IN ('READING', 'REREAD')
 	`, taskID).Scan(
 		&task.TaskID,
 		&task.NotebookID,
@@ -637,7 +637,7 @@ func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
 	return PersistReadingProgress(taskID, finalPage)
 }
 
-// CompleteReading completes an ACTIVE READING task only if user reached end_page and inserts QUIZ follow-up.
+// CompleteReading completes an ACTIVE reader-compatible task and inserts QUIZ follow-up.
 func CompleteReading(taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -666,7 +666,7 @@ func CompleteReading(taskID string) error {
 			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
 		FROM study_queue sq
 		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
-		WHERE sq.id = ? AND sq.task_type = 'READING'
+		WHERE sq.id = ? AND sq.task_type IN ('READING', 'REREAD')
 	`, taskID).Scan(
 		&seed.ID,
 		&seed.NotebookID,
@@ -711,7 +711,7 @@ func CompleteReading(taskID string) error {
 	})
 }
 
-// CompleteReadingWithGeneratedQuiz completes ACTIVE READING task and inserts a QUIZ follow-up with payload.
+// CompleteReadingWithGeneratedQuiz completes an ACTIVE reader-compatible task and inserts a QUIZ follow-up with payload.
 func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTaskPayload) (string, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -750,7 +750,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
 		FROM study_queue sq
 		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
-		WHERE sq.id = ? AND sq.task_type = 'READING'
+		WHERE sq.id = ? AND sq.task_type IN ('READING', 'REREAD')
 	`, taskID).Scan(
 		&seed.ID,
 		&seed.NotebookID,
@@ -770,6 +770,17 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 		return "", ErrTaskNotActive
 	}
 
+	// Begin transaction to ensure atomicity of cursor update and task completion
+	tx, err := conn.Begin()
+	if err != nil {
+		return "", fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			utils.Warnf("[COMPLETE_READING] rollback error taskID=%s err=%v", taskID, err)
+		}
+	}()
+
 	// Synchronize topics.current_page_cursor to keep both cursor systems aligned.
 	// Completion is authoritative for the assigned reading window, so cursor must
 	// advance to at least end_page to prevent scheduler rematerializing the same window.
@@ -778,7 +789,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 		if seed.EndPage > cursorAfterCompletion {
 			cursorAfterCompletion = seed.EndPage
 		}
-		_, err = conn.Exec(`
+		_, err = tx.Exec(`
 			UPDATE topics
 			SET current_page_cursor = ?,
 			    updated_at = CURRENT_TIMESTAMP
@@ -790,7 +801,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	}
 
 	quizTaskID := uuid.NewString()
-	err = CompleteTask(seed.ID, models.CompletionResult{
+	err = CompleteTaskTx(tx, seed.ID, models.CompletionResult{
 		Status: models.StudyTaskStatusCompleted,
 		FollowUps: []models.StudyQueueTask{
 			{
@@ -808,6 +819,10 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	})
 	if err != nil {
 		return "", err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return "", fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return quizTaskID, nil
 }

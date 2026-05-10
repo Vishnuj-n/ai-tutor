@@ -6,7 +6,10 @@
 
 A **Persistent Guided Study Queue** - NOT an autonomous AI tutor, hidden orchestration engine, or proactive scheduling system. The queue is the recommended guided progression path, but manual and exploratory entry points are intentionally supported when they reuse the same canonical bootstrap and topic ownership semantics.
 
-Advanced learning systems (quizzes, FSRS, remediation) are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
+Advanced learning systems are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
+
+- **Reading Layer**: Validates immediate comprehension and progression readiness (Reading → Quiz → pass/fail → reread or progress).
+- **Retention Layer**: Optimizes long-term retention using spaced retrieval (Flashcards / Examiner → FSRS update → adaptive review scheduling).
 
 Canonical checkpoint flow:
 Dashboard -> Reader -> Quiz -> Dashboard
@@ -75,7 +78,7 @@ Core components:
 - Frontend pages and sidebar navigation
 - Local data layer (SQLite + embedding index)
 - LLM provider adapter
-- Scheduler services (reading + FSRS)
+- Scheduler services (Reading follow-up + Retention/FSRS)
 
 ### Why
 
@@ -310,11 +313,11 @@ Explicit priority hierarchy with notebook biasing:
 
 | Order | Task Type | Rationale |
 |-------|-----------|-----------|
-| 1 | `FLASHCARD_REVIEW` (due reviews) | Time-sensitive spaced repetition |
-| 2 | `REREAD` (remediation) | Timely follow-up on failed material |
-| 3 | `QUIZ` | Assessment after reading |
-| 4 | `READING` | New material after obligations |
-| 5 | `EXAMINER` | Optional advanced assessment |
+| 1 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
+| 2 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
+| 3 | `QUIZ` | Assessment after reading (Reading Layer) |
+| 4 | `READING` | New material after obligations (Reading Layer) |
+| 5 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
 
 **Deterministic Query-Time Rules:**
 - Same `study_queue` state always produces same task order
@@ -340,7 +343,9 @@ ORDER BY
   sq.created_at ASC;
 ```
 
-### How FSRS Integrates with Queue
+### How Retention Layer (FSRS) Integrates with Queue
+
+**Important**: FSRS is for long-term retention (Flashcards, Examiner). Quizzes are for short-term comprehension and do NOT update FSRS state.
 
 1. When cards become **due** (per FSRS calculation):
    - Insert `FLASHCARD_REVIEW` task into `study_queue` (one task per block)
@@ -436,6 +441,49 @@ This is acceptable for MVP. Future refactoring may separate generation state to 
 | 3 | PENDING READING | New material ingestion |
 | 4 | REREAD (remediation) | Failed quiz |
 | 5 | EXAMINER | Mastery threshold met |
+
+### Adaptive Token-Budget Reading Windows
+
+Problem:
+Fixed page-count scheduling produced inconsistent workloads because page density varies significantly across textbooks, slides, OCR PDFs, and technical content.
+
+Solution:
+The scheduler now uses token-budget-driven adaptive page windows.
+
+Core flow:
+reading minutes
+    -> token budget
+    -> adaptive page accumulation
+    -> page window
+    -> token-aware workload estimation
+
+Key behaviors:
+- Dense pages -> fewer pages
+- Sparse slides -> more pages
+- OCR/query failures -> page-based fallback
+
+Constants:
+- WordsPerMinute = 200
+- TargetSessionWords = 2500
+- MinMinutesPerPage = 1.0
+- MinutesPerPage = 2.5 (legacy fallback only)
+
+Adaptive Window Logic:
+1. Convert reading budget into token budget.
+2. Incrementally accumulate pages using per-page token counts.
+3. Stop once accumulated tokens approach target workload.
+4. Preserve ClampWindowPages behavior near topic end.
+5. Fall back to page heuristics if token data unavailable.
+
+Estimation Logic:
+- Actual task minutes are estimated from extracted token counts.
+- Sparse content uses minimum page floors.
+- OCR/query failures use legacy page heuristics.
+
+Determinism:
+- Same chunk data -> same adaptive windows
+- No AI/runtime learning
+- Pure query-driven scheduling
 
 ### Examiner Task Policy
 

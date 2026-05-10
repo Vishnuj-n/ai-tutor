@@ -35,13 +35,13 @@ CREATE INDEX idx_study_queue_notebook_status ON study_queue(notebook_id, status)
 
 **Task Types:**
 
-| Type | Purpose | Created By |
-|------|---------|------------|
-| `READING` | Read a content block | Ingestion pipeline |
-| `QUIZ` | Take a generated quiz | Reading completion |
-| `REREAD` | Revisit material (remediation) | Failed quiz |
-| `FLASHCARD_REVIEW` | Review due flashcards (block-level) | FSRS scheduler |
-| `EXAMINER` | Written assessment | Mastery threshold |
+| Type | Purpose | Created By | Layer |
+|------|---------|------------|-------|
+| `READING` | Read a content block | Ingestion pipeline | Reading |
+| `QUIZ` | Take a generated quiz | Reading completion | Reading |
+| `REREAD` | Revisit material (remediation) | Failed quiz | Reading |
+| `FLASHCARD_REVIEW` | Review due flashcards (block-level) | FSRS scheduler | Retention |
+| `EXAMINER` | Written assessment | Mastery threshold | Retention |
 
 **Task Status Values:**
 
@@ -160,6 +160,24 @@ User quiz submissions.
 | `answers_json` | TEXT | User answers |
 | `completed_at` | INTEGER | Unix timestamp |
 
+### `reread_attempts`
+
+Tracks automatic reread insertions per `topic_id`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `topic_id` | TEXT PRIMARY KEY | Topic being remediated |
+| `attempt_count` | INTEGER NOT NULL DEFAULT 0 | Number of automatic reread insertions used for this topic |
+| `last_attempt_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last time the count changed |
+
+**Semantics:**
+- Maximum automatic reread insertions = `3`
+- Attempts are tracked per `topic_id`
+- Failed active quizzes increment the count inside the same completion transaction
+- Counts `1..3` insert exactly one `REREAD` follow-up
+- Count `4+` inserts no `REREAD`; quiz completes with a manual-review recommendation only
+- Successful quiz completion resets the count to `0`
+
 ---
 
 ## Flashcard Tables
@@ -261,11 +279,12 @@ All content stored in `blocks` table with uniform schema:
 
 ### 4. FSRS Integration
 
-FSRS is data-only:
-- Calculates due dates
-- Updates `state_json` on cards
-- Creates `FLASHCARD_REVIEW` tasks when `due_at <= now`
-- Does NOT orchestrate flow
+FSRS is data-only for the **Retention Layer**:
+- Calculates due dates for flashcards and examiner tasks.
+- Updates `state_json` on cards.
+- Creates `FLASHCARD_REVIEW` tasks when `due_at <= now`.
+- Does NOT orchestrate flow.
+- Does NOT process quiz results or reading completion.
 
 ### 5. Audit Trail
 
@@ -347,7 +366,7 @@ This is a lightweight query-time bias, NOT autonomous orchestration.
 
 ### 9. Reading Completion (Trust-Based)
 
-Reading tasks use trust-based completion:
+Reading tasks use trust-based completion, with Quizzes belonging to the Reading Layer (assessment):
 
 - User decides when reading is complete
 - Complete Session button stays enabled during active reading task

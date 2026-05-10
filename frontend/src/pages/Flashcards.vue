@@ -10,7 +10,7 @@
 
     <nav class="tabs">
       <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Extraction</button>
-      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Key Concept Extraction</button>
+      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Semantic Discovery</button>
     </nav>
 
     <section v-if="activeTab === 'comprehensive'" class="content">
