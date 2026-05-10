@@ -236,6 +236,72 @@ func GetTotalChunkTokensForPageRange(topicID string, startPage int, endPage int)
 	return getTotalChunkTokens(topicID, startPage, endPage)
 }
 
+// GetTokensPerPageMap returns a map of page number to total tokens for that page within a page range.
+// It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
+// This uses a single GROUP BY query to avoid N+1 query problems when scanning multiple pages.
+func GetTokensPerPageMap(topicID string, startPage int, endPage int) (map[int]int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if startPage <= 0 || endPage <= 0 {
+		return nil, fmt.Errorf("start page and end page must be positive")
+	}
+	if startPage > endPage {
+		startPage, endPage = endPage, startPage
+	}
+
+	query := `
+		SELECT page_num, COALESCE(token_count, 0), COALESCE(chunk_text, '')
+		FROM chunks
+		WHERE topic_id = ?
+		  AND page_num BETWEEN ? AND ?
+		ORDER BY page_num
+	`
+
+	rows, err := conn.Query(query, topicID, startPage, endPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	result := make(map[int]int)
+	for rows.Next() {
+		var pageNum int
+		var tokenCount int
+		var chunkText string
+		if err := rows.Scan(&pageNum, &tokenCount, &chunkText); err != nil {
+			return nil, err
+		}
+
+		pageTotal := 0
+		if tokenCount > 0 {
+			pageTotal = tokenCount
+		} else {
+			count, err := embeddings.CountTokens(chunkText)
+			if err != nil {
+				// Fall back to estimation if tokenizer unavailable
+				pageTotal = len(chunkText) / 4
+				if pageTotal <= 0 && strings.TrimSpace(chunkText) != "" {
+					pageTotal = 1
+				}
+			} else {
+				pageTotal = count
+			}
+		}
+
+		result[pageNum] += pageTotal
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
