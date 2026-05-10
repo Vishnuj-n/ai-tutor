@@ -32,39 +32,6 @@
 
       <p v-if="selectionHint" class="selection-hint">{{ selectionHint }}</p>
 
-      <!-- Conversation Analytics Panel -->
-      <div class="conversation-analytics">
-        <div class="analytics-card">
-          <h3 class="analytics-title">Session Metrics</h3>
-          <div class="metric-row">
-            <span class="metric-label">Messages Exchanged</span>
-            <span class="metric-value">{{ messages.length }}</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">Session Duration</span>
-            <span class="metric-value">{{ Math.floor(messages.length * 2) }} min</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">Available Topics</span>
-            <span class="metric-value">{{ availableTopics.length }}</span>
-          </div>
-        </div>
-        <div class="analytics-card">
-          <h3 class="analytics-title">Learning Progress</h3>
-          <div class="metric-row">
-            <span class="metric-label">Questions Asked</span>
-            <span class="metric-value">{{ messages.filter(m => m.role === 'user').length }}</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">Hints Received</span>
-            <span class="metric-value">{{ messages.filter(m => m.role === 'assistant').length }}</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-label">Citations Provided</span>
-            <span class="metric-value">{{ messages.reduce((count, m) => count + (m.citations?.length || 0), 0) }}</span>
-          </div>
-        </div>
-      </div>
 
       <div ref="threadRef" class="chat-thread">
         <div v-if="messages.length === 0" class="empty-state">
@@ -317,13 +284,14 @@ async function scrollToBottom() {
 
 <style scoped>
 .socratic-page {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
   min-height: calc(100vh - 48px);
 }
 
 .page-header {
-  padding: 2px 2px 0;
+  padding: 0;
 }
 
 .eyebrow {
@@ -345,20 +313,24 @@ h1 {
 }
 
 .chat-shell {
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   min-height: 620px;
+  flex: 1;
   background: var(--surface-container-lowest);
-  border-radius: 18px;
-  padding: 14px;
+  border-radius: 16px;
+  padding: 24px;
 }
 
 .chat-toolbar {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
-  gap: 10px;
-  align-items: end;
+  gap: 16px;
+  align-items: flex-end;
+  padding: 16px;
+  background: var(--surface-container-low);
+  border-radius: 12px;
 }
 
 .control-group {
@@ -377,10 +349,10 @@ h1 {
 
 .control-group select {
   width: 100%;
-  border: 1px solid rgba(45, 51, 56, 0.2);
-  border-radius: 10px;
-  padding: 10px;
-  background: var(--surface-container-highest);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-container-lowest);
   color: var(--on-surface);
   font-family: 'Inter', sans-serif;
   font-size: 14px;
@@ -394,9 +366,9 @@ h1 {
 
 .clear-btn {
   border: none;
-  border-radius: 10px;
-  padding: 10px 14px;
-  background: var(--surface-container-low);
+  border-radius: 8px;
+  padding: 10px 16px;
+  background: var(--surface-container-lowest);
   color: var(--on-surface);
   font-family: 'Inter', sans-serif;
   font-size: 13px;
@@ -406,91 +378,29 @@ h1 {
 }
 
 .clear-btn:hover {
-  background: var(--surface-container-lowest);
+  background: var(--surface-container-highest);
   transform: translateY(-1px);
 }
 
 .selection-hint {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: 12px 16px;
+  border-radius: 12px;
   background: var(--surface-container-low);
   color: var(--muted-text);
   font-size: 13px;
   font-family: 'Inter', sans-serif;
 }
 
-/* Conversation Analytics Panel */
-.conversation-analytics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
-  margin-top: 0.5rem;
-}
-
-/* Responsive: collapse to single column on small screens */
-@media (max-width: 768px) {
-  .conversation-analytics {
-    grid-template-columns: 1fr;
-  }
-}
-
-.analytics-card {
-  background: var(--surface-container-low);
-  border-radius: 0.75rem;
-  padding: 1.5rem;
-  transition: all 0.3s ease;
-}
-
-.analytics-card:hover {
-  background: var(--surface-container-lowest);
-  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.06);
-  transform: translateY(-2px);
-}
-
-.analytics-title {
-  font-family: 'Manrope', sans-serif;
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: var(--on-surface);
-  margin: 0 0 1rem 0;
-  letter-spacing: -0.2%;
-}
-
-.metric-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--outline-variant);
-}
-
-.metric-row:last-child {
-  border-bottom: none;
-}
-
-.metric-label {
-  font-family: 'Inter', sans-serif;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--muted-text);
-}
-
-.metric-value {
-  font-family: 'Inter', sans-serif;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--on-surface);
-}
-
 .chat-thread {
   overflow-y: auto;
-  padding: 12px;
-  background: var(--surface-container-highest);
-  border-radius: 14px;
-  display: grid;
-  gap: 10px;
-  min-height: 420px;
+  padding: 24px;
+  background: var(--surface-container-low);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
 }
 
 .empty-state {
@@ -639,8 +549,9 @@ h1 {
 }
 
 .composer {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .composer-input {
@@ -648,13 +559,13 @@ h1 {
   min-height: 88px;
   max-height: 160px;
   resize: vertical;
-  border: 1px solid rgba(45, 51, 56, 0.2);
-  border-radius: 0.75rem;
-  background: var(--surface-container-lowest);
-  padding: 1rem;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--surface-container-low);
+  padding: 16px;
   color: var(--on-surface);
   font-family: 'Inter', sans-serif;
-  font-size: 0.9rem;
+  font-size: 14px;
   line-height: 1.5;
   outline: none;
   transition: all 0.2s ease;
@@ -662,6 +573,7 @@ h1 {
 
 .composer-input:focus {
   border-color: var(--primary);
+  background: var(--surface-container-lowest);
 }
 
 .composer-footer {
@@ -678,12 +590,12 @@ h1 {
 
 .send-btn {
   border: 0;
-  border-radius: 0.75rem;
-  padding: 0.75rem 1.5rem;
+  border-radius: 12px;
+  padding: 12px 24px;
   background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
   color: var(--on-primary);
   font-family: 'Inter', sans-serif;
-  font-size: 0.9rem;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;

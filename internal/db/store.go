@@ -218,6 +218,14 @@ func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState,
 	return getFlashcardByIDRepo(cardID)
 }
 
+func GetFlashcardByIDTx(tx *sql.Tx, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return nil, nil, fmt.Errorf("flashcard id is required")
+	}
+	return getFlashcardByIDRepoTx(tx, cardID)
+}
+
 // GetFlashcardStatesByIDs returns a map of flashcard states keyed by card ID for the given card IDs
 func GetFlashcardStatesByIDs(cardIDs []string) (map[string]models.FlashcardState, error) {
 	if len(cardIDs) == 0 {
@@ -250,6 +258,80 @@ func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, stat
 		return fmt.Errorf("due time is required")
 	}
 	return updateFlashcardReviewRepo(cardID, dueAt, expectedDueAt, state, reviewLog)
+}
+
+func UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return fmt.Errorf("flashcard id is required")
+	}
+	if dueAt <= 0 {
+		return fmt.Errorf("due time is required")
+	}
+	return updateFlashcardReviewRepoTx(tx, cardID, dueAt, expectedDueAt, state, reviewLog)
+}
+
+func GetExistingReviewTaskForNotebook(notebookID string) (*models.StudyQueueTask, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	return getExistingReviewTaskForNotebookRepo(notebookID)
+}
+
+func GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	if now <= 0 {
+		return nil, fmt.Errorf("current time is required")
+	}
+	if limit <= 0 {
+		limit = maxReviewSessionCards
+	}
+	return getDueReviewCardsForNotebookRepo(notebookID, now, limit)
+}
+
+func CreateReviewSession(notebookID string) (*models.StudyQueueTask, bool, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, false, fmt.Errorf("notebook id is required")
+	}
+	return createReviewSessionRepo(notebookID, reviewSessionNow())
+}
+
+func GetReviewSession(taskID string) (*models.ReviewSession, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+	return getReviewSessionRepo(taskID)
+}
+
+func MarkReviewTaskCardReviewedTx(tx *sql.Tx, taskID, cardID string) error {
+	taskID = strings.TrimSpace(taskID)
+	cardID = strings.TrimSpace(cardID)
+	if taskID == "" || cardID == "" {
+		return fmt.Errorf("task id and card id are required")
+	}
+	return markReviewTaskCardReviewedTxRepo(tx, taskID, cardID)
+}
+
+func RemainingReviewTaskCardsTx(tx *sql.Tx, taskID string) (int, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return 0, fmt.Errorf("task id is required")
+	}
+	return remainingReviewTaskCardsTxRepo(tx, taskID)
+}
+
+func CompleteReviewSession(taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return fmt.Errorf("task id is required")
+	}
+	return completeReviewSessionRepo(taskID)
 }
 
 // InsertFSRSReviewLog inserts one generic FSRS review event.
@@ -439,6 +521,21 @@ func SearchVectorsForTopic(topicID string, queryVector []float32, k int, startPa
 		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
 	}
 	return searchVectorsForTopicRepo(topicID, queryVector, k, startPage, endPage)
+}
+
+// SearchVectorsForNotebook finds the top-k most similar vectors for a notebook-scoped query.
+func SearchVectorsForNotebook(notebookID string, queryVector []float32, k int) ([]string, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	if len(queryVector) == 0 {
+		return nil, fmt.Errorf("query vector is required")
+	}
+	if k <= 0 || k > maxRetrievalK {
+		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
+	}
+	return searchVectorsForNotebookRepo(notebookID, queryVector, k)
 }
 
 // UpdateChunkEmbedding updates the embedding_ref (hash) for a chunk to track changes.

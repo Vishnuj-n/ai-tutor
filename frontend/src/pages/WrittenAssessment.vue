@@ -1,75 +1,175 @@
 <template>
-  <div class="assessment-page">
-    <header class="page-header">
-      <h1 class="page-title">Written Assessment</h1>
-      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading || scoring">
-        <option value="">— Select Notebook —</option>
-        <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
-      </select>
-    </header>
+  <StudyPageLayout
+    eyebrow="Assessment"
+    title="Written Assessment"
+  >
+    <!-- Toolbar: notebook selector -->
+    <template #toolbar>
+      <div class="toolbar-field">
+        <label class="field-label" for="wa-notebook-select">Notebook</label>
+        <select
+          id="wa-notebook-select"
+          v-model="selectedNotebookID"
+          class="ghost-select"
+          :disabled="loading || scoring"
+        >
+          <option value="">— Select Notebook —</option>
+          <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
+        </select>
+      </div>
+    </template>
 
-    <nav class="tabs">
-      <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Exam</button>
-      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Semantic Discovery</button>
+    <!-- Mode tabs (pill style, no divider line) -->
+    <nav class="mode-tabs" aria-label="Assessment mode">
+      <button
+        id="tab-comprehensive"
+        :class="['mode-tab', { 'mode-tab--active': activeTab === 'comprehensive' }]"
+        @click="activeTab = 'comprehensive'"
+      >
+        Comprehensive Exam
+      </button>
+      <button
+        id="tab-explorer"
+        :class="['mode-tab', { 'mode-tab--active': activeTab === 'explorer' }]"
+        @click="activeTab = 'explorer'"
+      >
+        Semantic Discovery
+      </button>
     </nav>
 
-    <section v-if="activeTab === 'comprehensive'" class="content">
-      <div v-if="!question">
-        <div class="controls">
-          <div class="input-group">
-            <label>Start Page</label>
-            <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
+    <!-- ── COMPREHENSIVE TAB ───────────────────── -->
+    <section v-if="activeTab === 'comprehensive'" class="tab-content">
+
+      <!-- Config panel: idle / pre-question state -->
+      <div v-if="!question" class="config-panel">
+        <p class="config-panel__hint">
+          Select a page range and generate a long-form question drawn from your notebook.
+        </p>
+        <div class="config-panel__row">
+          <div class="number-field">
+            <label class="field-label" for="wa-start">Start Page</label>
+            <input
+              id="wa-start"
+              v-model.number="startPage"
+              class="ghost-input"
+              type="number"
+              min="1"
+              :disabled="loading"
+            />
           </div>
-          <div class="input-group">
-            <label>End Page</label>
-            <input v-model.number="endPage" type="number" min="1" :disabled="loading" />
+          <div class="number-field">
+            <label class="field-label" for="wa-end">End Page</label>
+            <input
+              id="wa-end"
+              v-model.number="endPage"
+              class="ghost-input"
+              type="number"
+              min="1"
+              :disabled="loading"
+            />
           </div>
-          <BaseButton :disabled="!canGenerate" :loading="loading" @click="generate">Generate Question</BaseButton>
+          <button
+            id="wa-generate-btn"
+            class="primary-btn"
+            :disabled="!canGenerate"
+            @click="generate"
+          >
+            {{ loading ? 'Generating…' : 'Generate Question' }}
+          </button>
         </div>
-        <ErrorMessage :message="error" />
+
+        <!-- Error state -->
+        <article v-if="error" class="state-panel state-panel--error">
+          <p class="state-text">{{ error }}</p>
+        </article>
       </div>
 
-      <div v-if="question && !result" class="exam">
-        <div class="question-box">
-          <p class="prompt">{{ question.prompt }}</p>
-          <span class="badge">Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span>
+      <!-- Active exam: question + answer -->
+      <div v-if="question && !result" class="exam-area">
+        <!-- Question card -->
+        <article class="question-card">
+          <p class="question-prompt">{{ question.prompt }}</p>
+          <span class="source-badge">Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span>
+        </article>
+
+        <!-- Answer textarea -->
+        <div class="answer-field">
+          <label class="field-label" for="wa-answer">Your Answer</label>
+          <textarea
+            id="wa-answer"
+            v-model="userAnswer"
+            class="ghost-textarea"
+            rows="7"
+            placeholder="Write your answer here…"
+            :disabled="scoring"
+          />
         </div>
-        <textarea
-v-model="userAnswer" rows="6" class="answer-input"
-          placeholder="Write your answer here…" :disabled="scoring" />
-        <div class="actions">
-          <BaseButton :disabled="!userAnswer.trim() || scoring" :loading="scoring" @click="submitAnswer">Submit Answer</BaseButton>
-          <button class="discard-btn" :disabled="scoring" @click="reset">Discard</button>
+
+        <!-- Actions row -->
+        <div class="form-footer">
+          <button
+            id="wa-discard-btn"
+            class="ghost-btn"
+            :disabled="scoring"
+            @click="reset"
+          >
+            Discard
+          </button>
+          <button
+            id="wa-submit-btn"
+            class="primary-btn"
+            :disabled="!userAnswer.trim() || scoring"
+            @click="submitAnswer"
+          >
+            {{ scoring ? 'Scoring…' : 'Submit Answer' }}
+          </button>
         </div>
+
+        <!-- Inline error during submission -->
+        <article v-if="error" class="state-panel state-panel--error">
+          <p class="state-text">{{ error }}</p>
+        </article>
       </div>
 
-      <div v-if="result" class="result">
-        <div class="score" :class="scoreClass">
-          <span class="num">{{ result.score }}</span>
-          <span class="denom">/10</span>
-        </div>
-        <div class="result-body">
-          <p class="feedback">{{ result.feedback }}</p>
-          <div v-if="result.fsrsRating" class="fsrs">
-            <span class="label">{{ result.fsrsRating }}</span>
-            <span class="days">Next: {{ result.scheduledDays }}d</span>
+      <!-- Result panel -->
+      <article v-if="result" class="result-panel">
+        <div class="result-panel__score-row">
+          <div class="score-display" :class="scoreClass">
+            <span class="score-num">{{ result.score }}</span>
+            <span class="score-denom">/10</span>
+          </div>
+          <div v-if="result.fsrsRating" class="fsrs-chip">
+            <span class="fsrs-rating">{{ result.fsrsRating }}</span>
+            <span class="fsrs-days">Next: {{ result.scheduledDays }}d</span>
           </div>
         </div>
-        <BaseButton @click="reset">New Question</BaseButton>
-      </div>
+
+        <p class="result-panel__feedback">{{ result.feedback }}</p>
+
+        <div class="form-footer">
+          <button id="wa-new-btn" class="primary-btn" @click="reset">
+            New Question
+          </button>
+        </div>
+      </article>
+
     </section>
 
-    <section v-else class="content stub">
-      <p>Semantic Discovery — coming in Phase 2.</p>
+    <!-- ── EXPLORER TAB (stub) ────────────────── -->
+    <section v-else class="tab-content stub-panel">
+      <p class="eyebrow-inline">Coming in Phase 2</p>
+      <p class="stub-text">
+        Semantic Discovery will surface concept clusters and generate targeted questions across your notebooks.
+      </p>
     </section>
-  </div>
+
+  </StudyPageLayout>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { getNotebooks, generateComprehensiveExam, scoreShortAnswer } from '../services/appApi.js'
-import BaseButton from '../components/BaseButton.vue'
-import ErrorMessage from '../components/ErrorMessage.vue'
+import StudyPageLayout from '../components/StudyPageLayout.vue'
 
 const notebooks          = ref([])
 const selectedNotebookID = ref('')
@@ -86,11 +186,12 @@ const result             = ref(null)
 const canGenerate = computed(() =>
   selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
 )
+
 const scoreClass = computed(() => {
   const s = result.value?.score ?? 0
-  if (s >= 8) return 'great'
-  if (s >= 5) return 'ok'
-  return 'low'
+  if (s >= 8) return 'score--great'
+  if (s >= 5) return 'score--ok'
+  return 'score--low'
 })
 
 onMounted(async () => {
@@ -109,7 +210,6 @@ async function generate() {
   try {
     const res = await generateComprehensiveExam(selectedNotebookID.value, startPage.value, endPage.value)
     if (res.error) { error.value = res.error; return }
-    // Normalize API response to camelCase
     question.value = {
       questionId: res.questionID,
       prompt: res.prompt,
@@ -138,7 +238,6 @@ async function submitAnswer() {
   try {
     const res = await scoreShortAnswer(question.value.questionId, userAnswer.value.trim())
     if (res.error) { error.value = res.error; return }
-    // Normalize API response to camelCase
     result.value = {
       questionId: res.question_id,
       prompt: res.prompt,
@@ -163,263 +262,402 @@ function reset() {
 </script>
 
 <style scoped>
-.assessment-page {
-  padding: 1.5rem;
-  max-width: 1000px;
-  margin: 0 auto;
+/* ── Toolbar ──────────────────────────────────── */
+.toolbar-field {
+  display: grid;
+  gap: 4px;
 }
 
-.page-header {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  margin-bottom: 1rem;
-}
-
-.page-title {
-  font-size: 1.75rem;
+.field-label {
+  font-size: 11px;
   font-weight: 700;
-  margin: 0;
-  color: var(--on-surface);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-text);
 }
 
-.notebook-select {
-  width: 300px;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: var(--background);
-  color: var(--on-surface);
-  font-size: 0.9rem;
-}
-
-.tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  border-bottom: 1px solid #e0e0e0;
-  padding-bottom: 0.5rem;
-}
-
-.tab-btn {
-  padding: 0.5rem 1rem;
-  border: none;
-  background: transparent;
+.ghost-select {
+  appearance: none;
+  padding: 8px 32px 8px 12px;
+  background: var(--surface-container-lowest)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364707d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 12px center;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
   color: var(--on-surface);
   cursor: pointer;
-  font-size: 0.9rem;
-  border-radius: 4px;
+  transition: border-color 0.15s ease;
+  min-width: 220px;
 }
 
-.tab-btn:hover {
-  background: #f5f5f5;
+.ghost-select:focus {
+  outline: none;
+  border-color: var(--primary);
 }
 
-.tab-btn.active {
-  background: var(--primary);
-  color: white;
+.ghost-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Mode tabs (pill style, no divider line) ──── */
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-container-low);
+  border-radius: 12px;
+  width: fit-content;
+}
+
+.mode-tab {
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--muted-text);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.content {
-  animation: fadeIn 0.2s ease;
+.mode-tab:hover:not(.mode-tab--active) {
+  color: var(--on-surface);
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.mode-tab--active {
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+}
+
+/* ── Tab content ──────────────────────────────── */
+.tab-content {
+  display: grid;
+  gap: 16px;
+  animation: fadeIn 0.18s ease;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.controls {
+/* ── Config panel ─────────────────────────────── */
+.config-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.config-panel__hint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-text);
+  line-height: 1.5;
+}
+
+.config-panel__row {
   display: flex;
-  gap: 1rem;
+  gap: 12px;
   align-items: flex-end;
-  padding: 1rem;
-  background: #f5f5f5;
-  border-radius: 4px;
-  margin-bottom: 1rem;
+  flex-wrap: wrap;
 }
 
-.input-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+.number-field {
+  display: grid;
+  gap: 4px;
 }
 
-.input-group label {
-  font-size: 0.85rem;
-  font-weight: 500;
+/* Ghost input: suggestion of a border, no hard box */
+.ghost-input {
+  width: 96px;
+  padding: 8px 12px;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
   color: var(--on-surface);
+  transition: border-color 0.15s ease;
 }
 
-.input-group input {
-  width: 100px;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 0.9rem;
-}
-
-.input-group input:focus {
+.ghost-input:focus {
   outline: none;
   border-color: var(--primary);
 }
 
-.exam {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.question-box {
-  background: #f5f5f5;
-  border-radius: 8px;
-  padding: 1rem;
-  border: 1px solid #e0e0e0;
-}
-
-.prompt {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--on-surface);
-  line-height: 1.5;
-  margin: 0 0 0.5rem 0;
-}
-
-.badge {
-  font-size: 0.75rem;
-  color: #666;
-  background: white;
-  border-radius: 4px;
-  padding: 0.25rem 0.5rem;
-  font-weight: 500;
-}
-
-.answer-input {
-  width: 100%;
-  background: white;
-  color: var(--on-surface);
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 0.75rem;
-  font-size: 0.9rem;
-  resize: vertical;
-  line-height: 1.5;
-  box-sizing: border-box;
-}
-
-.answer-input:focus {
-  outline: none;
-  border-color: var(--primary);
-}
-
-.answer-input:disabled {
+.ghost-input:disabled {
   opacity: 0.5;
 }
 
-.actions {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
+/* ── State panels ─────────────────────────────── */
+.state-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 40px 24px;
+  text-align: center;
 }
 
-.discard-btn {
-  padding: 0.5rem 1rem;
-  background: transparent;
-  border: 1px solid #ccc;
+.state-panel--error .state-text {
+  color: #b42318;
+}
+
+.state-text {
+  margin: 0;
+  font-size: 15px;
+  color: var(--muted-text);
+}
+
+/* ── Exam area ────────────────────────────────── */
+.exam-area {
+  display: grid;
+  gap: 16px;
+}
+
+/* Question card: lowest surface to "pop" */
+.question-card {
+  background: var(--surface-container-lowest);
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 12px;
+}
+
+.question-prompt {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--on-surface);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 500;
+  line-height: 1.6;
 }
 
-.discard-btn:hover {
+.source-badge {
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-text);
+  background: var(--surface-container-low);
+  border-radius: 999px;
+  padding: 4px 12px;
+  width: fit-content;
+}
+
+/* Answer field */
+.answer-field {
+  display: grid;
+  gap: 6px;
+}
+
+.ghost-textarea {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 16px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--on-surface);
+  resize: vertical;
+  line-height: 1.6;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+  min-height: 160px;
+}
+
+.ghost-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.ghost-textarea:disabled {
+  opacity: 0.5;
+}
+
+/* ── Form footer ──────────────────────────────── */
+.form-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ── Ghost secondary button ───────────────────── */
+.ghost-btn {
+  padding: 11px 20px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted-text);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.ghost-btn:hover:not(:disabled) {
   border-color: #ef4444;
   color: #dc2626;
 }
 
-.result {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
-  padding: 2rem;
-  background: #f5f5f5;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
+.ghost-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.score {
+/* ── Primary CTA ──────────────────────────────── */
+.primary-btn {
+  border: 0;
+  border-radius: 12px;
+  padding: 11px 24px;
+  color: var(--on-primary);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
+  cursor: pointer;
+  transition: transform 0.14s ease, filter 0.14s ease;
+  white-space: nowrap;
+}
+
+.primary-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.primary-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Result panel ─────────────────────────────── */
+.result-panel {
+  background: var(--surface-container-lowest);
+  border-radius: 16px;
+  padding: 32px 24px;
+  display: grid;
+  gap: 20px;
+}
+
+.result-panel__score-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.score-display {
   display: flex;
   align-items: baseline;
-  gap: 0.25rem;
+  gap: 4px;
 }
 
-.num {
-  font-size: 3rem;
-  font-weight: 800;
+.score-num {
+  font-family: 'Manrope', sans-serif;
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
   line-height: 1;
 }
 
-.denom {
-  font-size: 1rem;
-  color: #666;
+.score-denom {
+  font-size: 18px;
+  color: var(--muted-text);
   font-weight: 500;
 }
 
-.score.great .num {
-  color: #16a34a;
-}
+/* Score tonal colors */
+.score--great .score-num { color: #16a34a; }
+.score--ok    .score-num { color: #ea580c; }
+.score--low   .score-num { color: #dc2626; }
 
-.score.ok .num {
-  color: #ea580c;
-}
-
-.score.low .num {
-  color: #dc2626;
-}
-
-.result-body {
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.feedback {
-  font-size: 0.95rem;
-  color: var(--on-surface);
-  line-height: 1.5;
-  max-width: 500px;
-  font-weight: 500;
-  margin: 0;
-}
-
-.fsrs {
+/* FSRS chip */
+.fsrs-chip {
   display: inline-flex;
-  gap: 0.5rem;
+  gap: 8px;
   align-items: center;
-  background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 12px;
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8rem;
+  background: var(--surface-container-low);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
 }
 
-.label {
+.fsrs-rating {
   color: var(--primary);
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
-.days {
-  color: #666;
+.fsrs-days {
+  color: var(--muted-text);
   font-weight: 500;
 }
 
-.stub {
+.result-panel__feedback {
+  margin: 0;
+  font-size: 15px;
+  color: var(--on-surface);
+  line-height: 1.65;
+  max-width: 72ch;
+}
+
+/* ── Explorer stub ────────────────────────────── */
+.stub-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 64px 24px;
   text-align: center;
-  padding: 3rem;
-  color: #666;
+}
+
+.eyebrow-inline {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-text);
+}
+
+.stub-text {
+  margin: 8px 0 0;
+  font-size: 15px;
+  color: var(--muted-text);
+  line-height: 1.6;
+  max-width: 52ch;
+  margin-inline: auto;
+}
+
+/* ── Responsive ───────────────────────────────── */
+@media (max-width: 720px) {
+  .config-panel__row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ghost-textarea {
+    font-size: 14px;
+  }
+
+  .score-num {
+    font-size: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-content {
+    animation: none;
+  }
 }
 </style>

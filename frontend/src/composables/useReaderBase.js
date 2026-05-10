@@ -21,6 +21,8 @@ export function useReaderBase(taskID) {
   const fileType = ref('')
   const pageCount = ref(1)
   const currentPage = ref(1)
+  const topicStartPage = ref(0)
+  const topicEndPage = ref(0)
   const sections = ref([])
   const activeSection = ref(null)
 
@@ -201,6 +203,8 @@ export function useReaderBase(taskID) {
       notebookUrl.value = bundle.notebook_url || ''
       fileType.value = (bundle.file_type || '').toLowerCase()
       pageCount.value = Math.max(1, Number(bundle.page_count) || 1)
+      topicStartPage.value = Number(bundle.topic_start_page) || validStart
+      topicEndPage.value = Number(bundle.topic_end_page) || validEnd
       sections.value = bundle.sections
       activeSection.value = sections.value[0] || null
 
@@ -245,6 +249,8 @@ export function useReaderBase(taskID) {
       notebookUrl.value = result?.notebook_url || ''
       fileType.value = (result?.file_type || '').toLowerCase()
       pageCount.value = Math.max(1, Number(result?.page_count) || 1)
+      topicStartPage.value = Number(result?.topic_start_page) || 0
+      topicEndPage.value = Number(result?.topic_end_page) || 0
       sections.value = Array.isArray(result?.sections) ? result.sections : []
       activeSection.value = sections.value[0] || null
 
@@ -311,6 +317,8 @@ export function useReaderBase(taskID) {
     fileType,
     pageCount,
     currentPage,
+    topicStartPage,
+    topicEndPage,
     sections,
     activeSection,
     lockedStartPage,

@@ -1,69 +1,137 @@
 <template>
-  <section class="quiz-page">
-    <header class="page-header">
-      <h1 class="page-title">Quiz</h1>
-      <p v-if="taskMeta" class="meta">Pages {{ taskMeta.start_page }}-{{ taskMeta.end_page }}</p>
-      <select v-else-if="!taskID" v-model="selectedNotebookID" class="notebook-select" :disabled="loading || generating">
-        <option value="">— Select Notebook —</option>
-        <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
-      </select>
-    </header>
+  <StudyPageLayout
+    eyebrow="Assessment"
+    :title="taskMeta ? 'Quiz' : 'Quiz'"
+    :subtitle="taskMeta ? `Pages ${taskMeta.start_page}–${taskMeta.end_page}` : ''"
+  >
+    <!-- Toolbar: notebook selector (manual mode only) -->
+    <template v-if="!taskID && !generating && questions.length === 0" #toolbar>
+      <div class="toolbar-field">
+        <label class="field-label" for="quiz-notebook-select">Notebook</label>
+        <select
+          id="quiz-notebook-select"
+          v-model="selectedNotebookID"
+          class="ghost-select"
+          :disabled="loading || generating"
+        >
+          <option value="">— Select Notebook —</option>
+          <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
+        </select>
+      </div>
+    </template>
 
-    <article v-if="loading" class="state-card">
-      <p>Loading quiz...</p>
+    <!-- Loading -->
+    <article v-if="loading" class="state-panel">
+      <p class="state-text">Loading quiz…</p>
     </article>
 
-    <article v-else-if="error" class="state-card error-card">
-      <p>{{ error }}</p>
+    <!-- Error -->
+    <article v-else-if="error" class="state-panel state-panel--error">
+      <p class="state-text">{{ error }}</p>
     </article>
 
-    <div v-else-if="!taskID && !generating && questions.length === 0" class="manual-controls">
-      <div class="input-group">
-        <label>Start Page</label>
-        <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
+    <!-- Manual controls: page range + generate -->
+    <div
+      v-else-if="!taskID && !generating && questions.length === 0"
+      class="config-panel"
+    >
+      <p class="config-panel__hint">Enter the page range to generate quiz questions from.</p>
+      <div class="config-panel__row">
+        <div class="number-field">
+          <label class="field-label" for="quiz-start">Start Page</label>
+          <input id="quiz-start" v-model.number="startPage" class="ghost-input" type="number" min="1" :disabled="loading" />
+        </div>
+        <div class="number-field">
+          <label class="field-label" for="quiz-end">End Page</label>
+          <input id="quiz-end" v-model.number="endPage" class="ghost-input" type="number" min="1" :disabled="loading" />
+        </div>
+        <button
+          id="quiz-generate-btn"
+          class="primary-btn"
+          :disabled="!canGenerateManual"
+          @click="generateManualQuiz"
+        >
+          {{ generating ? 'Generating…' : 'Generate Quiz' }}
+        </button>
       </div>
-      <div class="input-group">
-        <label>End Page</label>
-        <input v-model.number="endPage" type="number" min="1" :disabled="loading" />
-      </div>
-      <button class="primary-btn" :disabled="!canGenerateManual" :loading="generating" @click="generateManualQuiz">
-        {{ generating ? 'Generating...' : 'Generate Quiz' }}
-      </button>
     </div>
 
-    <article v-else-if="submitted && result" class="result-card">
-      <h2>{{ resultHeading }}</h2>
-      <p>Score: {{ result.score }}% (threshold {{ result.passing_score }}%)</p>
-      <p>{{ result.feedback }}</p>
-      <p v-if="!result.passed">
-        Attempts: {{ result.reread_attempt_count }}/{{ result.max_reread_attempts }}
+    <!-- Generating state -->
+    <article v-else-if="generating" class="state-panel">
+      <p class="state-text">Generating questions…</p>
+    </article>
+
+    <!-- Result card -->
+    <article v-else-if="submitted && result" class="result-panel">
+      <div class="result-panel__badge" :class="result.passed ? 'badge--pass' : 'badge--fail'">
+        {{ result.passed ? 'Passed' : 'Needs Reread' }}
+      </div>
+      <p class="result-panel__score">
+        <span class="score-value">{{ result.score }}%</span>
+        <span class="score-threshold">threshold {{ result.passing_score }}%</span>
+      </p>
+      <p v-if="result.feedback" class="result-panel__feedback">{{ result.feedback }}</p>
+      <p v-if="!result.passed" class="result-panel__attempts">
+        Attempt {{ result.reread_attempt_count }} of {{ result.max_reread_attempts }}
       </p>
     </article>
 
-    <article v-else-if="questions.length === 0 && !generating" class="state-card">
-      <p>No quiz questions found for this task.</p>
+    <!-- Empty state: no questions -->
+    <article v-else-if="questions.length === 0 && !generating" class="state-panel">
+      <p class="state-text">No quiz questions found for this task.</p>
     </article>
 
+    <!-- Quiz form -->
     <form v-else class="quiz-form" @submit.prevent="submitQuiz">
-      <article v-for="(q, index) in questions" :key="q.id" class="question-card">
-        <p class="prompt">{{ index + 1 }}. {{ q.prompt }}</p>
-        <label v-for="option in q.options" :key="option" class="option-row">
-          <input v-model="answers[q.id]" type="radio" :name="q.id" :value="option" :disabled="submitting" />
-          <span>{{ option }}</span>
-        </label>
+      <article
+        v-for="(q, index) in questions"
+        :key="q.id"
+        class="question-card"
+      >
+        <p class="question-prompt">
+          <span class="question-num">{{ index + 1 }}</span>
+          {{ q.prompt }}
+        </p>
+        <div class="options-grid">
+          <label
+            v-for="option in q.options"
+            :key="option"
+            class="option-row"
+            :class="{ 'option-row--selected': answers[q.id] === option }"
+          >
+            <input
+              v-model="answers[q.id]"
+              class="option-radio"
+              type="radio"
+              :name="q.id"
+              :value="option"
+              :disabled="submitting"
+            />
+            <span class="option-text">{{ option }}</span>
+          </label>
+        </div>
       </article>
 
-      <button class="primary-btn" type="submit" :disabled="submitting || !allAnswered">
-        {{ submitting ? 'Scoring...' : 'Submit Quiz' }}
-      </button>
+      <div class="form-footer">
+        <p v-if="!allAnswered" class="footer-hint">Answer all questions to submit.</p>
+        <button
+          id="quiz-submit-btn"
+          class="primary-btn"
+          type="submit"
+          :disabled="submitting || !allAnswered"
+        >
+          {{ submitting ? 'Scoring…' : 'Submit Quiz' }}
+        </button>
+      </div>
     </form>
-  </section>
+  </StudyPageLayout>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { activateTask, getTask, submitQuizAttempt, getNotebooks, generateQuizForPageRange } from '../services/appApi'
+import StudyPageLayout from '../components/StudyPageLayout.vue'
 
 const route = useRoute()
 
@@ -103,13 +171,6 @@ const allAnswered = computed(() => {
 const canGenerateManual = computed(() =>
   selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !generating.value
 )
-
-const resultHeading = computed(() => {
-  if (!result.value) return 'Quiz Result'
-  if (result.value.passed) return 'Passed'
-  if (result.value.manual_review_recommended) return 'Manual Review Recommended'
-  return 'Needs Reread'
-})
 
 onMounted(async () => {
   await loadNotebooks()
@@ -216,113 +277,291 @@ async function submitQuiz() {
 </script>
 
 <style scoped>
-.quiz-page {
+/* ── Toolbar controls ─────────────────────────── */
+.toolbar-field {
   display: grid;
-  gap: 14px;
+  gap: 4px;
 }
 
-.page-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 36px;
-  font-family: 'Manrope', sans-serif;
-}
-
-.meta {
-  margin: 0;
+.field-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--muted-text);
-  font-size: 13px;
 }
 
-.notebook-select {
-  width: 300px;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: var(--background);
+/* Ghost select: suggestion of a border, no hard box */
+.ghost-select {
+  appearance: none;
+  padding: 8px 32px 8px 12px;
+  background: var(--surface-container-lowest)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364707d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 12px center;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
   color: var(--on-surface);
-  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+  min-width: 220px;
 }
 
-.manual-controls {
-  display: flex;
-  gap: 1rem;
-  align-items: flex-end;
-  padding: 1rem;
-  background: #f5f5f5;
-  border-radius: 4px;
-}
-
-.input-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.input-group label {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--on-surface);
-}
-
-.input-group input {
-  width: 100px;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 0.9rem;
-}
-
-.input-group input:focus {
+.ghost-select:focus {
   outline: none;
   border-color: var(--primary);
 }
 
-.state-card,
-.result-card,
-.question-card {
-  background: var(--surface-container-lowest);
-  border: 1px solid var(--surface-container-low);
-  border-radius: 12px;
-  padding: 12px;
+.ghost-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.error-card {
+/* ── Config panel ─────────────────────────────── */
+.config-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.config-panel__hint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-text);
+  line-height: 1.5;
+}
+
+.config-panel__row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.number-field {
+  display: grid;
+  gap: 4px;
+}
+
+/* Ghost input: 1px outline-variant hint, no heavy box */
+.ghost-input {
+  width: 96px;
+  padding: 8px 12px;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--on-surface);
+  transition: border-color 0.15s ease;
+}
+
+.ghost-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.ghost-input:disabled {
+  opacity: 0.5;
+}
+
+/* ── State panels ─────────────────────────────── */
+.state-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.state-panel--error .state-text {
   color: #b42318;
 }
 
+.state-text {
+  margin: 0;
+  font-size: 15px;
+  color: var(--muted-text);
+}
+
+/* ── Result panel ─────────────────────────────── */
+.result-panel {
+  background: var(--surface-container-lowest);
+  border-radius: 16px;
+  padding: 32px 24px;
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+
+.result-panel__badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+.badge--pass {
+  background: color-mix(in srgb, #16a34a 12%, var(--surface-container-low));
+  color: #16a34a;
+}
+
+.badge--fail {
+  background: color-mix(in srgb, #b42318 12%, var(--surface-container-low));
+  color: #b42318;
+}
+
+.result-panel__score {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.score-value {
+  font-family: 'Manrope', sans-serif;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--on-surface);
+  line-height: 1;
+}
+
+.score-threshold {
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+.result-panel__feedback {
+  margin: 0;
+  font-size: 15px;
+  color: var(--on-surface);
+  line-height: 1.6;
+  max-width: 60ch;
+}
+
+.result-panel__attempts {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+/* ── Quiz form ────────────────────────────────── */
 .quiz-form {
   display: grid;
+  gap: 12px;
+}
+
+.question-card {
+  background: var(--surface-container-lowest);
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+  transition: background 0.15s ease;
+}
+
+.question-prompt {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--on-surface);
+  line-height: 1.5;
+  display: flex;
   gap: 10px;
 }
 
-.prompt {
-  margin: 0 0 8px;
+.question-num {
+  flex-shrink: 0;
+  font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-text);
+  padding-top: 3px;
+  min-width: 1.5ch;
+}
+
+.options-grid {
+  display: grid;
+  gap: 8px;
 }
 
 .option-row {
   display: flex;
-  gap: 8px;
-  padding: 4px 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-container-low);
+  cursor: pointer;
+  transition: background 0.12s ease;
 }
 
+.option-row:hover {
+  background: color-mix(in srgb, var(--primary) 6%, var(--surface-container-low));
+}
+
+.option-row--selected {
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface-container-lowest));
+}
+
+.option-radio {
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--primary);
+}
+
+.option-text {
+  font-size: 14px;
+  color: var(--on-surface);
+  line-height: 1.5;
+}
+
+/* ── Form footer ──────────────────────────────── */
+.form-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-top: 8px;
+  flex-wrap: wrap;
+}
+
+.footer-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+/* ── Primary CTA ──────────────────────────────── */
 .primary-btn {
   border: 0;
   border-radius: 12px;
-  padding: 10px 16px;
+  padding: 11px 24px;
   color: var(--on-primary);
+  font-family: inherit;
+  font-size: 14px;
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
-  justify-self: start;
+  cursor: pointer;
+  transition: transform 0.14s ease, filter 0.14s ease;
+  white-space: nowrap;
+}
+
+.primary-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.primary-btn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .primary-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

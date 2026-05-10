@@ -1,46 +1,98 @@
 <template>
-  <div class="flashcards-page">
-    <header class="page-header">
-      <h1 class="page-title">Flashcards</h1>
-      <select v-model="selectedNotebookID" class="notebook-select" :disabled="loading || reviewing">
-        <option value="">— Select Notebook —</option>
-        <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
-      </select>
-    </header>
+  <StudyPageLayout
+    eyebrow="Retention"
+    title="Flashcards"
+    :subtitle="queueMode ? `Queue session · ${sessionRemaining} remaining` : ''"
+  >
+    <!-- Toolbar: notebook selector -->
+    <template #toolbar>
+      <div class="toolbar-field">
+        <label class="field-label" for="fc-notebook-select">Notebook</label>
+        <select
+          id="fc-notebook-select"
+          v-model="selectedNotebookID"
+          class="ghost-select"
+          :disabled="loading || reviewing"
+        >
+          <option value="">— Select Notebook —</option>
+          <option v-for="nb in notebooks" :key="nb.id" :value="nb.id">{{ nb.title }}</option>
+        </select>
+      </div>
+    </template>
 
-    <nav class="tabs">
-      <button :class="['tab-btn', { active: activeTab === 'comprehensive' }]" @click="activeTab = 'comprehensive'">Comprehensive Extraction</button>
-      <button :class="['tab-btn', { active: activeTab === 'explorer' }]" @click="activeTab = 'explorer'">Semantic Discovery</button>
+    <!-- Mode tabs -->
+    <nav class="mode-tabs" aria-label="Flashcard mode">
+      <button
+        id="tab-comprehensive"
+        :class="['mode-tab', { 'mode-tab--active': activeTab === 'comprehensive' }]"
+        @click="activeTab = 'comprehensive'"
+      >
+        Comprehensive
+      </button>
+      <button
+        id="tab-explorer"
+        :class="['mode-tab', { 'mode-tab--active': activeTab === 'explorer' }]"
+        @click="activeTab = 'explorer'"
+      >
+        Semantic Discovery
+      </button>
     </nav>
 
-    <section v-if="activeTab === 'comprehensive'" class="content">
-      <div v-if="!reviewing">
-        <div class="controls">
-          <div class="input-group">
-            <label>Start Page</label>
-            <input v-model.number="startPage" type="number" min="1" :disabled="loading" />
+    <!-- ── COMPREHENSIVE TAB ───────────────────── -->
+    <section v-if="activeTab === 'comprehensive'" class="tab-content">
+
+      <!-- Config panel: page range -->
+      <div v-if="!reviewing" class="config-panel">
+        <p class="config-panel__hint">Enter the page range to extract flashcards from.</p>
+        <div class="config-panel__row">
+          <div class="number-field">
+            <label class="field-label" for="fc-start">Start Page</label>
+            <input id="fc-start" v-model.number="startPage" class="ghost-input" type="number" min="1" :disabled="loading" />
           </div>
-          <div class="input-group">
-            <label>End Page</label>
-            <input v-model.number="endPage" type="number" min="1" :disabled="loading" />
+          <div class="number-field">
+            <label class="field-label" for="fc-end">End Page</label>
+            <input id="fc-end" v-model.number="endPage" class="ghost-input" type="number" min="1" :disabled="loading" />
           </div>
-          <BaseButton :disabled="!canGenerate" :loading="loading" @click="generate">Generate Cards</BaseButton>
+          <BaseButton id="fc-generate-btn" :disabled="!canGenerate" :loading="loading" @click="generate">
+            Generate Cards
+          </BaseButton>
         </div>
         <ErrorMessage :message="error" />
       </div>
 
+      <!-- Review session -->
       <div v-if="reviewing && currentCard" class="review-session">
-        <p class="progress">Card {{ reviewIndex + 1 }} of {{ cards.length }}</p>
+        <!-- Progress row -->
+        <div class="progress-row">
+          <p class="progress-label">Card {{ reviewIndex + 1 }} of {{ cards.length }}</p>
+          <div class="progress-track">
+            <div
+              class="progress-fill"
+              :style="{ width: `${((reviewIndex + 1) / cards.length) * 100}%` }"
+            />
+          </div>
+        </div>
+
+        <!-- Flashcard -->
         <div class="flashcard" :class="{ flipped }">
           <div class="card-inner">
-            <div class="card-front">
+            <!-- Front -->
+            <div class="card-face card-front">
               <p class="card-text">{{ currentCard.prompt }}</p>
-              <button class="flip-btn" @click="flipped = true">Show Answer</button>
+              <button id="fc-reveal-btn" class="reveal-btn" @click="flipped = true">Show Answer</button>
             </div>
-            <div class="card-back">
+            <!-- Back -->
+            <div class="card-face card-back">
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
-              <div class="rating-buttons">
-                <button v-for="r in ratings" :key="r.key" :class="['rating-btn', r.key]" :disabled="isSubmittingReview" @click="rate(r.key)">
+              <div class="rating-row">
+                <button
+                  v-for="r in ratings"
+                  :key="r.key"
+                  :id="`fc-rate-${r.key}`"
+                  :class="['rating-btn', `rating-btn--${r.key}`]"
+                  :disabled="isSubmittingReview"
+                  @click="rate(r.key)"
+                >
                   {{ r.label }}
                 </button>
               </div>
@@ -49,25 +101,36 @@
         </div>
       </div>
 
-      <div v-if="reviewing && !currentCard" class="done">
-        <h2>Session Complete</h2>
-        <p>{{ cards.length }} card{{ cards.length !== 1 ? 's' : '' }} reviewed.</p>
-        <BaseButton @click="reset">New Session</BaseButton>
+      <!-- Session complete -->
+      <div v-if="reviewing && !currentCard" class="done-panel">
+        <p class="eyebrow-inline">Session Complete</p>
+        <p class="done-count">
+          <span class="done-num">{{ cards.length }}</span>
+          card{{ cards.length !== 1 ? 's' : '' }} reviewed.
+        </p>
+        <BaseButton id="fc-new-session-btn" @click="reset">New Session</BaseButton>
       </div>
+
     </section>
 
-    <section v-else class="content stub">
-      <p>Explorer Mode — coming in Phase 2.</p>
+    <!-- ── EXPLORER TAB (stub) ────────────────── -->
+    <section v-else class="tab-content stub-panel">
+      <p class="eyebrow-inline">Coming in Phase 2</p>
+      <p class="stub-text">Semantic Discovery will surface concept clusters across your notebooks.</p>
     </section>
-  </div>
+
+  </StudyPageLayout>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getNotebooks, generateMarathonFlashcards, getFlashcards, recordFlashcardReview } from '../services/appApi.js'
+import { useRoute } from 'vue-router'
+import { activateTask, completeReviewSession, getNotebooks, generateMarathonFlashcards, getReviewSession, recordCardReview, recordFlashcardReview } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
+import StudyPageLayout from '../components/StudyPageLayout.vue'
 
+const route              = useRoute()
 const notebooks          = ref([])
 const selectedNotebookID = ref('')
 const activeTab          = ref('comprehensive')
@@ -80,12 +143,15 @@ const reviewIndex        = ref(0)
 const reviewing          = ref(false)
 const flipped            = ref(false)
 const isSubmittingReview = ref(false)
+const reviewTaskID       = ref('')
+const sessionRemaining   = ref(0)
+const queueMode          = computed(() => !!reviewTaskID.value)
 
 const ratings = [
-  { key: 'again', label: '✕ Again' },
-  { key: 'hard',  label: '~ Hard' },
-  { key: 'good',  label: '✓ Good' },
-  { key: 'easy',  label: '⚡ Easy' },
+  { key: 'again', label: '✕ Again', value: 1 },
+  { key: 'hard',  label: '~ Hard',  value: 2 },
+  { key: 'good',  label: '✓ Good',  value: 3 },
+  { key: 'easy',  label: '⚡ Easy', value: 4 },
 ]
 
 const canGenerate  = computed(() =>
@@ -97,7 +163,12 @@ onMounted(async () => {
   try {
     const res = await getNotebooks()
     notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
-  } catch { error.value = 'Failed to load notebooks.' }
+  } catch {
+    error.value = 'Failed to load notebooks.'
+  }
+  if (route.query.taskId) {
+    await loadQueueSession(String(route.query.taskId))
+  }
 })
 
 async function generate() {
@@ -122,16 +193,34 @@ async function generate() {
 async function rate(ratingKey) {
   const card = currentCard.value
   if (!card || isSubmittingReview.value) return
-  
+
   isSubmittingReview.value = true
   try {
-    const res = await recordFlashcardReview(card.id, ratingKey)
+    let res
+    if (queueMode.value) {
+      const rating = ratings.find(r => r.key === ratingKey)?.value
+      res = await recordCardReview(reviewTaskID.value, card.card_id, rating)
+    } else {
+      res = await recordFlashcardReview(card.id, ratingKey)
+    }
     if (res.error) {
       error.value = `Failed to save review: ${res.error}`
       return
     }
     flipped.value = false
-    reviewIndex.value++
+    if (queueMode.value) {
+      sessionRemaining.value = Number(res.remaining ?? 0)
+      if (sessionRemaining.value <= 0) {
+        const completeRes = await completeReviewSession(reviewTaskID.value)
+        if (completeRes?.error) {
+          error.value = `Failed to complete session: ${completeRes.error}`
+          return
+        }
+      }
+      await loadQueueSession(reviewTaskID.value)
+    } else {
+      reviewIndex.value++
+    }
   } catch (e) {
     error.value = `Failed to save review: ${e?.message ?? 'Unknown error'}`
   } finally {
@@ -146,263 +235,427 @@ function reset() {
   flipped.value = false
   isSubmittingReview.value = false
   error.value = ''
+  reviewTaskID.value = ''
+  sessionRemaining.value = 0
+}
+
+async function loadQueueSession(taskID) {
+  error.value = ''
+  loading.value = true
+  reviewTaskID.value = taskID
+  try {
+    const activateRes = await activateTask(taskID)
+    if (activateRes?.error && activateRes.code !== 409) {
+      error.value = activateRes.error
+      reviewing.value = false
+      cards.value = []
+      return
+    }
+    const res = await getReviewSession(taskID)
+    if (res.error) {
+      error.value = res.error
+      reviewing.value = false
+      cards.value = []
+      return
+    }
+    const session = res.session
+    cards.value = Array.isArray(session?.cards) ? session.cards : []
+    reviewIndex.value = Number(session?.next_pending_idx ?? -1)
+    sessionRemaining.value = Number(session?.remaining ?? 0)
+    reviewing.value = cards.value.length > 0
+    flipped.value = false
+    if (reviewIndex.value < 0) {
+      reviewIndex.value = cards.value.length
+    }
+  } catch (e) {
+    error.value = e?.message ?? 'Failed to load queue session'
+    reviewing.value = false
+    cards.value = []
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
 <style scoped>
-.flashcards-page {
-  padding: 1.5rem;
-  max-width: 1000px;
-  margin: 0 auto;
+/* ── Toolbar ──────────────────────────────────── */
+.toolbar-field {
+  display: grid;
+  gap: 4px;
 }
 
-.page-header {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  margin-bottom: 1rem;
-}
-
-.page-title {
-  font-size: 1.75rem;
+.field-label {
+  font-size: 11px;
   font-weight: 700;
-  margin: 0;
-  color: var(--on-surface);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-text);
 }
 
-.notebook-select {
-  width: 300px;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: var(--background);
-  color: var(--on-surface);
-  font-size: 0.9rem;
-}
-
-.tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  border-bottom: 1px solid #e0e0e0;
-  padding-bottom: 0.5rem;
-}
-
-.tab-btn {
-  padding: 0.5rem 1rem;
-  border: none;
-  background: transparent;
+.ghost-select {
+  appearance: none;
+  padding: 8px 32px 8px 12px;
+  background: var(--surface-container-lowest)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364707d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 12px center;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
   color: var(--on-surface);
   cursor: pointer;
-  font-size: 0.9rem;
-  border-radius: 4px;
+  transition: border-color 0.15s ease;
+  min-width: 220px;
 }
 
-.tab-btn:hover {
-  background: #f5f5f5;
-}
-
-.tab-btn.active {
-  background: var(--primary);
-  color: white;
-  font-weight: 600;
-}
-
-.content {
-  animation: fadeIn 0.2s ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.controls {
-  display: flex;
-  gap: 1rem;
-  align-items: flex-end;
-  padding: 1rem;
-  background: #f5f5f5;
-  border-radius: 4px;
-  margin-bottom: 1rem;
-}
-
-.input-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.input-group label {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--on-surface);
-}
-
-.input-group input {
-  width: 100px;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 0.9rem;
-}
-
-.input-group input:focus {
+.ghost-select:focus {
   outline: none;
   border-color: var(--primary);
 }
 
-.review-session {
+.ghost-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Mode tabs (pill style, no divider line) ──── */
+.mode-tabs {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-container-low);
+  border-radius: 12px;
+  width: fit-content;
 }
 
-.progress {
+.mode-tab {
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted-text);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mode-tab:hover:not(.mode-tab--active) {
+  color: var(--on-surface);
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.mode-tab--active {
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+}
+
+/* ── Tab content ──────────────────────────────── */
+.tab-content {
+  display: grid;
+  gap: 16px;
+  animation: fadeIn 0.18s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Config panel ─────────────────────────────── */
+.config-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.config-panel__hint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-text);
+  line-height: 1.5;
+}
+
+.config-panel__row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.number-field {
+  display: grid;
+  gap: 4px;
+}
+
+.ghost-input {
+  width: 96px;
+  padding: 8px 12px;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--on-surface);
+  transition: border-color 0.15s ease;
+}
+
+.ghost-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.ghost-input:disabled {
+  opacity: 0.5;
+}
+
+/* ── Review session ───────────────────────────── */
+.review-session {
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+}
+
+/* Progress row */
+.progress-row {
+  width: 100%;
+  max-width: 560px;
+  display: grid;
+  gap: 6px;
+}
+
+.progress-label {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-text);
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-align: center;
-  font-size: 0.85rem;
-  color: #666;
-  margin-bottom: 0.5rem;
 }
 
+.progress-track {
+  height: 3px;
+  background: var(--surface-container-low);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-dim), var(--primary));
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* Flashcard */
 .flashcard {
   width: 100%;
-  max-width: 500px;
-  height: 280px;
-  perspective: 1000px;
+  max-width: 560px;
+  perspective: 1200px;
 }
 
 .card-inner {
-  width: 100%;
-  height: 100%;
   position: relative;
+  width: 100%;
+  padding-bottom: 62%; /* aspect ratio ~16:10 */
   transform-style: preserve-3d;
-  transition: transform 0.5s;
-  border-radius: 8px;
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 16px;
 }
 
 .flashcard.flipped .card-inner {
   transform: rotateY(180deg);
 }
 
-.card-front,
-.card-back {
+.card-face {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
-  border-radius: 8px;
-  background: white;
-  border: 1px solid #e0e0e0;
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 1.5rem;
-  gap: 1rem;
+  gap: 16px;
+  padding: 32px 28px;
+}
+
+.card-front {
+  background: var(--surface-container-lowest);
 }
 
 .card-back {
+  background: var(--surface-container-low);
   transform: rotateY(180deg);
 }
 
 .card-text {
-  font-size: 1rem;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
   color: var(--on-surface);
   text-align: center;
-  line-height: 1.5;
-  font-weight: 500;
+  line-height: 1.6;
+  max-width: 48ch;
 }
 
 .answer-text {
+  font-weight: 600;
   color: var(--primary);
-  font-weight: 600;
 }
 
-.flip-btn {
-  padding: 0.5rem 1.25rem;
-  background: var(--primary);
-  color: white;
-  border: none;
-  border-radius: 4px;
+/* Reveal button */
+.reveal-btn {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 24px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-primary);
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 600;
+  transition: transform 0.14s ease, filter 0.14s ease;
 }
 
-.flip-btn:hover {
-  background: #0056b3;
+.reveal-btn:hover {
+  filter: brightness(1.08);
 }
 
-.rating-buttons {
+.reveal-btn:active {
+  transform: scale(0.96);
+}
+
+/* Rating buttons — semantic tonal variation */
+.rating-row {
   display: flex;
-  gap: 0.5rem;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
 }
 
 .rating-btn {
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  background: white;
+  transition: transform 0.1s ease, filter 0.12s ease;
+  background: var(--surface-container-lowest);
   color: var(--on-surface);
-  font-size: 0.85rem;
-  font-weight: 500;
 }
 
-.rating-btn:hover.again {
-  background: #fee2e2;
-  border-color: #ef4444;
+.rating-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.rating-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Hover: tonal tints only, no heavy borders */
+.rating-btn--again:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 14%, var(--surface-container-lowest));
   color: #dc2626;
 }
 
-.rating-btn:hover.hard {
-  background: #ffedd5;
-  border-color: #f97316;
+.rating-btn--hard:hover:not(:disabled) {
+  background: color-mix(in srgb, #f97316 14%, var(--surface-container-lowest));
   color: #ea580c;
 }
 
-.rating-btn:hover.good {
-  background: #dcfce7;
-  border-color: #22c55e;
+.rating-btn--good:hover:not(:disabled) {
+  background: color-mix(in srgb, #22c55e 14%, var(--surface-container-lowest));
   color: #16a34a;
 }
 
-.rating-btn:hover.easy {
-  background: #ede9fe;
-  border-color: #8b5cf6;
+.rating-btn--easy:hover:not(:disabled) {
+  background: color-mix(in srgb, #8b5cf6 14%, var(--surface-container-lowest));
   color: #7c3aed;
 }
 
-.done {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
-  padding: 3rem;
+/* ── Session done ─────────────────────────────── */
+.done-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 48px 24px;
+  display: grid;
+  gap: 16px;
+  justify-items: center;
   text-align: center;
-  background: #f5f5f5;
-  border-radius: 8px;
 }
 
-.done h2 {
-  font-size: 1.5rem;
-  font-weight: 700;
+.eyebrow-inline {
   margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-text);
+}
+
+.done-count {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.done-num {
+  font-family: 'Manrope', sans-serif;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
   color: var(--on-surface);
 }
 
-.done p {
-  font-size: 0.95rem;
-  color: #666;
-  margin: 0;
+/* ── Explorer stub ────────────────────────────── */
+.stub-panel {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 64px 24px;
+  text-align: center;
 }
 
-.stub {
-  text-align: center;
-  padding: 3rem;
-  color: #666;
+.stub-text {
+  margin: 8px 0 0;
+  font-size: 15px;
+  color: var(--muted-text);
+  line-height: 1.6;
+  max-width: 52ch;
+  margin-inline: auto;
+}
+
+/* ── Responsive ───────────────────────────────── */
+@media (max-width: 720px) {
+  .card-face {
+    padding: 24px 16px;
+  }
+
+  .card-text {
+    font-size: 14px;
+  }
+
+  .config-panel__row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-inner {
+    transition: none;
+  }
+
+  .tab-content {
+    animation: none;
+  }
 }
 </style>

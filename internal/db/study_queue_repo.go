@@ -43,6 +43,9 @@ func InsertStudyTask(task models.StudyQueueTask) error {
 			id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
 		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
 	`, task.ID, task.NotebookID, task.TopicID, string(task.TaskType), string(task.Status), task.Priority, task.PayloadJSON, task.StartPage, task.EndPage)
+	if err == nil {
+		utils.LogQueueTaskCreated(task.ID, string(task.TaskType), task.NotebookID, task.TopicID)
+	}
 	return err
 }
 
@@ -76,6 +79,7 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
 func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	utils.Warnf("[QUEUE] GetAllPendingTasks filter status=PENDING order=task_type, notebook_priority desc, task_priority asc, created_at asc")
+	utils.LogQueueOrdering("", "", "", "get_all_pending")
 	query := `
 		SELECT
 			sq.id,
@@ -90,7 +94,8 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			COALESCE(sq.payload_json, ''),
 			COALESCE(sq.start_page, 0),
 			COALESCE(sq.end_page, 0),
-			COALESCE(t.title, '')
+			COALESCE(t.title, ''),
+			COALESCE(n.priority, 5)
 		FROM study_queue sq
 		LEFT JOIN notebooks n ON sq.notebook_id = n.id
 		LEFT JOIN topics t ON sq.topic_id = t.id
@@ -121,6 +126,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	for rows.Next() {
 		var task models.StudyQueueTask
 		var topicTitle string
+		var notebookPriority int
 		err := rows.Scan(
 			&task.ID,
 			&task.NotebookID,
@@ -135,6 +141,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			&task.StartPage,
 			&task.EndPage,
 			&topicTitle,
+			&notebookPriority,
 		)
 		if err != nil {
 			return nil, err
@@ -143,6 +150,9 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			task.Title = topicTitle
 		}
 		tasks = append(tasks, task)
+
+		// Debug log: show notebook priority for each task
+		utils.Warnf("[QUEUE] task id=%s type=%s notebook_id=%s task_priority=%d notebook_priority=%d (from query ordering)", task.ID, task.TaskType, task.NotebookID, task.Priority, notebookPriority)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -222,6 +232,7 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q order=task_type, notebook_priority desc, task_priority asc, created_at asc", notebookID)
+	utils.LogQueueOrdering("", notebookID, "", "get_next_task")
 
 	query := `
 		SELECT
@@ -236,7 +247,8 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 			COALESCE(sq.completed_at, ''),
 			COALESCE(sq.payload_json, ''),
 			COALESCE(sq.start_page, 0),
-			COALESCE(sq.end_page, 0)
+			COALESCE(sq.end_page, 0),
+			COALESCE(n.priority, 5)
 		FROM study_queue sq
 		LEFT JOIN notebooks n ON sq.notebook_id = n.id
 		WHERE sq.status = 'PENDING'
@@ -263,6 +275,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	`
 
 	task := &models.StudyQueueTask{}
+	var notebookPriority int
 	err := conn.QueryRow(query, args...).Scan(
 		&task.ID,
 		&task.NotebookID,
@@ -276,6 +289,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 		&task.PayloadJSON,
 		&task.StartPage,
 		&task.EndPage,
+		&notebookPriority,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoPendingTasks
@@ -283,7 +297,8 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	if err != nil {
 		return nil, err
 	}
-	utils.Warnf("[QUEUE] GetNextTask result taskID=%s status=%s type=%s notebookID=%s topicID=%s", task.ID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
+	// Debug log: show notebook priority for next task
+	utils.Warnf("[QUEUE] GetNextTask result taskID=%s status=%s type=%s notebookID=%s topicID=%s task_priority=%d notebook_priority=%d", task.ID, task.Status, task.TaskType, task.NotebookID, task.TopicID, task.Priority, notebookPriority)
 	return task, nil
 }
 
@@ -312,7 +327,7 @@ func ActivateTask(taskID string) error {
 		return err
 	}
 	if affected == 1 {
-		utils.Warnf("[QUEUE] ActivateTask transition taskID=%s from=PENDING to=ACTIVE", taskID)
+		utils.LogQueueTransition(taskID, "", "PENDING", "ACTIVE", "task_activated")
 		return nil
 	}
 	var exists int
@@ -372,7 +387,7 @@ func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) e
 		utils.Warnf("[QUEUE] CompleteTaskTx reading task completion task not active taskID=%s", taskID)
 		return ErrTaskNotActive
 	}
-	utils.Warnf("[QUEUE] CompleteTaskTx reading task completion update success taskID=%s", taskID)
+	utils.LogQueueTransition(taskID, "", "ACTIVE", status, "task_completed")
 
 	for _, followUp := range result.FollowUps {
 		followUp.ID = strings.TrimSpace(followUp.ID)
@@ -392,16 +407,15 @@ func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) e
 			followUp.Status = models.StudyTaskStatusPending
 		}
 
-		utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion start taskID=%s followUpID=%s taskType=%s", taskID, followUp.ID, followUp.TaskType)
 		if _, err := tx.Exec(`
 			INSERT INTO study_queue (
 				id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
 			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
 		`, followUp.ID, followUp.NotebookID, followUp.TopicID, string(followUp.TaskType), string(followUp.Status), followUp.Priority, followUp.PayloadJSON, followUp.StartPage, followUp.EndPage); err != nil {
-			utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion error taskID=%s followUpID=%s err=%v", taskID, followUp.ID, err)
+			utils.Warnf("[QUEUE] CompleteTaskTx follow-up insertion error taskID=%s followUpID=%s err=%v", taskID, followUp.ID, err)
 			return err
 		}
-		utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion success taskID=%s followUpID=%s", taskID, followUp.ID)
+		utils.LogQueueTaskCreated(followUp.ID, string(followUp.TaskType), followUp.NotebookID, followUp.TopicID)
 	}
 
 	return nil
