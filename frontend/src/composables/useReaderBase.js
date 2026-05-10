@@ -203,8 +203,8 @@ export function useReaderBase(taskID) {
       notebookUrl.value = bundle.notebook_url || ''
       fileType.value = (bundle.file_type || '').toLowerCase()
       pageCount.value = Math.max(1, Number(bundle.page_count) || 1)
-      topicStartPage.value = Number(bundle.topic_start_page) || validStart
-      topicEndPage.value = Number(bundle.topic_end_page) || validEnd
+      topicStartPage.value = Number(bundle.topic_start_page ?? 0)
+      topicEndPage.value = Number(bundle.topic_end_page ?? 0)
       sections.value = bundle.sections
       activeSection.value = sections.value[0] || null
 

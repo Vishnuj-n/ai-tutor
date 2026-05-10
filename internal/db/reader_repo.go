@@ -160,7 +160,7 @@ func GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
 	}
 
 	rows, err := conn.Query(`
-		SELECT DISTINCT c.id, c.topic_id, c.parent_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
+		SELECT c.id, c.topic_id, c.parent_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
 		FROM notebook_chunks nc
 		JOIN chunks c ON c.id = nc.chunk_id
 		WHERE nc.notebook_id = ?

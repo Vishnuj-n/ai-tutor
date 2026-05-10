@@ -266,7 +266,6 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				return models.QuizResult{}, fmt.Errorf("failed to reset reread attempts: %w", err)
 			}
 		}
-		utils.LogQuizResult(task.ID, score, true, "")
 	} else if task.TopicID != "" {
 		rereadAttemptCount, err = db.IncrementRereadAttemptCountTx(tx, task.TopicID)
 		if err != nil {
@@ -286,13 +285,11 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				StartPage:   task.StartPage,
 				EndPage:     task.EndPage,
 			})
-			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
 		} else {
 			manualReviewRecommended = true
 			feedback = "Automatic reread limit reached. Review this topic manually, then return when ready to retry."
 			attempt.Feedback = feedback
 		}
-		utils.LogQuizResult(task.ID, score, false, rereadTaskID)
 	}
 
 	if err := db.SaveQuizAttemptTx(tx, attempt); err != nil {
@@ -318,6 +315,16 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	}
 	if err := tx.Commit(); err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to commit quiz transaction: %w", err)
+	}
+
+	// Log after successful commit to ensure consistency with persisted state
+	if passed {
+		utils.LogQuizResult(task.ID, score, true, "")
+	} else if task.TopicID != "" {
+		if rereadAttemptCount <= maxAutomaticRereadAttempts {
+			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
+		}
+		utils.LogQuizResult(task.ID, score, false, rereadTaskID)
 	}
 
 	return models.QuizResult{

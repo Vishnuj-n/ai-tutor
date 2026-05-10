@@ -176,6 +176,7 @@ func InitSchema(tx *sql.Tx) error {
 			chunk_id TEXT NOT NULL,
 			page_num INTEGER DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (notebook_id, chunk_id),
 			FOREIGN KEY (notebook_id) REFERENCES notebooks(id),
 			FOREIGN KEY (chunk_id) REFERENCES chunks(id)
 		)`,

@@ -1,6 +1,7 @@
 package study
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -98,7 +99,7 @@ func (s *StudyService) ExplainReaderSection(sectionID string, question string) m
 		return map[string]interface{}{"error": "failed to fetch reader section: " + err.Error()}
 	}
 
-	topicID, startPage, endPage, err := resolveReaderSectionScope(sectionID)
+	topicID, notebookID, startPage, endPage, err := resolveReaderSectionScope(sectionID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to resolve reader section scope: " + err.Error()}
 	}
@@ -108,6 +109,7 @@ func (s *StudyService) ExplainReaderSection(sectionID string, question string) m
 
 	resp := s.AnswerReaderQuestion(ReaderAIRequest{
 		TopicID:          topicID,
+		NotebookID:       notebookID,
 		Question:         question,
 		Scope:            ReaderScopeCurrentChapter,
 		ChapterStartPage: startPage,
@@ -221,7 +223,7 @@ func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
 	return strings.TrimSpace(builder.String()), citations
 }
 
-func resolveReaderSectionScope(sectionID string) (string, int, int, error) {
+func resolveReaderSectionScope(sectionID string) (string, string, int, int, error) {
 	var topicID string
 	err := db.GetConnection().QueryRow(`
 		SELECT topic_id
@@ -229,16 +231,30 @@ func resolveReaderSectionScope(sectionID string) (string, int, int, error) {
 		WHERE id = ?
 	`, sectionID).Scan(&topicID)
 	if err != nil {
-		return "", 0, 0, err
+		return "", "", 0, 0, err
+	}
+
+	// Fetch the first notebook that contains this topic
+	var notebookID string
+	err = db.GetConnection().QueryRow(`
+		SELECT notebook_id
+		FROM notebook_topics
+		WHERE topic_id = ?
+		ORDER BY created_at ASC, notebook_id ASC
+		LIMIT 1
+	`, topicID).Scan(&notebookID)
+	// If no notebook is linked, that's okay—notebookID remains empty
+	if err != nil && err != sql.ErrNoRows {
+		notebookID = ""
 	}
 
 	pageRanges, err := db.GetTopicHeadingPageRanges(topicID)
 	if err != nil {
-		return topicID, 0, 0, nil
+		return topicID, notebookID, 0, 0, nil
 	}
 	pageRange, ok := pageRanges[sectionID]
 	if !ok {
-		return topicID, 0, 0, nil
+		return topicID, notebookID, 0, 0, nil
 	}
-	return topicID, pageRange[0], pageRange[1], nil
+	return topicID, notebookID, pageRange[0], pageRange[1], nil
 }
