@@ -278,6 +278,7 @@ function reset() {
 
 .ghost-select {
   appearance: none;
+  width: 100%;
   padding: 8px 32px 8px 12px;
   background: var(--surface-container-lowest)
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364707d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
@@ -289,7 +290,7 @@ function reset() {
   color: var(--on-surface);
   cursor: pointer;
   transition: border-color 0.15s ease;
-  min-width: 220px;
+  max-width: 220px;
 }
 
 .ghost-select:focus {

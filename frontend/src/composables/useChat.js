@@ -35,6 +35,11 @@ export function useChat() {
   /**
    * Send a chat message
    * @param {object} context - Reader retrieval context
+   * @param {string} context.topicID - Topic identifier (required)
+   * @param {string} context.notebookID - Notebook identifier (required)
+   * @param {number} context.currentPage - Current page number (required)
+   * @param {number} [context.chapterStartPage] - Chapter start page (optional)
+   * @param {number} [context.chapterEndPage] - Chapter end page (optional)
    * @returns {Promise<boolean>} Success status
    */
   async function sendMessage(context) {
