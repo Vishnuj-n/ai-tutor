@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const maxAutomaticRereadAttempts = 3
+
 // GenerateQuizForPageRange generates a quiz from a notebook's page range.
 // This is the manual entry point for exploratory quiz generation.
 func (s *StudyService) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
@@ -231,27 +233,9 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	attemptID := uuid.NewString()
 	followUps := make([]models.StudyQueueTask, 0, 1)
 	rereadTaskID := ""
-	if !passed {
-		rereadTaskID = uuid.NewString()
-		feedbackPayload, _ := json.Marshal(map[string]string{"feedback": feedback})
-		followUps = append(followUps, models.StudyQueueTask{
-			ID:          rereadTaskID,
-			NotebookID:  task.NotebookID,
-			TopicID:     task.TopicID,
-			TaskType:    models.StudyTaskTypeReread,
-			Status:      models.StudyTaskStatusPending,
-			Priority:    0,
-			PayloadJSON: string(feedbackPayload),
-			StartPage:   task.StartPage,
-			EndPage:     task.EndPage,
-		})
-	}
-	resultPayload, _ := json.Marshal(map[string]interface{}{
-		"score":         score,
-		"passed":        passed,
-		"correct_count": correctCount,
-		"total_count":   totalCount,
-	})
+	rereadAttemptCount := 0
+	manualReviewRecommended := false
+	var resultPayload []byte
 
 	conn := db.GetConnection()
 	if conn == nil {
@@ -274,9 +258,52 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		Feedback:    feedback,
 		CompletedAt: time.Now().Unix(),
 	}
+	if passed {
+		if task.TopicID != "" {
+			if err := db.ResetRereadAttemptCountTx(tx, task.TopicID); err != nil {
+				return models.QuizResult{}, fmt.Errorf("failed to reset reread attempts: %w", err)
+			}
+		}
+	} else if task.TopicID != "" {
+		rereadAttemptCount, err = db.IncrementRereadAttemptCountTx(tx, task.TopicID)
+		if err != nil {
+			return models.QuizResult{}, fmt.Errorf("failed to increment reread attempts: %w", err)
+		}
+		if rereadAttemptCount <= maxAutomaticRereadAttempts {
+			rereadTaskID = uuid.NewString()
+			feedbackPayload, _ := json.Marshal(map[string]string{"feedback": feedback})
+			followUps = append(followUps, models.StudyQueueTask{
+				ID:          rereadTaskID,
+				NotebookID:  task.NotebookID,
+				TopicID:     task.TopicID,
+				TaskType:    models.StudyTaskTypeReread,
+				Status:      models.StudyTaskStatusPending,
+				Priority:    0,
+				PayloadJSON: string(feedbackPayload),
+				StartPage:   task.StartPage,
+				EndPage:     task.EndPage,
+			})
+		} else {
+			manualReviewRecommended = true
+			feedback = "Automatic reread limit reached. Review this topic manually, then return when ready to retry."
+			attempt.Feedback = feedback
+		}
+	}
+
 	if err := db.SaveQuizAttemptTx(tx, attempt); err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to save quiz attempt: %w", err)
 	}
+
+	resultPayload, _ = json.Marshal(map[string]interface{}{
+		"score":                     score,
+		"passed":                    passed,
+		"correct_count":             correctCount,
+		"total_count":               totalCount,
+		"manual_review_recommended": manualReviewRecommended,
+		"reread_attempt_count":      rereadAttemptCount,
+		"max_reread_attempts":       maxAutomaticRereadAttempts,
+	})
+
 	if err := db.CompleteTaskTx(tx, task.ID, models.CompletionResult{
 		Status:    models.StudyTaskStatusCompleted,
 		Payload:   string(resultPayload),
@@ -289,14 +316,17 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	}
 
 	return models.QuizResult{
-		TaskID:        task.ID,
-		Score:         score,
-		Passed:        passed,
-		CorrectCount:  correctCount,
-		TotalCount:    totalCount,
-		PassingScore:  payload.PassingScore,
-		Feedback:      feedback,
-		RereadTaskID:  rereadTaskID,
-		AttemptRecord: attemptID,
+		TaskID:                  task.ID,
+		Score:                   score,
+		Passed:                  passed,
+		CorrectCount:            correctCount,
+		TotalCount:              totalCount,
+		PassingScore:            payload.PassingScore,
+		Feedback:                feedback,
+		ManualReviewRecommended: manualReviewRecommended,
+		RereadAttemptCount:      rereadAttemptCount,
+		MaxRereadAttempts:       maxAutomaticRereadAttempts,
+		RereadTaskID:            rereadTaskID,
+		AttemptRecord:           attemptID,
 	}, nil
 }
