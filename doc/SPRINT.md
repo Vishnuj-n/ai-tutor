@@ -131,7 +131,7 @@ CREATE INDEX idx_study_queue_notebook_status
 
 ---
 
-### Sprint 2: Reading Flow & Page Locking [DONE~]
+### Sprint 2: Reading Flow & Page Locking [DONE]
 
 **Goal:** Implement deterministic reading tasks with page-range locking.
 
@@ -179,7 +179,7 @@ CREATE TABLE reading_progress (
 
 ---
 
-### Sprint 3: Synchronous Quiz Generation
+### Sprint 3: Synchronous Quiz Generation [DONE]
 
 **Goal:** Implement quiz generation as synchronous, queue-triggered flow.
 
@@ -238,7 +238,7 @@ CREATE TABLE reading_progress (
 
 ### Sprint 4: Reread Remediation & Loop Protection
 
-**Goal:** Implement reread tasks with retry limits to prevent infinite loops.
+**Goal:** Implement reread tasks with retry limits inside the existing quiz completion transaction to prevent infinite loops.
 
 **Required Context:**
 
@@ -248,40 +248,44 @@ CREATE TABLE reading_progress (
 - **Important Constraints:** Max reread attempts must be enforced, queue progression must continue after max failures
 
 **Reread Flow:**
-1. Quiz score below threshold
-2. REREAD task inserted for same content
-3. User completes reread
-4. New QUIZ task generated
-5. If still failing after max attempts → stop automatic insertion
+1. Active quiz score below threshold
+2. Increment `reread_attempts` for the quiz `topic_id` in the open quiz transaction
+3. If the resulting count is `1..3`, insert exactly one `REREAD` task for the same content
+4. User completes reread through the existing `/reader` flow
+5. Reader completion inserts a new `QUIZ` follow-up through the existing queue path
+6. If the resulting count is `4+`, stop automatic insertion and return a manual-review recommendation
 
 **Loop Protection:**
 ```sql
--- Track reread attempts per topic
 CREATE TABLE reread_attempts (
     topic_id TEXT PRIMARY KEY,
-    attempt_count INTEGER DEFAULT 0,
-    last_attempt_at TIMESTAMP
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-**Config:**
-- `max_reread_attempts = 3`
+**Exact Semantics:**
+- Maximum automatic reread insertions = `3`
+- Attempts are tracked per `topic_id`
+- Successful quiz completion resets the attempt count to `0`
+- Duplicate or stale quiz submissions do not create extra rereads because only an `ACTIVE` quiz task can complete
 
-**After Max Failures:**
-- Task marked COMPLETED (no further auto-remediation)
-- Manual review recommended to user
-- Queue progression continues with next task
+**After Max Automatic Insertions Are Exhausted:**
+- Quiz task is marked `COMPLETED` with no further auto-remediation
+- Manual review is recommended in the quiz result only
+- Queue progression continues with the next pending task
 
-**API Surface:**
-- `InsertRereadTask(notebookID, topicID string, reason string) error`
-- `CheckRereadLimit(topicID string) (attempts int, allowed bool)`
+**Repository Surface:**
+- Read reread attempt count by `topic_id`
+- Increment attempt count transactionally
+- Reset attempt count transactionally on quiz pass
 
 **Deliverables:**
-- [ ] Reread task type and payload
-- [ ] Reread attempt tracking table
-- [ ] Max attempt enforcement
+- [ ] `reread_attempts` table
+- [ ] Transactional reread attempt helpers
+- [ ] Max automatic reread insertion enforcement in `SubmitQuizAttempt`
+- [ ] Reader reuse for both `READING` and `REREAD`
 - [ ] Manual review recommendation UI
-- [ ] Queue progression after max failures
 
 ---
 
@@ -542,13 +546,6 @@ Each sprint is complete when:
 5. `go test ./...` passes
 6. `wails dev` smoke test passes
 7. No deprecated orchestration terminology in code/comments
-
----
-
-## Current Status
-
-- **Sprint 1:** Not started — Queue schema design complete
-- **Sprint 2-7:** Planned, pending Sprint 1 completion
 
 ---
 

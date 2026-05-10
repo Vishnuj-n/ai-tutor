@@ -6,6 +6,87 @@ import (
 	"testing"
 )
 
+func TestSchemaIncludesRereadAttemptsTable(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	var name string
+	if err := conn.QueryRow(`
+		SELECT name
+		FROM sqlite_master
+		WHERE type = 'table' AND name = 'reread_attempts'
+	`).Scan(&name); err != nil {
+		t.Fatalf("expected reread_attempts table to exist: %v", err)
+	}
+	if name != "reread_attempts" {
+		t.Fatalf("expected reread_attempts table, got %q", name)
+	}
+}
+
+func TestRereadAttemptCountHelpers(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-attempts", "Topic Attempts"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	count, err := GetRereadAttemptCount("topic-attempts")
+	if err != nil {
+		t.Fatalf("GetRereadAttemptCount initial failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected initial reread attempt count 0, got %d", count)
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatalf("begin tx failed: %v", err)
+	}
+	count, err = IncrementRereadAttemptCountTx(tx, "topic-attempts")
+	if err != nil {
+		t.Fatalf("IncrementRereadAttemptCountTx first failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected first increment to return 1, got %d", count)
+	}
+	count, err = IncrementRereadAttemptCountTx(tx, "topic-attempts")
+	if err != nil {
+		t.Fatalf("IncrementRereadAttemptCountTx second failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected second increment to return 2, got %d", count)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit increment tx failed: %v", err)
+	}
+
+	count, err = GetRereadAttemptCount("topic-attempts")
+	if err != nil {
+		t.Fatalf("GetRereadAttemptCount after increment failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected persisted reread attempt count 2, got %d", count)
+	}
+
+	tx, err = conn.Begin()
+	if err != nil {
+		t.Fatalf("begin reset tx failed: %v", err)
+	}
+	if err := ResetRereadAttemptCountTx(tx, "topic-attempts"); err != nil {
+		t.Fatalf("ResetRereadAttemptCountTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit reset tx failed: %v", err)
+	}
+
+	count, err = GetRereadAttemptCount("topic-attempts")
+	if err != nil {
+		t.Fatalf("GetRereadAttemptCount after reset failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected reread attempt count reset to 0, got %d", count)
+	}
+}
+
 func TestStudyQueueLifecycleAndState(t *testing.T) {
 	initDBForTest(t, false, 0)
 
@@ -360,5 +441,66 @@ func TestCompleteReadingWithGeneratedQuizAdvancesTopicCursorToTaskEnd(t *testing
 	}
 	if cursor != 49 {
 		t.Fatalf("expected cursor advanced to task end page 49, got %d", cursor)
+	}
+}
+
+func TestRereadTaskCanBeLoadedAndCompletedThroughReaderHelpers(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-reread", "Topic Reread"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := UpdateTopicPageBounds("topic-reread", 10, 14); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+	if err := CreateNotebook("nb-reread", "NB Reread", "/tmp/reread.pdf", "pdf", "topic-reread", 20); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := InsertStudyTask(models.StudyQueueTask{
+		ID:         "task-reread-reader",
+		NotebookID: "nb-reread",
+		TopicID:    "topic-reread",
+		TaskType:   models.StudyTaskTypeReread,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+		StartPage:  10,
+		EndPage:    14,
+	}); err != nil {
+		t.Fatalf("InsertStudyTask reread failed: %v", err)
+	}
+	if err := ActivateTask("task-reread-reader"); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+
+	task, err := GetReadingTask("task-reread-reader")
+	if err != nil {
+		t.Fatalf("GetReadingTask reread failed: %v", err)
+	}
+	if task.StartPage != 10 || task.EndPage != 14 {
+		t.Fatalf("unexpected reread task bounds: %#v", task)
+	}
+
+	if err := CompleteReading("task-reread-reader"); err != nil {
+		t.Fatalf("CompleteReading reread failed: %v", err)
+	}
+
+	var status string
+	if err := conn.QueryRow(`SELECT status FROM study_queue WHERE id = ?`, "task-reread-reader").Scan(&status); err != nil {
+		t.Fatalf("query reread task status failed: %v", err)
+	}
+	if status != "COMPLETED" {
+		t.Fatalf("expected reread task status COMPLETED, got %s", status)
+	}
+
+	var quizCount int
+	if err := conn.QueryRow(`
+		SELECT COUNT(*)
+		FROM study_queue
+		WHERE topic_id = ? AND task_type = 'QUIZ' AND status = 'PENDING'
+	`, "topic-reread").Scan(&quizCount); err != nil {
+		t.Fatalf("query reread follow-up quiz failed: %v", err)
+	}
+	if quizCount != 1 {
+		t.Fatalf("expected one follow-up QUIZ after reread completion, got %d", quizCount)
 	}
 }
