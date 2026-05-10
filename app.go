@@ -129,10 +129,10 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	// Init retrieval engine (standalone, used only by Socratic mode)
+	// Init shared retrieval engine for Socratic + Reader scoped chat.
 	a.retrievalEngine = retrieval.NewEngine(embedder)
 
-	// Init RAG embedding store + pipeline (used by AskAI / Reader)
+	// Init topic-scoped RAG pipeline (used by AskAI).
 	embedStore := rag.NewEmbeddingStore(embedder)
 	a.embedStore = embedStore
 	topicIDs, err := db.GetAllTopicIDs()
@@ -248,6 +248,28 @@ func (a *App) ExplainReaderSection(sectionID string, question string) map[string
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	return a.studyService.ExplainReaderSection(sectionID, question)
+}
+
+func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPage, chapterStartPage, chapterEndPage int) map[string]interface{} {
+	if !a.aiReady {
+		reason := a.aiInitError
+		if reason == "" {
+			reason = "local AI runtime is not ready"
+		}
+		return map[string]interface{}{"error": "Reader AI unavailable: " + reason}
+	}
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	return a.studyService.AnswerReaderQuestion(study.ReaderAIRequest{
+		TopicID:          topicID,
+		NotebookID:       notebookID,
+		Question:         question,
+		Scope:            study.ReaderRetrievalScope(strings.ToLower(strings.TrimSpace(scope))),
+		CurrentPage:      currentPage,
+		ChapterStartPage: chapterStartPage,
+		ChapterEndPage:   chapterEndPage,
+	})
 }
 
 func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
@@ -942,6 +964,9 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 }
 
 func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
 	cardID = strings.TrimSpace(cardID)
 	rating = strings.ToLower(strings.TrimSpace(rating))
 	if cardID == "" {

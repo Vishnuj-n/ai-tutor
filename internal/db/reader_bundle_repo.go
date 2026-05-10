@@ -24,8 +24,19 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 		Sections: []models.ReaderSection{},
 	}
 
-	if err := conn.QueryRow(`SELECT title FROM topics WHERE id = ?`, topicID).Scan(&bundle.TopicTitle); err != nil {
+	var startPage sql.NullInt64
+	var endPage sql.NullInt64
+	if err := conn.QueryRow(`
+		SELECT title, COALESCE(start_page, 0), COALESCE(end_page, 0)
+		FROM topics WHERE id = ?
+	`, topicID).Scan(&bundle.TopicTitle, &startPage, &endPage); err != nil {
 		return nil, err
+	}
+	if startPage.Valid {
+		bundle.TopicStartPage = int(startPage.Int64)
+	}
+	if endPage.Valid {
+		bundle.TopicEndPage = int(endPage.Int64)
 	}
 
 	var notebookIDRow sql.NullString

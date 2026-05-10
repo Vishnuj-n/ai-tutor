@@ -22,6 +22,35 @@ var (
 	ErrReviewSessionOpen     = errors.New("review session still has pending cards")
 )
 
+func fetchExistingReviewTask(q querier, notebookID string) (*models.StudyQueueTask, error) {
+	task := &models.StudyQueueTask{}
+	err := q.QueryRow(`
+		SELECT
+			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
+			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
+			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
+		FROM study_queue
+		WHERE notebook_id = ?
+		  AND task_type = 'FLASHCARD_REVIEW'
+		  AND status IN ('PENDING', 'ACTIVE')
+		ORDER BY
+			CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+			created_at ASC,
+			id ASC
+		LIMIT 1
+	`, notebookID).Scan(
+		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
+		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
 func getExistingReviewTaskForNotebookRepo(notebookID string) (*models.StudyQueueTask, error) {
 	task := &models.StudyQueueTask{}
 	err := conn.QueryRow(`
@@ -171,32 +200,7 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 }
 
 func getExistingReviewTaskForNotebookTxRepo(tx *sql.Tx, notebookID string) (*models.StudyQueueTask, error) {
-	task := &models.StudyQueueTask{}
-	err := tx.QueryRow(`
-		SELECT
-			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
-			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
-			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
-		FROM study_queue
-		WHERE notebook_id = ?
-		  AND task_type = 'FLASHCARD_REVIEW'
-		  AND status IN ('PENDING', 'ACTIVE')
-		ORDER BY
-			CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
-			created_at ASC,
-			id ASC
-		LIMIT 1
-	`, notebookID).Scan(
-		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
-		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return task, nil
+	return fetchExistingReviewTask(tx, notebookID)
 }
 
 func getReviewSessionRepo(taskID string) (*models.ReviewSession, error) {

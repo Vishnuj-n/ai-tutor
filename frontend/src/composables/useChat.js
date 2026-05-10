@@ -1,5 +1,5 @@
 import { ref, nextTick } from 'vue'
-import { askAI, explainReaderSection } from '../services/appApi'
+import { askReaderAI } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 /**
@@ -14,6 +14,7 @@ export function useChat() {
   const chatInput = ref('')
   const chatLoading = ref(false)
   const chatError = ref('')
+  const chatScope = ref('entire_notebook')
   const messagesPane = ref(null)
 
   /**
@@ -33,13 +34,12 @@ export function useChat() {
 
   /**
    * Send a chat message
-   * @param {string} topicID - Current topic ID for context
-   * @param {string} sectionID - Optional section ID for section-aware questions
+   * @param {object} context - Reader retrieval context
    * @returns {Promise<boolean>} Success status
    */
-  async function sendMessage(topicID, sectionID = '') {
+  async function sendMessage(context) {
     const question = chatInput.value.trim()
-    if (!question || !topicID) {
+    if (!question || !context?.topicID) {
       return false
     }
 
@@ -49,9 +49,15 @@ export function useChat() {
     chatLoading.value = true
 
     try {
-      const result = sectionID
-        ? await explainReaderSection(sectionID, question)
-        : await askAI(topicID, question)
+      const result = await askReaderAI(
+        context.topicID,
+        context.notebookID,
+        question,
+        chatScope.value,
+        context.currentPage,
+        context.chapterStartPage,
+        context.chapterEndPage
+      )
 
       if (result?.error) {
         chatError.value = result.error
@@ -95,6 +101,7 @@ export function useChat() {
     chatInput,
     chatLoading,
     chatError,
+    chatScope,
     messagesPane,
 
     // Methods

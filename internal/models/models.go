@@ -242,15 +242,17 @@ type ReaderSection struct {
 
 // ReaderTopicBundle contains notebook metadata plus section/page mapping for reader UI.
 type ReaderTopicBundle struct {
-	TopicID       string          `json:"topic_id"`
-	TopicTitle    string          `json:"topic_title"`
-	NotebookID    string          `json:"notebook_id,omitempty"`
-	NotebookTitle string          `json:"notebook_title,omitempty"`
-	NotebookURL   string          `json:"notebook_url,omitempty"`
-	FileType      string          `json:"file_type,omitempty"`
-	PageCount     int             `json:"page_count"`
-	Sections      []ReaderSection `json:"sections"`
-	Subtopics     []Subtopic      `json:"subtopics,omitempty"`
+	TopicID        string          `json:"topic_id"`
+	TopicTitle     string          `json:"topic_title"`
+	NotebookID     string          `json:"notebook_id,omitempty"`
+	NotebookTitle  string          `json:"notebook_title,omitempty"`
+	NotebookURL    string          `json:"notebook_url,omitempty"`
+	FileType       string          `json:"file_type,omitempty"`
+	PageCount      int             `json:"page_count"`
+	TopicStartPage int             `json:"topic_start_page"`
+	TopicEndPage   int             `json:"topic_end_page"`
+	Sections       []ReaderSection `json:"sections"`
+	Subtopics      []Subtopic      `json:"subtopics,omitempty"`
 }
 
 // QuizQuestion is a generated question persisted per topic.

@@ -27,6 +27,18 @@ export function explainReaderSection(sectionID, question = '') {
   return appBridge().ExplainReaderSection(sectionID, question)
 }
 
+export function askReaderAI(topicID, notebookID, question, scope, currentPage, chapterStartPage, chapterEndPage) {
+  return appBridge().AskReaderAI(
+    topicID,
+    notebookID || '',
+    question,
+    scope,
+    currentPage || 0,
+    chapterStartPage || 0,
+    chapterEndPage || 0
+  )
+}
+
 export function completeReadingSession(topicID, startPage, targetPage) {
   return appBridge().CompleteReadingSession(topicID, startPage, targetPage)
 }
