@@ -109,15 +109,18 @@ type QuizAttemptRecord struct {
 }
 
 type QuizResult struct {
-	TaskID        string `json:"task_id"`
-	Score         int    `json:"score"`
-	Passed        bool   `json:"passed"`
-	CorrectCount  int    `json:"correct_count"`
-	TotalCount    int    `json:"total_count"`
-	PassingScore  int    `json:"passing_score"`
-	Feedback      string `json:"feedback"`
-	RereadTaskID  string `json:"reread_task_id,omitempty"`
-	AttemptRecord string `json:"attempt_id,omitempty"`
+	TaskID                  string `json:"task_id"`
+	Score                   int    `json:"score"`
+	Passed                  bool   `json:"passed"`
+	CorrectCount            int    `json:"correct_count"`
+	TotalCount              int    `json:"total_count"`
+	PassingScore            int    `json:"passing_score"`
+	Feedback                string `json:"feedback"`
+	ManualReviewRecommended bool   `json:"manual_review_recommended"`
+	RereadAttemptCount      int    `json:"reread_attempt_count"`
+	MaxRereadAttempts       int    `json:"max_reread_attempts"`
+	RereadTaskID            string `json:"reread_task_id,omitempty"`
+	AttemptRecord           string `json:"attempt_id,omitempty"`
 }
 
 // ReadingTask is the task payload required by the page-locked reader flow.

@@ -12,6 +12,10 @@ import (
 	"github.com/google/uuid"
 )
 
+func isReaderCompatibleTaskType(taskType models.StudyTaskType) bool {
+	return taskType == models.StudyTaskTypeReading || taskType == models.StudyTaskTypeReread
+}
+
 var (
 	ErrNoPendingTasks = errors.New("no pending tasks in queue")
 	ErrTaskNotPending = errors.New("task is not in PENDING status")
@@ -508,7 +512,7 @@ func GetQueueState(notebookID string) (models.QueueState, error) {
 	return state, nil
 }
 
-// GetReadingTask returns one READING task with locked bounds and persisted cursor.
+// GetReadingTask returns one reader-compatible task with locked bounds and persisted cursor.
 func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -526,7 +530,7 @@ func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
 		FROM study_queue sq
 		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
-		WHERE sq.id = ? AND sq.task_type = 'READING'
+		WHERE sq.id = ? AND sq.task_type IN ('READING', 'REREAD')
 	`, taskID).Scan(
 		&task.TaskID,
 		&task.NotebookID,
@@ -637,7 +641,7 @@ func ValidateReadingCompletion(taskID string, finalPage int) (bool, error) {
 	return PersistReadingProgress(taskID, finalPage)
 }
 
-// CompleteReading completes an ACTIVE READING task only if user reached end_page and inserts QUIZ follow-up.
+// CompleteReading completes an ACTIVE reader-compatible task and inserts QUIZ follow-up.
 func CompleteReading(taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -666,7 +670,7 @@ func CompleteReading(taskID string) error {
 			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
 		FROM study_queue sq
 		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
-		WHERE sq.id = ? AND sq.task_type = 'READING'
+		WHERE sq.id = ? AND sq.task_type IN ('READING', 'REREAD')
 	`, taskID).Scan(
 		&seed.ID,
 		&seed.NotebookID,
@@ -711,7 +715,7 @@ func CompleteReading(taskID string) error {
 	})
 }
 
-// CompleteReadingWithGeneratedQuiz completes ACTIVE READING task and inserts a QUIZ follow-up with payload.
+// CompleteReadingWithGeneratedQuiz completes an ACTIVE reader-compatible task and inserts a QUIZ follow-up with payload.
 func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTaskPayload) (string, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -750,7 +754,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
 		FROM study_queue sq
 		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
-		WHERE sq.id = ? AND sq.task_type = 'READING'
+		WHERE sq.id = ? AND sq.task_type IN ('READING', 'REREAD')
 	`, taskID).Scan(
 		&seed.ID,
 		&seed.NotebookID,

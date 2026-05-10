@@ -21,6 +21,237 @@ import (
 	"ai-tutor/internal/study"
 )
 
+func mustInsertActiveQuizTask(t *testing.T, notebookID, topicID, taskID string, passingScore int) {
+	t.Helper()
+	if err := db.EnsureTopic(topicID, topicID); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.CreateNotebook(notebookID, notebookID, "/tmp/"+notebookID+".pdf", "pdf", topicID, 12); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	payloadBytes, err := json.Marshal(models.QuizTaskPayload{
+		Questions: []models.QuizTaskQuestion{
+			{
+				ID:            "quiz-q1",
+				Prompt:        "Question 1",
+				Options:       []string{"A", "B", "C", "D"},
+				CorrectAnswer: "A",
+			},
+			{
+				ID:            "quiz-q2",
+				Prompt:        "Question 2",
+				Options:       []string{"A", "B", "C", "D"},
+				CorrectAnswer: "B",
+			},
+		},
+		PassingScore: passingScore,
+	})
+	if err != nil {
+		t.Fatalf("marshal quiz payload failed: %v", err)
+	}
+
+	if err := db.InsertStudyTask(models.StudyQueueTask{
+		ID:          taskID,
+		NotebookID:  notebookID,
+		TopicID:     topicID,
+		TaskType:    models.StudyTaskTypeQuiz,
+		Status:      models.StudyTaskStatusActive,
+		Priority:    0,
+		PayloadJSON: string(payloadBytes),
+		StartPage:   3,
+		EndPage:     6,
+	}); err != nil {
+		t.Fatalf("InsertStudyTask quiz failed: %v", err)
+	}
+}
+
+func TestSubmitQuizAttemptFailedQuizInsertsRereadAndReturnsCountMetadata(t *testing.T) {
+	app := newTestApp(t)
+	mustInsertActiveQuizTask(t, "nb-quiz-fail", "topic-quiz-fail", "task-quiz-fail", 100)
+
+	resp := app.SubmitQuizAttempt("task-quiz-fail", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "B"},
+		{QuestionID: "quiz-q2", Selected: "C"},
+	})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected submit success, got error: %v", resp["error"])
+	}
+
+	result, ok := resp["result"].(models.QuizResult)
+	if !ok {
+		t.Fatalf("expected QuizResult payload, got %#v", resp["result"])
+	}
+	if result.Passed {
+		t.Fatalf("expected failed quiz result")
+	}
+	if result.RereadTaskID == "" {
+		t.Fatalf("expected reread task id on failed quiz below cap")
+	}
+	if result.ManualReviewRecommended {
+		t.Fatalf("expected manual_review_recommended=false below cap")
+	}
+	if result.RereadAttemptCount != 1 || result.MaxRereadAttempts != 3 {
+		t.Fatalf("unexpected reread metadata: %#v", result)
+	}
+
+	var rereadCount int
+	if err := db.GetConnection().QueryRow(`
+		SELECT COUNT(*)
+		FROM study_queue
+		WHERE id = ? AND task_type = 'REREAD' AND status = 'PENDING'
+	`, result.RereadTaskID).Scan(&rereadCount); err != nil {
+		t.Fatalf("query reread follow-up failed: %v", err)
+	}
+	if rereadCount != 1 {
+		t.Fatalf("expected one pending reread follow-up, got %d", rereadCount)
+	}
+}
+
+func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T) {
+	app := newTestApp(t)
+	mustInsertActiveQuizTask(t, "nb-quiz-max", "topic-quiz-max", "task-quiz-max", 100)
+
+	tx, err := db.GetConnection().Begin()
+	if err != nil {
+		t.Fatalf("begin tx failed: %v", err)
+	}
+	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
+		t.Fatalf("seed attempt 1 failed: %v", err)
+	}
+	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
+		t.Fatalf("seed attempt 2 failed: %v", err)
+	}
+	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
+		t.Fatalf("seed attempt 3 failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit seed attempts failed: %v", err)
+	}
+
+	resp := app.SubmitQuizAttempt("task-quiz-max", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "B"},
+		{QuestionID: "quiz-q2", Selected: "C"},
+	})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected submit success, got error: %v", resp["error"])
+	}
+
+	result, ok := resp["result"].(models.QuizResult)
+	if !ok {
+		t.Fatalf("expected QuizResult payload, got %#v", resp["result"])
+	}
+	if result.RereadTaskID != "" {
+		t.Fatalf("expected no reread task id after max automatic rereads, got %q", result.RereadTaskID)
+	}
+	if !result.ManualReviewRecommended {
+		t.Fatalf("expected manual_review_recommended=true after max automatic rereads")
+	}
+	if result.RereadAttemptCount != 4 || result.MaxRereadAttempts != 3 {
+		t.Fatalf("unexpected reread metadata: %#v", result)
+	}
+
+	var pendingRereads int
+	if err := db.GetConnection().QueryRow(`
+		SELECT COUNT(*)
+		FROM study_queue
+		WHERE topic_id = 'topic-quiz-max' AND task_type = 'REREAD' AND status = 'PENDING'
+	`).Scan(&pendingRereads); err != nil {
+		t.Fatalf("query pending rereads failed: %v", err)
+	}
+	if pendingRereads != 0 {
+		t.Fatalf("expected no automatic reread inserted after max, got %d", pendingRereads)
+	}
+}
+
+func TestSubmitQuizAttemptRepeatedSubmissionReturnsErrTaskNotActiveAndNoDuplicateReread(t *testing.T) {
+	app := newTestApp(t)
+	mustInsertActiveQuizTask(t, "nb-quiz-repeat", "topic-quiz-repeat", "task-quiz-repeat", 100)
+
+	first := app.SubmitQuizAttempt("task-quiz-repeat", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "B"},
+		{QuestionID: "quiz-q2", Selected: "C"},
+	})
+	if _, hasErr := first["error"]; hasErr {
+		t.Fatalf("expected first submit success, got error: %v", first["error"])
+	}
+
+	second := app.SubmitQuizAttempt("task-quiz-repeat", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "B"},
+		{QuestionID: "quiz-q2", Selected: "C"},
+	})
+	if got := second["error"]; got != "ErrTaskNotActive" {
+		t.Fatalf("expected ErrTaskNotActive on repeated submit, got %#v", got)
+	}
+
+	var pendingRereads int
+	if err := db.GetConnection().QueryRow(`
+		SELECT COUNT(*)
+		FROM study_queue
+		WHERE topic_id = 'topic-quiz-repeat' AND task_type = 'REREAD' AND status = 'PENDING'
+	`).Scan(&pendingRereads); err != nil {
+		t.Fatalf("query pending rereads failed: %v", err)
+	}
+	if pendingRereads != 1 {
+		t.Fatalf("expected exactly one reread after duplicate submit attempt, got %d", pendingRereads)
+	}
+}
+
+func TestSubmitQuizAttemptPassResetsAttemptsAndFutureFailureStartsAtOne(t *testing.T) {
+	app := newTestApp(t)
+
+	mustInsertActiveQuizTask(t, "nb-quiz-pass-reset", "topic-quiz-pass-reset", "task-quiz-pass", 100)
+	tx, err := db.GetConnection().Begin()
+	if err != nil {
+		t.Fatalf("begin seed tx failed: %v", err)
+	}
+	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-pass-reset"); err != nil {
+		t.Fatalf("seed attempt 1 failed: %v", err)
+	}
+	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-pass-reset"); err != nil {
+		t.Fatalf("seed attempt 2 failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit seed tx failed: %v", err)
+	}
+
+	passResp := app.SubmitQuizAttempt("task-quiz-pass", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "A"},
+		{QuestionID: "quiz-q2", Selected: "B"},
+	})
+	if _, hasErr := passResp["error"]; hasErr {
+		t.Fatalf("expected pass submit success, got error: %v", passResp["error"])
+	}
+
+	count, err := db.GetRereadAttemptCount("topic-quiz-pass-reset")
+	if err != nil {
+		t.Fatalf("GetRereadAttemptCount after pass failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected pass to reset reread attempt count to 0, got %d", count)
+	}
+
+	mustInsertActiveQuizTask(t, "nb-quiz-pass-reset-2", "topic-quiz-pass-reset", "task-quiz-fail-after-reset", 100)
+	failResp := app.SubmitQuizAttempt("task-quiz-fail-after-reset", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "B"},
+		{QuestionID: "quiz-q2", Selected: "C"},
+	})
+	if _, hasErr := failResp["error"]; hasErr {
+		t.Fatalf("expected fail submit success after reset, got error: %v", failResp["error"])
+	}
+
+	result, ok := failResp["result"].(models.QuizResult)
+	if !ok {
+		t.Fatalf("expected QuizResult payload, got %#v", failResp["result"])
+	}
+	if result.RereadAttemptCount != 1 {
+		t.Fatalf("expected failure after reset to restart reread attempts at 1, got %d", result.RereadAttemptCount)
+	}
+	if result.RereadTaskID == "" {
+		t.Fatalf("expected reread task id after reset and new failure")
+	}
+}
+
 func initTestDB(t *testing.T) {
 	t.Helper()
 	tempDB := filepath.Join(t.TempDir(), "ai-tutor-test.db")

@@ -32,9 +32,12 @@
     </div>
 
     <article v-else-if="submitted && result" class="result-card">
-      <h2>{{ result.passed ? 'Passed' : 'Needs Reread' }}</h2>
+      <h2>{{ resultHeading }}</h2>
       <p>Score: {{ result.score }}% (threshold {{ result.passing_score }}%)</p>
       <p>{{ result.feedback }}</p>
+      <p v-if="!result.passed">
+        Attempts: {{ result.reread_attempt_count }}/{{ result.max_reread_attempts }}
+      </p>
     </article>
 
     <article v-else-if="questions.length === 0 && !generating" class="state-card">
@@ -100,6 +103,13 @@ const allAnswered = computed(() => {
 const canGenerateManual = computed(() =>
   selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !generating.value
 )
+
+const resultHeading = computed(() => {
+  if (!result.value) return 'Quiz Result'
+  if (result.value.passed) return 'Passed'
+  if (result.value.manual_review_recommended) return 'Manual Review Recommended'
+  return 'Needs Reread'
+})
 
 onMounted(async () => {
   await loadNotebooks()
