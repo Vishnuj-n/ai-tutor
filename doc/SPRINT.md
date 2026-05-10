@@ -236,7 +236,7 @@ CREATE TABLE reading_progress (
 
 ---
 
-### Sprint 4: Reread Remediation & Loop Protection
+### Sprint 4: Reread Remediation & Loop Protection [DONE]
 
 **Goal:** Implement reread tasks with retry limits inside the existing quiz completion transaction to prevent infinite loops.
 

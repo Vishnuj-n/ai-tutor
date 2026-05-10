@@ -22,6 +22,29 @@ func TestSchemaIncludesRereadAttemptsTable(t *testing.T) {
 	}
 }
 
+func TestSchemaIncludesReviewTaskCardsTableAndIndex(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	var tableName string
+	if err := conn.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name = 'review_task_cards'
+	`).Scan(&tableName); err != nil {
+		t.Fatalf("expected review_task_cards table to exist: %v", err)
+	}
+	if tableName != "review_task_cards" {
+		t.Fatalf("expected review_task_cards table, got %q", tableName)
+	}
+
+	var indexName string
+	if err := conn.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_review_task_cards_task_status'
+	`).Scan(&indexName); err != nil {
+		t.Fatalf("expected idx_review_task_cards_task_status index to exist: %v", err)
+	}
+}
+
 func TestRereadAttemptCountHelpers(t *testing.T) {
 	initDBForTest(t, false, 0)
 
@@ -502,5 +525,166 @@ func TestRereadTaskCanBeLoadedAndCompletedThroughReaderHelpers(t *testing.T) {
 	}
 	if quizCount != 1 {
 		t.Fatalf("expected one follow-up QUIZ after reread completion, got %d", quizCount)
+	}
+}
+
+func TestCreateReviewSessionDueCardBatchingAndDuplicatePrevention(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-review-a", "Review Topic A"); err != nil {
+		t.Fatalf("EnsureTopic A failed: %v", err)
+	}
+	if err := EnsureTopic("topic-review-b", "Review Topic B"); err != nil {
+		t.Fatalf("EnsureTopic B failed: %v", err)
+	}
+	if err := CreateNotebook("nb-review", "NB Review", "/tmp/review.pdf", "pdf", "", 30); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT INTO notebook_topics (notebook_id, topic_id) VALUES ('nb-review', 'topic-review-a')`); err != nil {
+		t.Fatalf("link topic-review-a failed: %v", err)
+	}
+
+	cards := make([]models.Flashcard, 0, 24)
+	states := make(map[string]models.FlashcardState)
+	for i := 0; i < 22; i++ {
+		id := "due-card-" + string(rune('a'+i))
+		cards = append(cards, models.Flashcard{
+			ID:        id,
+			TopicID:   "topic-review-a",
+			Prompt:    id,
+			Answer:    "answer",
+			DueAt:     int64(100 + i),
+			Suspended: false,
+		})
+		states[id] = models.FlashcardState{}
+	}
+	cards = append(cards,
+		models.Flashcard{ID: "future-card", TopicID: "topic-review-a", Prompt: "future", Answer: "future", DueAt: 5000, Suspended: false},
+		models.Flashcard{ID: "suspended-card", TopicID: "topic-review-a", Prompt: "suspended", Answer: "suspended", DueAt: 50, Suspended: true},
+		models.Flashcard{ID: "other-notebook-card", TopicID: "topic-review-b", Prompt: "other", Answer: "other", DueAt: 10, Suspended: false},
+	)
+	states["future-card"] = models.FlashcardState{}
+	states["suspended-card"] = models.FlashcardState{}
+	states["other-notebook-card"] = models.FlashcardState{}
+	if err := CreateFlashcards("topic-review-a", cards[:24], states); err != nil {
+		t.Fatalf("CreateFlashcards topic-review-a failed: %v", err)
+	}
+	if err := CreateFlashcards("topic-review-b", []models.Flashcard{cards[24]}, states); err != nil {
+		t.Fatalf("CreateFlashcards topic-review-b failed: %v", err)
+	}
+
+	dueCards, err := GetDueReviewCardsForNotebook("nb-review", 1000, 20)
+	if err != nil {
+		t.Fatalf("GetDueReviewCardsForNotebook failed: %v", err)
+	}
+	if len(dueCards) != 20 {
+		t.Fatalf("expected due-card batch capped at 20, got %d", len(dueCards))
+	}
+	if dueCards[0].ID != "due-card-a" || dueCards[19].ID != "due-card-t" {
+		t.Fatalf("unexpected deterministic due-card ordering: first=%s last=%s", dueCards[0].ID, dueCards[19].ID)
+	}
+
+	task, existing, err := CreateReviewSession("nb-review")
+	if err != nil {
+		t.Fatalf("CreateReviewSession failed: %v", err)
+	}
+	if existing {
+		t.Fatalf("expected first CreateReviewSession to create a new task")
+	}
+	if task == nil {
+		t.Fatalf("expected review task to be created")
+	}
+
+	var linkedCount int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM review_task_cards WHERE task_id = ?`, task.ID).Scan(&linkedCount); err != nil {
+		t.Fatalf("count review_task_cards failed: %v", err)
+	}
+	if linkedCount != 20 {
+		t.Fatalf("expected 20 linked review cards, got %d", linkedCount)
+	}
+
+	task2, existing2, err := CreateReviewSession("nb-review")
+	if err != nil {
+		t.Fatalf("second CreateReviewSession failed: %v", err)
+	}
+	if !existing2 {
+		t.Fatalf("expected second CreateReviewSession to return existing task")
+	}
+	if task2 == nil || task2.ID != task.ID {
+		t.Fatalf("expected duplicate prevention to return task %s, got %#v", task.ID, task2)
+	}
+	assertCountEquals(t, `SELECT COUNT(*) FROM study_queue WHERE notebook_id = ? AND task_type = 'FLASHCARD_REVIEW'`, "nb-review", 1)
+}
+
+func TestReviewSessionRecoveryOrderingAndCompletion(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-session", "Review Session Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateNotebook("nb-session", "NB Session", "/tmp/session.pdf", "pdf", "", 20); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT INTO notebook_topics (notebook_id, topic_id) VALUES ('nb-session', 'topic-session')`); err != nil {
+		t.Fatalf("link topic failed: %v", err)
+	}
+	if err := CreateFlashcards("topic-session", []models.Flashcard{
+		{ID: "card-1", TopicID: "topic-session", Prompt: "Q1", Answer: "A1", DueAt: 10},
+		{ID: "card-2", TopicID: "topic-session", Prompt: "Q2", Answer: "A2", DueAt: 20},
+		{ID: "card-3", TopicID: "topic-session", Prompt: "Q3", Answer: "A3", DueAt: 30},
+	}, map[string]models.FlashcardState{
+		"card-1": {},
+		"card-2": {},
+		"card-3": {},
+	}); err != nil {
+		t.Fatalf("CreateFlashcards failed: %v", err)
+	}
+
+	task, _, err := CreateReviewSession("nb-session")
+	if err != nil {
+		t.Fatalf("CreateReviewSession failed: %v", err)
+	}
+	if err := ActivateTask(task.ID); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+
+	if _, err := conn.Exec(`
+		UPDATE review_task_cards SET status = 'reviewed'
+		WHERE task_id = ? AND card_id = 'card-1'
+	`, task.ID); err != nil {
+		t.Fatalf("seed reviewed link failed: %v", err)
+	}
+
+	session, err := GetReviewSession(task.ID)
+	if err != nil {
+		t.Fatalf("GetReviewSession failed: %v", err)
+	}
+	if session.Remaining != 2 || session.ReviewedCount != 1 {
+		t.Fatalf("unexpected session counts: %#v", session)
+	}
+	if session.NextPendingIdx != 0 || session.CurrentCard == nil || session.CurrentCard.CardID != "card-2" {
+		t.Fatalf("expected next pending card-2 first, got %#v", session.CurrentCard)
+	}
+	if session.Cards[2].CardID != "card-1" || session.Cards[2].Status != models.ReviewTaskCardStatusReviewed {
+		t.Fatalf("expected reviewed card moved after pending cards, got %#v", session.Cards)
+	}
+
+	if err := CompleteReviewSession(task.ID); !errors.Is(err, ErrReviewSessionOpen) {
+		t.Fatalf("expected ErrReviewSessionOpen before all cards reviewed, got %v", err)
+	}
+
+	if _, err := conn.Exec(`UPDATE review_task_cards SET status = 'reviewed' WHERE task_id = ?`, task.ID); err != nil {
+		t.Fatalf("mark all reviewed failed: %v", err)
+	}
+	if err := CompleteReviewSession(task.ID); err != nil {
+		t.Fatalf("CompleteReviewSession failed: %v", err)
+	}
+
+	var status string
+	if err := conn.QueryRow(`SELECT status FROM study_queue WHERE id = ?`, task.ID).Scan(&status); err != nil {
+		t.Fatalf("query task status failed: %v", err)
+	}
+	if status != "COMPLETED" {
+		t.Fatalf("expected COMPLETED task, got %s", status)
 	}
 }
