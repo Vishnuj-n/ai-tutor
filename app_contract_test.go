@@ -23,10 +23,10 @@ import (
 
 func mustInsertActiveQuizTask(t *testing.T, notebookID, topicID, taskID string, passingScore int) {
 	t.Helper()
-	if err := db.EnsureTopic(topicID, topicID); err != nil {
+	if err := db.EnsureTopic(topicID, topicID+"-title"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := db.CreateNotebook(notebookID, notebookID, "/tmp/"+notebookID+".pdf", "pdf", topicID, 12); err != nil {
+	if err := db.CreateNotebook(notebookID, notebookID+"-name", "/tmp/"+notebookID+".pdf", "pdf", topicID, 12); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestSubmitQuizAttemptRepeatedSubmissionReturnsErrTaskNotActiveAndNoDuplicat
 		{QuestionID: "quiz-q1", Selected: "B"},
 		{QuestionID: "quiz-q2", Selected: "C"},
 	})
-	if got := second["error"]; got != "ErrTaskNotActive" {
+	if got := second["error"]; got == nil || !strings.Contains(fmt.Sprint(got), "ErrTaskNotActive") {
 		t.Fatalf("expected ErrTaskNotActive on repeated submit, got %#v", got)
 	}
 

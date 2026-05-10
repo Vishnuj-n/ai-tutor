@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -18,7 +19,7 @@ func GetRereadAttemptCount(topicID string) (int, error) {
 		FROM reread_attempts
 		WHERE topic_id = ?
 	`, topicID).Scan(&count)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -33,21 +34,14 @@ func IncrementRereadAttemptCountTx(tx *sql.Tx, topicID string) (int, error) {
 		return 0, fmt.Errorf("topic id is required")
 	}
 
-	if _, err := tx.Exec(`
+	var count int
+	if err := tx.QueryRow(`
 		INSERT INTO reread_attempts (topic_id, attempt_count, last_attempt_at)
 		VALUES (?, 1, CURRENT_TIMESTAMP)
 		ON CONFLICT(topic_id) DO UPDATE
 		SET attempt_count = reread_attempts.attempt_count + 1,
 		    last_attempt_at = CURRENT_TIMESTAMP
-	`, topicID); err != nil {
-		return 0, err
-	}
-
-	var count int
-	if err := tx.QueryRow(`
-		SELECT attempt_count
-		FROM reread_attempts
-		WHERE topic_id = ?
+		RETURNING attempt_count
 	`, topicID).Scan(&count); err != nil {
 		return 0, err
 	}

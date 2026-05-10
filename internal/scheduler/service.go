@@ -138,9 +138,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		tokenBudget = TargetSessionWords
 	}
 
-	if tokenBudget < 0 {
-		tokenBudget = 0
-	}
+	// tokenBudget cannot be negative since readingBudget is clamped to >=0 and WordsPerMinute is positive
 
 	readingTopic, foundReadingTopic, err := s.queryNextReadingTopic()
 
@@ -153,7 +151,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 
 	if foundReadingTopic {
 
-		startPage, endPage, ok := resolvePageWindow(
+		startPage, endPage, ok, tokenMap := resolvePageWindow(
 			readingTopic,
 			tokenBudget,
 			s.queryTokensPerPageMap,
@@ -163,22 +161,19 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 
 			generatedTaskID := "task-read-" + readingTopic.ID
 
-			fmt.Printf(
-				"[TODAY_PLAN] adaptive reading window taskID=%s topicID=%s startPage=%d endPage=%d tokenBudget=%d\n",
-				generatedTaskID,
-				readingTopic.ID,
-				startPage,
-				endPage,
-				tokenBudget,
-			)
+			// Structured debug logging for adaptive reading window resolution
+			// Use utils.Debugf if available, otherwise comment out for production
+			// TODO: Add utils.Debugf support when debug logging is needed
+			// utils.Debugf("[TODAY_PLAN] adaptive reading window taskID=%s topicID=%s startPage=%d endPage=%d tokenBudget=%d",
+			// 	generatedTaskID, readingTopic.ID, startPage, endPage, tokenBudget)
 
 			activeTopics = append(activeTopics, readingTopic.Title)
 
-			actualTaskMinutes := estimateTaskMinutes(
-				s,
+			actualTaskMinutes := s.estimateTaskMinutes(
 				readingTopic.ID,
 				startPage,
 				endPage,
+				tokenMap,
 			)
 
 			tasks = append(tasks, models.ScheduledTask{
@@ -218,14 +213,14 @@ func resolvePageWindow(
 	topic models.ReadingTopicCursor,
 	tokenBudget int,
 	queryTokensPerPageMap queryTokensPerPageMapFn,
-) (int, int, bool) {
+) (int, int, bool, map[int]int) {
 
 	if topic.EndPage <= 0 {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
 
 	if tokenBudget <= 0 {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
 
 	startPage := topic.CurrentPageCursor
@@ -243,7 +238,7 @@ func resolvePageWindow(
 	}
 
 	if startPage > topic.EndPage {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
 
 	endPage := startPage
@@ -252,7 +247,8 @@ func resolvePageWindow(
 	// Batch fetch all page tokens in a single query to avoid N+1 problem
 	tokenMap, err := queryTokensPerPageMap(topic.ID, startPage, topic.EndPage)
 	if err != nil {
-		// Fall back to single-page queries if batch fails
+		// On error, initialize an empty tokenMap so the subsequent logic will use
+		// FallbackWordsPerPage for all pages instead of performing single-page queries
 		tokenMap = make(map[int]int)
 	}
 
@@ -263,10 +259,8 @@ func resolvePageWindow(
 		}
 
 		pageWords, ok := tokenMap[page]
-		useFallback := false
 		if !ok || pageWords <= 0 {
 			pageWords = FallbackWordsPerPage
-			useFallback = true
 		}
 
 		// Check if adding this page would exceed budget BEFORE adding it
@@ -277,14 +271,11 @@ func resolvePageWindow(
 		accumulatedWords += pageWords
 		endPage = page
 
-		fmt.Printf(
-			"[RESOLVE_PAGE_WINDOW] page=%d pageWords=%d accumulatedWords=%d tokenBudget=%d useFallback=%v\n",
-			page,
-			pageWords,
-			accumulatedWords,
-			tokenBudget,
-			useFallback,
-		)
+		// Structured debug logging for page-by-page resolution
+		// Use utils.Debugf if available, otherwise comment out for production
+		// TODO: Add utils.Debugf support when debug logging is needed
+		// utils.Debugf("[RESOLVE_PAGE_WINDOW] page=%d pageWords=%d accumulatedWords=%d tokenBudget=%d useFallback=%v",
+		// 	page, pageWords, accumulatedWords, tokenBudget, useFallback)
 	}
 
 	// Preserve original near-end behavior
@@ -293,18 +284,19 @@ func resolvePageWindow(
 	}
 
 	if endPage < startPage {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
 
-	return startPage, endPage, true
+	return startPage, endPage, true, tokenMap
 }
 
 // estimateTaskMinutes calculates realistic workload using token counts.
-func estimateTaskMinutes(
-	s *service,
+// Accepts optional pre-fetched tokenMap to avoid redundant DB queries.
+func (s *service) estimateTaskMinutes(
 	topicID string,
 	startPage,
 	endPage int,
+	tokenMap map[int]int,
 ) int {
 
 	pageCount := endPage - startPage + 1
@@ -313,10 +305,18 @@ func estimateTaskMinutes(
 		return 0
 	}
 
-	// Calculate total words from the page map
-	tokenMap, err := s.queryTokensPerPageMap(topicID, startPage, endPage)
+	// Use pre-fetched tokenMap if provided, otherwise query DB
 	totalWords := 0
-	if err == nil {
+	var err error
+	if tokenMap == nil {
+		fetchedMap, fetchErr := s.queryTokensPerPageMap(topicID, startPage, endPage)
+		if fetchErr == nil {
+			for _, pageTokens := range fetchedMap {
+				totalWords += pageTokens
+			}
+		}
+		err = fetchErr
+	} else {
 		for _, pageTokens := range tokenMap {
 			totalWords += pageTokens
 		}

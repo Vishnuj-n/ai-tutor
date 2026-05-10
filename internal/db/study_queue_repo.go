@@ -770,6 +770,17 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 		return "", ErrTaskNotActive
 	}
 
+	// Begin transaction to ensure atomicity of cursor update and task completion
+	tx, err := conn.Begin()
+	if err != nil {
+		return "", fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			utils.Warnf("[COMPLETE_READING] rollback error taskID=%s err=%v", taskID, err)
+		}
+	}()
+
 	// Synchronize topics.current_page_cursor to keep both cursor systems aligned.
 	// Completion is authoritative for the assigned reading window, so cursor must
 	// advance to at least end_page to prevent scheduler rematerializing the same window.
@@ -778,7 +789,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 		if seed.EndPage > cursorAfterCompletion {
 			cursorAfterCompletion = seed.EndPage
 		}
-		_, err = conn.Exec(`
+		_, err = tx.Exec(`
 			UPDATE topics
 			SET current_page_cursor = ?,
 			    updated_at = CURRENT_TIMESTAMP
@@ -790,7 +801,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	}
 
 	quizTaskID := uuid.NewString()
-	err = CompleteTask(seed.ID, models.CompletionResult{
+	err = CompleteTaskTx(tx, seed.ID, models.CompletionResult{
 		Status: models.StudyTaskStatusCompleted,
 		FollowUps: []models.StudyQueueTask{
 			{
@@ -808,6 +819,10 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	})
 	if err != nil {
 		return "", err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return "", fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return quizTaskID, nil
 }
