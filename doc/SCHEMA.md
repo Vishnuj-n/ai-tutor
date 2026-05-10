@@ -160,6 +160,24 @@ User quiz submissions.
 | `answers_json` | TEXT | User answers |
 | `completed_at` | INTEGER | Unix timestamp |
 
+### `reread_attempts`
+
+Tracks automatic reread insertions per `topic_id`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `topic_id` | TEXT PRIMARY KEY | Topic being remediated |
+| `attempt_count` | INTEGER NOT NULL DEFAULT 0 | Number of automatic reread insertions used for this topic |
+| `last_attempt_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last time the count changed |
+
+**Semantics:**
+- Maximum automatic reread insertions = `3`
+- Attempts are tracked per `topic_id`
+- Failed active quizzes increment the count inside the same completion transaction
+- Counts `1..3` insert exactly one `REREAD` follow-up
+- Count `4+` inserts no `REREAD`; quiz completes with a manual-review recommendation only
+- Successful quiz completion resets the count to `0`
+
 ---
 
 ## Flashcard Tables

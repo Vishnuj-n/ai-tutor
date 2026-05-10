@@ -103,6 +103,13 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (task_id) REFERENCES study_queue(id) ON DELETE CASCADE
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS reread_attempts (
+			topic_id TEXT PRIMARY KEY,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			last_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+		)`,
+
 		// Written questions and user answers
 		`CREATE TABLE IF NOT EXISTS written_questions (
 			id TEXT PRIMARY KEY,
@@ -287,6 +294,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_study_queue_status_priority_created ON study_queue(status, priority, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_study_queue_notebook_status ON study_queue(notebook_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_task_completed_at ON quiz_attempts(task_id, completed_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_reread_attempts_last_attempt_at ON reread_attempts(last_attempt_at DESC)`,
 	}
 
 	for _, stmt := range indexes {
