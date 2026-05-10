@@ -1091,6 +1091,106 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 	}
 }
 
+func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := db.EnsureTopic("queue-review-topic", "Queue Review Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", 15); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if _, err := db.GetConnection().Exec(`
+		INSERT INTO notebook_topics (notebook_id, topic_id)
+		VALUES ('queue-review-nb', 'queue-review-topic')
+	`); err != nil {
+		t.Fatalf("link notebook_topics failed: %v", err)
+	}
+	if err := db.CreateFlashcards("queue-review-topic", []models.Flashcard{
+		{ID: "queue-card-1", TopicID: "queue-review-topic", Prompt: "Q1", Answer: "A1", DueAt: 1},
+		{ID: "queue-card-2", TopicID: "queue-review-topic", Prompt: "Q2", Answer: "A2", DueAt: 2},
+	}, map[string]models.FlashcardState{
+		"queue-card-1": {},
+		"queue-card-2": {},
+	}); err != nil {
+		t.Fatalf("CreateFlashcards failed: %v", err)
+	}
+
+	generateResp := app.GenerateReviewTasks("queue-review-nb")
+	if _, hasErr := generateResp["error"]; hasErr {
+		t.Fatalf("GenerateReviewTasks failed: %v", generateResp["error"])
+	}
+	tasks, ok := generateResp["tasks"].([]models.StudyQueueTask)
+	if !ok || len(tasks) != 1 {
+		t.Fatalf("expected one generated review task, got %#v", generateResp["tasks"])
+	}
+	taskID := tasks[0].ID
+
+	secondGenerateResp := app.GenerateReviewTasks("queue-review-nb")
+	secondTasks, ok := secondGenerateResp["tasks"].([]models.StudyQueueTask)
+	if !ok || len(secondTasks) != 1 || secondTasks[0].ID != taskID {
+		t.Fatalf("expected duplicate prevention to return same task, got %#v", secondGenerateResp["tasks"])
+	}
+
+	if resp := app.ActivateTask(taskID); resp["error"] != nil {
+		t.Fatalf("ActivateTask failed: %#v", resp)
+	}
+
+	sessionResp := app.GetReviewSession(taskID)
+	if _, hasErr := sessionResp["error"]; hasErr {
+		t.Fatalf("GetReviewSession failed: %v", sessionResp["error"])
+	}
+	session, ok := sessionResp["session"].(*models.ReviewSession)
+	if !ok {
+		t.Fatalf("expected review session pointer, got %#v", sessionResp["session"])
+	}
+	if session.CurrentCard == nil || session.CurrentCard.CardID != "queue-card-1" {
+		t.Fatalf("expected first pending card queue-card-1, got %#v", session.CurrentCard)
+	}
+
+	reviewResp := app.RecordCardReview(taskID, "queue-card-1", 3)
+	if _, hasErr := reviewResp["error"]; hasErr {
+		t.Fatalf("RecordCardReview failed: %v", reviewResp["error"])
+	}
+	if remaining, ok := reviewResp["remaining"].(int); !ok || remaining != 1 {
+		t.Fatalf("expected remaining=1, got %#v", reviewResp["remaining"])
+	}
+
+	reloadResp := app.GetReviewSession(taskID)
+	reloaded := reloadResp["session"].(*models.ReviewSession)
+	if reloaded.CurrentCard == nil || reloaded.CurrentCard.CardID != "queue-card-2" {
+		t.Fatalf("expected resumed next pending card queue-card-2, got %#v", reloaded.CurrentCard)
+	}
+
+	duplicateReviewResp := app.RecordCardReview(taskID, "queue-card-1", 3)
+	if code, ok := duplicateReviewResp["code"].(int); !ok || code != 409 {
+		t.Fatalf("expected duplicate review to return 409, got %#v", duplicateReviewResp)
+	}
+
+	incompleteCompleteResp := app.CompleteReviewSession(taskID)
+	if code, ok := incompleteCompleteResp["code"].(int); !ok || code != 409 {
+		t.Fatalf("expected incomplete completion to return 409, got %#v", incompleteCompleteResp)
+	}
+
+	reviewResp2 := app.RecordCardReview(taskID, "queue-card-2", 4)
+	if _, hasErr := reviewResp2["error"]; hasErr {
+		t.Fatalf("second RecordCardReview failed: %v", reviewResp2["error"])
+	}
+
+	completeResp := app.CompleteReviewSession(taskID)
+	if _, hasErr := completeResp["error"]; hasErr {
+		t.Fatalf("CompleteReviewSession failed: %v", completeResp["error"])
+	}
+
+	task, err := db.GetTaskByID(taskID)
+	if err != nil {
+		t.Fatalf("GetTaskByID failed: %v", err)
+	}
+	if task.Status != models.StudyTaskStatusCompleted {
+		t.Fatalf("expected review task completed, got %s", task.Status)
+	}
+}
+
 // ============================================================================
 // WRITTEN ANSWER TESTS
 // ============================================================================

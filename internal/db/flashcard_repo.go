@@ -102,11 +102,19 @@ func getFlashcardsForTopicRepo(topicID string, dueOnly bool, now int64) ([]model
 }
 
 func getFlashcardByIDRepo(cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+	return getFlashcardByIDQuerier(conn, cardID)
+}
+
+func getFlashcardByIDRepoTx(tx *sql.Tx, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+	return getFlashcardByIDQuerier(tx, cardID)
+}
+
+func getFlashcardByIDQuerier(q querier, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
 	var card models.Flashcard
 	var stateJSON sql.NullString
 	var suspended bool
 
-	err := conn.QueryRow(`
+	err := q.QueryRow(`
 		SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, answer, COALESCE(due_at, 0), suspended, state_json
 		FROM fsrs_cards
 		WHERE id = ?
@@ -246,6 +254,55 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, 
 		return err
 	}
 	committed = true
+	return nil
+}
+
+func updateFlashcardReviewRepoTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
+	}
+
+	result, err := tx.Exec(`
+		UPDATE fsrs_cards
+		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND due_at = ? AND state_json = ?
+	`, string(stateJSON), dueAt, cardID, expectedDueAt, reviewLog.StateBeforeJSON)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("flashcard %s was modified concurrently", cardID)
+	}
+
+	var validatedTopicID string
+	if err = tx.QueryRow(`
+		SELECT t.id
+		FROM fsrs_cards c
+		JOIN topics t ON t.id = c.topic_id
+		WHERE c.id = ?
+	`, cardID).Scan(&validatedTopicID); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("topic not found for flashcard %s", cardID)
+		}
+		return err
+	}
+
+	if _, err = tx.Exec(`
+		INSERT INTO fsrs_review_log (
+			id, topic_id, activity_type, reference_id, reviewed_at, rating,
+			scheduled_days, state_before_json, state_after_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, reviewLog.ID, validatedTopicID, reviewLog.ActivityType, cardID,
+		reviewLog.ReviewedAt, reviewLog.Rating, reviewLog.ScheduledDays,
+		reviewLog.StateBeforeJSON, string(stateJSON)); err != nil {
+		return err
+	}
 	return nil
 }
 

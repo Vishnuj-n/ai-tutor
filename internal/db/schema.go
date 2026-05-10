@@ -250,6 +250,15 @@ func InitSchema(tx *sql.Tx) error {
 			last_accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (task_id) REFERENCES study_queue(id)
 		)`,
+
+		`CREATE TABLE IF NOT EXISTS review_task_cards (
+			task_id TEXT NOT NULL,
+			card_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			PRIMARY KEY (task_id, card_id),
+			FOREIGN KEY (task_id) REFERENCES study_queue(id) ON DELETE CASCADE,
+			FOREIGN KEY (card_id) REFERENCES fsrs_cards(id) ON DELETE CASCADE
+		)`,
 	}
 
 	// Execute all table creation statements
@@ -293,6 +302,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_created_at ON topics(status, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_study_queue_status_priority_created ON study_queue(status, priority, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_study_queue_notebook_status ON study_queue(notebook_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_review_task_cards_task_status ON review_task_cards(task_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_task_completed_at ON quiz_attempts(task_id, completed_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_reread_attempts_last_attempt_at ON reread_attempts(last_attempt_at DESC)`,
 	}

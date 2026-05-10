@@ -64,10 +64,12 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getNotebooks, generateMarathonFlashcards, getFlashcards, recordFlashcardReview } from '../services/appApi.js'
+import { useRoute } from 'vue-router'
+import { activateTask, completeReviewSession, getNotebooks, generateMarathonFlashcards, getReviewSession, recordCardReview, recordFlashcardReview } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
 
+const route              = useRoute()
 const notebooks          = ref([])
 const selectedNotebookID = ref('')
 const activeTab          = ref('comprehensive')
@@ -80,12 +82,15 @@ const reviewIndex        = ref(0)
 const reviewing          = ref(false)
 const flipped            = ref(false)
 const isSubmittingReview = ref(false)
+const reviewTaskID       = ref('')
+const sessionRemaining   = ref(0)
+const queueMode          = computed(() => !!reviewTaskID.value)
 
 const ratings = [
-  { key: 'again', label: '✕ Again' },
-  { key: 'hard',  label: '~ Hard' },
-  { key: 'good',  label: '✓ Good' },
-  { key: 'easy',  label: '⚡ Easy' },
+  { key: 'again', label: '✕ Again', value: 1 },
+  { key: 'hard',  label: '~ Hard', value: 2 },
+  { key: 'good',  label: '✓ Good', value: 3 },
+  { key: 'easy',  label: '⚡ Easy', value: 4 },
 ]
 
 const canGenerate  = computed(() =>
@@ -97,7 +102,12 @@ onMounted(async () => {
   try {
     const res = await getNotebooks()
     notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
-  } catch { error.value = 'Failed to load notebooks.' }
+    if (route.query.taskId) {
+      await loadQueueSession(String(route.query.taskId))
+    }
+  } catch {
+    error.value = 'Failed to load notebooks.'
+  }
 })
 
 async function generate() {
@@ -125,13 +135,31 @@ async function rate(ratingKey) {
   
   isSubmittingReview.value = true
   try {
-    const res = await recordFlashcardReview(card.id, ratingKey)
+    let res
+    if (queueMode.value) {
+      const rating = ratings.find(r => r.key === ratingKey)?.value
+      res = await recordCardReview(reviewTaskID.value, card.card_id, rating)
+    } else {
+      res = await recordFlashcardReview(card.id, ratingKey)
+    }
     if (res.error) {
       error.value = `Failed to save review: ${res.error}`
       return
     }
     flipped.value = false
-    reviewIndex.value++
+    if (queueMode.value) {
+      sessionRemaining.value = Number(res.remaining ?? 0)
+      if (sessionRemaining.value <= 0) {
+        const completeRes = await completeReviewSession(reviewTaskID.value)
+        if (completeRes?.error) {
+          error.value = `Failed to complete session: ${completeRes.error}`
+          return
+        }
+      }
+      await loadQueueSession(reviewTaskID.value)
+    } else {
+      reviewIndex.value++
+    }
   } catch (e) {
     error.value = `Failed to save review: ${e?.message ?? 'Unknown error'}`
   } finally {
@@ -146,6 +174,37 @@ function reset() {
   flipped.value = false
   isSubmittingReview.value = false
   error.value = ''
+  reviewTaskID.value = ''
+  sessionRemaining.value = 0
+}
+
+async function loadQueueSession(taskID) {
+  error.value = ''
+  loading.value = true
+  reviewTaskID.value = taskID
+  try {
+    const activateRes = await activateTask(taskID)
+    if (activateRes?.error && activateRes.code !== 409) {
+      error.value = activateRes.error
+      return
+    }
+    const res = await getReviewSession(taskID)
+    if (res.error) {
+      error.value = res.error
+      return
+    }
+    const session = res.session
+    cards.value = Array.isArray(session?.cards) ? session.cards : []
+    reviewIndex.value = Number(session?.next_pending_idx ?? -1)
+    sessionRemaining.value = Number(session?.remaining ?? 0)
+    reviewing.value = cards.value.length > 0
+    flipped.value = false
+    if (reviewIndex.value < 0) {
+      reviewIndex.value = cards.value.length
+    }
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 

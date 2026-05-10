@@ -128,6 +128,22 @@ export function recordFlashcardReview(cardID, rating) {
   return appBridge().RecordFlashcardReview(cardID, rating)
 }
 
+export function generateReviewTasks(notebookID) {
+  return appBridge().GenerateReviewTasks(notebookID)
+}
+
+export function getReviewSession(taskID) {
+  return appBridge().GetReviewSession(taskID)
+}
+
+export function recordCardReview(taskID, cardID, rating) {
+  return appBridge().RecordCardReview(taskID, cardID, rating)
+}
+
+export function completeReviewSession(taskID) {
+  return appBridge().CompleteReviewSession(taskID)
+}
+
 export function getNotebooks(topicID = '') {
   return appBridge().GetNotebooks(topicID)
 }

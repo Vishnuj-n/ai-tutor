@@ -1,0 +1,386 @@
+package db
+
+import (
+	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+const maxReviewSessionCards = 20
+
+var (
+	ErrReviewLinkNotPending  = errors.New("review task card link is not pending")
+	ErrReviewSessionComplete = errors.New("review session already complete")
+	ErrReviewSessionOpen     = errors.New("review session still has pending cards")
+)
+
+func getExistingReviewTaskForNotebookRepo(notebookID string) (*models.StudyQueueTask, error) {
+	task := &models.StudyQueueTask{}
+	err := conn.QueryRow(`
+		SELECT
+			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
+			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
+			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
+		FROM study_queue
+		WHERE notebook_id = ?
+		  AND task_type = 'FLASHCARD_REVIEW'
+		  AND status IN ('PENDING', 'ACTIVE')
+		ORDER BY
+			CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+			created_at ASC,
+			id ASC
+		LIMIT 1
+	`, notebookID).Scan(
+		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
+		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	utils.LogReviewSessionResume(task.ID, string(task.Status))
+	return task, nil
+}
+
+func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
+	rows, err := conn.Query(`
+		SELECT
+			fc.id,
+			fc.topic_id,
+			COALESCE(fc.source_chunk_id, ''),
+			fc.prompt,
+			fc.answer,
+			COALESCE(fc.due_at, 0),
+			fc.suspended
+		FROM fsrs_cards fc
+		JOIN notebook_topics nt ON nt.topic_id = fc.topic_id
+		WHERE nt.notebook_id = ?
+		  AND fc.suspended = 0
+		  AND fc.due_at IS NOT NULL
+		  AND fc.due_at <= ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM review_task_cards rtc
+			JOIN study_queue sq ON sq.id = rtc.task_id
+			WHERE rtc.card_id = fc.id
+			  AND sq.task_type = 'FLASHCARD_REVIEW'
+			  AND sq.status IN ('PENDING', 'ACTIVE')
+		  )
+		ORDER BY fc.due_at ASC, fc.created_at ASC, fc.id ASC
+		LIMIT ?
+	`, notebookID, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	cards := make([]models.Flashcard, 0)
+	for rows.Next() {
+		var card models.Flashcard
+		var suspended bool
+		if err := rows.Scan(&card.ID, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
+			return nil, err
+		}
+		card.Suspended = suspended
+		cards = append(cards, card)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return cards, nil
+}
+
+func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTask, bool, error) {
+	if existing, err := getExistingReviewTaskForNotebookRepo(notebookID); err != nil {
+		return nil, false, err
+	} else if existing != nil {
+		return existing, true, nil
+	}
+
+	cards, err := getDueReviewCardsForNotebookRepo(notebookID, now, maxReviewSessionCards)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(cards) == 0 {
+		utils.LogReviewSession("", notebookID, "0", "no_due_cards")
+		return nil, false, nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if existing, err := getExistingReviewTaskForNotebookTxRepo(tx, notebookID); err != nil {
+		return nil, false, err
+	} else if existing != nil {
+		return existing, true, nil
+	}
+
+	payloadBytes, err := json.Marshal(models.ReviewSessionPayload{
+		CardCount:     len(cards),
+		CreatedAtUnix: now,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	task := &models.StudyQueueTask{
+		ID:          uuid.NewString(),
+		NotebookID:  notebookID,
+		TopicID:     cards[0].TopicID,
+		TaskType:    models.StudyTaskTypeFlashcardReview,
+		Status:      models.StudyTaskStatusPending,
+		Priority:    0,
+		PayloadJSON: string(payloadBytes),
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO study_queue (
+			id, notebook_id, topic_id, task_type, status, priority, payload_json
+		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?)
+	`, task.ID, task.NotebookID, task.TopicID, string(task.TaskType), string(task.Status), task.Priority, task.PayloadJSON); err != nil {
+		return nil, false, err
+	}
+
+	for _, card := range cards {
+		if _, err := tx.Exec(`
+			INSERT INTO review_task_cards (task_id, card_id, status)
+			VALUES (?, ?, 'pending')
+		`, task.ID, card.ID); err != nil {
+			return nil, false, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	utils.LogReviewSession(task.ID, notebookID, strconv.Itoa(len(cards)), "session_created")
+	createdTask, err := GetTaskByID(task.ID)
+	return createdTask, false, err
+}
+
+func getExistingReviewTaskForNotebookTxRepo(tx *sql.Tx, notebookID string) (*models.StudyQueueTask, error) {
+	task := &models.StudyQueueTask{}
+	err := tx.QueryRow(`
+		SELECT
+			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
+			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
+			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
+		FROM study_queue
+		WHERE notebook_id = ?
+		  AND task_type = 'FLASHCARD_REVIEW'
+		  AND status IN ('PENDING', 'ACTIVE')
+		ORDER BY
+			CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+			created_at ASC,
+			id ASC
+		LIMIT 1
+	`, notebookID).Scan(
+		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
+		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func getReviewSessionRepo(taskID string) (*models.ReviewSession, error) {
+	task, err := GetTaskByID(taskID)
+	if err != nil {
+		return nil, err
+	}
+	if task.TaskType != models.StudyTaskTypeFlashcardReview {
+		return nil, fmt.Errorf("task %s is not a flashcard review task", taskID)
+	}
+
+	session := &models.ReviewSession{
+		Task:           task,
+		Cards:          make([]models.ReviewSessionCard, 0),
+		NextPendingIdx: -1,
+	}
+	if payload := strings.TrimSpace(task.PayloadJSON); payload != "" {
+		_ = json.Unmarshal([]byte(payload), &session.Payload)
+	}
+
+	rows, err := conn.Query(`
+		SELECT
+			rtc.card_id,
+			rtc.status,
+			fc.topic_id,
+			COALESCE(fc.source_chunk_id, ''),
+			fc.prompt,
+			fc.answer,
+			COALESCE(fc.due_at, 0),
+			fc.suspended
+		FROM review_task_cards rtc
+		JOIN fsrs_cards fc ON fc.id = rtc.card_id
+		WHERE rtc.task_id = ?
+		ORDER BY
+			CASE rtc.status WHEN 'pending' THEN 0 ELSE 1 END,
+			fc.due_at ASC,
+			fc.created_at ASC,
+			fc.id ASC
+	`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var card models.ReviewSessionCard
+		var suspended bool
+		card.TaskID = taskID
+		if err := rows.Scan(&card.CardID, &card.Status, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
+			return nil, err
+		}
+		card.Suspended = suspended
+		card.Position = len(session.Cards)
+		session.Cards = append(session.Cards, card)
+		if card.Status == models.ReviewTaskCardStatusPending {
+			if session.NextPendingIdx == -1 {
+				session.NextPendingIdx = card.Position
+			}
+			session.Remaining++
+		} else {
+			session.ReviewedCount++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	session.CardCount = len(session.Cards)
+	if session.Payload.CardCount == 0 {
+		session.Payload.CardCount = session.CardCount
+	}
+	if session.NextPendingIdx >= 0 {
+		session.CurrentCard = &session.Cards[session.NextPendingIdx]
+	}
+	return session, nil
+}
+
+func markReviewTaskCardReviewedTxRepo(tx *sql.Tx, taskID, cardID string) error {
+	res, err := tx.Exec(`
+		UPDATE review_task_cards
+		SET status = 'reviewed'
+		WHERE task_id = ? AND card_id = ? AND status = 'pending'
+	`, taskID, cardID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 1 {
+		return nil
+	}
+
+	var status string
+	err = tx.QueryRow(`
+		SELECT COALESCE(status, '')
+		FROM review_task_cards
+		WHERE task_id = ? AND card_id = ?
+	`, taskID, cardID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrTaskNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status == string(models.ReviewTaskCardStatusReviewed) {
+		return ErrReviewLinkNotPending
+	}
+	return fmt.Errorf("unexpected review task card state")
+}
+
+func remainingReviewTaskCardsTxRepo(tx *sql.Tx, taskID string) (int, error) {
+	var remaining int
+	err := tx.QueryRow(`
+		SELECT COUNT(*)
+		FROM review_task_cards
+		WHERE task_id = ? AND status = 'pending'
+	`, taskID).Scan(&remaining)
+	return remaining, err
+}
+
+func completeReviewSessionRepo(taskID string) error {
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	task, err := getTaskByIDTxRepo(tx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.TaskType != models.StudyTaskTypeFlashcardReview {
+		return fmt.Errorf("task %s is not a flashcard review task", taskID)
+	}
+	if task.Status != models.StudyTaskStatusActive {
+		return ErrTaskNotActive
+	}
+
+	remaining, err := remainingReviewTaskCardsTxRepo(tx, taskID)
+	if err != nil {
+		return err
+	}
+	if remaining > 0 {
+		return ErrReviewSessionOpen
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE study_queue
+		SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = 'ACTIVE'
+	`, taskID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	utils.LogReviewSession(taskID, "", "0", "session_completed")
+	return nil
+}
+
+func getTaskByIDTxRepo(tx *sql.Tx, taskID string) (*models.StudyQueueTask, error) {
+	task := &models.StudyQueueTask{}
+	err := tx.QueryRow(`
+		SELECT
+			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
+			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
+			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
+		FROM study_queue
+		WHERE id = ?
+	`, taskID).Scan(
+		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
+		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func reviewSessionNow() int64 {
+	return time.Now().Unix()
+}

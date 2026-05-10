@@ -76,3 +76,117 @@ func Errorf(format string, args ...interface{}) {
 		log.Printf("ERROR: "+format, args...)
 	}
 }
+
+// ---------- Queue Lifecycle Logging ----------
+
+// LogQueueTransition logs structured queue transition events.
+// Format: [QUEUE] task=<id> type=<type> from=<old> to=<new> reason=<reason>
+func LogQueueTransition(taskID, taskType, oldStatus, newStatus, reason string) {
+	if currentLogLevel() > levelWarn {
+		return
+	}
+	if taskID == "" {
+		taskID = "unknown"
+	}
+	if taskType == "" {
+		taskType = "unknown"
+	}
+	if oldStatus == "" {
+		oldStatus = "none"
+	}
+	if newStatus == "" {
+		newStatus = "unknown"
+	}
+	if reason == "" {
+		reason = "transition"
+	}
+	log.Printf("[QUEUE] task=%s type=%s from=%s to=%s reason=%s", taskID, taskType, oldStatus, newStatus, reason)
+}
+
+// LogQueueTaskCreated logs when a new task is inserted into the queue.
+func LogQueueTaskCreated(taskID, taskType, notebookID, topicID string) {
+	if currentLogLevel() > levelWarn {
+		return
+	}
+	if taskID == "" {
+		taskID = "unknown"
+	}
+	if taskType == "" {
+		taskType = "unknown"
+	}
+	log.Printf("[QUEUE] task=%s type=%s notebook=%s topic=%s event=task_inserted", taskID, taskType, notebookID, topicID)
+}
+
+// LogQuizResult logs quiz completion with pass/fail outcome.
+func LogQuizResult(taskID string, score int, passed bool, rereadTaskID string) {
+	if currentLogLevel() > levelWarn {
+		return
+	}
+	if taskID == "" {
+		taskID = "unknown"
+	}
+	outcome := "failed"
+	if passed {
+		outcome = "passed"
+	}
+	rereadInfo := "none"
+	if rereadTaskID != "" {
+		rereadInfo = "reread=" + rereadTaskID
+	}
+	log.Printf("[QUEUE] task=%s type=QUIZ score=%d outcome=%s %s event=quiz_completed", taskID, score, outcome, rereadInfo)
+}
+
+// LogRereadInsertion logs when a reread task is generated after quiz failure.
+func LogRereadInsertion(taskID, topicID, attemptCount, maxAttempts string) {
+	if currentLogLevel() > levelWarn {
+		return
+	}
+	if taskID == "" {
+		taskID = "unknown"
+	}
+	log.Printf("[QUEUE] task=%s type=REREAD topic=%s attempt=%s/%s event=reread_inserted", taskID, topicID, attemptCount, maxAttempts)
+}
+
+// LogReviewSession logs review session lifecycle events.
+func LogReviewSession(taskID, notebookID, cardCount, event string) {
+	if currentLogLevel() > levelWarn {
+		return
+	}
+	if taskID == "" {
+		taskID = "unknown"
+	}
+	log.Printf("[QUEUE] task=%s type=FLASHCARD_REVIEW notebook=%s cards=%s event=%s", taskID, notebookID, cardCount, event)
+}
+
+// LogReviewSessionResume logs when an existing review session is resumed (duplicate prevention).
+func LogReviewSessionResume(taskID, status string) {
+	if currentLogLevel() > levelWarn {
+		return
+	}
+	if taskID == "" {
+		taskID = "unknown"
+	}
+	log.Printf("[QUEUE] task=%s type=FLASHCARD_REVIEW status=%s event=session_resumed", taskID, status)
+}
+
+// LogSchedulerDecision logs adaptive reading window decisions.
+func LogSchedulerDecision(topicID string, startPage, endPage int, tokenBudget, reason string) {
+	if currentLogLevel() > levelDebug {
+		return
+	}
+	if topicID == "" {
+		topicID = "unknown"
+	}
+	log.Printf("[SCHEDULER] topic=%s window=%d-%d tokenBudget=%s reason=%s", topicID, startPage, endPage, tokenBudget, reason)
+}
+
+// LogQueueOrdering logs queue ordering decisions for debugging.
+func LogQueueOrdering(taskType, notebookID, priority, reason string) {
+	if currentLogLevel() > levelDebug {
+		return
+	}
+	if taskType == "" {
+		taskType = "unknown"
+	}
+	log.Printf("[QUEUE] type=%s notebook=%s priority=%s event=ordering_decision reason=%s", taskType, notebookID, priority, reason)
+}

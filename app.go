@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
@@ -876,6 +875,72 @@ func (a *App) GetFlashcards(topicID string, dueOnly bool) map[string]interface{}
 	return map[string]interface{}{"topic_id": topicID, "cards": cards}
 }
 
+func (a *App) GenerateReviewTasks(notebookID string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	tasks, err := a.studyService.GenerateReviewTasks(notebookID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"tasks": tasks}
+}
+
+func (a *App) GetReviewSession(taskID string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	session, err := a.studyService.GetReviewSession(taskID)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"session": session}
+}
+
+func (a *App) RecordCardReview(taskID, cardID string, rating int) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	remaining, err := a.studyService.RecordCardReview(taskID, cardID, rating)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		case db.ErrReviewLinkNotPending:
+			return map[string]interface{}{"error": "ErrCardAlreadyReviewed", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true, "remaining": remaining}
+}
+
+func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	if err := a.studyService.CompleteReviewSession(taskID); err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		case db.ErrReviewSessionOpen:
+			return map[string]interface{}{"error": "ErrReviewSessionIncomplete", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
 func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]interface{} {
 	cardID = strings.TrimSpace(cardID)
 	rating = strings.ToLower(strings.TrimSpace(rating))
@@ -886,46 +951,11 @@ func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]int
 	if !ok {
 		return map[string]interface{}{"error": "rating must be one of again, hard, good, easy"}
 	}
-	card, state, err := db.GetFlashcardByID(cardID)
+	card, state, reviewLogID, err := a.studyService.ApplyFlashcardReview(cardID, ratingCode)
 	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch flashcard: " + err.Error()}
-	}
-	if card == nil || state == nil {
-		return map[string]interface{}{"error": "flashcard not found"}
-	}
-	stateBeforeJSONBytes, err := json.Marshal(state)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to encode flashcard state: " + err.Error()}
-	}
-	now := time.Now().Unix()
-	elapsedSeconds := now - card.DueAt
-	elapsedDays := 0
-	if elapsedSeconds > 0 {
-		elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
-	}
-	state.ElapsedDays = elapsedDays
-	nextState := scheduler.NextFSRSState(*state, ratingCode)
-	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
-	if nextState.ScheduledDays == 0 {
-		dueAt = now
-	}
-	stateAfterJSONBytes, err := json.Marshal(nextState)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to encode updated flashcard state: " + err.Error()}
-	}
-	reviewLog := models.FSRSReviewLog{
-		ID: uuid.NewString(), TopicID: card.TopicID, ActivityType: "flashcard",
-		ReferenceID: card.ID, ReviewedAt: now, Rating: ratingCode,
-		ScheduledDays:   nextState.ScheduledDays,
-		StateBeforeJSON: string(stateBeforeJSONBytes), StateAfterJSON: string(stateAfterJSONBytes),
-	}
-	if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
 		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
 	}
-	// Note: UpdateFlashcardReview already logs to fsrs_review_log, so no need to call studyService.LogReview
-	// Only update local state after successful database transaction
-	card.DueAt = dueAt
-	return map[string]interface{}{"card": card, "state": &nextState, "review_log_id": reviewLog.ID}
+	return map[string]interface{}{"card": card, "state": state, "review_log_id": reviewLogID}
 }
 
 func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} {

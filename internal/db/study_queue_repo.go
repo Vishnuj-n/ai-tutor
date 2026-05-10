@@ -43,6 +43,9 @@ func InsertStudyTask(task models.StudyQueueTask) error {
 			id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
 		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
 	`, task.ID, task.NotebookID, task.TopicID, string(task.TaskType), string(task.Status), task.Priority, task.PayloadJSON, task.StartPage, task.EndPage)
+	if err == nil {
+		utils.LogQueueTaskCreated(task.ID, string(task.TaskType), task.NotebookID, task.TopicID)
+	}
 	return err
 }
 
@@ -76,6 +79,7 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
 func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	utils.Warnf("[QUEUE] GetAllPendingTasks filter status=PENDING order=task_type, notebook_priority desc, task_priority asc, created_at asc")
+	utils.LogQueueOrdering("", "", "", "get_all_pending")
 	query := `
 		SELECT
 			sq.id,
@@ -222,6 +226,7 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q order=task_type, notebook_priority desc, task_priority asc, created_at asc", notebookID)
+	utils.LogQueueOrdering("", notebookID, "", "get_next_task")
 
 	query := `
 		SELECT
@@ -312,7 +317,7 @@ func ActivateTask(taskID string) error {
 		return err
 	}
 	if affected == 1 {
-		utils.Warnf("[QUEUE] ActivateTask transition taskID=%s from=PENDING to=ACTIVE", taskID)
+		utils.LogQueueTransition(taskID, "", "PENDING", "ACTIVE", "task_activated")
 		return nil
 	}
 	var exists int
@@ -372,7 +377,7 @@ func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) e
 		utils.Warnf("[QUEUE] CompleteTaskTx reading task completion task not active taskID=%s", taskID)
 		return ErrTaskNotActive
 	}
-	utils.Warnf("[QUEUE] CompleteTaskTx reading task completion update success taskID=%s", taskID)
+	utils.LogQueueTransition(taskID, "", "ACTIVE", status, "task_completed")
 
 	for _, followUp := range result.FollowUps {
 		followUp.ID = strings.TrimSpace(followUp.ID)
@@ -392,16 +397,15 @@ func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) e
 			followUp.Status = models.StudyTaskStatusPending
 		}
 
-		utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion start taskID=%s followUpID=%s taskType=%s", taskID, followUp.ID, followUp.TaskType)
 		if _, err := tx.Exec(`
 			INSERT INTO study_queue (
 				id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
 			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
 		`, followUp.ID, followUp.NotebookID, followUp.TopicID, string(followUp.TaskType), string(followUp.Status), followUp.Priority, followUp.PayloadJSON, followUp.StartPage, followUp.EndPage); err != nil {
-			utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion error taskID=%s followUpID=%s err=%v", taskID, followUp.ID, err)
+			utils.Warnf("[QUEUE] CompleteTaskTx follow-up insertion error taskID=%s followUpID=%s err=%v", taskID, followUp.ID, err)
 			return err
 		}
-		utils.Warnf("[QUEUE] CompleteTaskTx quiz task insertion success taskID=%s followUpID=%s", taskID, followUp.ID)
+		utils.LogQueueTaskCreated(followUp.ID, string(followUp.TaskType), followUp.NotebookID, followUp.TopicID)
 	}
 
 	return nil
