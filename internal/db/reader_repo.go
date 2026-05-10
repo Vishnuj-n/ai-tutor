@@ -152,6 +152,51 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 	return chunks, nil
 }
 
+// GetChunksForNotebook retrieves all chunks linked to one notebook.
+func GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+
+	rows, err := conn.Query(`
+		SELECT DISTINCT c.id, c.topic_id, c.parent_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
+		FROM notebook_chunks nc
+		JOIN chunks c ON c.id = nc.chunk_id
+		WHERE nc.notebook_id = ?
+		ORDER BY c.page_num ASC, c.id ASC
+	`, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chunks []models.Chunk
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(
+			&chunk.ID,
+			&chunk.TopicID,
+			&chunk.ParentID,
+			&chunk.Text,
+			&chunk.ImportanceScore,
+			&chunk.WeaknessScore,
+			&chunk.PageNum,
+		); err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return chunks, nil
+}
+
 // GetChunksForTopics retrieves chunks for multiple topics in a single batch query
 func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 	if len(topicIDs) == 0 {

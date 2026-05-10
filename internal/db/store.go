@@ -523,6 +523,21 @@ func SearchVectorsForTopic(topicID string, queryVector []float32, k int, startPa
 	return searchVectorsForTopicRepo(topicID, queryVector, k, startPage, endPage)
 }
 
+// SearchVectorsForNotebook finds the top-k most similar vectors for a notebook-scoped query.
+func SearchVectorsForNotebook(notebookID string, queryVector []float32, k int) ([]string, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	if len(queryVector) == 0 {
+		return nil, fmt.Errorf("query vector is required")
+	}
+	if k <= 0 || k > maxRetrievalK {
+		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
+	}
+	return searchVectorsForNotebookRepo(notebookID, queryVector, k)
+}
+
 // UpdateChunkEmbedding updates the embedding_ref (hash) for a chunk to track changes.
 func UpdateChunkEmbedding(chunkID string, hash string) error {
 	_, err := conn.Exec(`

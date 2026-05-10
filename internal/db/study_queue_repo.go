@@ -94,7 +94,8 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			COALESCE(sq.payload_json, ''),
 			COALESCE(sq.start_page, 0),
 			COALESCE(sq.end_page, 0),
-			COALESCE(t.title, '')
+			COALESCE(t.title, ''),
+			COALESCE(n.priority, 5)
 		FROM study_queue sq
 		LEFT JOIN notebooks n ON sq.notebook_id = n.id
 		LEFT JOIN topics t ON sq.topic_id = t.id
@@ -125,6 +126,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	for rows.Next() {
 		var task models.StudyQueueTask
 		var topicTitle string
+		var notebookPriority int
 		err := rows.Scan(
 			&task.ID,
 			&task.NotebookID,
@@ -139,6 +141,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			&task.StartPage,
 			&task.EndPage,
 			&topicTitle,
+			&notebookPriority,
 		)
 		if err != nil {
 			return nil, err
@@ -147,6 +150,9 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			task.Title = topicTitle
 		}
 		tasks = append(tasks, task)
+
+		// Debug log: show notebook priority for each task
+		utils.Warnf("[QUEUE] task id=%s type=%s notebook_id=%s task_priority=%d notebook_priority=%d (from query ordering)", task.ID, task.TaskType, task.NotebookID, task.Priority, notebookPriority)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -241,7 +247,8 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 			COALESCE(sq.completed_at, ''),
 			COALESCE(sq.payload_json, ''),
 			COALESCE(sq.start_page, 0),
-			COALESCE(sq.end_page, 0)
+			COALESCE(sq.end_page, 0),
+			COALESCE(n.priority, 5)
 		FROM study_queue sq
 		LEFT JOIN notebooks n ON sq.notebook_id = n.id
 		WHERE sq.status = 'PENDING'
@@ -268,6 +275,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	`
 
 	task := &models.StudyQueueTask{}
+	var notebookPriority int
 	err := conn.QueryRow(query, args...).Scan(
 		&task.ID,
 		&task.NotebookID,
@@ -281,6 +289,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 		&task.PayloadJSON,
 		&task.StartPage,
 		&task.EndPage,
+		&notebookPriority,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoPendingTasks
@@ -288,7 +297,8 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	if err != nil {
 		return nil, err
 	}
-	utils.Warnf("[QUEUE] GetNextTask result taskID=%s status=%s type=%s notebookID=%s topicID=%s", task.ID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
+	// Debug log: show notebook priority for next task
+	utils.Warnf("[QUEUE] GetNextTask result taskID=%s status=%s type=%s notebookID=%s topicID=%s task_priority=%d notebook_priority=%d", task.ID, task.Status, task.TaskType, task.NotebookID, task.TopicID, task.Priority, notebookPriority)
 	return task, nil
 }
 

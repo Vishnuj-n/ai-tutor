@@ -82,6 +82,18 @@
             <span v-if="reader.selectedNotebookTitle.value">from {{ reader.selectedNotebookTitle.value }}</span>
           </p>
 
+          <div class="scope-bar">
+            <div class="scope-main">
+              <span class="scope-label">Retrieval Scope</span>
+              <select v-model="chat.chatScope.value" class="scope-select">
+                <option value="entire_notebook">Entire Notebook</option>
+                <option value="current_chapter">Current Chapter</option>
+                <option value="current_page">Current Page</option>
+              </select>
+            </div>
+            <p class="scope-helper">Broader scopes search more of your notebook.</p>
+          </div>
+
           <div ref="chat.messagesPane" class="messages">
             <article v-for="(msg, idx) in chat.chatMessages.value" :key="idx" class="msg" :class="msg.role">
               <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
@@ -97,7 +109,7 @@
             <textarea
               v-model="chat.chatInput.value"
               :disabled="chat.chatLoading.value || !reader.selectedTopicID.value"
-              placeholder="Ask based on selected notebook/topic..."
+              placeholder="Ask about what you’re reading right now..."
             ></textarea>
           </label>
 
@@ -262,7 +274,13 @@ async function completeSession() {
 
 // Chat wrapper
 async function sendChat() {
-  await chat.sendMessage(reader.selectedTopicID.value, reader.activeSection.value?.id)
+  await chat.sendMessage({
+    topicID: reader.selectedTopicID.value,
+    notebookID: reader.selectedNotebookID.value,
+    currentPage: reader.currentPage.value,
+    chapterStartPage: reader.topicStartPage.value,
+    chapterEndPage: reader.topicEndPage.value
+  })
 }
 </script>
 
@@ -490,6 +508,44 @@ h3 {
   margin: 0;
   font-size: 13px;
   color: var(--muted-text);
+}
+
+.scope-bar {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-container-low) 86%, transparent);
+}
+
+.scope-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scope-helper {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted-text);
+  line-height: 1.3;
+}
+
+.scope-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-text);
+}
+
+.scope-select {
+  width: auto;
+  min-width: 160px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 10px;
 }
 
 .messages {

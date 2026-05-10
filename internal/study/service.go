@@ -61,52 +61,6 @@ func (s *StudyService) selectLLM(contextText string) (LLMProvider, string) {
 	return s.fastLLMProvider, "fast"
 }
 
-// ExplainReaderSection explains one reader section without topic-wide retrieval.
-func (s *StudyService) ExplainReaderSection(sectionID string, question string) map[string]interface{} {
-	sectionID = strings.TrimSpace(sectionID)
-	question = strings.TrimSpace(question)
-	if sectionID == "" {
-		return map[string]interface{}{"error": "section ID is required"}
-	}
-	if s.fastLLMProvider == nil {
-		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
-	}
-
-	section, err := db.GetParentSection(sectionID)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch reader section: " + err.Error()}
-	}
-	if question == "" {
-		question = "Explain this section in clear study notes."
-	}
-
-	prompt := fmt.Sprintf(`You are an AI study companion.
-Use ONLY the section below. Do not add outside knowledge.
-If a question asks about details missing from the section, reply with: "This section does not contain that detail."
-
-Section heading: %s
-Section content:
-%s
-
-User request: %s
-
-Return a response with:
-1. Plain-language summary (2–3 sentences, main idea)
-2. Key takeaway: why this matters or where it applies
-3. Recall cue: one memorable phrase or question to test understanding
-4. Example (if the section includes a concrete example or scenario, highlight it; otherwise, skip this)`, section["heading"], section["content"], question)
-
-	answer, err := s.fastLLMProvider.GenerateAnswer(prompt)
-	if err != nil {
-		return map[string]interface{}{"error": "section explanation failed: " + err.Error()}
-	}
-	return map[string]interface{}{
-		"answer":         answer,
-		"cited_sections": []string{section["heading"]},
-		"section_id":     section["id"],
-	}
-}
-
 // ScoreShortAnswer scores one persisted short-answer prompt and updates FSRS.
 func (s *StudyService) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {
 	questionID = strings.TrimSpace(questionID)

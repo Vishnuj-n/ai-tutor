@@ -29,6 +29,13 @@ type SearchResult struct {
 	Score           float64
 }
 
+type Scope string
+
+const (
+	ScopeTopic    Scope = "topic"
+	ScopeNotebook Scope = "notebook"
+)
+
 // Engine performs semantic similarity search using ONNX embeddings + sqlite-vec
 // with a lexical TF-cosine fallback when ONNX is unavailable.
 type Engine struct {
@@ -158,6 +165,69 @@ func (e *Engine) SemanticSearch(topicID string, query string, topK int, startPag
 	}
 
 	// --- Lexical TF-cosine fallback ---
+	return e.lexicalSearch(query, chunks, k), nil
+}
+
+// SemanticSearchNotebook returns the topK most relevant chunks linked to one notebook.
+func (e *Engine) SemanticSearchNotebook(notebookID string, query string, topK int) ([]SearchResult, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	if topK <= 0 {
+		topK = 5
+	}
+
+	chunks, err := db.GetChunksForNotebook(notebookID)
+	if err != nil {
+		return nil, fmt.Errorf("could not load chunks for notebook %s: %w", notebookID, err)
+	}
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("no chunks found for notebook %s", notebookID)
+	}
+
+	k := topK
+	if len(chunks) < k {
+		k = len(chunks)
+	}
+
+	if e.embedder != nil {
+		queryVec, embedErr := e.embedder.Embed(query)
+		if embedErr == nil {
+			chunkIDs, searchErr := db.SearchVectorsForNotebook(notebookID, queryVec, k)
+			if searchErr == nil && len(chunkIDs) > 0 {
+				byID := make(map[string]models.Chunk, len(chunks))
+				for _, c := range chunks {
+					byID[c.ID] = c
+				}
+				results := make([]SearchResult, 0, len(chunkIDs))
+				for i, cid := range chunkIDs {
+					c, ok := byID[cid]
+					if !ok {
+						continue
+					}
+					results = append(results, SearchResult{
+						ChunkID:         c.ID,
+						Text:            c.Text,
+						TopicID:         c.TopicID,
+						ParentID:        c.ParentID,
+						ImportanceScore: c.ImportanceScore,
+						WeaknessScore:   c.WeaknessScore,
+						Score:           float64(len(chunkIDs) - i),
+					})
+				}
+				if len(results) > 0 {
+					return results, nil
+				}
+			}
+			if searchErr != nil {
+				log.Printf("retrieval: notebook vector search unavailable, falling back to lexical: %v", searchErr)
+			}
+		} else {
+			log.Printf("retrieval: notebook query embedding failed, falling back to lexical: %v", embedErr)
+		}
+	}
+
 	return e.lexicalSearch(query, chunks, k), nil
 }
 

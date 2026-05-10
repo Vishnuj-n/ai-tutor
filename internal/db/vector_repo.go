@@ -263,6 +263,97 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, sta
 	return chunkIDs, nil
 }
 
+func searchVectorsForNotebookRepo(notebookID string, queryVector []float32, k int) ([]string, error) {
+	if embeddingDimension <= 0 {
+		log.Printf("warning: vector search skipped for notebook %s because embedding dimension is not initialized", notebookID)
+		return []string{}, nil
+	}
+
+	if len(queryVector) != int(embeddingDimension) {
+		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), embeddingDimension)
+	}
+
+	queryVectorJSON, err := vectorToJSONRepo(queryVector)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode query vector: %w", err)
+	}
+
+	rowRows, err := conn.Query(`
+		SELECT DISTINCT c.rowid, c.id
+		FROM notebook_chunks nc
+		JOIN chunks c ON c.id = nc.chunk_id
+		WHERE nc.notebook_id = ?
+	`, notebookID)
+	if err != nil {
+		return nil, fmt.Errorf("chunk prefilter failed: %w", err)
+	}
+	defer func() {
+		if closeErr := rowRows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close notebook chunk prefilter rows: %v", closeErr)
+		}
+	}()
+
+	allowedChunkByRowID := make(map[int64]string)
+	allowedRowIDs := make([]int64, 0)
+	for rowRows.Next() {
+		var rowID int64
+		var chunkID string
+		if scanErr := rowRows.Scan(&rowID, &chunkID); scanErr != nil {
+			return nil, scanErr
+		}
+		allowedChunkByRowID[rowID] = chunkID
+		allowedRowIDs = append(allowedRowIDs, rowID)
+	}
+	if err := rowRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(allowedRowIDs) == 0 {
+		return []string{}, nil
+	}
+
+	allowedRowIDsJSON, err := json.Marshal(allowedRowIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode allowed row ids: %w", err)
+	}
+
+	rows, err := conn.Query(`
+		SELECT rowid
+		FROM chunk_vectors
+		WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
+		ORDER BY distance(embedding, ?) ASC
+		LIMIT ?
+	`, string(allowedRowIDsJSON), queryVectorJSON, k)
+	if err != nil {
+		if isVectorUnavailableError(err) {
+			log.Printf("warning: vector search unavailable for notebook %s, using lexical fallback: %v", notebookID, err)
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("vector search failed: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close notebook vector search rows: %v", closeErr)
+		}
+	}()
+
+	chunkIDs := make([]string, 0, k)
+	for rows.Next() {
+		var rowID int64
+		if err := rows.Scan(&rowID); err != nil {
+			return nil, err
+		}
+		if chunkID, ok := allowedChunkByRowID[rowID]; ok {
+			chunkIDs = append(chunkIDs, chunkID)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return chunkIDs, nil
+}
+
 func vectorToJSONRepo(vector []float32) (string, error) {
 	if len(vector) == 0 {
 		return "[]", nil

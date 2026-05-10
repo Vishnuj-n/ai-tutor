@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 // EnsureTopic inserts a topic if it does not already exist.
@@ -392,6 +393,7 @@ func GetTopicCurrentPageCursor(topicID string) (int, error) {
 
 // QueryNextReadingTopic returns the next reading topic with deterministic page bounds and cursor.
 // Joins with notebooks table to ensure topics have a valid notebook source.
+// Orders by notebook priority (higher first) to respect notebook priority biasing.
 func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	var topic models.ReadingTopicCursor
 	err := conn.QueryRow(`
@@ -409,7 +411,7 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 		  AND COALESCE(t.current_page_cursor, 0) < COALESCE(t.end_page, 0)
 		  AND n.id IS NOT NULL
 		  AND n.id != ''
-		ORDER BY t.updated_at ASC, t.created_at ASC
+		ORDER BY COALESCE(n.priority, 5) DESC, t.updated_at ASC, t.created_at ASC
 		LIMIT 1
 	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
 	if err == sql.ErrNoRows {
@@ -418,6 +420,7 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	if err != nil {
 		return models.ReadingTopicCursor{}, false, err
 	}
+	utils.Warnf("[SCHEDULER] QueryNextReadingTopic selected topicID=%s notebookID=%s (ordered by notebook priority DESC)", topic.ID, topic.NotebookID)
 	return topic, true, nil
 }
 

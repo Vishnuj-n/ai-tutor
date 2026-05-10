@@ -122,6 +122,28 @@
           <input id="notebook-title" v-model="draftNotebookTitle" type="text" class="chapter-input" placeholder="Notebook name" />
         </div>
 
+        <div class="modal-priority-edit">
+          <label for="notebook-priority">Notebook priority (1-10)</label>
+          <select id="notebook-priority" v-model.number="draftNotebookPriority" class="priority-select-modal">
+            <option v-for="n in 10" :key="n" :value="n">{{ n }} - {{ n === 1 ? 'Lowest' : n === 10 ? 'Highest' : n === 5 ? 'Default' : '' }}</option>
+          </select>
+          <p class="priority-hint">Higher-priority notebooks appear earlier in your study queue.</p>
+        </div>
+
+        <div class="modal-topics-preview">
+          <h4>Topics Preview</h4>
+          <div v-if="draftChapters.length > 0" class="topics-list">
+            <div v-for="(chapter, index) in draftChapters" :key="`topic-preview-${index}`" class="topic-preview-item">
+              <span class="topic-number">{{ index + 1 }}</span>
+              <span class="topic-title">{{ chapter.title }}</span>
+              <span class="topic-pages">p. {{ chapter.start_page }}-{{ chapter.end_page }}</span>
+            </div>
+          </div>
+          <div v-else class="topics-empty">
+            <p>No topics defined yet. Add chapters above to generate topics.</p>
+          </div>
+        </div>
+
         <div v-if="draftError" class="error-message modal-error">{{ draftError }}</div>
 
         <div class="chapter-table-wrap">
@@ -236,7 +258,9 @@ const indexingNotebookID = ref('')
 const showSyllabusModal = ref(false)
 const draftNotebookID = ref('')
 const draftNotebookTitle = ref('')
+const draftNotebookPriority = ref(5)
 const originalDraftTitle = ref('')
+const originalDraftPriority = ref(5)
 const draftPageCount = ref(1)
 const draftChapters = ref([])
 const originalDraftChapters = ref([])
@@ -459,6 +483,7 @@ async function resolveLocalFilePath(file) {
 async function openSyllabusDraft(notebookID, notebookTitle = '') {
   draftNotebookID.value = notebookID
   draftNotebookTitle.value = String(notebookTitle || '').trim()
+  draftNotebookPriority.value = 5 // Default priority
   draftError.value = ''
 
   // Set loading state immediately for UI responsiveness
@@ -481,6 +506,12 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
       }))
       : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
 
+    // Load notebook to get current priority
+    const notebook = notebooks.value.find((nb) => nb.id === notebookID)
+    if (notebook && notebook.priority) {
+      draftNotebookPriority.value = notebook.priority
+    }
+
     showSyllabusModal.value = true
 
     if (draft?.fallback_used) {
@@ -494,6 +525,7 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
     }
 
     originalDraftTitle.value = draftNotebookTitle.value
+    originalDraftPriority.value = draftNotebookPriority.value
     originalDraftChapters.value = draftChapters.value.map((ch) => ({
       title: String(ch.title || '').trim(),
       start_page: Number(ch.start_page) || 1,
@@ -586,6 +618,7 @@ async function confirmSyllabusDraft() {
 
   const trimmedTitle = String(draftNotebookTitle.value || '').trim()
   const titleChanged = trimmedTitle !== String(originalDraftTitle.value || '').trim()
+  const priorityChanged = draftNotebookPriority.value !== originalDraftPriority.value
   const chaptersChanged = !chaptersEqual(sanitized, originalDraftChapters.value)
 
   draftError.value = ''
@@ -603,8 +636,19 @@ async function confirmSyllabusDraft() {
       }
     }
 
+    if (priorityChanged) {
+      const priorityResult = await apiUpdateNotebookPriority(draftNotebookID.value, draftNotebookPriority.value)
+      if (priorityResult?.error) {
+        throw new Error(priorityResult.error)
+      }
+      const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
+      if (notebook) {
+        notebook.priority = draftNotebookPriority.value
+      }
+    }
+
     // Only call ConfirmNotebookSyllabus if chapters actually changed
-    // This avoids expensive re-ingestion when only notebook title changed
+    // This avoids expensive re-ingestion when only notebook title or priority changed
     if (chaptersChanged) {
       const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
       if (result?.error) {
@@ -615,7 +659,7 @@ async function confirmSyllabusDraft() {
       closeSyllabusModal()
       showToast('Notebook ready! Semantic indexing running in background...')
     } else {
-      // Chapters didn't change, just update notebook title if needed
+      // Chapters didn't change, just update notebook title/priority if needed
       await loadNotebooks()
       closeSyllabusModal()
       showToast('Notebook metadata updated')
@@ -1115,6 +1159,103 @@ function formatDate(dateString) {
   font-size: 12px;
   color: var(--muted-text);
   margin-bottom: 6px;
+}
+
+.modal-priority-edit {
+  margin: 0 0 12px;
+}
+
+.modal-priority-edit label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted-text);
+  margin-bottom: 6px;
+}
+
+.priority-select-modal {
+  width: 100%;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  cursor: pointer;
+}
+
+.priority-select-modal:hover {
+  border-color: var(--primary);
+}
+
+.priority-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted-text);
+}
+
+.modal-topics-preview {
+  margin: 0 0 16px;
+  padding: 12px;
+  background: var(--surface-container);
+  border-radius: 8px;
+  border: 1px solid var(--outline-variant);
+}
+
+.modal-topics-preview h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--on-surface);
+}
+
+.topics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.topic-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface-container-low);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.topic-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.topic-title {
+  flex: 1;
+  color: var(--on-surface);
+  font-weight: 500;
+}
+
+.topic-pages {
+  color: var(--muted-text);
+  font-size: 11px;
+}
+
+.topics-empty {
+  padding: 8px;
+  text-align: center;
+}
+
+.topics-empty p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-text);
 }
 
 .modal-error {

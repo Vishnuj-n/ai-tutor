@@ -417,9 +417,15 @@ func newTestApp(t *testing.T) *App {
 		}
 		for _, chunk := range chunks {
 			embedStore.AddChunk(chunk)
+			if app.retrievalEngine == nil {
+				app.retrievalEngine = retrieval.NewEngine(nil)
+			}
+			app.retrievalEngine.AddChunk(chunk)
 		}
 	}
-	app.retrievalEngine = retrieval.NewEngine(nil)
+	if app.retrievalEngine == nil {
+		app.retrievalEngine = retrieval.NewEngine(nil)
+	}
 
 	// Initialize study service with all required dependencies
 	app.studyService = study.NewStudyService(study.Config{
@@ -1520,6 +1526,14 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 		t.Fatalf("expected topic_id string, got: %#v", resp["topic_id"])
 	}
 
+	// Verify topic_start_page and topic_end_page are present
+	if _, ok := resp["topic_start_page"].(int); !ok {
+		t.Fatalf("expected topic_start_page int, got: %#v", resp["topic_start_page"])
+	}
+	if _, ok := resp["topic_end_page"].(int); !ok {
+		t.Fatalf("expected topic_end_page int, got: %#v", resp["topic_end_page"])
+	}
+
 	// Verify sections were returned and contain expected data
 	sectionsRaw, exists := resp["sections"]
 	if !exists {
@@ -1586,6 +1600,9 @@ func TestExplainReaderSection_Success(t *testing.T) {
 	if err := db.CreateParentSection(parentID, topicID, "Section Title", 1, "section content"); err != nil {
 		t.Fatalf("CreateParentSection failed: %v", err)
 	}
+	if err := db.CreateChunk("chunk-explain", topicID, parentID, "section content about grounded retrieval", 8, 1); err != nil {
+		t.Fatalf("CreateChunk failed: %v", err)
+	}
 
 	resp := app.ExplainReaderSection(parentID, "What is this section about?")
 
@@ -1620,6 +1637,9 @@ func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 	if err := db.CreateParentSection(parentID, topicID, "Section", 1, "content"); err != nil {
 		t.Fatalf("CreateParentSection failed: %v", err)
 	}
+	if err := db.CreateChunk("chunk-explain-empty", topicID, parentID, "content for the reader explanation fallback path", 8, 1); err != nil {
+		t.Fatalf("CreateChunk failed: %v", err)
+	}
 
 	// Should succeed with empty question (uses default explanation)
 	resp := app.ExplainReaderSection(parentID, "")
@@ -1630,6 +1650,65 @@ func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 
 	if _, ok := resp["answer"].(string); !ok {
 		t.Fatalf("expected answer string for empty question, got: %#v", resp["answer"])
+	}
+}
+
+func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
+	app := newTestApp(t)
+
+	notebookID := "reader-ai-nb"
+	topicID := "reader-ai-topic"
+	parentID := "reader-ai-parent"
+	chunkID := "reader-ai-chunk"
+
+	if err := db.EnsureTopic(topicID, "Reader AI Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.UpdateTopicPageBounds(topicID, 2, 4); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+	if err := db.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := db.CreateParentSection(parentID, topicID, "Reader Scope Section", 1, "Reader scope section content"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+	if err := db.CreateChunk(chunkID, topicID, parentID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
+		t.Fatalf("CreateChunk failed: %v", err)
+	}
+	if err := db.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
+		t.Fatalf("LinkChunksToNotebook failed: %v", err)
+	}
+	app.retrievalEngine.AddChunk(models.Chunk{
+		ID:       chunkID,
+		TopicID:  topicID,
+		ParentID: parentID,
+		Text:     "Round robin stays fair by rotating time slices.",
+		PageNum:  3,
+	})
+
+	resp := app.AskReaderAI(topicID, notebookID, "Why is round robin fair?", "current_page", 3, 2, 4)
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	if got, ok := resp["scope"].(string); !ok || got != "current_page" {
+		t.Fatalf("expected current_page scope, got %#v", resp["scope"])
+	}
+	if _, ok := resp["answer"].(string); !ok {
+		t.Fatalf("expected answer string, got %#v", resp["answer"])
+	}
+	switch cited := resp["cited_sections"].(type) {
+	case []string:
+		if len(cited) == 0 {
+			t.Fatalf("expected citations, got empty slice")
+		}
+	case []interface{}:
+		if len(cited) == 0 {
+			t.Fatalf("expected citations, got empty slice")
+		}
+	default:
+		t.Fatalf("expected citations array, got %#v", resp["cited_sections"])
 	}
 }
 
