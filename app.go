@@ -1049,11 +1049,20 @@ func normalizeQuizAnswer(answer string, options []string) string {
 }
 
 func resolveAppDir() (string, error) {
-	baseDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
+	var appDir string
+
+	// If APP_ENV is set to dev, use a local folder in the project root
+	if os.Getenv("APP_ENV") == "dev" {
+		appDir = filepath.Join(".", "dev_data")
+	} else {
+		// Otherwise, use the standard system config directory (AppData)
+		baseDir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		appDir = filepath.Join(baseDir, "ai-tutor")
 	}
-	appDir := filepath.Join(baseDir, "ai-tutor")
+
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		return "", err
 	}

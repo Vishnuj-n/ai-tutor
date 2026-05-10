@@ -12,10 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func isReaderCompatibleTaskType(taskType models.StudyTaskType) bool {
-	return taskType == models.StudyTaskTypeReading || taskType == models.StudyTaskTypeReread
-}
-
 var (
 	ErrNoPendingTasks = errors.New("no pending tasks in queue")
 	ErrTaskNotPending = errors.New("task is not in PENDING status")

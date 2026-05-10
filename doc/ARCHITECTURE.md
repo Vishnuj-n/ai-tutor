@@ -442,6 +442,49 @@ This is acceptable for MVP. Future refactoring may separate generation state to 
 | 4 | REREAD (remediation) | Failed quiz |
 | 5 | EXAMINER | Mastery threshold met |
 
+### Adaptive Token-Budget Reading Windows
+
+Problem:
+Fixed page-count scheduling produced inconsistent workloads because page density varies significantly across textbooks, slides, OCR PDFs, and technical content.
+
+Solution:
+The scheduler now uses token-budget-driven adaptive page windows.
+
+Core flow:
+reading minutes
+    -> token budget
+    -> adaptive page accumulation
+    -> page window
+    -> token-aware workload estimation
+
+Key behaviors:
+- Dense pages -> fewer pages
+- Sparse slides -> more pages
+- OCR/query failures -> page-based fallback
+
+Constants:
+- WordsPerMinute = 200
+- TargetSessionWords = 2500
+- MinMinutesPerPage = 1.0
+- MinutesPerPage = 2.5 (legacy fallback only)
+
+Adaptive Window Logic:
+1. Convert reading budget into token budget.
+2. Incrementally accumulate pages using per-page token counts.
+3. Stop once accumulated tokens approach target workload.
+4. Preserve ClampWindowPages behavior near topic end.
+5. Fall back to page heuristics if token data unavailable.
+
+Estimation Logic:
+- Actual task minutes are estimated from extracted token counts.
+- Sparse content uses minimum page floors.
+- OCR/query failures use legacy page heuristics.
+
+Determinism:
+- Same chunk data -> same adaptive windows
+- No AI/runtime learning
+- Pure query-driven scheduling
+
 ### Examiner Task Policy
 
 EXAMINER tasks:
