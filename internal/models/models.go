@@ -242,15 +242,17 @@ type ReaderSection struct {
 
 // ReaderTopicBundle contains notebook metadata plus section/page mapping for reader UI.
 type ReaderTopicBundle struct {
-	TopicID       string          `json:"topic_id"`
-	TopicTitle    string          `json:"topic_title"`
-	NotebookID    string          `json:"notebook_id,omitempty"`
-	NotebookTitle string          `json:"notebook_title,omitempty"`
-	NotebookURL   string          `json:"notebook_url,omitempty"`
-	FileType      string          `json:"file_type,omitempty"`
-	PageCount     int             `json:"page_count"`
-	Sections      []ReaderSection `json:"sections"`
-	Subtopics     []Subtopic      `json:"subtopics,omitempty"`
+	TopicID        string          `json:"topic_id"`
+	TopicTitle     string          `json:"topic_title"`
+	NotebookID     string          `json:"notebook_id,omitempty"`
+	NotebookTitle  string          `json:"notebook_title,omitempty"`
+	NotebookURL    string          `json:"notebook_url,omitempty"`
+	FileType       string          `json:"file_type,omitempty"`
+	PageCount      int             `json:"page_count"`
+	TopicStartPage int             `json:"topic_start_page"`
+	TopicEndPage   int             `json:"topic_end_page"`
+	Sections       []ReaderSection `json:"sections"`
+	Subtopics      []Subtopic      `json:"subtopics,omitempty"`
 }
 
 // QuizQuestion is a generated question persisted per topic.
@@ -325,6 +327,42 @@ type FlashcardState struct {
 	Reps          int     `json:"reps"`
 	Lapses        int     `json:"lapses"`
 	StateCode     int     `json:"state_code"`
+}
+
+type ReviewTaskCardStatus string
+
+const (
+	ReviewTaskCardStatusPending  ReviewTaskCardStatus = "pending"
+	ReviewTaskCardStatusReviewed ReviewTaskCardStatus = "reviewed"
+)
+
+type ReviewSessionPayload struct {
+	CardCount     int   `json:"card_count"`
+	CreatedAtUnix int64 `json:"created_at_unix"`
+}
+
+type ReviewSessionCard struct {
+	CardID        string               `json:"card_id"`
+	TaskID        string               `json:"task_id"`
+	Status        ReviewTaskCardStatus `json:"status"`
+	Position      int                  `json:"position"`
+	TopicID       string               `json:"topic_id"`
+	SourceChunkID string               `json:"source_chunk_id,omitempty"`
+	Prompt        string               `json:"prompt"`
+	Answer        string               `json:"answer"`
+	DueAt         int64                `json:"due_at,omitempty"`
+	Suspended     bool                 `json:"suspended"`
+}
+
+type ReviewSession struct {
+	Task           *StudyQueueTask      `json:"task"`
+	Payload        ReviewSessionPayload `json:"payload"`
+	Cards          []ReviewSessionCard  `json:"cards"`
+	CurrentCard    *ReviewSessionCard   `json:"current_card,omitempty"`
+	NextPendingIdx int                  `json:"next_pending_idx"`
+	Remaining      int                  `json:"remaining"`
+	ReviewedCount  int                  `json:"reviewed_count"`
+	CardCount      int                  `json:"card_count"`
 }
 
 // FSRSReviewLog stores generic review events for flashcards and future activity types.

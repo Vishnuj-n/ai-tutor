@@ -417,9 +417,15 @@ func newTestApp(t *testing.T) *App {
 		}
 		for _, chunk := range chunks {
 			embedStore.AddChunk(chunk)
+			if app.retrievalEngine == nil {
+				app.retrievalEngine = retrieval.NewEngine(nil)
+			}
+			app.retrievalEngine.AddChunk(chunk)
 		}
 	}
-	app.retrievalEngine = retrieval.NewEngine(nil)
+	if app.retrievalEngine == nil {
+		app.retrievalEngine = retrieval.NewEngine(nil)
+	}
 
 	// Initialize study service with all required dependencies
 	app.studyService = study.NewStudyService(study.Config{
@@ -1091,6 +1097,106 @@ func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) 
 	}
 }
 
+func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := db.EnsureTopic("queue-review-topic", "Queue Review Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", 15); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if _, err := db.GetConnection().Exec(`
+		INSERT INTO notebook_topics (notebook_id, topic_id)
+		VALUES ('queue-review-nb', 'queue-review-topic')
+	`); err != nil {
+		t.Fatalf("link notebook_topics failed: %v", err)
+	}
+	if err := db.CreateFlashcards("queue-review-topic", []models.Flashcard{
+		{ID: "queue-card-1", TopicID: "queue-review-topic", Prompt: "Q1", Answer: "A1", DueAt: 1},
+		{ID: "queue-card-2", TopicID: "queue-review-topic", Prompt: "Q2", Answer: "A2", DueAt: 2},
+	}, map[string]models.FlashcardState{
+		"queue-card-1": {},
+		"queue-card-2": {},
+	}); err != nil {
+		t.Fatalf("CreateFlashcards failed: %v", err)
+	}
+
+	generateResp := app.GenerateReviewTasks("queue-review-nb")
+	if _, hasErr := generateResp["error"]; hasErr {
+		t.Fatalf("GenerateReviewTasks failed: %v", generateResp["error"])
+	}
+	tasks, ok := generateResp["tasks"].([]models.StudyQueueTask)
+	if !ok || len(tasks) != 1 {
+		t.Fatalf("expected one generated review task, got %#v", generateResp["tasks"])
+	}
+	taskID := tasks[0].ID
+
+	secondGenerateResp := app.GenerateReviewTasks("queue-review-nb")
+	secondTasks, ok := secondGenerateResp["tasks"].([]models.StudyQueueTask)
+	if !ok || len(secondTasks) != 1 || secondTasks[0].ID != taskID {
+		t.Fatalf("expected duplicate prevention to return same task, got %#v", secondGenerateResp["tasks"])
+	}
+
+	if resp := app.ActivateTask(taskID); resp["error"] != nil {
+		t.Fatalf("ActivateTask failed: %#v", resp)
+	}
+
+	sessionResp := app.GetReviewSession(taskID)
+	if _, hasErr := sessionResp["error"]; hasErr {
+		t.Fatalf("GetReviewSession failed: %v", sessionResp["error"])
+	}
+	session, ok := sessionResp["session"].(*models.ReviewSession)
+	if !ok {
+		t.Fatalf("expected review session pointer, got %#v", sessionResp["session"])
+	}
+	if session.CurrentCard == nil || session.CurrentCard.CardID != "queue-card-1" {
+		t.Fatalf("expected first pending card queue-card-1, got %#v", session.CurrentCard)
+	}
+
+	reviewResp := app.RecordCardReview(taskID, "queue-card-1", 3)
+	if _, hasErr := reviewResp["error"]; hasErr {
+		t.Fatalf("RecordCardReview failed: %v", reviewResp["error"])
+	}
+	if remaining, ok := reviewResp["remaining"].(int); !ok || remaining != 1 {
+		t.Fatalf("expected remaining=1, got %#v", reviewResp["remaining"])
+	}
+
+	reloadResp := app.GetReviewSession(taskID)
+	reloaded := reloadResp["session"].(*models.ReviewSession)
+	if reloaded.CurrentCard == nil || reloaded.CurrentCard.CardID != "queue-card-2" {
+		t.Fatalf("expected resumed next pending card queue-card-2, got %#v", reloaded.CurrentCard)
+	}
+
+	duplicateReviewResp := app.RecordCardReview(taskID, "queue-card-1", 3)
+	if code, ok := duplicateReviewResp["code"].(int); !ok || code != 409 {
+		t.Fatalf("expected duplicate review to return 409, got %#v", duplicateReviewResp)
+	}
+
+	incompleteCompleteResp := app.CompleteReviewSession(taskID)
+	if code, ok := incompleteCompleteResp["code"].(int); !ok || code != 409 {
+		t.Fatalf("expected incomplete completion to return 409, got %#v", incompleteCompleteResp)
+	}
+
+	reviewResp2 := app.RecordCardReview(taskID, "queue-card-2", 4)
+	if _, hasErr := reviewResp2["error"]; hasErr {
+		t.Fatalf("second RecordCardReview failed: %v", reviewResp2["error"])
+	}
+
+	completeResp := app.CompleteReviewSession(taskID)
+	if _, hasErr := completeResp["error"]; hasErr {
+		t.Fatalf("CompleteReviewSession failed: %v", completeResp["error"])
+	}
+
+	task, err := db.GetTaskByID(taskID)
+	if err != nil {
+		t.Fatalf("GetTaskByID failed: %v", err)
+	}
+	if task.Status != models.StudyTaskStatusCompleted {
+		t.Fatalf("expected review task completed, got %s", task.Status)
+	}
+}
+
 // ============================================================================
 // WRITTEN ANSWER TESTS
 // ============================================================================
@@ -1420,6 +1526,14 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 		t.Fatalf("expected topic_id string, got: %#v", resp["topic_id"])
 	}
 
+	// Verify topic_start_page and topic_end_page are present
+	if _, ok := resp["topic_start_page"].(int); !ok {
+		t.Fatalf("expected topic_start_page int, got: %#v", resp["topic_start_page"])
+	}
+	if _, ok := resp["topic_end_page"].(int); !ok {
+		t.Fatalf("expected topic_end_page int, got: %#v", resp["topic_end_page"])
+	}
+
 	// Verify sections were returned and contain expected data
 	sectionsRaw, exists := resp["sections"]
 	if !exists {
@@ -1486,6 +1600,9 @@ func TestExplainReaderSection_Success(t *testing.T) {
 	if err := db.CreateParentSection(parentID, topicID, "Section Title", 1, "section content"); err != nil {
 		t.Fatalf("CreateParentSection failed: %v", err)
 	}
+	if err := db.CreateChunk("chunk-explain", topicID, parentID, "section content about grounded retrieval", 8, 1); err != nil {
+		t.Fatalf("CreateChunk failed: %v", err)
+	}
 
 	resp := app.ExplainReaderSection(parentID, "What is this section about?")
 
@@ -1520,6 +1637,9 @@ func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 	if err := db.CreateParentSection(parentID, topicID, "Section", 1, "content"); err != nil {
 		t.Fatalf("CreateParentSection failed: %v", err)
 	}
+	if err := db.CreateChunk("chunk-explain-empty", topicID, parentID, "content for the reader explanation fallback path", 8, 1); err != nil {
+		t.Fatalf("CreateChunk failed: %v", err)
+	}
 
 	// Should succeed with empty question (uses default explanation)
 	resp := app.ExplainReaderSection(parentID, "")
@@ -1530,6 +1650,65 @@ func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
 
 	if _, ok := resp["answer"].(string); !ok {
 		t.Fatalf("expected answer string for empty question, got: %#v", resp["answer"])
+	}
+}
+
+func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
+	app := newTestApp(t)
+
+	notebookID := "reader-ai-nb"
+	topicID := "reader-ai-topic"
+	parentID := "reader-ai-parent"
+	chunkID := "reader-ai-chunk"
+
+	if err := db.EnsureTopic(topicID, "Reader AI Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := db.UpdateTopicPageBounds(topicID, 2, 4); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+	if err := db.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := db.CreateParentSection(parentID, topicID, "Reader Scope Section", 1, "Reader scope section content"); err != nil {
+		t.Fatalf("CreateParentSection failed: %v", err)
+	}
+	if err := db.CreateChunk(chunkID, topicID, parentID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
+		t.Fatalf("CreateChunk failed: %v", err)
+	}
+	if err := db.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
+		t.Fatalf("LinkChunksToNotebook failed: %v", err)
+	}
+	app.retrievalEngine.AddChunk(models.Chunk{
+		ID:       chunkID,
+		TopicID:  topicID,
+		ParentID: parentID,
+		Text:     "Round robin stays fair by rotating time slices.",
+		PageNum:  3,
+	})
+
+	resp := app.AskReaderAI(topicID, notebookID, "Why is round robin fair?", "current_page", 3, 2, 4)
+
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	if got, ok := resp["scope"].(string); !ok || got != "current_page" {
+		t.Fatalf("expected current_page scope, got %#v", resp["scope"])
+	}
+	if _, ok := resp["answer"].(string); !ok {
+		t.Fatalf("expected answer string, got %#v", resp["answer"])
+	}
+	switch cited := resp["cited_sections"].(type) {
+	case []string:
+		if len(cited) == 0 {
+			t.Fatalf("expected citations, got empty slice")
+		}
+	case []interface{}:
+		if len(cited) == 0 {
+			t.Fatalf("expected citations, got empty slice")
+		}
+	default:
+		t.Fatalf("expected citations array, got %#v", resp["cited_sections"])
 	}
 }
 

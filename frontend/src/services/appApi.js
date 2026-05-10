@@ -27,6 +27,18 @@ export function explainReaderSection(sectionID, question = '') {
   return appBridge().ExplainReaderSection(sectionID, question)
 }
 
+export function askReaderAI(topicID, notebookID, question, scope, currentPage, chapterStartPage, chapterEndPage) {
+  return appBridge().AskReaderAI(
+    topicID,
+    notebookID || '',
+    question,
+    scope,
+    currentPage || 0,
+    chapterStartPage || 0,
+    chapterEndPage || 0
+  )
+}
+
 export function completeReadingSession(topicID, startPage, targetPage) {
   return appBridge().CompleteReadingSession(topicID, startPage, targetPage)
 }
@@ -126,6 +138,22 @@ export function getFlashcards(topicID, dueOnly = true) {
 
 export function recordFlashcardReview(cardID, rating) {
   return appBridge().RecordFlashcardReview(cardID, rating)
+}
+
+export function generateReviewTasks(notebookID) {
+  return appBridge().GenerateReviewTasks(notebookID)
+}
+
+export function getReviewSession(taskID) {
+  return appBridge().GetReviewSession(taskID)
+}
+
+export function recordCardReview(taskID, cardID, rating) {
+  return appBridge().RecordCardReview(taskID, cardID, rating)
+}
+
+export function completeReviewSession(taskID) {
+  return appBridge().CompleteReviewSession(taskID)
 }
 
 export function getNotebooks(topicID = '') {

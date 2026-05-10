@@ -3,10 +3,12 @@ package scheduler
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 const (
@@ -161,11 +163,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 
 			generatedTaskID := "task-read-" + readingTopic.ID
 
-			// Structured debug logging for adaptive reading window resolution
-			// Use utils.Debugf if available, otherwise comment out for production
-			// TODO: Add utils.Debugf support when debug logging is needed
-			// utils.Debugf("[TODAY_PLAN] adaptive reading window taskID=%s topicID=%s startPage=%d endPage=%d tokenBudget=%d",
-			// 	generatedTaskID, readingTopic.ID, startPage, endPage, tokenBudget)
+			utils.LogSchedulerDecision(readingTopic.ID, startPage, endPage, strconv.Itoa(tokenBudget), "adaptive_window_resolved")
 
 			activeTopics = append(activeTopics, readingTopic.Title)
 
@@ -317,7 +315,11 @@ func (s *service) estimateTaskMinutes(
 		}
 		err = fetchErr
 	} else {
-		for _, pageTokens := range tokenMap {
+		for page := startPage; page <= endPage; page++ {
+			pageTokens := tokenMap[page]
+			if pageTokens <= 0 {
+				pageTokens = FallbackWordsPerPage
+			}
 			totalWords += pageTokens
 		}
 	}

@@ -3,11 +3,13 @@ package study
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -264,6 +266,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				return models.QuizResult{}, fmt.Errorf("failed to reset reread attempts: %w", err)
 			}
 		}
+		utils.LogQuizResult(task.ID, score, true, "")
 	} else if task.TopicID != "" {
 		rereadAttemptCount, err = db.IncrementRereadAttemptCountTx(tx, task.TopicID)
 		if err != nil {
@@ -283,11 +286,13 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				StartPage:   task.StartPage,
 				EndPage:     task.EndPage,
 			})
+			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
 		} else {
 			manualReviewRecommended = true
 			feedback = "Automatic reread limit reached. Review this topic manually, then return when ready to retry."
 			attempt.Feedback = feedback
 		}
+		utils.LogQuizResult(task.ID, score, false, rereadTaskID)
 	}
 
 	if err := db.SaveQuizAttemptTx(tx, attempt); err != nil {

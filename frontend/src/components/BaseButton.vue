@@ -1,6 +1,6 @@
 <template>
-  <button 
-    :class="['base-btn', { 'loading': loading }]" 
+  <button
+    :class="['base-btn', { loading }]"
     :disabled="disabled || loading"
     :aria-busy="loading"
     @click="$emit('click')"
@@ -14,14 +14,8 @@
 
 <script setup>
 defineProps({
-  disabled: {
-    type: Boolean,
-    default: false
-  },
-  loading: {
-    type: Boolean,
-    default: false
-  }
+  disabled: { type: Boolean, default: false },
+  loading:  { type: Boolean, default: false },
 })
 
 defineEmits(['click'])
@@ -29,29 +23,29 @@ defineEmits(['click'])
 
 <style scoped>
 .base-btn {
-  padding: 0.5rem 1rem;
-  background: var(--primary);
-  color: white;
-  border: none;
-  border-radius: 4px;
+  padding: 10px 24px;
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
+  color: var(--on-primary);
+  border: 0;
+  border-radius: 12px;
   font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  transition: background 0.15s ease;
+  gap: 8px;
+  transition: transform 0.14s ease, filter 0.14s ease;
   white-space: nowrap;
 }
 
 .base-btn:hover:not(:disabled) {
-  background: #0056b3;
+  filter: brightness(1.08);
 }
 
 .base-btn:active:not(:disabled) {
-  background: #004494;
+  transform: scale(0.96);
 }
 
 .base-btn:disabled {
@@ -62,8 +56,8 @@ defineEmits(['click'])
 .spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid transparent;
-  border-top: 2px solid currentColor;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }

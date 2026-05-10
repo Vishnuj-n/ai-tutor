@@ -1,0 +1,244 @@
+package study
+
+import (
+	"fmt"
+	"strings"
+
+	"ai-tutor/internal/db"
+	"ai-tutor/internal/retrieval"
+)
+
+type ReaderRetrievalScope string
+
+const (
+	ReaderScopeCurrentPage    ReaderRetrievalScope = "current_page"
+	ReaderScopeCurrentChapter ReaderRetrievalScope = "current_chapter"
+	ReaderScopeEntireNotebook ReaderRetrievalScope = "entire_notebook"
+)
+
+type ReaderAIRequest struct {
+	TopicID          string
+	NotebookID       string
+	Question         string
+	Scope            ReaderRetrievalScope
+	CurrentPage      int
+	ChapterStartPage int
+	ChapterEndPage   int
+}
+
+func (s *StudyService) AnswerReaderQuestion(req ReaderAIRequest) map[string]interface{} {
+	req.TopicID = strings.TrimSpace(req.TopicID)
+	req.NotebookID = strings.TrimSpace(req.NotebookID)
+	req.Question = strings.TrimSpace(req.Question)
+
+	if req.TopicID == "" {
+		return map[string]interface{}{"error": "topic ID is required"}
+	}
+	if req.Question == "" {
+		return map[string]interface{}{"error": "question is required"}
+	}
+	if s.fastLLMProvider == nil {
+		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
+	}
+	if s.retrievalEngine == nil {
+		return map[string]interface{}{"error": "retrieval engine not initialized"}
+	}
+
+	scope := normalizeReaderScope(req.Scope)
+	results, err := s.searchReaderScope(req, scope)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if len(results) == 0 {
+		return map[string]interface{}{"error": "no relevant content found in the selected reading scope"}
+	}
+
+	contextText, citations := buildReaderContext(results)
+	scopeLabel := readerScopeLabel(scope)
+	prompt := fmt.Sprintf(`You are the Reader sidebar AI: a lightweight, context-aware reading companion.
+Use ONLY the retrieved reading material below.
+If the answer is not supported by the selected scope, reply exactly: "I couldn’t find a strong answer within the selected scope. Try expanding the retrieval scope."
+
+Rules:
+- Keep the response concise and grounded.
+- Prefer 2 short paragraphs or up to 3 bullets.
+- Explain clearly, but do not turn this into a full tutoring session.
+- Stay anchored to the student's current reading flow and selected scope.
+
+Selected retrieval scope: %s
+
+Retrieved reading material:
+%s
+
+Student question: %s
+
+Answer:`, scopeLabel, contextText, req.Question)
+
+	answer, err := s.fastLLMProvider.GenerateAnswer(prompt)
+	if err != nil {
+		return map[string]interface{}{"error": "reader response failed: " + err.Error()}
+	}
+
+	return map[string]interface{}{
+		"answer":         answer,
+		"cited_sections": citations,
+		"scope":          string(scope),
+	}
+}
+
+func (s *StudyService) ExplainReaderSection(sectionID string, question string) map[string]interface{} {
+	sectionID = strings.TrimSpace(sectionID)
+	question = strings.TrimSpace(question)
+	if sectionID == "" {
+		return map[string]interface{}{"error": "section ID is required"}
+	}
+
+	section, err := db.GetParentSection(sectionID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to fetch reader section: " + err.Error()}
+	}
+
+	topicID, startPage, endPage, err := resolveReaderSectionScope(sectionID)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to resolve reader section scope: " + err.Error()}
+	}
+	if question == "" {
+		question = "Explain this section in clear study notes."
+	}
+
+	resp := s.AnswerReaderQuestion(ReaderAIRequest{
+		TopicID:          topicID,
+		Question:         question,
+		Scope:            ReaderScopeCurrentChapter,
+		ChapterStartPage: startPage,
+		ChapterEndPage:   endPage,
+	})
+	if resp["error"] != nil {
+		return resp
+	}
+	resp["section_id"] = section["id"]
+	return resp
+}
+
+func (s *StudyService) searchReaderScope(req ReaderAIRequest, scope ReaderRetrievalScope) ([]retrieval.SearchResult, error) {
+	const topK = 5
+
+	switch scope {
+	case ReaderScopeCurrentPage:
+		if req.CurrentPage <= 0 {
+			return nil, fmt.Errorf("current page is required for current-page retrieval")
+		}
+		return s.retrievalEngine.SemanticSearch(req.TopicID, req.Question, topK, req.CurrentPage, req.CurrentPage)
+	case ReaderScopeEntireNotebook:
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook ID is required for notebook-wide retrieval")
+		}
+		return s.retrievalEngine.SemanticSearchNotebook(req.NotebookID, req.Question, topK)
+	case ReaderScopeCurrentChapter:
+		startPage := req.ChapterStartPage
+		endPage := req.ChapterEndPage
+		if startPage <= 0 || endPage <= 0 {
+			var err error
+			startPage, endPage, err = db.GetTopicPageBounds(req.TopicID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve chapter bounds: %w", err)
+			}
+		}
+		if startPage > 0 && endPage > 0 {
+			return s.retrievalEngine.SemanticSearch(req.TopicID, req.Question, topK, startPage, endPage)
+		}
+		return s.retrievalEngine.SemanticSearch(req.TopicID, req.Question, topK, 0, 0)
+	default:
+		return nil, fmt.Errorf("unsupported reader retrieval scope: %s", scope)
+	}
+}
+
+func normalizeReaderScope(scope ReaderRetrievalScope) ReaderRetrievalScope {
+	switch scope {
+	case ReaderScopeCurrentPage, ReaderScopeCurrentChapter:
+		return scope
+	default:
+		return ReaderScopeEntireNotebook
+	}
+}
+
+func readerScopeLabel(scope ReaderRetrievalScope) string {
+	switch scope {
+	case ReaderScopeCurrentPage:
+		return "Current Page"
+	case ReaderScopeCurrentChapter:
+		return "Current Chapter"
+	default:
+		return "Entire Notebook"
+	}
+}
+
+func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
+	var builder strings.Builder
+	citations := make([]string, 0, len(results))
+	seenParents := make(map[string]bool)
+
+	for _, result := range results {
+		if result.ParentID == "" || seenParents[result.ParentID] {
+			continue
+		}
+		section, err := db.GetParentSection(result.ParentID)
+		if err != nil {
+			continue
+		}
+		startPage, endPage := 0, 0
+		if ranges, rangeErr := db.GetTopicHeadingPageRanges(result.TopicID); rangeErr == nil {
+			if pageRange, ok := ranges[result.ParentID]; ok {
+				startPage, endPage = pageRange[0], pageRange[1]
+			}
+		}
+
+		heading := strings.TrimSpace(section["heading"])
+		if heading == "" {
+			heading = "Section"
+		}
+		if startPage > 0 && endPage > 0 {
+			fmt.Fprintf(&builder, "[%s | pages %d-%d]\n%s\n\n", heading, startPage, endPage, strings.TrimSpace(result.Text))
+			citations = append(citations, fmt.Sprintf("%s (pages %d-%d)", heading, startPage, endPage))
+		} else {
+			fmt.Fprintf(&builder, "[%s]\n%s\n\n", heading, strings.TrimSpace(result.Text))
+			citations = append(citations, heading)
+		}
+		seenParents[result.ParentID] = true
+	}
+
+	if builder.Len() == 0 {
+		for _, result := range results {
+			text := strings.TrimSpace(result.Text)
+			if text == "" {
+				continue
+			}
+			builder.WriteString(text)
+			builder.WriteString("\n\n")
+		}
+	}
+
+	return strings.TrimSpace(builder.String()), citations
+}
+
+func resolveReaderSectionScope(sectionID string) (string, int, int, error) {
+	var topicID string
+	err := db.GetConnection().QueryRow(`
+		SELECT topic_id
+		FROM parents
+		WHERE id = ?
+	`, sectionID).Scan(&topicID)
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	pageRanges, err := db.GetTopicHeadingPageRanges(topicID)
+	if err != nil {
+		return topicID, 0, 0, nil
+	}
+	pageRange, ok := pageRanges[sectionID]
+	if !ok {
+		return topicID, 0, 0, nil
+	}
+	return topicID, pageRange[0], pageRange[1], nil
+}
