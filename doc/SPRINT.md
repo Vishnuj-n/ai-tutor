@@ -76,7 +76,7 @@ PENDING → ACTIVE → COMPLETED
 
 ---
 
-### Sprint 1: Queue Foundation
+### Sprint 1: Queue Foundation [DONE]
 
 **Goal:** Establish the `study_queue` schema and core task lifecycle.
 
@@ -131,36 +131,28 @@ CREATE INDEX idx_study_queue_notebook_status
 
 ---
 
-### Sprint 2: Reading Flow (Trust-Based)
+### Sprint 2: Reading Flow & Page Locking [DONE]
 
-**Goal:** Implement trust-based reading tasks with simple completion flow.
+**Goal:** Implement deterministic reading tasks with page-range locking.
 
 **Required Context:**
 
 - **Documentation:** SCHEMA.md, APP_FLOW.md
 - **Agent Instructions:** /AGENTS.md, /internal/AGENTS.md
 - **Relevant Packages:** internal/db/, frontend/src/pages/
-- **Important Constraints:** Trust-based completion, no engagement surveillance, no enforced validation
+- **Important Constraints:** No engagement surveillance, reading completion only requires reaching final page
 
 **Reading Task Flow:**
 1. User opens reading task from queue
-2. PDF viewer opens to `start_page` (authoritative entry point)
-3. User reads freely within assigned range
-4. User clicks Complete Session when ready (button always enabled)
-5. Backend marks task complete → QUIZ task inserted
-
-**Trust-Based Completion:**
-- User decides when reading is complete
-- Complete Session button stays enabled during active reading task
-- `start_page` is authoritative for opening context
-- `end_page` is informational only
-- No enforced page-completion validation
-- No `currentPage >= endPage` gating
-- No `can_complete` enforcement logic
+2. PDF viewer locked to assigned page range (`start_page` to `end_page`)
+3. User navigates within bounds
+4. On reaching `end_page`, completion button activates
+5. User clicks Complete → QUIZ task inserted
 
 **API Surface:**
 - `GetReadingTask(taskID string) ReadingTask` — Get task with page bounds
-- `CompleteReading(taskID string) error` — Complete task (trust-based), trigger quiz insertion
+- `ValidateReadingCompletion(taskID string, finalPage int) bool` — Verify user reached end page
+- `CompleteReading(taskID string) error` — Complete task, trigger quiz insertion
 
 **Schema Additions:**
 ```sql
@@ -174,22 +166,20 @@ CREATE TABLE reading_progress (
 ```
 
 **Rules:**
-- Trust-based completion (user decides when done)
 - NO engagement surveillance (no timers, no scroll tracking)
-- NO completion validation or gating
-- Reader module does NOT own progression semantics
-- Dashboard owns workflow routing
+- Completion requires reaching `end_page` — nothing else
+- PDF locked to assigned range — user cannot read ahead
 
 **Deliverables:**
 - [ ] Reading task payload with page bounds
-- [ ] PDF viewer with start_page opening
-- [ ] Reading progress persistence (optional)
-- [ ] Trust-based completion (always-enabled Complete button)
+- [ ] PDF viewer page locking (frontend)
+- [ ] Reading progress persistence
+- [ ] Completion validation (reach final page)
 - [ ] Quiz task auto-insertion on completion
 
 ---
 
-### Sprint 3: Synchronous Quiz Generation
+### Sprint 3: Synchronous Quiz Generation [DONE]
 
 **Goal:** Implement quiz generation as synchronous, queue-triggered flow.
 
@@ -248,7 +238,7 @@ CREATE TABLE reading_progress (
 
 ### Sprint 4: Reread Remediation & Loop Protection
 
-**Goal:** Implement reread tasks with retry limits to prevent infinite loops.
+**Goal:** Implement reread tasks with retry limits inside the existing quiz completion transaction to prevent infinite loops.
 
 **Required Context:**
 
@@ -258,40 +248,44 @@ CREATE TABLE reading_progress (
 - **Important Constraints:** Max reread attempts must be enforced, queue progression must continue after max failures
 
 **Reread Flow:**
-1. Quiz score below threshold
-2. REREAD task inserted for same content
-3. User completes reread
-4. New QUIZ task generated
-5. If still failing after max attempts → stop automatic insertion
+1. Active quiz score below threshold
+2. Increment `reread_attempts` for the quiz `topic_id` in the open quiz transaction
+3. If the resulting count is `1..3`, insert exactly one `REREAD` task for the same content
+4. User completes reread through the existing `/reader` flow
+5. Reader completion inserts a new `QUIZ` follow-up through the existing queue path
+6. If the resulting count is `4+`, stop automatic insertion and return a manual-review recommendation
 
 **Loop Protection:**
 ```sql
--- Track reread attempts per topic
 CREATE TABLE reread_attempts (
     topic_id TEXT PRIMARY KEY,
-    attempt_count INTEGER DEFAULT 0,
-    last_attempt_at TIMESTAMP
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-**Config:**
-- `max_reread_attempts = 3`
+**Exact Semantics:**
+- Maximum automatic reread insertions = `3`
+- Attempts are tracked per `topic_id`
+- Successful quiz completion resets the attempt count to `0`
+- Duplicate or stale quiz submissions do not create extra rereads because only an `ACTIVE` quiz task can complete
 
-**After Max Failures:**
-- Task marked COMPLETED (no further auto-remediation)
-- Manual review recommended to user
-- Queue progression continues with next task
+**After Max Automatic Insertions Are Exhausted:**
+- Quiz task is marked `COMPLETED` with no further auto-remediation
+- Manual review is recommended in the quiz result only
+- Queue progression continues with the next pending task
 
-**API Surface:**
-- `InsertRereadTask(notebookID, topicID string, reason string) error`
-- `CheckRereadLimit(topicID string) (attempts int, allowed bool)`
+**Repository Surface:**
+- Read reread attempt count by `topic_id`
+- Increment attempt count transactionally
+- Reset attempt count transactionally on quiz pass
 
 **Deliverables:**
-- [ ] Reread task type and payload
-- [ ] Reread attempt tracking table
-- [ ] Max attempt enforcement
+- [ ] `reread_attempts` table
+- [ ] Transactional reread attempt helpers
+- [ ] Max automatic reread insertion enforcement in `SubmitQuizAttempt`
+- [ ] Reader reuse for both `READING` and `REREAD`
 - [ ] Manual review recommendation UI
-- [ ] Queue progression after max failures
 
 ---
 
@@ -552,13 +546,6 @@ Each sprint is complete when:
 5. `go test ./...` passes
 6. `wails dev` smoke test passes
 7. No deprecated orchestration terminology in code/comments
-
----
-
-## Current Status
-
-- **Sprint 1:** Not started — Queue schema design complete
-- **Sprint 2-7:** Planned, pending Sprint 1 completion
 
 ---
 

@@ -10,6 +10,9 @@ Canonical checkpoint flow:
 
 Dashboard -> Reader -> Quiz -> Dashboard
 
+**Reading Layer**: Focuses on immediate comprehension validation and progression readiness.
+**Retention Layer**: Focuses on long-term retention using FSRS-based spaced repetition.
+
 Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard owns progression again after quiz submission and evaluation.
 
 ---
@@ -217,9 +220,9 @@ Prevents infinite queue pollution.
 
 ## 5. Flashcards & FSRS
 
-### What
+### Retention Layer: Spaced Retrieval
 
-FSRS is a scheduling algorithm only. It calculates intervals; it does not control flow.
+FSRS is a scheduling algorithm only for long-term retention. It calculates intervals for flashcards and examiner tasks; it does not control immediate progression or comprehension validation. Quizzes are separate and do NOT update FSRS state.
 
 ### Flashcard Review Granularity
 

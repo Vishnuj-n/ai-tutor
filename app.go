@@ -1049,11 +1049,30 @@ func normalizeQuizAnswer(answer string, options []string) string {
 }
 
 func resolveAppDir() (string, error) {
-	baseDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
+	var appDir string
+
+	// If APP_ENV is set to dev, use a local folder in the project root
+	if os.Getenv("APP_ENV") == "dev" {
+		// Resolve stable project root instead of using relative path
+		projectRoot, err := os.Executable()
+		if err != nil {
+			// Fallback to current working directory if executable path fails
+			projectRoot, err = os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("failed to resolve project root: %w", err)
+			}
+		}
+		projectRoot = filepath.Dir(projectRoot)
+		appDir = filepath.Join(projectRoot, "dev_data")
+	} else {
+		// Otherwise, use the standard system config directory (AppData)
+		baseDir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		appDir = filepath.Join(baseDir, "ai-tutor")
 	}
-	appDir := filepath.Join(baseDir, "ai-tutor")
+
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		return "", err
 	}

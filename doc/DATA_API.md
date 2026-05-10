@@ -61,9 +61,9 @@ Marks a task complete and triggers follow-up logic.
 
 | Type | Use Case | Data Fields |
 |------|----------|-------------|
-| `quiz_result` | Quiz completion | `score`, `passed` |
-| `read_complete` | Reading completion | `pages_read` (informational only; not a mastery signal) |
-| `flashcard_review` | Flashcard session | `cards_reviewed`, `ratings` |
+| `quiz_result` | Quiz completion (Reading Layer) | `score`, `passed`. Does NOT update FSRS. |
+| `read_complete` | Reading completion (Reading Layer) | `pages_read` (informational only; not a mastery signal) |
+| `flashcard_review` | Flashcard session (Retention Layer) | `cards_reviewed`, `ratings`. Updates FSRS state. |
 | `skip` | User skips task | `reason` (optional) |
 
 **Response:** Success or error

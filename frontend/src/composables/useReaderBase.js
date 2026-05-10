@@ -248,11 +248,8 @@ export function useReaderBase(taskID) {
       sections.value = Array.isArray(result?.sections) ? result.sections : []
       activeSection.value = sections.value[0] || null
 
-      // Set page bounds from topic if not locked
+      // Set page to topic start page (browse mode - no locked window)
       const topicStart = Number(result?.topic_start_page) || 1
-      const topicEnd = Number(result?.topic_end_page) || pageCount.value
-      lockedStartPage.value = topicStart
-      lockedTargetPage.value = Math.max(topicEnd, topicStart)
       currentPage.value = topicStart
       return true
     } catch (err) {
