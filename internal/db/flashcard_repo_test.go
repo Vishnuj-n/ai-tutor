@@ -211,3 +211,56 @@ func TestQueryDueReviewCardsIgnoresOrphanedCards(t *testing.T) {
 		t.Fatalf("expected orphaned card excluded, got count=%d", countAfter)
 	}
 }
+
+func TestGetNextDueReviewNotebookUsesPriorityAndLegacyTopicLink(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-low", "Low Priority Topic"); err != nil {
+		t.Fatalf("EnsureTopic low failed: %v", err)
+	}
+	if err := EnsureTopic("topic-high", "High Priority Topic"); err != nil {
+		t.Fatalf("EnsureTopic high failed: %v", err)
+	}
+	if err := CreateNotebook("nb-low", "Low", "/tmp/low.pdf", "pdf", "topic-low", 10); err != nil {
+		t.Fatalf("CreateNotebook low failed: %v", err)
+	}
+	if err := CreateNotebook("nb-high", "High", "/tmp/high.pdf", "pdf", "", 10); err != nil {
+		t.Fatalf("CreateNotebook high failed: %v", err)
+	}
+	if _, err := conn.Exec(`UPDATE notebooks SET priority = 9 WHERE id = 'nb-high'`); err != nil {
+		t.Fatalf("update notebook priority failed: %v", err)
+	}
+	if _, err := conn.Exec(`INSERT INTO notebook_topics (notebook_id, topic_id) VALUES ('nb-high', 'topic-high')`); err != nil {
+		t.Fatalf("link high topic failed: %v", err)
+	}
+
+	if err := CreateFlashcards("topic-low", []models.Flashcard{
+		{ID: "low-1", TopicID: "topic-low", Prompt: "Q1", Answer: "A1", DueAt: 100},
+		{ID: "low-2", TopicID: "topic-low", Prompt: "Q2", Answer: "A2", DueAt: 100},
+	}, map[string]models.FlashcardState{
+		"low-1": {},
+		"low-2": {},
+	}); err != nil {
+		t.Fatalf("CreateFlashcards low failed: %v", err)
+	}
+	if err := CreateFlashcards("topic-high", []models.Flashcard{
+		{ID: "high-1", TopicID: "topic-high", Prompt: "Q3", Answer: "A3", DueAt: 100},
+		{ID: "high-2", TopicID: "topic-high", Prompt: "Q4", Answer: "A4", DueAt: 100},
+	}, map[string]models.FlashcardState{
+		"high-1": {},
+		"high-2": {},
+	}); err != nil {
+		t.Fatalf("CreateFlashcards high failed: %v", err)
+	}
+
+	notebookID, dueCount, err := GetNextDueReviewNotebook(200)
+	if err != nil {
+		t.Fatalf("GetNextDueReviewNotebook failed: %v", err)
+	}
+	if notebookID != "nb-high" {
+		t.Fatalf("expected higher-priority notebook selected on tie, got %s", notebookID)
+	}
+	if dueCount != 2 {
+		t.Fatalf("expected dueCount=2, got %d", dueCount)
+	}
+}

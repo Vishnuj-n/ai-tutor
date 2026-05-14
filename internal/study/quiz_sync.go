@@ -16,6 +16,38 @@ import (
 
 const maxAutomaticRereadAttempts = 3
 
+// GenerateFlashcardsAfterQuiz generates flashcards after successful quiz completion.
+// New cards are future-dated and intentionally excluded from immediate review materialization.
+func (s *StudyService) GenerateFlashcardsAfterQuiz(notebookID, topicID string, startPage, endPage int) (int, error) {
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_started source=quiz_completion notebookID=%s topicID=%s startPage=%d endPage=%d pipeline=manual_pipeline_reuse", notebookID, topicID, startPage, endPage)
+
+	// Validate inputs
+	notebookID = strings.TrimSpace(notebookID)
+	topicID = strings.TrimSpace(topicID)
+	if notebookID == "" || topicID == "" {
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_skipped reason=invalid_inputs notebookID=%s topicID=%s", notebookID, topicID)
+		return 0, fmt.Errorf("notebook ID and topic ID are required")
+	}
+	if startPage <= 0 || endPage <= 0 || endPage < startPage {
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_skipped reason=invalid_page_range notebookID=%s topicID=%s startPage=%d endPage=%d", notebookID, topicID, startPage, endPage)
+		return 0, fmt.Errorf("invalid page range")
+	}
+
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_auto_flow_confirmation using_page_bounded_context=true page_range=%d-%d no_topic_aggregation=true", startPage, endPage)
+
+	// Generate flashcards for the topic using the same pipeline as manual generation
+	result := s.GenerateMarathonFlashcardsWithTopic(topicID, notebookID, startPage, endPage)
+	if errorMsg, hasError := result["error"].(string); hasError {
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_failed notebookID=%s topicID=%s error=%s", notebookID, topicID, errorMsg)
+		return 0, fmt.Errorf("%s", errorMsg)
+	}
+
+	cardCount, _ := result["card_count"].(int)
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed notebookID=%s topicID=%s cardCount=%d", notebookID, topicID, cardCount)
+	utils.Warnf("[FLASHCARD_PIPELINE] review_session_skipped notebookID=%s topicID=%s reason=deferred_new_cards_excluded", notebookID, topicID)
+	return cardCount, nil
+}
+
 // GenerateQuizForPageRange generates a quiz from a notebook's page range.
 // This is the manual entry point for exploratory quiz generation.
 func (s *StudyService) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
@@ -235,6 +267,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	attemptID := uuid.NewString()
 	followUps := make([]models.StudyQueueTask, 0, 1)
 	rereadTaskID := ""
+	flashcardTaskID := ""
 	rereadAttemptCount := 0
 	manualReviewRecommended := false
 	var resultPayload []byte
@@ -313,9 +346,16 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	}); err != nil {
 		return models.QuizResult{}, err
 	}
+	// Flashcards are generated AFTER user clicks Continue (not during quiz submission)
+	// This prevents blocking the UI on "Scoring..." during flashcard generation
+	flashcardsPending := passed && task.TopicID != ""
+
 	if err := tx.Commit(); err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to commit quiz transaction: %w", err)
 	}
+
+	// Log quiz scoring completed immediately
+	utils.Warnf("[QUIZ] quiz_scoring_completed taskID=%s score=%d passed=%t rereadTaskID=%s flashcardsPending=%t", task.ID, score, passed, rereadTaskID, flashcardsPending)
 
 	// Log after successful commit to ensure consistency with persisted state
 	if passed {
@@ -325,6 +365,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
 		}
 		utils.LogQuizResult(task.ID, score, false, rereadTaskID)
+		utils.Warnf("[QUIZ] quiz_failed_reread_created notebookID=%s topicID=%s rereadTaskID=%s", task.NotebookID, task.TopicID, rereadTaskID)
 	}
 
 	return models.QuizResult{
@@ -339,6 +380,25 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		RereadAttemptCount:      rereadAttemptCount,
 		MaxRereadAttempts:       maxAutomaticRereadAttempts,
 		RereadTaskID:            rereadTaskID,
+		FlashcardTaskID:         flashcardTaskID,
 		AttemptRecord:           attemptID,
+		FlashcardsPending:       flashcardsPending, // Flashcards will be generated after Continue click
 	}, nil
+}
+
+// generateFlashcardsSync generates flashcards synchronously for use within quiz submission.
+// This is a thin wrapper around generateMarathonFlashcards that returns a map result.
+func (s *StudyService) generateFlashcardsSync(notebookID, topicID string, startPage, endPage int) map[string]interface{} {
+	notebookID = strings.TrimSpace(notebookID)
+	topicID = strings.TrimSpace(topicID)
+	if notebookID == "" || topicID == "" {
+		return map[string]interface{}{"error": "notebook ID and topic ID are required"}
+	}
+	if startPage <= 0 || endPage <= 0 || endPage < startPage {
+		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
+	}
+
+	// Use the same generation pipeline as manual flashcard generation
+	result := s.generateMarathonFlashcards(topicID, notebookID, startPage, endPage, topicID)
+	return result
 }

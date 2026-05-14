@@ -120,7 +120,14 @@ type QuizResult struct {
 	RereadAttemptCount      int    `json:"reread_attempt_count"`
 	MaxRereadAttempts       int    `json:"max_reread_attempts"`
 	RereadTaskID            string `json:"reread_task_id,omitempty"`
+	FlashcardTaskID         string `json:"flashcard_task_id,omitempty"`
 	AttemptRecord           string `json:"attempt_id,omitempty"`
+	// Flashcard generation results (populated when quiz is passed and flashcards are generated)
+	FlashcardsGenerated int    `json:"flashcards_generated"`
+	FlashcardsScheduled int    `json:"flashcards_scheduled"`
+	FlashcardGenMessage string `json:"flashcard_gen_message,omitempty"`
+	// FlashcardsPending is true when flashcards should be generated after user clicks Continue
+	FlashcardsPending bool `json:"flashcards_pending"`
 }
 
 // ReadingTask is the task payload required by the page-locked reader flow.
@@ -135,14 +142,16 @@ type ReadingTask struct {
 
 // TodayPlan is the scheduler output consumed by the dashboard.
 type TodayPlan struct {
-	Date            string          `json:"date"`
-	TotalMinutes    int             `json:"total_minutes"`
-	ReviewMinutes   int             `json:"review_minutes"`
-	LearningMinutes int             `json:"learning_minutes"`
-	DueReviewCards  int             `json:"due_review_cards"`
-	ActiveTopics    []string        `json:"active_topics"`
-	Tasks           []ScheduledTask `json:"tasks"`
-	IsEstimate      bool            `json:"is_estimate"`
+	Date                string          `json:"date"`
+	TotalMinutes        int             `json:"total_minutes"`
+	ReviewMinutes       int             `json:"review_minutes"`
+	LearningMinutes     int             `json:"learning_minutes"`
+	DueReviewCards      int             `json:"due_review_cards"`
+	TotalDueReviewCards int             `json:"total_due_review_cards"`
+	DeferredReviewCards int             `json:"deferred_review_cards"`
+	ActiveTopics        []string        `json:"active_topics"`
+	Tasks               []ScheduledTask `json:"tasks"`
+	IsEstimate          bool            `json:"is_estimate"`
 }
 
 // TopicSummary keeps scheduler queries simple and explicit.

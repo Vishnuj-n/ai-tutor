@@ -124,13 +124,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { activateTask, completeReviewSession, getNotebooks, generateMarathonFlashcards, getReviewSession, recordCardReview, recordFlashcardReview } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
 const route              = useRoute()
+const router             = useRouter()
 const notebooks          = ref([])
 const selectedNotebookID = ref('')
 const activeTab          = ref('comprehensive')
@@ -167,7 +168,7 @@ onMounted(async () => {
     error.value = 'Failed to load notebooks.'
   }
   if (route.query.taskId) {
-    await loadQueueSession(String(route.query.taskId))
+    await loadQueueSession(String(route.query.taskId), String(route.query.notebookId || ''))
   }
 })
 
@@ -202,6 +203,12 @@ async function rate(ratingKey) {
   }
 
   isSubmittingReview.value = true
+  console.warn('[FLASHCARD_PIPELINE] frontend_review_rating_submit', {
+    queueMode: queueMode.value,
+    reviewTaskID: reviewTaskID.value,
+    cardID: queueMode.value ? card.card_id : card.id,
+    rating: ratingKey,
+  })
   try {
     let res
     if (queueMode.value) {
@@ -222,8 +229,11 @@ async function rate(ratingKey) {
           error.value = `Failed to complete session: ${completeRes.error}`
           return
         }
+        console.warn('[FLASHCARDS] flashcard_review_completed_dashboard_redirect')
+        router.push('/dashboard')
+        return
       }
-      await loadQueueSession(reviewTaskID.value)
+      await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
     } else {
       reviewIndex.value++
     }
@@ -245,10 +255,12 @@ function reset() {
   sessionRemaining.value = 0
 }
 
-async function loadQueueSession(taskID) {
+async function loadQueueSession(taskID, notebookID = '') {
   error.value = ''
   loading.value = true
   reviewTaskID.value = taskID
+  if (notebookID) selectedNotebookID.value = notebookID
+  console.warn('[FLASHCARD_PIPELINE] frontend_review_task_rendering start', { taskID, notebookID })
   try {
     const activateRes = await activateTask(taskID)
     if (activateRes?.error && activateRes.code !== 409) {
@@ -258,7 +270,7 @@ async function loadQueueSession(taskID) {
       reviewTaskID.value = ''
       return
     }
-    const res = await getReviewSession(taskID)
+    const res = await getReviewSession(taskID, notebookID)
     if (res.error) {
       error.value = res.error
       reviewing.value = false
@@ -271,6 +283,13 @@ async function loadQueueSession(taskID) {
     reviewIndex.value = Number(session?.next_pending_idx ?? -1)
     sessionRemaining.value = Number(session?.remaining ?? 0)
     reviewing.value = cards.value.length > 0
+    console.warn('[FLASHCARD_PIPELINE] frontend_review_task_rendering result', {
+      taskID,
+      cards: cards.value.length,
+      nextPendingIdx: reviewIndex.value,
+      remaining: sessionRemaining.value,
+      reviewing: reviewing.value,
+    })
     flipped.value = false
     if (reviewIndex.value < 0) {
       reviewIndex.value = cards.value.length

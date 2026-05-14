@@ -71,9 +71,39 @@
         <span class="score-threshold">threshold {{ result.passing_score }}%</span>
       </p>
       <p v-if="result.feedback" class="result-panel__feedback">{{ result.feedback }}</p>
+
+      <!-- Flashcard generation pending message (only when passed and flashcards pending) -->
+      <div v-if="result.passed && result.flashcards_pending" class="result-panel__flashcard-success">
+        <p class="flashcard-success-title">Flashcards scheduled for generation.</p>
+        <p class="flashcard-success-detail">Click Continue to generate flashcards for spaced repetition.</p>
+        <p class="flashcard-success-hint">These cards will appear in your dashboard when they're due for review.</p>
+      </div>
+
+      <!-- Flashcard generation success message (only when generated during Continue) -->
+      <div v-if="result.passed && !result.flashcards_pending && result.flashcards_generated > 0" class="result-panel__flashcard-success">
+        <p class="flashcard-success-title">Flashcards generated successfully.</p>
+        <p class="flashcard-success-detail">{{ result.flashcards_generated }} review cards scheduled for spaced repetition.</p>
+        <p class="flashcard-success-hint">These cards will appear in your dashboard when they're due for review.</p>
+      </div>
+
+      <!-- Reread message (when failed) -->
+      <p v-if="!result.passed && result.reread_task_id" class="result-panel__reread-message">
+        Reread session added to your learning queue.
+      </p>
       <p v-if="!result.passed" class="result-panel__attempts">
         Attempt {{ result.reread_attempt_count }} of {{ result.max_reread_attempts }}
       </p>
+
+      <div class="result-panel__actions">
+        <button
+          class="primary-btn continue-btn"
+          :disabled="generatingFlashcards"
+          @click="handleContinue"
+        >
+          <span v-if="generatingFlashcards">Generating flashcards for spaced repetition...</span>
+          <span v-else>Continue</span>
+        </button>
+      </div>
     </article>
 
     <!-- Empty state: no questions -->
@@ -129,11 +159,12 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { activateTask, getTask, submitQuizAttempt, getNotebooks, generateQuizForPageRange } from '../services/appApi'
+import { useRoute, useRouter } from 'vue-router'
+import { activateTask, getTask, submitQuizAttempt, getNotebooks, generateQuizForPageRange, generateFlashcardsForQuizTask } from '../services/appApi'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
 const route = useRoute()
+const router = useRouter()
 
 const loading = ref(true)
 const submitting = ref(false)
@@ -143,6 +174,7 @@ const taskMeta = ref(null)
 const questions = ref([])
 const answers = ref({})
 const result = ref(null)
+const generatingFlashcards = ref(false)
 
 // Manual generation state
 const notebooks = ref([])
@@ -273,6 +305,39 @@ async function submitQuiz() {
   } finally {
     submitting.value = false
   }
+}
+
+async function handleContinue() {
+  // If quiz passed with flashcards pending and score > 70, generate flashcards first
+  if (result.value?.passed && result.value?.flashcards_pending && result.value?.score > 70) {
+    generatingFlashcards.value = true
+    error.value = ''
+    try {
+      const genResult = await generateFlashcardsForQuizTask(result.value.task_id)
+      if (genResult?.error) {
+        // Generation failed but quiz passed - still route to dashboard
+        console.warn('[FLASHCARD_PIPELINE] Flashcard generation failed:', genResult.error)
+      } else {
+        // Update result with generated counts for dashboard banner
+        result.value.flashcards_generated = genResult?.cards_scheduled || 0
+        result.value.flashcards_pending = false
+      }
+    } catch (err) {
+      console.warn('[FLASHCARD_PIPELINE] Flashcard generation error:', err)
+      // Continue to dashboard even if generation failed
+    } finally {
+      generatingFlashcards.value = false
+    }
+  }
+
+  // Route to dashboard after quiz completion
+  const query = {}
+  if (result.value?.passed && result.value?.flashcards_generated > 0) {
+    query.flashcardsCreated = result.value.flashcards_generated
+  } else if (!result.value?.passed && result.value?.reread_task_id) {
+    query.highlight = result.value.reread_task_id
+  }
+  router.push({ path: '/dashboard', query })
 }
 </script>
 
@@ -449,6 +514,42 @@ async function submitQuiz() {
   margin: 0;
   font-size: 13px;
   color: var(--muted-text);
+}
+
+/* Flashcard success message styles */
+.result-panel__flashcard-success {
+  background: color-mix(in srgb, #16a34a 8%, var(--surface-container-low));
+  border: 1px solid color-mix(in srgb, #16a34a 20%, transparent);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin: 8px 0;
+}
+
+.flashcard-success-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #16a34a;
+}
+
+.flashcard-success-detail {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--on-surface);
+}
+
+.flashcard-success-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
+  font-style: italic;
+}
+
+.result-panel__reread-message {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--on-surface);
+  font-weight: 500;
 }
 
 /* ── Quiz form ────────────────────────────────── */
