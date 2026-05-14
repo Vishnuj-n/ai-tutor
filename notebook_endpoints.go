@@ -224,6 +224,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	// Attempt to fetch existing topics/bounds for this notebook to decide path
 	existingTopics, etErr := db.GetNotebookTopicsWithBounds(notebookID)
+	existingTopicIDs := make(map[string]struct{}, len(existingTopics))
+	for _, et := range existingTopics {
+		existingTopicIDs[et.TopicID] = struct{}{}
+	}
 	if etErr != nil {
 		// Log but continue with conservative full re-ingest flow
 		utils.Warnf("ConfirmNotebookSyllabus: unable to load existing topics for %s: %v", notebookID, etErr)
@@ -359,9 +363,13 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	// Batch update page bounds
 	if err := db.UpdateTopicPageBoundsBatch(boundsItems); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
-		// Cleanup: delete created topic rows to avoid orphaned records
-		for _, item := range topicItems {
-			_ = db.DeleteTopic(item.TopicID)
+		// Cleanup only topics provably created in this request; skip cleanup if existing-topic lookup failed.
+		if etErr == nil {
+			for _, item := range topicItems {
+				if _, existed := existingTopicIDs[item.TopicID]; !existed {
+					_ = db.DeleteTopic(item.TopicID)
+				}
+			}
 		}
 		return map[string]interface{}{"error": "failed to persist topic bounds: " + err.Error()}
 	}
@@ -372,8 +380,12 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	// Track which topic IDs were newly created for cleanup
 	newlyCreatedTopicIDs := make(map[string]bool)
-	for _, item := range topicItems {
-		newlyCreatedTopicIDs[item.TopicID] = true
+	if etErr == nil {
+		for _, item := range topicItems {
+			if _, existed := existingTopicIDs[item.TopicID]; !existed {
+				newlyCreatedTopicIDs[item.TopicID] = true
+			}
+		}
 	}
 
 	groups, allChunks := notebook.BuildTopicGroupsFromChapters(notebookID, doc, topicIDs, normalized)

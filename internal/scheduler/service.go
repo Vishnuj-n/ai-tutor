@@ -153,7 +153,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		safeReviewBudget = MaxReviewMinutesSession
 	}
 
-	// Calculate materialized vs deferred cards based on the safe budget
+	// Calculate materialized cards based on the safe budget
 	materializedCards := int(float64(safeReviewBudget) / ReviewMinutesPerCard)
 	if materializedCards > dueCards {
 		materializedCards = dueCards
@@ -239,7 +239,22 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		if bestNotebookID == "" {
 			return nil, fmt.Errorf("failed to resolve notebook for due review cards")
 		}
-		utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d source=scheduler", bestNotebookID, selectedDueCards)
+
+		reviewCardsForTask := finalDueReviewCards
+		if selectedDueCards < reviewCardsForTask {
+			reviewCardsForTask = selectedDueCards
+		}
+		if reviewCardsForTask < 0 {
+			reviewCardsForTask = 0
+		}
+		finalDueReviewCards = reviewCardsForTask
+		finalReviewMinutes = int(math.Ceil(float64(reviewCardsForTask) * ReviewMinutesPerCard))
+		deferredCards = totalDueCards - finalDueReviewCards
+		if deferredCards < 0 {
+			deferredCards = 0
+		}
+
+		utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d selectedDueCards=%d source=scheduler", bestNotebookID, finalDueReviewCards, selectedDueCards)
 
 		reviewTask := models.ScheduledTask{
 			ID:              models.ReviewTaskDailyID,
@@ -250,7 +265,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 			NotebookID:      bestNotebookID,
 			Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", finalDueReviewCards),
 		}
-		utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_task_created taskID=%s notebookID=%s dueCards=%d materializedCards=%d", reviewTask.ID, reviewTask.NotebookID, totalDueCards, finalDueReviewCards)
+		utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_task_created taskID=%s notebookID=%s dueCards=%d selectedDueCards=%d materializedCards=%d", reviewTask.ID, reviewTask.NotebookID, totalDueCards, selectedDueCards, finalDueReviewCards)
 		tasks = append([]models.ScheduledTask{reviewTask}, tasks...)
 	}
 

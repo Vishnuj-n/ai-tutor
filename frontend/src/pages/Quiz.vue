@@ -86,6 +86,10 @@
         <p class="flashcard-success-hint">These cards will appear in your dashboard when they're due for review.</p>
       </div>
 
+      <div v-if="result.passed && result.flashcards_generation_error" class="result-panel__reread-message">
+        Flashcard generation failed: {{ result.flashcards_generation_message || 'Unknown error' }}
+      </div>
+
       <!-- Reread message (when failed) -->
       <p v-if="!result.passed && result.reread_task_id" class="result-panel__reread-message">
         Reread session added to your learning queue.
@@ -312,11 +316,16 @@ async function handleContinue() {
   if (result.value?.passed && result.value?.flashcards_pending) {
     generatingFlashcards.value = true
     error.value = ''
+    result.value.flashcards_generation_error = false
+    result.value.flashcards_generation_message = ''
     try {
       const genResult = await generateFlashcardsForQuizTask(result.value.task_id)
       if (genResult?.error) {
-        // Generation failed but quiz passed - still route to dashboard
         console.warn('[FLASHCARD_PIPELINE] Flashcard generation failed:', genResult.error)
+        result.value.flashcards_generation_error = true
+        result.value.flashcards_generation_message = genResult.error
+        result.value.flashcards_pending = false
+        return
       } else {
         // Update result with generated counts for dashboard banner
         result.value.flashcards_generated = genResult?.cards_scheduled || 0
@@ -324,7 +333,10 @@ async function handleContinue() {
       }
     } catch (err) {
       console.warn('[FLASHCARD_PIPELINE] Flashcard generation error:', err)
-      // Continue to dashboard even if generation failed
+      result.value.flashcards_generation_error = true
+      result.value.flashcards_generation_message = err?.message || 'Flashcard generation failed.'
+      result.value.flashcards_pending = false
+      return
     } finally {
       generatingFlashcards.value = false
     }
