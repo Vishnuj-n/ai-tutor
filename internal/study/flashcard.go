@@ -82,7 +82,7 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 	}
 
 	// Build prompt with token budgeting
-	prompt, promptTokenCount := buildMarathonFlashcardPromptWithBudget(notebookID, startPage, endPage, contextChunks, targetCount, maxInputTokens)
+	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookID, startPage, endPage, contextChunks, targetCount, maxInputTokens)
 
 	// Log token estimates before generation
 	utils.Warnf("[FLASHCARD_PIPELINE] token_budget_estimate prompt_tokens=%d max_input=%d budget_used_pct=%.2f", promptTokenCount, maxInputTokens, float64(promptTokenCount)/float64(maxInputTokens)*100)
@@ -110,9 +110,9 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
 	states := make(map[string]models.FlashcardState, len(parsed.Cards))
-	allowedChunkIDs := make(map[string]struct{}, len(contextChunks))
-	for _, chunk := range contextChunks {
-		allowedChunkIDs[chunk.ChunkID] = struct{}{}
+	allowedChunkIDs := make(map[string]struct{}, len(includedChunkIDs))
+	for _, chunkID := range includedChunkIDs {
+		allowedChunkIDs[chunkID] = struct{}{}
 	}
 	for _, candidate := range parsed.Cards {
 		sourceChunkID := strings.TrimSpace(candidate.SourceChunkID)
@@ -165,7 +165,17 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 		return map[string]interface{}{"error": "failed to persist marathon flashcards: " + err.Error()}
 	}
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_persistence result=ok topicID=%s notebookID=%s cardCount=%d existing=%v", topicID, notebookID, len(cards), existing)
-	utils.Warnf("[FLASHCARD_PIPELINE] deferred_new_cards_excluded notebookID=%s topicID=%s cardCount=%d initialDueAt=%d", notebookID, topicID, len(cards), dueAt)
+
+	initialDueAt := dueAt
+	if existing {
+		initialDueAt = 0
+		for _, card := range cards {
+			if card.DueAt > 0 && (initialDueAt == 0 || card.DueAt < initialDueAt) {
+				initialDueAt = card.DueAt
+			}
+		}
+	}
+	utils.Warnf("[FLASHCARD_PIPELINE] deferred_new_cards_excluded notebookID=%s topicID=%s cardCount=%d initialDueAt=%d", notebookID, topicID, len(cards), initialDueAt)
 
 	cardIDs := make([]string, len(cards))
 	for i, card := range cards {
@@ -176,7 +186,7 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 		return map[string]interface{}{"error": "failed to fetch flashcard states: " + err.Error()}
 	}
 
-	return map[string]interface{}{
+	response := map[string]interface{}{
 		"notebook_id":       notebookID,
 		"existing":          existing,
 		"start_page":        startPage,
@@ -185,13 +195,17 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 		"cards":             cards,
 		"states":            persistedStates,
 		"card_count":        len(cards),
-		"initial_due_at":    dueAt,
 		"llm_tier":          tier,
 		"generated_at_unix": now,
 	}
+	if initialDueAt > 0 {
+		response["initial_due_at"] = initialDueAt
+	}
+
+	return response
 }
 
-func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int) {
+func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {
 	// Base prompt overhead (instructions, format, etc.)
 	const baseOverheadTokens = 300
 	const safetyMarginTokens = 500 // Reserve for output tokens and safety margin
@@ -223,6 +237,7 @@ func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPag
 	// Trim chunks based on token budget
 	currentTokens := baseOverheadTokens
 	var includedChunks []models.ChunkWithContext
+	var includedChunkIDs []string
 	truncatedCount := 0
 
 	for _, chunk := range contextChunks {
@@ -246,6 +261,7 @@ func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPag
 		}
 
 		includedChunks = append(includedChunks, chunk)
+		includedChunkIDs = append(includedChunkIDs, chunk.ChunkID)
 		currentTokens += chunkTokens
 	}
 
@@ -262,5 +278,5 @@ func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPag
 	utils.Warnf("[FLASHCARD_PIPELINE] chunk_trimming total_chunks=%d included=%d truncated=%d budget_used=%d available=%d",
 		len(contextChunks), len(includedChunks), truncatedCount, currentTokens, availableBudget)
 
-	return b.String(), currentTokens
+	return b.String(), currentTokens, includedChunkIDs
 }

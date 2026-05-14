@@ -324,30 +324,32 @@ func InitSchema(tx *sql.Tx) error {
 			FROM notebook_chunks
 			ORDER BY notebook_id, chunk_id, created_at ASC
 		`)
-		if err == nil {
-			defer rows.Close()
-			seen := make(map[string]bool)
-			var idsToDelete []string
-			for rows.Next() {
-				var id, nb, cid string
-				var createdAt string
-				if err := rows.Scan(&id, &nb, &cid, &createdAt); err != nil {
-					continue
-				}
-				key := nb + "::" + cid
-				if seen[key] {
-					idsToDelete = append(idsToDelete, id)
-					continue
-				}
-				seen[key] = true
+		if err != nil {
+			return fmt.Errorf("failed to query notebook_chunks for dedupe: %w", err)
+		}
+		defer rows.Close()
+		seen := make(map[string]bool)
+		var idsToDelete []string
+		for rows.Next() {
+			var id, nb, cid string
+			var createdAt string
+			if err := rows.Scan(&id, &nb, &cid, &createdAt); err != nil {
+				return fmt.Errorf("failed to scan notebook_chunks dedupe row id=%s notebook_id=%s chunk_id=%s: %w", id, nb, cid, err)
 			}
+			key := nb + "::" + cid
+			if seen[key] {
+				idsToDelete = append(idsToDelete, id)
+				continue
+			}
+			seen[key] = true
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("failed while iterating notebook_chunks dedupe rows: %w", err)
+		}
 
-			for _, id := range idsToDelete {
-				if _, err := tx.Exec(`DELETE FROM notebook_chunks WHERE id = ?`, id); err != nil {
-					// If deletion fails, log and continue; we'll still attempt to create the index.
-					// Best-effort cleanup to allow uniqueness index creation.
-					_ = err
-				}
+		for _, id := range idsToDelete {
+			if _, err := tx.Exec(`DELETE FROM notebook_chunks WHERE id = ?`, id); err != nil {
+				return fmt.Errorf("failed to delete duplicate notebook_chunks row id=%s: %w", id, err)
 			}
 		}
 

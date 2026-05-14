@@ -123,28 +123,97 @@ func (e *Engine) SemanticSearchNotebook(notebookID string, topicID string, query
 	if notebookID == "" {
 		return nil, fmt.Errorf("notebook id is required")
 	}
+	topicID = strings.TrimSpace(topicID)
 
-	// Load chunks for notebook, optionally scoped to a topic if provided.
-	loadChunks := func() ([]models.Chunk, error) {
+	var scopedChunksCache []models.Chunk
+	var scopedChunksLoaded bool
+	getScopedChunks := func() ([]models.Chunk, error) {
+		if scopedChunksLoaded {
+			return scopedChunksCache, nil
+		}
 		chunks, err := db.GetChunksForNotebook(notebookID)
 		if err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(topicID) == "" {
-			return chunks, nil
+		if topicID == "" {
+			scopedChunksCache = chunks
+			scopedChunksLoaded = true
+			return scopedChunksCache, nil
 		}
-		// Filter in-memory by topic to avoid changing DB API here.
 		filtered := make([]models.Chunk, 0, len(chunks))
 		for _, c := range chunks {
 			if c.TopicID == topicID {
 				filtered = append(filtered, c)
 			}
 		}
-		return filtered, nil
+		scopedChunksCache = filtered
+		scopedChunksLoaded = true
+		return scopedChunksCache, nil
+	}
+
+	// Load chunks for notebook, optionally scoped to a topic if provided.
+	loadChunks := func() ([]models.Chunk, error) {
+		return getScopedChunks()
 	}
 
 	vectorSearch := func(queryVec []float32, k int) ([]string, error) {
-		return db.SearchVectorsForNotebook(notebookID, queryVec, k)
+		if topicID == "" {
+			return db.SearchVectorsForNotebook(notebookID, queryVec, k)
+		}
+
+		scopedChunks, err := getScopedChunks()
+		if err != nil {
+			return nil, err
+		}
+		allowed := make(map[string]struct{}, len(scopedChunks))
+		for _, c := range scopedChunks {
+			allowed[c.ID] = struct{}{}
+		}
+
+		filtered := make([]string, 0, k)
+		seen := make(map[string]struct{}, k)
+		overfetchK := k
+		if overfetchK < 10 {
+			overfetchK = 10
+		}
+		if overfetchK > 100 {
+			overfetchK = 100
+		}
+
+		for {
+			chunkIDs, searchErr := db.SearchVectorsForNotebook(notebookID, queryVec, overfetchK)
+			if searchErr != nil {
+				return nil, searchErr
+			}
+
+			for _, cid := range chunkIDs {
+				if _, ok := allowed[cid]; !ok {
+					continue
+				}
+				if _, dup := seen[cid]; dup {
+					continue
+				}
+				seen[cid] = struct{}{}
+				filtered = append(filtered, cid)
+				if len(filtered) >= k {
+					return filtered[:k], nil
+				}
+			}
+
+			if len(chunkIDs) < overfetchK || overfetchK >= 100 {
+				break
+			}
+			nextK := overfetchK * 2
+			if nextK > 100 {
+				nextK = 100
+			}
+			if nextK == overfetchK {
+				break
+			}
+			overfetchK = nextK
+		}
+
+		return filtered, nil
 	}
 
 	return e.searchWithScope("notebook vector search", query, topK, loadChunks, vectorSearch)
@@ -283,6 +352,28 @@ func (e *Engine) searchWithScope(
 	if len(parentResults) > topK {
 		parentResults = parentResults[:topK]
 	}
+
+	for i := range parentResults {
+		parentID := strings.TrimSpace(parentResults[i].ParentID)
+		if parentID == "" {
+			continue
+		}
+		parent, err := db.GetParentSection(parentID)
+		if err != nil {
+			log.Printf("retrieval: failed to materialize parent %s, keeping representative chunk: %v", parentID, err)
+			parentResults[i].ChunkID = parentID
+			continue
+		}
+		if parentText := strings.TrimSpace(parent["content"]); parentText != "" {
+			parentResults[i].Text = parentText
+		}
+		if materializedID := strings.TrimSpace(parent["id"]); materializedID != "" {
+			parentResults[i].ChunkID = materializedID
+		} else {
+			parentResults[i].ChunkID = parentID
+		}
+	}
+
 	return parentResults, nil
 }
 
