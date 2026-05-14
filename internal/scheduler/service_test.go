@@ -171,7 +171,7 @@ func TestBuildTodayPlanNoReadingTopic(t *testing.T) {
 		t.Errorf("expected 10 review minutes, got %d", plan.ReviewMinutes)
 	}
 	if len(plan.Tasks) != 1 {
-		t.Errorf("expected 1 task (review only), got %d", len(plan.Tasks))
+		t.Fatalf("expected 1 task (review only), got %d", len(plan.Tasks))
 	}
 	if plan.Tasks[0].ActionType != "flashcard_review" {
 		t.Errorf("expected review task, got %s", plan.Tasks[0].ActionType)

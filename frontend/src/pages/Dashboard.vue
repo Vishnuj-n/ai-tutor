@@ -76,7 +76,7 @@
 <script setup>
 import { onMounted, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { getDailyAgenda, getNotebooks } from '../services/appApi'
+import { getTodayPlan, getNotebooks } from '../services/appApi'
 
 const router = useRouter()
 const route = useRoute()
@@ -95,6 +95,12 @@ const flashcardsJustCreated = computed(() => {
 
 onMounted(async () => {
   console.warn('[DASHBOARD] onMounted loading queue')
+  // Clear flashcardsCreated query param after first render to prevent reappearing on reload/back
+  if (flashcardsJustCreated.value > 0) {
+    const newQuery = { ...route.query }
+    delete newQuery.flashcardsCreated
+    await router.replace({ query: newQuery })
+  }
   await loadAgenda()
 })
 
@@ -104,7 +110,7 @@ async function loadAgenda() {
     loading.value = true
     error.value = ''
 
-    const response = await getDailyAgenda()
+    const response = await getTodayPlan()
     console.warn('[DASHBOARD] loadAgenda backend response', response)
     if (response.error) {
       error.value = response.error

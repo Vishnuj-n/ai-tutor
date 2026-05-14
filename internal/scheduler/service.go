@@ -239,12 +239,10 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		if bestNotebookID == "" {
 			return nil, fmt.Errorf("failed to resolve notebook for due review cards")
 		}
-		if bestNotebookID != "" {
-			utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d source=scheduler", bestNotebookID, selectedDueCards)
-		}
+		utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d source=scheduler", bestNotebookID, selectedDueCards)
 
 		reviewTask := models.ScheduledTask{
-			ID:              "task-review-daily",
+			ID:              models.ReviewTaskDailyID,
 			ActionType:      "flashcard_review",
 			Title:           fmt.Sprintf("Flashcard Review: %d cards", finalDueReviewCards),
 			EstimateMinutes: finalReviewMinutes,
