@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxReviewSessionCards = 20
+const maxReviewSessionCards = 60
 
 var (
 	ErrReviewLinkNotPending  = errors.New("review task card link is not pending")
@@ -82,6 +82,7 @@ func getExistingReviewTaskForNotebookRepo(notebookID string) (*models.StudyQueue
 }
 
 func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
+	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan notebookID=%s now=%d limit=%d", notebookID, now, limit)
 	rows, err := conn.Query(`
 		SELECT
 			fc.id,
@@ -92,8 +93,18 @@ func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) (
 			COALESCE(fc.due_at, 0),
 			fc.suspended
 		FROM fsrs_cards fc
-		JOIN notebook_topics nt ON nt.topic_id = fc.topic_id
-		WHERE nt.notebook_id = ?
+		WHERE EXISTS (
+			SELECT 1
+			FROM notebooks n
+			LEFT JOIN notebook_topics nt
+				ON nt.notebook_id = n.id
+			   AND nt.topic_id = fc.topic_id
+			WHERE n.id = ?
+			  AND (
+				nt.topic_id IS NOT NULL
+				OR COALESCE(n.topic_id, '') = fc.topic_id
+			  )
+		)
 		  AND fc.suspended = 0
 		  AND fc.due_at IS NOT NULL
 		  AND fc.due_at <= ?
@@ -126,13 +137,106 @@ func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) (
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan result notebookID=%s dueCards=%d", notebookID, len(cards))
 	return cards, nil
 }
 
+// GetDueReviewCardCountsByNotebook returns a map of notebook IDs to their due card counts.
+// Excludes cards already linked to pending/active review tasks for consistency with session creation.
+func GetDueReviewCardCountsByNotebook(now int64) (map[string]int, error) {
+	rows, err := conn.Query(`
+		SELECT n.id, COUNT(fc.id)
+		FROM notebooks n
+		JOIN fsrs_cards fc
+		  ON (
+			COALESCE(n.topic_id, '') = fc.topic_id
+			OR EXISTS (
+				SELECT 1
+				FROM notebook_topics nt
+				WHERE nt.notebook_id = n.id
+				  AND nt.topic_id = fc.topic_id
+			)
+		  )
+		JOIN topics t ON t.id = fc.topic_id
+		WHERE fc.suspended = 0
+		  AND fc.due_at IS NOT NULL
+		  AND fc.due_at <= ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM review_task_cards rtc
+			JOIN study_queue sq ON sq.id = rtc.task_id
+			WHERE rtc.card_id = fc.id
+			  AND sq.task_type = 'FLASHCARD_REVIEW'
+			  AND sq.status IN ('PENDING', 'ACTIVE')
+		  )
+		GROUP BY n.id
+	`, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var id string
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return nil, err
+		}
+		counts[id] = count
+	}
+	return counts, nil
+}
+
+func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
+	var notebookID string
+	var dueCount int
+	err := conn.QueryRow(`
+		SELECT
+			n.id,
+			COUNT(fc.id) AS due_count
+		FROM notebooks n
+		JOIN fsrs_cards fc
+		  ON (
+			COALESCE(n.topic_id, '') = fc.topic_id
+			OR EXISTS (
+				SELECT 1
+				FROM notebook_topics nt
+				WHERE nt.notebook_id = n.id
+				  AND nt.topic_id = fc.topic_id
+			)
+		  )
+		JOIN topics t ON t.id = fc.topic_id
+		WHERE fc.suspended = 0
+		  AND fc.due_at IS NOT NULL
+		  AND fc.due_at <= ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM review_task_cards rtc
+			JOIN study_queue sq ON sq.id = rtc.task_id
+			WHERE rtc.card_id = fc.id
+			  AND sq.task_type = 'FLASHCARD_REVIEW'
+			  AND sq.status IN ('PENDING', 'ACTIVE')
+		  )
+		GROUP BY n.id, COALESCE(n.priority, 5)
+		ORDER BY due_count DESC, COALESCE(n.priority, 5) DESC, n.id ASC
+		LIMIT 1
+	`, now).Scan(&notebookID, &dueCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, nil
+	}
+	if err != nil {
+		return "", 0, err
+	}
+	return notebookID, dueCount, nil
+}
+
 func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTask, bool, error) {
+	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation start notebookID=%s now=%d", notebookID, now)
 	if existing, err := getExistingReviewTaskForNotebookRepo(notebookID); err != nil {
 		return nil, false, err
 	} else if existing != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation reused_existing notebookID=%s taskID=%s status=%s", notebookID, existing.ID, existing.Status)
 		return existing, true, nil
 	}
 
@@ -142,6 +246,7 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 	}
 	if len(cards) == 0 {
 		utils.LogReviewSession("", notebookID, "0", "no_due_cards")
+		utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation skipped notebookID=%s reason=no_due_cards", notebookID)
 		return nil, false, nil
 	}
 
@@ -181,6 +286,7 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 	`, task.ID, task.NotebookID, task.TopicID, string(task.TaskType), string(task.Status), task.Priority, task.PayloadJSON); err != nil {
 		return nil, false, err
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] queue_insertion taskID=%s taskType=%s notebookID=%s topicID=%s cardCount=%d", task.ID, task.TaskType, task.NotebookID, task.TopicID, len(cards))
 
 	for _, card := range cards {
 		if _, err := tx.Exec(`
@@ -195,6 +301,7 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 		return nil, false, err
 	}
 	utils.LogReviewSession(task.ID, notebookID, strconv.Itoa(len(cards)), "session_created")
+	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation committed taskID=%s notebookID=%s linkedCards=%d", task.ID, notebookID, len(cards))
 	createdTask, err := GetTaskByID(task.ID)
 	return createdTask, false, err
 }

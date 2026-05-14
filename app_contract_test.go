@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
@@ -995,6 +996,12 @@ func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
 	}
 	cards := resp["cards"].([]models.Flashcard)
 
+	// Manually set cards to be due now, since new cards are scheduled 24 hours out
+	now := time.Now().Unix()
+	if _, err := db.GetConnection().Exec("UPDATE fsrs_cards SET due_at = ? WHERE topic_id = ?", now-100, "os-scheduling"); err != nil {
+		t.Fatalf("failed to make cards due: %v", err)
+	}
+
 	reviewResp := app.RecordFlashcardReview(cards[0].ID, "easy")
 	if _, hasErr := reviewResp["error"]; hasErr {
 		t.Fatalf("review failed: %v", reviewResp["error"])
@@ -1142,7 +1149,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 		t.Fatalf("ActivateTask failed: %#v", resp)
 	}
 
-	sessionResp := app.GetReviewSession(taskID)
+	sessionResp := app.GetReviewSession(taskID, "queue-review-nb")
 	if _, hasErr := sessionResp["error"]; hasErr {
 		t.Fatalf("GetReviewSession failed: %v", sessionResp["error"])
 	}
@@ -1162,7 +1169,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 		t.Fatalf("expected remaining=1, got %#v", reviewResp["remaining"])
 	}
 
-	reloadResp := app.GetReviewSession(taskID)
+	reloadResp := app.GetReviewSession(taskID, "queue-review-nb")
 	reloaded := reloadResp["session"].(*models.ReviewSession)
 	if reloaded.CurrentCard == nil || reloaded.CurrentCard.CardID != "queue-card-2" {
 		t.Fatalf("expected resumed next pending card queue-card-2, got %#v", reloaded.CurrentCard)
@@ -1407,6 +1414,10 @@ func (m *mockLLMProvider) GenerateAnswer(prompt string) (string, error) {
 		return "", m.err
 	}
 	return m.answer, nil
+}
+
+func (m *mockLLMProvider) ModelName() string {
+	return "mock-model"
 }
 
 func extractRequestedCount(prompt string, prefix string) int {

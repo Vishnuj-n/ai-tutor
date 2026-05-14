@@ -599,8 +599,8 @@ func TestCreateReviewSessionDueCardBatchingAndDuplicatePrevention(t *testing.T) 
 	if err := conn.QueryRow(`SELECT COUNT(*) FROM review_task_cards WHERE task_id = ?`, task.ID).Scan(&linkedCount); err != nil {
 		t.Fatalf("count review_task_cards failed: %v", err)
 	}
-	if linkedCount != 20 {
-		t.Fatalf("expected 20 linked review cards, got %d", linkedCount)
+	if linkedCount != 23 {
+		t.Fatalf("expected 23 linked review cards, got %d", linkedCount)
 	}
 
 	task2, existing2, err := CreateReviewSession("nb-review")
@@ -686,5 +686,44 @@ func TestReviewSessionRecoveryOrderingAndCompletion(t *testing.T) {
 	}
 	if status != "COMPLETED" {
 		t.Fatalf("expected COMPLETED task, got %s", status)
+	}
+}
+
+func TestCreateReviewSessionResolvesLegacyNotebookTopicContext(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	if err := EnsureTopic("topic-legacy-review", "Legacy Review Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := CreateNotebook("nb-legacy-review", "Legacy NB", "/tmp/legacy.pdf", "pdf", "topic-legacy-review", 12); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := CreateFlashcards("topic-legacy-review", []models.Flashcard{
+		{ID: "legacy-card-1", TopicID: "topic-legacy-review", Prompt: "Q1", Answer: "A1", DueAt: 10},
+		{ID: "legacy-card-2", TopicID: "topic-legacy-review", Prompt: "Q2", Answer: "A2", DueAt: 20},
+	}, map[string]models.FlashcardState{
+		"legacy-card-1": {},
+		"legacy-card-2": {},
+	}); err != nil {
+		t.Fatalf("CreateFlashcards failed: %v", err)
+	}
+
+	task, existing, err := CreateReviewSession("nb-legacy-review")
+	if err != nil {
+		t.Fatalf("CreateReviewSession failed: %v", err)
+	}
+	if existing {
+		t.Fatalf("expected new session for legacy-linked notebook")
+	}
+	if task == nil || task.NotebookID != "nb-legacy-review" {
+		t.Fatalf("expected task for notebook nb-legacy-review, got %#v", task)
+	}
+
+	var linkedCount int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM review_task_cards WHERE task_id = ?`, task.ID).Scan(&linkedCount); err != nil {
+		t.Fatalf("count review_task_cards failed: %v", err)
+	}
+	if linkedCount != 2 {
+		t.Fatalf("expected 2 linked review cards, got %d", linkedCount)
 	}
 }

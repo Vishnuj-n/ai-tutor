@@ -28,19 +28,26 @@ const (
 	FallbackWordsPerPage = 500
 	MaxPageScanLimit     = 100
 	MinMinutesPerPage    = 1.0
+
+	// Review workload caps
+	MaxReviewMinutesRatio   = 0.5 // Allow max 50% of session for reviews
+	MaxReviewMinutesSession = 30  // Hard cap of 30 mins for reviews
+	MaxReviewSessionCards   = 60  // Max cards per total workload (across sessions)
 )
 
 type queryDueReviewCardsFn func(now int64) (int, error)
 type queryDailyStudyMinutesFn func() (int, error)
 type queryNextReadingTopicFn func() (models.ReadingTopicCursor, bool, error)
 type queryTokensPerPageMapFn func(topicID string, startPage int, endPage int) (map[int]int, error)
+type queryNextDueReviewNotebookFn func(now int64) (string, int, error)
 
 // service builds one context-locked daily reading task.
 type service struct {
-	queryDueReviewCards   queryDueReviewCardsFn
-	queryDailyStudyMinute queryDailyStudyMinutesFn
-	queryNextReadingTopic queryNextReadingTopicFn
-	queryTokensPerPageMap queryTokensPerPageMapFn
+	queryDueReviewCards        queryDueReviewCardsFn
+	queryDailyStudyMinute      queryDailyStudyMinutesFn
+	queryNextReadingTopic      queryNextReadingTopicFn
+	queryTokensPerPageMap      queryTokensPerPageMapFn
+	queryNextDueReviewNotebook queryNextDueReviewNotebookFn
 }
 
 // Option customizes service dependencies for testing and advanced setups.
@@ -82,6 +89,15 @@ func WithQueryTokensPerPageMap(fn queryTokensPerPageMapFn) Option {
 	}
 }
 
+// WithQueryNextDueReviewNotebook overrides the deterministic notebook review selection dependency.
+func WithQueryNextDueReviewNotebook(fn queryNextDueReviewNotebookFn) Option {
+	return func(s *service) {
+		if fn != nil {
+			s.queryNextDueReviewNotebook = fn
+		}
+	}
+}
+
 // Service is the public interface for daily plan scheduling.
 type Service interface {
 	BuildTodayPlan(now time.Time) (*models.TodayPlan, error)
@@ -90,10 +106,11 @@ type Service interface {
 // New creates a new scheduler service with real database queries.
 func New(opts ...Option) Service {
 	s := &service{
-		queryDueReviewCards:   db.QueryDueReviewCards,
-		queryDailyStudyMinute: db.GetDailyStudyMinutes,
-		queryNextReadingTopic: db.QueryNextReadingTopic,
-		queryTokensPerPageMap: db.GetTokensPerPageMap,
+		queryDueReviewCards:        db.QueryDueReviewCards,
+		queryDailyStudyMinute:      db.GetDailyStudyMinutes,
+		queryNextReadingTopic:      db.QueryNextReadingTopic,
+		queryTokensPerPageMap:      db.GetTokensPerPageMap,
+		queryNextDueReviewNotebook: db.GetNextDueReviewNotebook,
 	}
 
 	for _, opt := range opts {
@@ -120,13 +137,33 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		dailyStudyMinutes = DefaultDailyStudyMinutes
 	}
 
+	totalDueCards := dueCards
 	reviewBudget := int(math.Ceil(float64(dueCards) * ReviewMinutesPerCard))
 
-	if reviewBudget > dailyStudyMinutes {
-		reviewBudget = dailyStudyMinutes
+	// Intelligent Balancing: Cap review time to prevent it from consuming the entire session.
+	// We use the smaller of:
+	// 1. MaxReviewMinutesSession (hard cap)
+	// 2. MaxReviewMinutesRatio * dailyStudyMinutes (proportional cap)
+	proportionalCap := int(float64(dailyStudyMinutes) * MaxReviewMinutesRatio)
+	safeReviewBudget := reviewBudget
+	if safeReviewBudget > proportionalCap {
+		safeReviewBudget = proportionalCap
+	}
+	if safeReviewBudget > MaxReviewMinutesSession {
+		safeReviewBudget = MaxReviewMinutesSession
 	}
 
-	readingBudget := dailyStudyMinutes - reviewBudget
+	// Calculate materialized vs deferred cards based on the safe budget
+	materializedCards := int(float64(safeReviewBudget) / ReviewMinutesPerCard)
+	if materializedCards > dueCards {
+		materializedCards = dueCards
+	}
+	deferredCards := totalDueCards - materializedCards
+
+	utils.Warnf("[SCHEDULER] workload_audit total_due_cards=%d review_cards_materialized=%d estimated_review_minutes=%d deferred_review_cards=%d review_session_limit=%d daily_mins=%d",
+		totalDueCards, materializedCards, reviewBudget, deferredCards, MaxReviewMinutesSession, dailyStudyMinutes)
+
+	readingBudget := dailyStudyMinutes - safeReviewBudget
 
 	if readingBudget < 0 {
 		readingBudget = 0
@@ -139,6 +176,10 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	if tokenBudget > TargetSessionWords {
 		tokenBudget = TargetSessionWords
 	}
+
+	// Final plan values use the safe (materialized) counts
+	finalReviewMinutes := safeReviewBudget
+	finalDueReviewCards := materializedCards
 
 	// tokenBudget cannot be negative since readingBudget is clamped to >=0 and WordsPerMinute is positive
 
@@ -190,20 +231,46 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	}
 
 	totalLearningMinutes := 0
+	if finalDueReviewCards > 0 {
+		bestNotebookID, selectedDueCards, err := s.queryNextDueReviewNotebook(now.Unix())
+		if err != nil {
+			return nil, err
+		}
+		if bestNotebookID == "" {
+			return nil, fmt.Errorf("failed to resolve notebook for due review cards")
+		}
+		if bestNotebookID != "" {
+			utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d source=scheduler", bestNotebookID, selectedDueCards)
+		}
+
+		reviewTask := models.ScheduledTask{
+			ID:              "task-review-daily",
+			ActionType:      "flashcard_review",
+			Title:           fmt.Sprintf("Flashcard Review: %d cards", finalDueReviewCards),
+			EstimateMinutes: finalReviewMinutes,
+			Priority:        1,
+			NotebookID:      bestNotebookID,
+			Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", finalDueReviewCards),
+		}
+		utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_task_created taskID=%s notebookID=%s dueCards=%d materializedCards=%d", reviewTask.ID, reviewTask.NotebookID, totalDueCards, finalDueReviewCards)
+		tasks = append([]models.ScheduledTask{reviewTask}, tasks...)
+	}
 
 	for _, task := range tasks {
 		totalLearningMinutes += task.EstimateMinutes
 	}
 
 	return &models.TodayPlan{
-		Date:            now.Format("2006-01-02"),
-		TotalMinutes:    dailyStudyMinutes,
-		ReviewMinutes:   reviewBudget,
-		LearningMinutes: totalLearningMinutes,
-		DueReviewCards:  dueCards,
-		ActiveTopics:    activeTopics,
-		Tasks:           tasks,
-		IsEstimate:      len(tasks) == 0,
+		Date:                now.Format("2006-01-02"),
+		TotalMinutes:        dailyStudyMinutes,
+		ReviewMinutes:       finalReviewMinutes,
+		LearningMinutes:     totalLearningMinutes,
+		DueReviewCards:      finalDueReviewCards,
+		TotalDueReviewCards: totalDueCards,
+		DeferredReviewCards: deferredCards,
+		ActiveTopics:        activeTopics,
+		Tasks:               tasks,
+		IsEstimate:          len(tasks) == 0,
 	}, nil
 }
 

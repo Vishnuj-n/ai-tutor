@@ -8,6 +8,7 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
+	"ai-tutor/internal/utils"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -214,16 +215,99 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "notebook not found"}
 	}
 
-	// Check if notebook is already chunked - if so, we might be able to skip full re-ingestion
-	// for metadata-only updates (title changes, chapter title changes without page boundary changes)
-	// For now, we always do full re-ingestion to maintain consistency
-	// TODO: Optimize for metadata-only updates
+	// Extract document only when a full re-ingest is necessary. We'll try to detect
+	// whether a metadata-only or topic-metadata-only update is sufficient.
+	normalized := notebook.NormalizeSyllabusChapters(chapters, nb.PageCount)
+	if len(normalized) == 0 {
+		return map[string]interface{}{"error": "at least one valid chapter is required"}
+	}
+
+	// Attempt to fetch existing topics/bounds for this notebook to decide path
+	existingTopics, etErr := db.GetNotebookTopicsWithBounds(notebookID)
+	if etErr != nil {
+		// Log but continue with conservative full re-ingest flow
+		utils.Warnf("ConfirmNotebookSyllabus: unable to load existing topics for %s: %v", notebookID, etErr)
+	}
+
+	// If notebook already chunked and we have existing topic info, compare bounds/titles
+	if nb.Status == "chunked" && len(existingTopics) > 0 {
+		boundsChanged := false
+		titlesChanged := false
+
+		if len(existingTopics) != len(normalized) {
+			boundsChanged = true
+		} else {
+			for i := range normalized {
+				if existingTopics[i].StartPage != normalized[i].StartPage || existingTopics[i].EndPage != normalized[i].EndPage {
+					boundsChanged = true
+					break
+				}
+				if strings.TrimSpace(existingTopics[i].Title) != strings.TrimSpace(normalized[i].Title) {
+					titlesChanged = true
+				}
+			}
+		}
+
+		if !boundsChanged && !titlesChanged {
+			// Nothing changed (no chapter or title changes) — treat as metadata_only/no-op
+			utils.Infof("ConfirmNotebookSyllabus: metadata_only (no chapter/title changes) for %s", notebookID)
+			return map[string]interface{}{
+				"success":     true,
+				"status":      nb.Status,
+				"notebook_id": notebookID,
+				"mode":        "metadata_only",
+			}
+		}
+
+		if !boundsChanged && titlesChanged {
+			// Only titles changed — update topic titles in-place and preserve chunks/vectors
+			utils.Infof("ConfirmNotebookSyllabus: topic_metadata_only for %s — updating topic titles only", notebookID)
+
+			topicItems := make([]db.TopicBatchItem, 0, len(existingTopics))
+			boundsItems := make([]db.TopicPageBoundsBatchItem, 0, len(existingTopics))
+			topicIDs := make([]string, 0, len(existingTopics))
+			for i, et := range existingTopics {
+				topicItems = append(topicItems, db.TopicBatchItem{TopicID: et.TopicID, Title: normalized[i].Title})
+				boundsItems = append(boundsItems, db.TopicPageBoundsBatchItem{TopicID: et.TopicID, StartPage: normalized[i].StartPage, EndPage: normalized[i].EndPage})
+				topicIDs = append(topicIDs, et.TopicID)
+			}
+
+			if err := db.EnsureTopicsBatch(topicItems); err != nil {
+				_ = db.UpdateNotebookStatus(notebookID, "failed")
+				return map[string]interface{}{"error": "failed to update topics: " + err.Error()}
+			}
+			if err := db.UpdateTopicPageBoundsBatch(boundsItems); err != nil {
+				_ = db.UpdateNotebookStatus(notebookID, "failed")
+				return map[string]interface{}{"error": "failed to persist topic bounds: " + err.Error()}
+			}
+
+			if len(topicIDs) > 0 {
+				_ = db.UpdateNotebookTopic(notebookID, topicIDs[0])
+			}
+
+			// Return without running extraction/ingestion or embedding updates
+			return map[string]interface{}{
+				"success":     true,
+				"status":      nb.Status,
+				"notebook_id": notebookID,
+				"mode":        "topic_metadata_only",
+				"topic_ids":   topicIDs,
+			}
+		}
+		// If boundsChanged==true fall through to full re-ingest
+	}
+
+	// Full re-ingest path (extract document and rebuild chunks)
 	doc, err := a.notebookService.ExtractDocument(nb.FilePath, nb.FileType)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	normalized := notebook.NormalizeSyllabusChapters(chapters, doc.PageCount)
+	// Re-normalize with real page count from document
+	normalized = notebook.NormalizeSyllabusChapters(chapters, doc.PageCount)
+	if len(normalized) == 0 {
+		return map[string]interface{}{"error": "at least one valid chapter is required"}
+	}
 	if len(normalized) == 0 {
 		return map[string]interface{}{"error": "at least one valid chapter is required"}
 	}
@@ -310,6 +394,8 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		}
 		return map[string]interface{}{"error": "confirmed chapters produced no chunks"}
 	}
+
+	utils.Infof("ConfirmNotebookSyllabus: full_reingest for %s — creating %d chunks", notebookID, len(allChunks))
 
 	emitIngestionProgress(a, ingestionProgressPayload{
 		NotebookID: notebookID,

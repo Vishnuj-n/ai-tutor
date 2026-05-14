@@ -5,10 +5,25 @@
       <div class="profile">Academic Profile</div>
     </header>
 
+    <!-- Flashcard creation confirmation banner -->
+    <article v-if="flashcardsJustCreated" class="card flashcard-success-banner">
+      <div class="flashcard-success-content">
+        <span class="flashcard-success-icon">✓</span>
+        <div class="flashcard-success-text">
+          <p class="flashcard-success-title">Flashcards generated successfully!</p>
+          <p class="flashcard-success-subtitle">{{ flashcardsJustCreated }} cards scheduled for spaced repetition. They'll appear here when due.</p>
+        </div>
+      </div>
+    </article>
+
     <article class="status-strip">
       <div>
         <p class="eyebrow">Today's Mission</p>
         <h1>Daily Agenda</h1>
+      </div>
+      <div v-if="dueReviewCards > 0" class="review-stats">
+        <p class="review-count">{{ dueReviewCards }} cards due for review</p>
+        <p class="review-hint">Spaced repetition strengthens long-term retention</p>
       </div>
     </article>
 
@@ -59,16 +74,24 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, ref, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { getDailyAgenda, getNotebooks } from '../services/appApi'
 
 const router = useRouter()
+const route = useRoute()
 
 const loading = ref(true)
 const error = ref('')
 const tasks = ref([])
 const hasActiveStudyContent = ref(false)
+const dueReviewCards = ref(0)
+
+// Show confirmation when flashcards were just created from quiz completion
+const flashcardsJustCreated = computed(() => {
+  const created = parseInt(route.query.flashcardsCreated, 10)
+  return isNaN(created) || created <= 0 ? 0 : created
+})
 
 onMounted(async () => {
   console.warn('[DASHBOARD] onMounted loading queue')
@@ -89,9 +112,23 @@ async function loadAgenda() {
     }
 
     tasks.value = response.tasks || []
+    dueReviewCards.value = response.due_review_cards || 0
     console.warn('[DASHBOARD] loadAgenda task list length', tasks.value.length)
     console.warn('[DASHBOARD] loadAgenda top pending task', tasks.value[0] || null)
     console.warn('[DASHBOARD] loadAgenda task ids', tasks.value.map((task) => ({ id: task.id, action_type: task.action_type, status: task.status, topic_id: task.topic_id, notebook_id: task.notebook_id })))
+    const actionCounts = tasks.value.reduce((acc, task) => {
+      const key = String(task?.action_type || '').toLowerCase() || 'unknown'
+      acc[key] = (acc[key] || 0) + 1
+      return acc
+    }, {})
+    const reviewCount = actionCounts.flashcard_review || 0
+    console.warn('[FLASHCARD_PIPELINE] frontend_task_rendering', {
+      totalTasks: tasks.value.length,
+      reviewTasks: reviewCount,
+      actionCounts,
+      reviewMinutes: response.review_minutes,
+      dueReviewCards: response.due_review_cards,
+    })
     const notebooks = await getNotebooks('')
     const notebookList = Array.isArray(notebooks) ? notebooks.filter((nb) => !nb?.error) : []
     hasActiveStudyContent.value = notebookList.some((nb) => {
@@ -118,6 +155,12 @@ function startTask(task) {
   }
 
   const action = (task.action_type || '').toLowerCase()
+  console.warn('[FLASHCARD_PIPELINE] frontend_task_start_click', {
+    taskID: task.id,
+    actionType: action,
+    notebookID: task.notebook_id,
+    topicID: task.topic_id,
+  })
 
   if (action === 'reading') {
     routePath = '/reader'
@@ -191,6 +234,69 @@ function startTask(task) {
   font-size: 44px;
   letter-spacing: -0.03em;
   line-height: 1;
+  color: var(--on-surface);
+}
+
+/* Review stats in header */
+.review-stats {
+  text-align: right;
+}
+
+.review-count {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--primary);
+  font-family: 'Manrope', sans-serif;
+}
+
+.review-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+/* Flashcard success banner */
+.flashcard-success-banner {
+  background: color-mix(in srgb, #16a34a 10%, var(--surface-container-lowest));
+  border: 1px solid color-mix(in srgb, #16a34a 25%, transparent);
+}
+
+.flashcard-success-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 4px;
+}
+
+.flashcard-success-icon {
+  width: 40px;
+  height: 40px;
+  background: #16a34a;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.flashcard-success-text {
+  flex: 1;
+}
+
+.flashcard-success-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #16a34a;
+}
+
+.flashcard-success-subtitle {
+  margin: 0;
+  font-size: 14px;
   color: var(--on-surface);
 }
 

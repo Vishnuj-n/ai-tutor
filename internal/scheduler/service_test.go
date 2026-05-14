@@ -30,6 +30,9 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 			}
 			return result, nil
 		}),
+		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+			return "nb-1", 10, nil
+		}),
 	)
 
 	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
@@ -41,11 +44,11 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 		t.Errorf("expected 5 review minutes, got %d", plan.ReviewMinutes)
 	}
 
-	if len(plan.Tasks) != 1 {
-		t.Fatalf("expected 1 reading task, got %d", len(plan.Tasks))
+	if len(plan.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks (1 review, 1 reading), got %d", len(plan.Tasks))
 	}
 
-	task := plan.Tasks[0]
+	task := plan.Tasks[1] // Reading task is second
 	if task.StartPage != 1 {
 		t.Errorf("expected StartPage=1, got %d", task.StartPage)
 	}
@@ -77,6 +80,9 @@ func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 		WithQueryTokensPerPageMap(func(string, int, int) (map[int]int, error) {
 			// Simulate token query failure (e.g., OCR-heavy pages with no text layer)
 			return nil, fmt.Errorf("no chunks found")
+		}),
+		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+			return "", 0, nil
 		}),
 	)
 
@@ -122,6 +128,9 @@ func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
 			}
 			return result, nil
 		}),
+		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+			return "", 0, nil
+		}),
 	)
 
 	plan, err := svc.BuildTodayPlan(time.Now())
@@ -148,6 +157,9 @@ func TestBuildTodayPlanNoReadingTopic(t *testing.T) {
 		WithQueryTokensPerPageMap(func(string, int, int) (map[int]int, error) {
 			return map[int]int{1: 1000}, nil
 		}),
+		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+			return "nb-1", 20, nil
+		}),
 	)
 
 	plan, err := svc.BuildTodayPlan(time.Now())
@@ -158,8 +170,11 @@ func TestBuildTodayPlanNoReadingTopic(t *testing.T) {
 	if plan.ReviewMinutes != 10 {
 		t.Errorf("expected 10 review minutes, got %d", plan.ReviewMinutes)
 	}
-	if len(plan.Tasks) != 0 {
-		t.Errorf("expected 0 tasks, got %d", len(plan.Tasks))
+	if len(plan.Tasks) != 1 {
+		t.Errorf("expected 1 task (review only), got %d", len(plan.Tasks))
+	}
+	if plan.Tasks[0].ActionType != "flashcard_review" {
+		t.Errorf("expected review task, got %s", plan.Tasks[0].ActionType)
 	}
 	if len(plan.ActiveTopics) != 0 {
 		t.Errorf("expected 0 active topics, got %d", len(plan.ActiveTopics))

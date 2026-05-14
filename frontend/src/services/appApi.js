@@ -87,6 +87,10 @@ export function submitQuizAttempt(taskID, answers) {
   return appBridge().SubmitQuizAttempt(taskID, answers)
 }
 
+export function generateFlashcardsForQuizTask(taskID) {
+  return appBridge().GenerateFlashcardsForQuizTask(taskID)
+}
+
 export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
@@ -144,8 +148,8 @@ export function generateReviewTasks(notebookID) {
   return appBridge().GenerateReviewTasks(notebookID)
 }
 
-export function getReviewSession(taskID) {
-  return appBridge().GetReviewSession(taskID)
+export function getReviewSession(taskID, notebookID = '') {
+  return appBridge().GetReviewSession(taskID, notebookID)
 }
 
 export function recordCardReview(taskID, cardID, rating) {

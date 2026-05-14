@@ -415,6 +415,7 @@ func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) e
 			utils.Warnf("[QUEUE] CompleteTaskTx follow-up insertion error taskID=%s followUpID=%s err=%v", taskID, followUp.ID, err)
 			return err
 		}
+		utils.Warnf("[FLASHCARD_PIPELINE] queue_insertion source=completion_followup parentTaskID=%s followUpID=%s taskType=%s notebookID=%s topicID=%s", taskID, followUp.ID, followUp.TaskType, followUp.NotebookID, followUp.TopicID)
 		utils.LogQueueTaskCreated(followUp.ID, string(followUp.TaskType), followUp.NotebookID, followUp.TopicID)
 	}
 

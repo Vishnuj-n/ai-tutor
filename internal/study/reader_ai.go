@@ -243,9 +243,14 @@ func resolveReaderSectionScope(sectionID string) (string, string, int, int, erro
 		ORDER BY created_at ASC, notebook_id ASC
 		LIMIT 1
 	`, topicID).Scan(&notebookID)
-	// If no notebook is linked, that's okay—notebookID remains empty
-	if err != nil && err != sql.ErrNoRows {
-		notebookID = ""
+	// If no notebook is linked, that's okay—notebookID remains empty.
+	// Other DB errors should be surfaced.
+	if err != nil {
+		if err == sql.ErrNoRows {
+			notebookID = ""
+		} else {
+			return "", "", 0, 0, fmt.Errorf("failed to resolve notebook for topic %q: %w", topicID, err)
+		}
 	}
 
 	pageRanges, err := db.GetTopicHeadingPageRanges(topicID)
