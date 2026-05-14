@@ -135,7 +135,7 @@ func (s *StudyService) searchReaderScope(req ReaderAIRequest, scope ReaderRetrie
 		if req.NotebookID == "" {
 			return nil, fmt.Errorf("notebook ID is required for notebook-wide retrieval")
 		}
-		return s.retrievalEngine.SemanticSearchNotebook(req.NotebookID, req.Question, topK)
+		return s.retrievalEngine.SemanticSearchNotebook(req.NotebookID, req.TopicID, req.Question, topK)
 	case ReaderScopeCurrentChapter:
 		startPage := req.ChapterStartPage
 		endPage := req.ChapterEndPage
@@ -224,27 +224,16 @@ func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
 }
 
 func resolveReaderSectionScope(sectionID string) (string, string, int, int, error) {
-	var topicID string
-	err := db.GetConnection().QueryRow(`
-		SELECT topic_id
-		FROM parents
-		WHERE id = ?
-	`, sectionID).Scan(&topicID)
+	// Use repository helpers to avoid SQL in service layer.
+	topicID, err := db.GetTopicIDBySectionID(sectionID)
 	if err != nil {
 		return "", "", 0, 0, err
 	}
 
-	// Fetch the first notebook that contains this topic
-	var notebookID string
-	err = db.GetConnection().QueryRow(`
-		SELECT notebook_id
-		FROM notebook_topics
-		WHERE topic_id = ?
-		ORDER BY created_at ASC, notebook_id ASC
-		LIMIT 1
-	`, topicID).Scan(&notebookID)
-	// If no notebook is linked, that's okay—notebookID remains empty.
-	// Other DB errors should be surfaced.
+	// Fetch the first notebook that contains this topic. It's acceptable for
+	// there to be no notebook linked (sql.ErrNoRows) — callers treat empty
+	// notebookID as a non-fatal condition.
+	notebookID, err := db.GetFirstNotebookIDByTopicID(topicID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			notebookID = ""

@@ -309,6 +309,13 @@ func GetNextDueReviewNotebook(now int64) (string, int, error) {
 	return getNextDueReviewNotebookRepo(now)
 }
 
+func GetDueReviewCardCountsByNotebook(now int64) (map[string]int, error) {
+	if now <= 0 {
+		return nil, fmt.Errorf("current time is required")
+	}
+	return getDueReviewCardCountsByNotebookRepo(now)
+}
+
 func CreateReviewSession(notebookID string) (*models.StudyQueueTask, bool, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {

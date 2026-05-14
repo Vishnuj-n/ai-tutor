@@ -262,16 +262,15 @@ func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
 	// Truncation recovery: fix common JSON malformations
 	// Case 1: Extra } after array element (e.g., {"cards":[{...},{...}}})
 	if strings.Contains(raw, "}}") && strings.Count(raw, "}") > strings.Count(raw, "{") {
-		// Remove extra closing braces
-		for strings.Count(raw, "}") > strings.Count(raw, "{") {
-			lastIdx := strings.LastIndex(raw, "}")
-			if lastIdx > 0 {
-				raw = raw[:lastIdx]
-			} else {
-				break
-			}
+		// Single-pass brace-balance scanner: count and remove only necessary closing braces
+		openBraces := strings.Count(raw, "{")
+		closeBraces := strings.Count(raw, "}")
+		extraBraces := closeBraces - openBraces
+		if extraBraces > 0 {
+			// Remove trailing extra braces
+			raw = raw[:len(raw)-extraBraces]
+			utils.Warnf("[FLASHCARD_PARSE] truncation_recovery removed_extra_closing_braces count=%d", extraBraces)
 		}
-		utils.Warnf("[FLASHCARD_PARSE] truncation_recovery removed_extra_closing_braces")
 	}
 
 	// Case 2: Missing closing braces
@@ -293,12 +292,36 @@ func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
 
 	var out flashcardLLMResponse
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		utils.Warnf("[FLASHCARD_PARSE] json_unmarshal_failed error=%v raw_response=%s", err, raw)
+		// Log truncated raw prefix to avoid huge/secret-bearing logs
+		rawPrefix := raw
+		if len(rawPrefix) > 512 {
+			rawPrefix = rawPrefix[:512]
+		}
+		utils.Warnf("[FLASHCARD_PARSE] json_unmarshal_failed error=%v raw_length=%d raw_prefix=%s", err, len(raw), rawPrefix)
 
 		// Graceful degradation: try to salvage partial cards from malformed JSON
-		if salvaged := salvagePartialCards(raw); salvaged != nil {
-			utils.Warnf("[FLASHCARD_PARSE] graceful_degradation salvaged=%d_cards from_malformed_json", len(salvaged.Cards))
-			return salvaged, nil
+		if salvaged := salvagePartialCards(raw); salvaged != nil && len(salvaged.Cards) > 0 {
+			// Validate salvaged cards using the same validation as normal cards
+			validCards := make([]flashcardLLMCard, 0, len(salvaged.Cards))
+			for i, card := range salvaged.Cards {
+				if strings.TrimSpace(card.SourceChunkID) == "" {
+					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=source_chunk_id skipping", i)
+					continue
+				}
+				if strings.TrimSpace(card.Prompt) == "" {
+					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=prompt skipping", i)
+					continue
+				}
+				if strings.TrimSpace(card.Answer) == "" {
+					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=answer skipping", i)
+					continue
+				}
+				validCards = append(validCards, card)
+			}
+			if len(validCards) > 0 {
+				utils.Warnf("[FLASHCARD_PARSE] graceful_degradation salvaged=%d_cards valid=%d from_malformed_json", len(salvaged.Cards), len(validCards))
+				return &flashcardLLMResponse{Cards: validCards}, nil
+			}
 		}
 
 		return nil, err
@@ -344,30 +367,43 @@ func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
 func salvagePartialCards(raw string) *flashcardLLMResponse {
 	utils.Warnf("[FLASHCARD_PARSE] salvage_attempt initiated raw_length=%d", len(raw))
 
-	// Try to find card objects using regex-like pattern matching
-	// Look for patterns like: {"source_chunk_id":"...","prompt":"...","answer":"..."}
+	// Try to find card objects by splitting on '{' boundaries
 	cards := make([]flashcardLLMCard, 0)
 
-	// Split by potential card boundaries
-	cardPatterns := strings.Split(raw, `{"source_chunk_id"`)
+	// Find all '{' positions to identify potential card objects
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '{' {
+			// Find matching closing brace or next card start
+			braceCount := 1
+			j := i + 1
+			for j < len(raw) && braceCount > 0 {
+				switch raw[j] {
+				case '{':
+					braceCount++
+				case '}':
+					braceCount--
+				}
+				j++
+			}
 
-	for i, pattern := range cardPatterns {
-		if i == 0 {
-			continue // Skip first split (before first card)
-		}
+			// Extract potential card object
+			if braceCount == 0 && j > i+1 {
+				cardStr := raw[i+1 : j-1] // Content between { and }
 
-		// Try to extract fields from this pattern
-		sourceChunkID := extractJSONField(pattern, "source_chunk_id")
-		prompt := extractJSONField(pattern, "prompt")
-		answer := extractJSONField(pattern, "answer")
+				// Try to extract fields from this object
+				sourceChunkID := extractJSONField("{"+cardStr+"}", "source_chunk_id")
+				prompt := extractJSONField("{"+cardStr+"}", "prompt")
+				answer := extractJSONField("{"+cardStr+"}", "answer")
 
-		// Only add if we have at least some fields
-		if sourceChunkID != "" || prompt != "" || answer != "" {
-			cards = append(cards, flashcardLLMCard{
-				SourceChunkID: sourceChunkID,
-				Prompt:        prompt,
-				Answer:        answer,
-			})
+				// Only add if we have at least some non-empty required fields
+				if sourceChunkID != "" && prompt != "" && answer != "" {
+					cards = append(cards, flashcardLLMCard{
+						SourceChunkID: sourceChunkID,
+						Prompt:        prompt,
+						Answer:        answer,
+					})
+				}
+			}
 		}
 	}
 
@@ -380,7 +416,8 @@ func salvagePartialCards(raw string) *flashcardLLMResponse {
 	return &flashcardLLMResponse{Cards: cards}
 }
 
-// extractJSONField attempts to extract a field value from a malformed JSON string
+// extractJSONField attempts to extract a field value from a malformed JSON string,
+// properly handling escaped quotes (e.g., \")
 func extractJSONField(raw, fieldName string) string {
 	// Look for pattern: "field":"value" or "field":"value"
 	pattern := `"` + fieldName + `":"`
@@ -390,15 +427,31 @@ func extractJSONField(raw, fieldName string) string {
 	}
 
 	// Skip past the pattern and opening quote
-	start := idx + len(pattern) + 1
+	start := idx + len(pattern)
 	if start >= len(raw) {
 		return ""
 	}
 
-	// Find the closing quote
-	end := strings.Index(raw[start:], `"`)
-	if end == -1 {
-		return ""
+	// Find the closing quote, accounting for escaped quotes
+	var end int
+	for i := start; i < len(raw); i++ {
+		if raw[i] == '\\' && i+1 < len(raw) {
+			// Skip escaped character
+			i++
+			continue
+		}
+		if raw[i] == '"' {
+			end = i - start
+			break
+		}
+	}
+	if end == 0 && (len(raw) <= start || raw[start] == '"') {
+		return "" // No value found or empty string
+	}
+
+	// Handle case where we didn't find closing quote
+	if end == 0 {
+		end = len(raw) - start
 	}
 
 	return strings.TrimSpace(raw[start : start+end])

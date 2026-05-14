@@ -141,9 +141,9 @@ func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) (
 	return cards, nil
 }
 
-// GetDueReviewCardCountsByNotebook returns a map of notebook IDs to their due card counts.
+// getDueReviewCardCountsByNotebookRepo returns a map of notebook IDs to their due card counts.
 // Excludes cards already linked to pending/active review tasks for consistency with session creation.
-func GetDueReviewCardCountsByNotebook(now int64) (map[string]int, error) {
+func getDueReviewCardCountsByNotebookRepo(now int64) (map[string]int, error) {
 	rows, err := conn.Query(`
 		SELECT n.id, COUNT(fc.id)
 		FROM notebooks n

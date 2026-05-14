@@ -118,7 +118,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		return map[string]interface{}{"error": "notebook service not initialized"}
 	}
 
-	nb, err := a.notebookService.GetNotebookByID(notebookID)
+	nb, err := db.GetNotebookByID(notebookID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -207,7 +207,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "notebook service not initialized"}
 	}
 
-	nb, err := a.notebookService.GetNotebookByID(notebookID)
+	nb, err := db.GetNotebookByID(notebookID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -264,21 +264,15 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 			utils.Infof("ConfirmNotebookSyllabus: topic_metadata_only for %s — updating topic titles only", notebookID)
 
 			topicItems := make([]db.TopicBatchItem, 0, len(existingTopics))
-			boundsItems := make([]db.TopicPageBoundsBatchItem, 0, len(existingTopics))
 			topicIDs := make([]string, 0, len(existingTopics))
 			for i, et := range existingTopics {
 				topicItems = append(topicItems, db.TopicBatchItem{TopicID: et.TopicID, Title: normalized[i].Title})
-				boundsItems = append(boundsItems, db.TopicPageBoundsBatchItem{TopicID: et.TopicID, StartPage: normalized[i].StartPage, EndPage: normalized[i].EndPage})
 				topicIDs = append(topicIDs, et.TopicID)
 			}
 
 			if err := db.EnsureTopicsBatch(topicItems); err != nil {
 				_ = db.UpdateNotebookStatus(notebookID, "failed")
 				return map[string]interface{}{"error": "failed to update topics: " + err.Error()}
-			}
-			if err := db.UpdateTopicPageBoundsBatch(boundsItems); err != nil {
-				_ = db.UpdateNotebookStatus(notebookID, "failed")
-				return map[string]interface{}{"error": "failed to persist topic bounds: " + err.Error()}
 			}
 
 			if len(topicIDs) > 0 {
@@ -305,9 +299,6 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	// Re-normalize with real page count from document
 	normalized = notebook.NormalizeSyllabusChapters(chapters, doc.PageCount)
-	if len(normalized) == 0 {
-		return map[string]interface{}{"error": "at least one valid chapter is required"}
-	}
 	if len(normalized) == 0 {
 		return map[string]interface{}{"error": "at least one valid chapter is required"}
 	}
@@ -407,7 +398,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		Percent:    20,
 	})
 
-	if err := a.notebookService.IngestNotebookContentByTopic(notebookID, groups); err != nil {
+	if err := db.IngestNotebookContentByTopic(notebookID, groups); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
 		// Cleanup: delete only newly created topic rows to avoid orphaned records
 		for topicID := range newlyCreatedTopicIDs {
@@ -545,7 +536,7 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 	}
 
 	// Get notebook to retrieve file path
-	nb, err := a.notebookService.GetNotebookByID(notebookID)
+	nb, err := db.GetNotebookByID(notebookID)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
@@ -566,7 +557,7 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 	}
 
 	// Delete database record
-	if err := a.notebookService.DeleteNotebookRecords(notebookID); err != nil {
+	if err := db.DeleteNotebook(notebookID); err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}

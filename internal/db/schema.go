@@ -314,6 +314,52 @@ func InitSchema(tx *sql.Tx) error {
 		}
 	}
 
+	// Ensure uniqueness of (notebook_id, chunk_id) for existing databases.
+	// For DBs created earlier without the UNIQUE constraint, dedupe existing
+	// rows first, then create a unique index. This avoids adding the constraint
+	// directly which would fail if duplicates exist.
+	{
+		rows, err := tx.Query(`
+			SELECT id, notebook_id, chunk_id, created_at
+			FROM notebook_chunks
+			ORDER BY notebook_id, chunk_id, created_at ASC
+		`)
+		if err == nil {
+			defer rows.Close()
+			seen := make(map[string]bool)
+			var idsToDelete []string
+			for rows.Next() {
+				var id, nb, cid string
+				var createdAt string
+				if err := rows.Scan(&id, &nb, &cid, &createdAt); err != nil {
+					continue
+				}
+				key := nb + "::" + cid
+				if seen[key] {
+					idsToDelete = append(idsToDelete, id)
+					continue
+				}
+				seen[key] = true
+			}
+
+			for _, id := range idsToDelete {
+				if _, err := tx.Exec(`DELETE FROM notebook_chunks WHERE id = ?`, id); err != nil {
+					// If deletion fails, log and continue; we'll still attempt to create the index.
+					// Best-effort cleanup to allow uniqueness index creation.
+					_ = err
+				}
+			}
+		}
+
+		// Create unique index (works on SQLite/Postgres with IF NOT EXISTS semantics for sqlite)
+		if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notebook_chunk_unique ON notebook_chunks(notebook_id, chunk_id)`); err != nil {
+			// Ignore duplicate index errors where they indicate index already exists.
+			if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+				return fmt.Errorf("failed to create unique index on notebook_chunks: %w", err)
+			}
+		}
+	}
+
 	// Initialize default user settings
 	if _, err := tx.Exec(`
 		INSERT INTO user_settings (id, daily_study_minutes)

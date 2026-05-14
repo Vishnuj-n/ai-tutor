@@ -49,6 +49,9 @@ const (
 	StudyTaskStatusFailed    StudyTaskStatus = "FAILED"
 )
 
+// ReviewTaskDailyID is the synthetic task ID for daily flashcard review materialization.
+const ReviewTaskDailyID = "task-review-daily"
+
 // StudyQueueTask is the persisted queue task driving guided study progression.
 type StudyQueueTask struct {
 	ID          string          `json:"id"`

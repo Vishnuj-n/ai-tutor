@@ -7,22 +7,12 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
+	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 )
-
-// modelLimits defines token limits for specific models (local copy to avoid import cycle).
-type modelLimits struct {
-	MaxInputTokens  int
-	MaxOutputTokens int
-}
-
-// limitsProvider is an interface for LLM providers that can report token limits.
-type limitsProvider interface {
-	GetLimits() modelLimits
-}
 
 // GenerateMarathonFlashcards generates FSRS flashcards from the raw text
 // of a notebook's page range, injecting context directly into the prompt.
@@ -76,19 +66,19 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 	maxInputTokens := 30000 // default fallback
 	maxOutputTokens := 3000 // default fallback
 
-	if typed, ok := llm.(limitsProvider); ok {
-		limits := typed.GetLimits()
+	if provider, ok := llm.(*llmpkg.Provider); ok {
+		limits := provider.GetLimits()
 		maxInputTokens = limits.MaxInputTokens
 		maxOutputTokens = limits.MaxOutputTokens
 		utils.Warnf("[FLASHCARD_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
 	}
 
-	// Enforce strict token budget: cap at 10 cards to prevent oversized outputs
-	const maxFlashcardCount = 10
-	targetCount := ScaledFlashcardCount(tokenCount)
-	if targetCount > maxFlashcardCount {
-		targetCount = maxFlashcardCount
-		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_count_capped original=%d capped=%d", ScaledFlashcardCount(tokenCount), targetCount)
+	// Enforce strict token budget: cap at configured maximum to prevent oversized outputs
+	originalCount := ScaledFlashcardCount(tokenCount)
+	targetCount := originalCount
+	if targetCount > FlashcardCountMax {
+		targetCount = FlashcardCountMax
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_count_capped original=%d capped=%d max_configured=%d", originalCount, targetCount, FlashcardCountMax)
 	}
 
 	// Build prompt with token budgeting

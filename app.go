@@ -439,7 +439,7 @@ func (a *App) GetNextTask(notebookID string) map[string]interface{} {
 }
 
 func (a *App) ActivateTask(taskID string) map[string]interface{} {
-	if taskID == "task-review-daily" {
+	if taskID == models.ReviewTaskDailyID {
 		return map[string]interface{}{"ok": true}
 	}
 	if task, err := db.GetTaskByID(taskID); err == nil {
@@ -672,25 +672,6 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			// Note: can_complete removed - trust-based completion, user decides when done
 		},
 	}
-}
-
-// ValidateReadingCompletion - DEPRECATED/LEGACY
-// Trust-based completion model: user decides when reading is complete.
-// This endpoint only persists reading progress, it does NOT validate page completion.
-func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return map[string]interface{}{"error": "task ID is required", "code": 400}
-	}
-	// Persist progress only, no validation
-	_, err := db.PersistReadingProgress(taskID, finalPage)
-	if err != nil {
-		if err == db.ErrTaskNotFound {
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		}
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) CompleteReading(taskID string) map[string]interface{} {
@@ -967,7 +948,7 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 	}
 
 	// Materialize synthetic tasks from the scheduler
-	if taskID == "task-review-daily" {
+	if taskID == models.ReviewTaskDailyID {
 		requestedNotebookID := notebookID
 		utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materializing synthetic task notebookID=%s", notebookID)
 		if notebookID == "" {
@@ -986,10 +967,8 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 			return map[string]interface{}{"error": "No due cards found for review materialization"}
 		}
 
-		// Create a real session in the DB.
-		// We'll use the synthetic ID if possible, or just create a new one.
-		// Actually, db.CreateReviewSession creates a new UUID.
-		// To keep the frontend happy, we'll try to find an existing session for this notebook first.
+		// CreateReviewSession materializes a review session in the DB for the given notebookID.
+		// Returns the session Task (with a newly-created ID) and a boolean indicating if an existing legacy session was reused.
 		task, reused, err := db.CreateReviewSession(notebookID)
 		if err != nil {
 			return map[string]interface{}{"error": "Failed to materialize review session: " + err.Error()}

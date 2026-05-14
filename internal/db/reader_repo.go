@@ -269,6 +269,37 @@ func GetParentSection(parentID string) (map[string]string, error) {
 	}, nil
 }
 
+// GetTopicIDBySectionID returns topic_id for a given parent/section id.
+func GetTopicIDBySectionID(sectionID string) (string, error) {
+	var topicID string
+	err := conn.QueryRow(`
+		SELECT topic_id
+		FROM parents
+		WHERE id = ?
+	`, sectionID).Scan(&topicID)
+	if err != nil {
+		return "", err
+	}
+	return topicID, nil
+}
+
+// GetFirstNotebookIDByTopicID returns the earliest notebook_id linked to a topic.
+// If no notebook is linked, returns sql.ErrNoRows.
+func GetFirstNotebookIDByTopicID(topicID string) (string, error) {
+	var notebookID string
+	err := conn.QueryRow(`
+		SELECT notebook_id
+		FROM notebook_topics
+		WHERE topic_id = ?
+		ORDER BY created_at ASC, notebook_id ASC
+		LIMIT 1
+	`, topicID).Scan(&notebookID)
+	if err != nil {
+		return "", err
+	}
+	return notebookID, nil
+}
+
 // GetTotalChunkTokens returns estimated total tokens for one topic.
 // It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
 func GetTotalChunkTokens(topicID string) (int, error) {

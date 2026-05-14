@@ -42,7 +42,20 @@ func (s *StudyService) GenerateFlashcardsAfterQuiz(notebookID, topicID string, s
 		return 0, fmt.Errorf("%s", errorMsg)
 	}
 
-	cardCount, _ := result["card_count"].(int)
+	// Defensively extract card_count, handling multiple numeric types
+	cardCount := 0
+	if val, exists := result["card_count"]; exists {
+		switch v := val.(type) {
+		case int:
+			cardCount = v
+		case int64:
+			cardCount = int(v)
+		case float64:
+			cardCount = int(v)
+		default:
+			utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_unexpected_card_count_type notebookID=%s topicID=%s type=%T value=%v", notebookID, topicID, val, val)
+		}
+	}
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed notebookID=%s topicID=%s cardCount=%d", notebookID, topicID, cardCount)
 	utils.Warnf("[FLASHCARD_PIPELINE] review_session_skipped notebookID=%s topicID=%s reason=deferred_new_cards_excluded", notebookID, topicID)
 	return cardCount, nil
@@ -267,7 +280,6 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	attemptID := uuid.NewString()
 	followUps := make([]models.StudyQueueTask, 0, 1)
 	rereadTaskID := ""
-	flashcardTaskID := ""
 	rereadAttemptCount := 0
 	manualReviewRecommended := false
 	var resultPayload []byte
@@ -380,25 +392,8 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		RereadAttemptCount:      rereadAttemptCount,
 		MaxRereadAttempts:       maxAutomaticRereadAttempts,
 		RereadTaskID:            rereadTaskID,
-		FlashcardTaskID:         flashcardTaskID,
+		FlashcardTaskID:         "", // Flashcards are generated AFTER user clicks Continue (via separate flow)
 		AttemptRecord:           attemptID,
 		FlashcardsPending:       flashcardsPending, // Flashcards will be generated after Continue click
 	}, nil
-}
-
-// generateFlashcardsSync generates flashcards synchronously for use within quiz submission.
-// This is a thin wrapper around generateMarathonFlashcards that returns a map result.
-func (s *StudyService) generateFlashcardsSync(notebookID, topicID string, startPage, endPage int) map[string]interface{} {
-	notebookID = strings.TrimSpace(notebookID)
-	topicID = strings.TrimSpace(topicID)
-	if notebookID == "" || topicID == "" {
-		return map[string]interface{}{"error": "notebook ID and topic ID are required"}
-	}
-	if startPage <= 0 || endPage <= 0 || endPage < startPage {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
-	}
-
-	// Use the same generation pipeline as manual flashcard generation
-	result := s.generateMarathonFlashcards(topicID, notebookID, startPage, endPage, topicID)
-	return result
 }

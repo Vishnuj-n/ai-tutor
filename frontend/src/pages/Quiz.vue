@@ -308,8 +308,8 @@ async function submitQuiz() {
 }
 
 async function handleContinue() {
-  // If quiz passed with flashcards pending and score > 70, generate flashcards first
-  if (result.value?.passed && result.value?.flashcards_pending && result.value?.score > 70) {
+  // If quiz passed with flashcards pending, generate flashcards first
+  if (result.value?.passed && result.value?.flashcards_pending) {
     generatingFlashcards.value = true
     error.value = ''
     try {
