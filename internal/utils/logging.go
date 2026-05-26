@@ -129,7 +129,7 @@ func LogQuizResult(taskID string, score int, passed bool, rereadTaskID string) {
 	if passed {
 		outcome = "passed"
 	}
-	rereadInfo := "none"
+	rereadInfo := "reread=none"
 	if rereadTaskID != "" {
 		rereadInfo = "reread=" + rereadTaskID
 	}

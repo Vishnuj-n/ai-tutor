@@ -14,12 +14,19 @@ import (
 
 const minTimeoutMs = 1
 
+// ModelLimits defines token limits for specific models.
+type ModelLimits struct {
+	MaxInputTokens  int
+	MaxOutputTokens int
+}
+
 // Config holds LLM provider configuration.
 type Config struct {
 	BaseURL   string
 	APIKey    string
 	Model     string
 	TimeoutMs int
+	Limits    ModelLimits
 }
 
 // LoadConfigFromEnv loads the legacy single-provider config from environment variables.
@@ -57,7 +64,44 @@ func LoadConfigFromEnvForPrefix(prefix string) *Config {
 		config.APIKey = "sk-test"
 	}
 
+	config.Limits = getModelLimits(config.Model)
+
 	return config
+}
+
+// getModelLimits returns model-specific token limits with safety margins.
+// Uses 60% of model's max context as safe input limit, reserves 15-20% margin.
+func getModelLimits(model string) ModelLimits {
+	model = strings.TrimSpace(strings.ToLower(model))
+
+	switch {
+	case strings.Contains(model, "llama-3.1-8b"):
+		return ModelLimits{
+			MaxInputTokens:  40000, // ~60% of 128k context
+			MaxOutputTokens: 3000,
+		}
+	case strings.Contains(model, "llama-3.3-70b"):
+		return ModelLimits{
+			MaxInputTokens:  50000, // ~60% of 128k context
+			MaxOutputTokens: 4000,
+		}
+	case strings.Contains(model, "gpt-oss-120b"):
+		return ModelLimits{
+			MaxInputTokens:  50000, // ~60% of 128k context
+			MaxOutputTokens: 4000,
+		}
+	case strings.Contains(model, "gpt-oss-20b"):
+		return ModelLimits{
+			MaxInputTokens:  35000, // ~60% of 128k context
+			MaxOutputTokens: 2500,
+		}
+	default:
+		// Conservative defaults for unknown models
+		return ModelLimits{
+			MaxInputTokens:  30000,
+			MaxOutputTokens: 3000,
+		}
+	}
 }
 
 func prefixedKeys(prefix string, keys ...string) []string {
@@ -113,6 +157,17 @@ func (p *Provider) ModelName() string {
 		return ""
 	}
 	return strings.TrimSpace(p.config.Model)
+}
+
+// GetLimits returns the token limits for the configured model.
+func (p *Provider) GetLimits() ModelLimits {
+	if p == nil || p.config == nil {
+		return ModelLimits{
+			MaxInputTokens:  30000,
+			MaxOutputTokens: 3000,
+		}
+	}
+	return p.config.Limits
 }
 
 // openAIRequest follows the OpenAI API format.

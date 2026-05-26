@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
@@ -329,13 +330,22 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 
 	queueTasks := make([]models.ScheduledTask, 0, len(activeQueueTasks)+len(pendingQueueTasks))
+	actionCounts := make(map[string]int)
 	for _, q := range activeQueueTasks {
-		queueTasks = append(queueTasks, queueTaskToScheduledTask(q))
+		task := queueTaskToScheduledTask(q)
+		queueTasks = append(queueTasks, task)
+		actionCounts[task.ActionType]++
 	}
 	for _, q := range pendingQueueTasks {
-		queueTasks = append(queueTasks, queueTaskToScheduledTask(q))
+		task := queueTaskToScheduledTask(q)
+		queueTasks = append(queueTasks, task)
+		actionCounts[task.ActionType]++
 	}
 	utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
+	utils.Warnf("[TODAY_PLAN] planner aggregation dueReviewCards=%d reviewMinutes=%d schedulerTasks=%d queueActionCounts=%v", plan.DueReviewCards, plan.ReviewMinutes, len(plan.Tasks), actionCounts)
+	if actionCounts["flashcard_review"] > 0 {
+		utils.Warnf("[FLASHCARD_PIPELINE] today_plan_review_detected flashcard_review_count=%d", actionCounts["flashcard_review"])
+	}
 	if len(queueTasks) > 0 {
 		plan.Tasks = queueTasks
 		plan.IsEstimate = false
@@ -353,7 +363,8 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	return map[string]interface{}{
 		"date": plan.Date, "total_minutes": plan.TotalMinutes,
 		"review_minutes": plan.ReviewMinutes, "learning_minutes": plan.LearningMinutes,
-		"due_review_cards": plan.DueReviewCards, "active_topics": plan.ActiveTopics,
+		"due_review_cards": plan.DueReviewCards, "total_due_review_cards": plan.TotalDueReviewCards,
+		"deferred_review_cards": plan.DeferredReviewCards, "active_topics": plan.ActiveTopics,
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
 		"insights_available": false, "plan_source": "scheduler-v2-context-locked",
@@ -386,7 +397,13 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		meta = fmt.Sprintf("Pages %d-%d", task.StartPage, task.EndPage)
 	}
 	estimateMinutes := 10
-	if task.StartPage > 0 && task.EndPage >= task.StartPage {
+	if task.TaskType == models.StudyTaskTypeFlashcardReview {
+		// Use card count from payload if available
+		var payload models.ReviewSessionPayload
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err == nil && payload.CardCount > 0 {
+			estimateMinutes = int(math.Ceil(float64(payload.CardCount) * scheduler.ReviewMinutesPerCard))
+		}
+	} else if task.StartPage > 0 && task.EndPage >= task.StartPage {
 		estimateMinutes = int(float64(task.EndPage-task.StartPage+1) * scheduler.MinutesPerPage)
 	}
 
@@ -422,8 +439,8 @@ func (a *App) GetNextTask(notebookID string) map[string]interface{} {
 }
 
 func (a *App) ActivateTask(taskID string) map[string]interface{} {
-	if strings.TrimSpace(taskID) == "" {
-		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	if taskID == models.ReviewTaskDailyID {
+		return map[string]interface{}{"ok": true}
 	}
 	if task, err := db.GetTaskByID(taskID); err == nil {
 		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
@@ -657,25 +674,6 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 	}
 }
 
-// ValidateReadingCompletion - DEPRECATED/LEGACY
-// Trust-based completion model: user decides when reading is complete.
-// This endpoint only persists reading progress, it does NOT validate page completion.
-func (a *App) ValidateReadingCompletion(taskID string, finalPage int) map[string]interface{} {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return map[string]interface{}{"error": "task ID is required", "code": 400}
-	}
-	// Persist progress only, no validation
-	_, err := db.PersistReadingProgress(taskID, finalPage)
-	if err != nil {
-		if err == db.ErrTaskNotFound {
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		}
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"ok": true}
-}
-
 func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -753,6 +751,7 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 		}
 	}
 	utils.Warnf("[COMPLETE_SESSION] CompleteReading CompleteReadingWithGeneratedQuiz result taskID=%s quizTaskID=%s", taskID, quizTaskID)
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_trigger check stage=reading_completed taskID=%s topicID=%s result=not_triggered reason=no_flashcard_hook_in_complete_reading", taskID, task.TopicID)
 	return map[string]interface{}{"ok": true, "quiz_task_id": quizTaskID}
 }
 
@@ -805,6 +804,38 @@ func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[
 		}
 	}
 	return map[string]interface{}{"result": result}
+}
+
+// GenerateFlashcardsForQuizTask generates flashcards based on a passed quiz task.
+// Newly generated cards are future-dated and do not create an immediate review task.
+func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+
+	task, err := db.GetTaskByID(taskID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if task.TaskType != models.StudyTaskTypeQuiz {
+		return map[string]interface{}{"error": "task is not a quiz"}
+	}
+
+	utils.Warnf("[FLASHCARD_PIPELINE] continue_button_flashcard_generation_started taskID=%s topicID=%s notebookID=%s", taskID, task.TopicID, task.NotebookID)
+
+	cardCount, err := a.studyService.GenerateFlashcardsAfterQuiz(task.NotebookID, task.TopicID, task.StartPage, task.EndPage)
+	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_failed taskID=%s reason=%v", taskID, err)
+		return map[string]interface{}{"error": "failed to generate flashcards: " + err.Error()}
+	}
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
+	utils.Warnf("[DASHBOARD] dashboard_redirect_after_generation taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
+
+	return map[string]interface{}{
+		"review_task_id":    "",
+		"cards_scheduled":   cardCount,
+		"flashcards_gen_ok": true,
+	}
 }
 
 func (a *App) GetDailyStudySettings() map[string]interface{} {
@@ -901,17 +932,51 @@ func (a *App) GenerateReviewTasks(notebookID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation trigger=manual_api notebookID=%s", strings.TrimSpace(notebookID))
 	tasks, err := a.studyService.GenerateReviewTasks(notebookID)
 	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation result=error notebookID=%s err=%v", strings.TrimSpace(notebookID), err)
 		return map[string]interface{}{"error": err.Error()}
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation result=ok notebookID=%s createdTasks=%d", strings.TrimSpace(notebookID), len(tasks))
 	return map[string]interface{}{"tasks": tasks}
 }
 
-func (a *App) GetReviewSession(taskID string) map[string]interface{} {
+func (a *App) GetReviewSession(taskID string, notebookID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
+
+	// Materialize synthetic tasks from the scheduler
+	if taskID == models.ReviewTaskDailyID {
+		requestedNotebookID := notebookID
+		utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materializing synthetic task notebookID=%s", notebookID)
+		if notebookID == "" {
+			resolvedNotebookID, dueCount, err := db.GetNextDueReviewNotebook(time.Now().Unix())
+			if err != nil {
+				return map[string]interface{}{"error": "Failed to resolve notebook for review materialization: " + err.Error()}
+			}
+			notebookID = resolvedNotebookID
+			if notebookID != "" {
+				utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d source=review_materialization", notebookID, dueCount)
+			}
+		}
+		utils.Warnf("[FLASHCARD_PIPELINE] review_materialization_notebook_resolution taskID=%s requestedNotebookID=%s resolvedNotebookID=%s", taskID, requestedNotebookID, notebookID)
+
+		if notebookID == "" {
+			return map[string]interface{}{"error": "No due cards found for review materialization"}
+		}
+
+		// CreateReviewSession materializes a review session in the DB for the given notebookID.
+		// Returns the session Task (with a newly-created ID) and a boolean indicating if an existing legacy session was reused.
+		task, reused, err := db.CreateReviewSession(notebookID)
+		if err != nil {
+			return map[string]interface{}{"error": "Failed to materialize review session: " + err.Error()}
+		}
+		utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materialized notebookID=%s taskID=%s reused=%t", notebookID, task.ID, reused)
+		taskID = task.ID
+	}
+
 	session, err := a.studyService.GetReviewSession(taskID)
 	if err != nil {
 		switch err {

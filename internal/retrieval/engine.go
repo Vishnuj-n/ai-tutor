@@ -102,23 +102,144 @@ func (e *Engine) SemanticSearch(topicID string, query string, topK int, startPag
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
 	}
+
+	loadChunks := func() ([]models.Chunk, error) {
+		if startPage > 0 && endPage > 0 {
+			return db.GetChunksForTopicPageRange(topicID, startPage, endPage)
+		}
+		return db.GetChunksForTopic(topicID)
+	}
+
+	vectorSearch := func(queryVec []float32, k int) ([]string, error) {
+		return db.SearchVectorsForTopic(topicID, queryVec, k, startPage, endPage)
+	}
+
+	return e.searchWithScope("vector search", query, topK, loadChunks, vectorSearch)
+}
+
+// SemanticSearchNotebook returns the topK most relevant chunks linked to one notebook.
+func (e *Engine) SemanticSearchNotebook(notebookID string, topicID string, query string, topK int) ([]SearchResult, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	topicID = strings.TrimSpace(topicID)
+
+	var scopedChunksCache []models.Chunk
+	var scopedChunksLoaded bool
+	getScopedChunks := func() ([]models.Chunk, error) {
+		if scopedChunksLoaded {
+			return scopedChunksCache, nil
+		}
+		chunks, err := db.GetChunksForNotebook(notebookID)
+		if err != nil {
+			return nil, err
+		}
+		if topicID == "" {
+			scopedChunksCache = chunks
+			scopedChunksLoaded = true
+			return scopedChunksCache, nil
+		}
+		filtered := make([]models.Chunk, 0, len(chunks))
+		for _, c := range chunks {
+			if c.TopicID == topicID {
+				filtered = append(filtered, c)
+			}
+		}
+		scopedChunksCache = filtered
+		scopedChunksLoaded = true
+		return scopedChunksCache, nil
+	}
+
+	// Load chunks for notebook, optionally scoped to a topic if provided.
+	loadChunks := func() ([]models.Chunk, error) {
+		return getScopedChunks()
+	}
+
+	vectorSearch := func(queryVec []float32, k int) ([]string, error) {
+		if topicID == "" {
+			return db.SearchVectorsForNotebook(notebookID, queryVec, k)
+		}
+
+		scopedChunks, err := getScopedChunks()
+		if err != nil {
+			return nil, err
+		}
+		allowed := make(map[string]struct{}, len(scopedChunks))
+		for _, c := range scopedChunks {
+			allowed[c.ID] = struct{}{}
+		}
+
+		filtered := make([]string, 0, k)
+		seen := make(map[string]struct{}, k)
+		overfetchK := k
+		if overfetchK < 10 {
+			overfetchK = 10
+		}
+		if overfetchK > 100 {
+			overfetchK = 100
+		}
+
+		for {
+			chunkIDs, searchErr := db.SearchVectorsForNotebook(notebookID, queryVec, overfetchK)
+			if searchErr != nil {
+				return nil, searchErr
+			}
+
+			for _, cid := range chunkIDs {
+				if _, ok := allowed[cid]; !ok {
+					continue
+				}
+				if _, dup := seen[cid]; dup {
+					continue
+				}
+				seen[cid] = struct{}{}
+				filtered = append(filtered, cid)
+				if len(filtered) >= k {
+					return filtered[:k], nil
+				}
+			}
+
+			if len(chunkIDs) < overfetchK || overfetchK >= 100 {
+				break
+			}
+			nextK := overfetchK * 2
+			if nextK > 100 {
+				nextK = 100
+			}
+			if nextK == overfetchK {
+				break
+			}
+			overfetchK = nextK
+		}
+
+		return filtered, nil
+	}
+
+	return e.searchWithScope("notebook vector search", query, topK, loadChunks, vectorSearch)
+}
+
+// --- internal helpers ---
+
+// searchWithScope is a shared search implementation for both topic and notebook scopes.
+// It handles chunk loading, embedding, vector search, and lexical fallback.
+func (e *Engine) searchWithScope(
+	scopeName string,
+	query string,
+	topK int,
+	loadChunks func() ([]models.Chunk, error),
+	vectorSearch func([]float32, int) ([]string, error),
+) ([]SearchResult, error) {
 	if topK <= 0 {
 		topK = 5
 	}
 
-	// Use database-level filtering when page range is specified
-	var chunks []models.Chunk
-	var err error
-	if startPage > 0 && endPage > 0 {
-		chunks, err = db.GetChunksForTopicPageRange(topicID, startPage, endPage)
-	} else {
-		chunks, err = db.GetChunksForTopic(topicID)
-	}
+	chunks, err := loadChunks()
 	if err != nil {
-		return nil, fmt.Errorf("could not load chunks for topic %s: %w", topicID, err)
+		return nil, fmt.Errorf("could not load chunks: %w", err)
 	}
 	if len(chunks) == 0 {
-		return nil, fmt.Errorf("no chunks found for topic %s", topicID)
+		return nil, fmt.Errorf("no chunks found")
 	}
 
 	k := topK
@@ -126,11 +247,16 @@ func (e *Engine) SemanticSearch(topicID string, query string, topK int, startPag
 		k = len(chunks)
 	}
 
+	// We'll collect chunk-level results in chunkResults and then promote to
+	// parent-level results before returning, so callers always receive parent
+	// documents.
+	var chunkResults []SearchResult
+
 	// --- ONNX path (preferred) ---
 	if e.embedder != nil {
 		queryVec, embedErr := e.embedder.Embed(query)
 		if embedErr == nil {
-			chunkIDs, searchErr := db.SearchVectorsForTopic(topicID, queryVec, k, startPage, endPage)
+			chunkIDs, searchErr := vectorSearch(queryVec, k)
 			if searchErr == nil && len(chunkIDs) > 0 {
 				byID := make(map[string]models.Chunk, len(chunks))
 				for _, c := range chunks {
@@ -152,83 +278,103 @@ func (e *Engine) SemanticSearch(topicID string, query string, topK int, startPag
 						Score:           float64(len(chunkIDs) - i),
 					})
 				}
-				if len(results) > 0 {
-					return results, nil
-				}
+				chunkResults = results
 			}
 			if searchErr != nil {
-				log.Printf("retrieval: vector search unavailable, falling back to lexical: %v", searchErr)
+				log.Printf("retrieval: %s unavailable, falling back to lexical: %v", scopeName, searchErr)
 			}
 		} else {
 			log.Printf("retrieval: query embedding failed, falling back to lexical: %v", embedErr)
 		}
 	}
 
-	// --- Lexical TF-cosine fallback ---
-	return e.lexicalSearch(query, chunks, k), nil
-}
-
-// SemanticSearchNotebook returns the topK most relevant chunks linked to one notebook.
-func (e *Engine) SemanticSearchNotebook(notebookID string, query string, topK int) ([]SearchResult, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
-	}
-	if topK <= 0 {
-		topK = 5
+	// If ONNX didn't produce results, use lexical fallback
+	if len(chunkResults) == 0 {
+		chunkResults = e.lexicalSearch(query, chunks, k)
 	}
 
-	chunks, err := db.GetChunksForNotebook(notebookID)
-	if err != nil {
-		return nil, fmt.Errorf("could not load chunks for notebook %s: %w", notebookID, err)
+	// Promote chunk-level results to parent-level by aggregating scores per parent.
+	type parentAgg struct {
+		repChunkID string
+		text       string
+		topicID    string
+		parentID   string
+		score      float64
+		importance float64
+		weakness   float64
 	}
-	if len(chunks) == 0 {
-		return nil, fmt.Errorf("no chunks found for notebook %s", notebookID)
-	}
-
-	k := topK
-	if len(chunks) < k {
-		k = len(chunks)
-	}
-
-	if e.embedder != nil {
-		queryVec, embedErr := e.embedder.Embed(query)
-		if embedErr == nil {
-			chunkIDs, searchErr := db.SearchVectorsForNotebook(notebookID, queryVec, k)
-			if searchErr == nil && len(chunkIDs) > 0 {
-				byID := make(map[string]models.Chunk, len(chunks))
-				for _, c := range chunks {
-					byID[c.ID] = c
-				}
-				results := make([]SearchResult, 0, len(chunkIDs))
-				for i, cid := range chunkIDs {
-					c, ok := byID[cid]
-					if !ok {
-						continue
-					}
-					results = append(results, SearchResult{
-						ChunkID:         c.ID,
-						Text:            c.Text,
-						TopicID:         c.TopicID,
-						ParentID:        c.ParentID,
-						ImportanceScore: c.ImportanceScore,
-						WeaknessScore:   c.WeaknessScore,
-						Score:           float64(len(chunkIDs) - i),
-					})
-				}
-				if len(results) > 0 {
-					return results, nil
-				}
+	aggs := make(map[string]*parentAgg)
+	for _, r := range chunkResults {
+		pid := r.ParentID
+		if pid == "" {
+			// If no parent, treat chunk as its own parent by using ChunkID
+			pid = r.ChunkID
+		}
+		a, ok := aggs[pid]
+		if !ok {
+			aggs[pid] = &parentAgg{
+				repChunkID: r.ChunkID,
+				text:       r.Text,
+				topicID:    r.TopicID,
+				parentID:   pid,
+				score:      r.Score,
+				importance: r.ImportanceScore,
+				weakness:   r.WeaknessScore,
 			}
-			if searchErr != nil {
-				log.Printf("retrieval: notebook vector search unavailable, falling back to lexical: %v", searchErr)
-			}
-		} else {
-			log.Printf("retrieval: notebook query embedding failed, falling back to lexical: %v", embedErr)
+			continue
+		}
+		// Aggregate by summing scores and keeping highest-importance/weakness
+		a.score += r.Score
+		if r.ImportanceScore > a.importance {
+			a.importance = r.ImportanceScore
+			a.text = r.Text
+			a.repChunkID = r.ChunkID
+		}
+		if r.WeaknessScore > a.weakness {
+			a.weakness = r.WeaknessScore
 		}
 	}
 
-	return e.lexicalSearch(query, chunks, k), nil
+	// Convert aggs map to slice and sort by aggregated score desc
+	parentResults := make([]SearchResult, 0, len(aggs))
+	for _, a := range aggs {
+		parentResults = append(parentResults, SearchResult{
+			ChunkID:         a.repChunkID,
+			Text:            a.text,
+			TopicID:         a.topicID,
+			ParentID:        a.parentID,
+			ImportanceScore: a.importance,
+			WeaknessScore:   a.weakness,
+			Score:           a.score,
+		})
+	}
+	sort.Slice(parentResults, func(i, j int) bool { return parentResults[i].Score > parentResults[j].Score })
+	if len(parentResults) > topK {
+		parentResults = parentResults[:topK]
+	}
+
+	for i := range parentResults {
+		parentID := strings.TrimSpace(parentResults[i].ParentID)
+		if parentID == "" {
+			continue
+		}
+		parent, err := db.GetParentSection(parentID)
+		if err != nil {
+			log.Printf("retrieval: failed to materialize parent %s, keeping representative chunk: %v", parentID, err)
+			parentResults[i].ChunkID = parentID
+			continue
+		}
+		if parentText := strings.TrimSpace(parent["content"]); parentText != "" {
+			parentResults[i].Text = parentText
+		}
+		if materializedID := strings.TrimSpace(parent["id"]); materializedID != "" {
+			parentResults[i].ChunkID = materializedID
+		} else {
+			parentResults[i].ChunkID = parentID
+		}
+	}
+
+	return parentResults, nil
 }
 
 // --- internal helpers ---
