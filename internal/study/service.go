@@ -24,6 +24,7 @@ const wordThresholdForHeavyLLM = 4000
 // LLMProvider is the minimal interface both LLM tiers satisfy.
 type LLMProvider interface {
 	GenerateAnswer(prompt string) (string, error)
+	ModelName() string
 }
 
 // Config wires all dependencies into StudyService via constructor injection.
@@ -233,19 +234,227 @@ func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
 	if raw == "" {
 		return nil, fmt.Errorf("empty LLM response")
 	}
+
+	// Strip markdown code fences if present
+	if strings.HasPrefix(raw, "```json") {
+		raw = strings.TrimPrefix(raw, "```json")
+		raw = strings.TrimSpace(raw)
+		if strings.HasSuffix(raw, "```") {
+			raw = strings.TrimSuffix(raw, "```")
+			raw = strings.TrimSpace(raw)
+		}
+	} else if strings.HasPrefix(raw, "```") {
+		raw = strings.TrimPrefix(raw, "```")
+		raw = strings.TrimSpace(raw)
+		if strings.HasSuffix(raw, "```") {
+			raw = strings.TrimSuffix(raw, "```")
+			raw = strings.TrimSpace(raw)
+		}
+	}
+
+	// Extract JSON between first { and last }
 	start := strings.Index(raw, "{")
 	end := strings.LastIndex(raw, "}")
 	if start >= 0 && end > start {
 		raw = raw[start : end+1]
 	}
+
+	// Truncation recovery: fix common JSON malformations
+	// Case 1: Extra } after array element (e.g., {"cards":[{...},{...}}})
+	if strings.Contains(raw, "}}") && strings.Count(raw, "}") > strings.Count(raw, "{") {
+		// Single-pass brace-balance scanner: count and remove only necessary closing braces
+		openBraces := strings.Count(raw, "{")
+		closeBraces := strings.Count(raw, "}")
+		extraBraces := closeBraces - openBraces
+		if extraBraces > 0 {
+			// Remove trailing extra braces
+			raw = raw[:len(raw)-extraBraces]
+			utils.Warnf("[FLASHCARD_PARSE] truncation_recovery removed_extra_closing_braces count=%d", extraBraces)
+		}
+	}
+
+	// Case 2: Missing closing braces
+	openBraces := strings.Count(raw, "{")
+	closeBraces := strings.Count(raw, "}")
+	if closeBraces < openBraces {
+		missing := openBraces - closeBraces
+		for i := 0; i < missing; i++ {
+			raw += "}"
+		}
+		utils.Warnf("[FLASHCARD_PARSE] truncation_recovery added=%d_closing_braces", missing)
+	}
+
+	// Case 3: Missing closing bracket for cards array
+	if strings.Contains(raw, `"cards":[`) && !strings.Contains(raw, "]") {
+		raw += "]"
+		utils.Warnf("[FLASHCARD_PARSE] truncation_recovery added_closing_bracket")
+	}
+
 	var out flashcardLLMResponse
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		// Log truncated raw prefix to avoid huge/secret-bearing logs
+		rawPrefix := raw
+		if len(rawPrefix) > 512 {
+			rawPrefix = rawPrefix[:512]
+		}
+		utils.Warnf("[FLASHCARD_PARSE] json_unmarshal_failed error=%v raw_length=%d raw_prefix=%s", err, len(raw), rawPrefix)
+
+		// Graceful degradation: try to salvage partial cards from malformed JSON
+		if salvaged := salvagePartialCards(raw); salvaged != nil && len(salvaged.Cards) > 0 {
+			// Validate salvaged cards using the same validation as normal cards
+			validCards := make([]flashcardLLMCard, 0, len(salvaged.Cards))
+			for i, card := range salvaged.Cards {
+				if strings.TrimSpace(card.SourceChunkID) == "" {
+					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=source_chunk_id skipping", i)
+					continue
+				}
+				if strings.TrimSpace(card.Prompt) == "" {
+					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=prompt skipping", i)
+					continue
+				}
+				if strings.TrimSpace(card.Answer) == "" {
+					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=answer skipping", i)
+					continue
+				}
+				validCards = append(validCards, card)
+			}
+			if len(validCards) > 0 {
+				utils.Warnf("[FLASHCARD_PARSE] graceful_degradation salvaged=%d_cards valid=%d from_malformed_json", len(salvaged.Cards), len(validCards))
+				return &flashcardLLMResponse{Cards: validCards}, nil
+			}
+		}
+
 		return nil, err
 	}
 	if len(out.Cards) == 0 {
+		utils.Warnf("[FLASHCARD_PARSE] no_cards_in_response raw_response=%s", raw)
 		return nil, fmt.Errorf("no cards in LLM response")
 	}
+
+	// Schema validation: ensure each card has required fields
+	validCards := make([]flashcardLLMCard, 0, len(out.Cards))
+	for i, card := range out.Cards {
+		if strings.TrimSpace(card.SourceChunkID) == "" {
+			utils.Warnf("[FLASHCARD_PARSE] schema_validation_failed card_index=%d missing_field=source_chunk_id skipping", i)
+			continue
+		}
+		if strings.TrimSpace(card.Prompt) == "" {
+			utils.Warnf("[FLASHCARD_PARSE] schema_validation_failed card_index=%d missing_field=prompt skipping", i)
+			continue
+		}
+		if strings.TrimSpace(card.Answer) == "" {
+			utils.Warnf("[FLASHCARD_PARSE] schema_validation_failed card_index=%d missing_field=answer skipping", i)
+			continue
+		}
+		validCards = append(validCards, card)
+	}
+
+	if len(validCards) == 0 {
+		utils.Warnf("[FLASHCARD_PARSE] no_valid_cards_after_validation original_count=%d", len(out.Cards))
+		return nil, fmt.Errorf("no valid cards after schema validation")
+	}
+
+	if len(validCards) < len(out.Cards) {
+		utils.Warnf("[FLASHCARD_PARSE] graceful_degradation original=%d valid=%d skipped=%d", len(out.Cards), len(validCards), len(out.Cards)-len(validCards))
+		out.Cards = validCards
+	}
+
 	return &out, nil
+}
+
+// salvagePartialCards attempts to extract valid cards from malformed JSON
+// by looking for card-like patterns in the raw response.
+func salvagePartialCards(raw string) *flashcardLLMResponse {
+	utils.Warnf("[FLASHCARD_PARSE] salvage_attempt initiated raw_length=%d", len(raw))
+
+	// Try to find card objects by splitting on '{' boundaries
+	cards := make([]flashcardLLMCard, 0)
+
+	// Find all '{' positions to identify potential card objects
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '{' {
+			// Find matching closing brace or next card start
+			braceCount := 1
+			j := i + 1
+			for j < len(raw) && braceCount > 0 {
+				switch raw[j] {
+				case '{':
+					braceCount++
+				case '}':
+					braceCount--
+				}
+				j++
+			}
+
+			// Extract potential card object
+			if braceCount == 0 && j > i+1 {
+				cardStr := raw[i+1 : j-1] // Content between { and }
+
+				// Try to extract fields from this object
+				sourceChunkID := extractJSONField("{"+cardStr+"}", "source_chunk_id")
+				prompt := extractJSONField("{"+cardStr+"}", "prompt")
+				answer := extractJSONField("{"+cardStr+"}", "answer")
+
+				// Only add if we have at least some non-empty required fields
+				if sourceChunkID != "" && prompt != "" && answer != "" {
+					cards = append(cards, flashcardLLMCard{
+						SourceChunkID: sourceChunkID,
+						Prompt:        prompt,
+						Answer:        answer,
+					})
+				}
+			}
+		}
+	}
+
+	if len(cards) == 0 {
+		utils.Warnf("[FLASHCARD_PARSE] salvage_failed no_cards_extracted")
+		return nil
+	}
+
+	utils.Warnf("[FLASHCARD_PARSE] salvage_success extracted=%d_cards", len(cards))
+	return &flashcardLLMResponse{Cards: cards}
+}
+
+// extractJSONField attempts to extract a field value from a malformed JSON string,
+// properly handling escaped quotes (e.g., \")
+func extractJSONField(raw, fieldName string) string {
+	// Look for pattern: "field":"value" or "field":"value"
+	pattern := `"` + fieldName + `":"`
+	idx := strings.Index(raw, pattern)
+	if idx == -1 {
+		return ""
+	}
+
+	// Skip past the pattern and opening quote
+	start := idx + len(pattern)
+	if start >= len(raw) {
+		return ""
+	}
+
+	// Find the closing quote, accounting for escaped quotes
+	var end int
+	for i := start; i < len(raw); i++ {
+		if raw[i] == '\\' && i+1 < len(raw) {
+			// Skip escaped character
+			i++
+			continue
+		}
+		if raw[i] == '"' {
+			end = i - start
+			break
+		}
+	}
+	if end == 0 && (len(raw) <= start || raw[start] == '"') {
+		return "" // No value found or empty string
+	}
+
+	// Handle case where we didn't find closing quote
+	if end == 0 {
+		end = len(raw) - start
+	}
+
+	return strings.TrimSpace(raw[start : start+end])
 }
 
 func parseShortAnswerPromptLLMResponse(raw string) (*shortAnswerPromptLLMResponse, error) {
@@ -422,17 +631,22 @@ func ScaledFlashcardCount(wordCount int) int {
 
 // buildPageBoundedContext fetches structured chunk context for a notebook page range
 // and returns (chunks, tokenCount, error) with hard token budget enforcement.
+// This is the canonical bounded context pipeline used by both manual and automatic flashcard generation.
 func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
+	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext entry notebookID=%s page_range=%d-%d", notebookID, startPage, endPage)
 	chunks, err := db.GetChunksWithContextByNotebookPageRange(notebookID, startPage, endPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to load page-bounded context: %w", err)
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext raw_chunks=%d before_budget_enforcement", len(chunks))
 	if len(chunks) == 0 {
 		// Return empty response instead of error for marathon mode compatibility
 		return []models.ChunkWithContext{}, 0, nil
 	}
 
 	// Enforce hard token budget during assembly
+	// Use conservative default since we don't have model context here
+	// The actual budget enforcement happens in buildMarathonFlashcardPromptWithBudget
 	const maxContextTokens = 8000
 	const baseOverhead = 200 // Estimated tokens for prompt template and instructions
 
@@ -464,6 +678,7 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 
 	// Calculate final token count
 	finalTokenCount := calculatePromptTokenCount(budgetedChunks)
+	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext exit budgeted_chunks=%d token_count=%d raw_chunks=%d truncated=%d", len(budgetedChunks), finalTokenCount, len(chunks), len(chunks)-len(budgetedChunks))
 
 	return budgetedChunks, finalTokenCount, nil
 }

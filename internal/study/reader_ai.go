@@ -1,6 +1,7 @@
 package study
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -98,7 +99,7 @@ func (s *StudyService) ExplainReaderSection(sectionID string, question string) m
 		return map[string]interface{}{"error": "failed to fetch reader section: " + err.Error()}
 	}
 
-	topicID, startPage, endPage, err := resolveReaderSectionScope(sectionID)
+	topicID, notebookID, startPage, endPage, err := resolveReaderSectionScope(sectionID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to resolve reader section scope: " + err.Error()}
 	}
@@ -108,6 +109,7 @@ func (s *StudyService) ExplainReaderSection(sectionID string, question string) m
 
 	resp := s.AnswerReaderQuestion(ReaderAIRequest{
 		TopicID:          topicID,
+		NotebookID:       notebookID,
 		Question:         question,
 		Scope:            ReaderScopeCurrentChapter,
 		ChapterStartPage: startPage,
@@ -133,7 +135,7 @@ func (s *StudyService) searchReaderScope(req ReaderAIRequest, scope ReaderRetrie
 		if req.NotebookID == "" {
 			return nil, fmt.Errorf("notebook ID is required for notebook-wide retrieval")
 		}
-		return s.retrievalEngine.SemanticSearchNotebook(req.NotebookID, req.Question, topK)
+		return s.retrievalEngine.SemanticSearchNotebook(req.NotebookID, req.TopicID, req.Question, topK)
 	case ReaderScopeCurrentChapter:
 		startPage := req.ChapterStartPage
 		endPage := req.ChapterEndPage
@@ -221,24 +223,32 @@ func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
 	return strings.TrimSpace(builder.String()), citations
 }
 
-func resolveReaderSectionScope(sectionID string) (string, int, int, error) {
-	var topicID string
-	err := db.GetConnection().QueryRow(`
-		SELECT topic_id
-		FROM parents
-		WHERE id = ?
-	`, sectionID).Scan(&topicID)
+func resolveReaderSectionScope(sectionID string) (string, string, int, int, error) {
+	// Use repository helpers to avoid SQL in service layer.
+	topicID, err := db.GetTopicIDBySectionID(sectionID)
 	if err != nil {
-		return "", 0, 0, err
+		return "", "", 0, 0, err
+	}
+
+	// Fetch the first notebook that contains this topic. It's acceptable for
+	// there to be no notebook linked (sql.ErrNoRows) — callers treat empty
+	// notebookID as a non-fatal condition.
+	notebookID, err := db.GetFirstNotebookIDByTopicID(topicID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			notebookID = ""
+		} else {
+			return "", "", 0, 0, fmt.Errorf("failed to resolve notebook for topic %q: %w", topicID, err)
+		}
 	}
 
 	pageRanges, err := db.GetTopicHeadingPageRanges(topicID)
 	if err != nil {
-		return topicID, 0, 0, nil
+		return topicID, notebookID, 0, 0, nil
 	}
 	pageRange, ok := pageRanges[sectionID]
 	if !ok {
-		return topicID, 0, 0, nil
+		return topicID, notebookID, 0, 0, nil
 	}
-	return topicID, pageRange[0], pageRange[1], nil
+	return topicID, notebookID, pageRange[0], pageRange[1], nil
 }

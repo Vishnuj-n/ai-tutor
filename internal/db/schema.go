@@ -176,6 +176,7 @@ func InitSchema(tx *sql.Tx) error {
 			chunk_id TEXT NOT NULL,
 			page_num INTEGER DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (notebook_id, chunk_id),
 			FOREIGN KEY (notebook_id) REFERENCES notebooks(id),
 			FOREIGN KEY (chunk_id) REFERENCES chunks(id)
 		)`,
@@ -310,6 +311,54 @@ func InitSchema(tx *sql.Tx) error {
 	for _, stmt := range indexes {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to create index: %w", err)
+		}
+	}
+
+	// Ensure uniqueness of (notebook_id, chunk_id) for existing databases.
+	// For DBs created earlier without the UNIQUE constraint, dedupe existing
+	// rows first, then create a unique index. This avoids adding the constraint
+	// directly which would fail if duplicates exist.
+	{
+		rows, err := tx.Query(`
+			SELECT id, notebook_id, chunk_id, created_at
+			FROM notebook_chunks
+			ORDER BY notebook_id, chunk_id, created_at ASC
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to query notebook_chunks for dedupe: %w", err)
+		}
+		defer rows.Close()
+		seen := make(map[string]bool)
+		var idsToDelete []string
+		for rows.Next() {
+			var id, nb, cid string
+			var createdAt string
+			if err := rows.Scan(&id, &nb, &cid, &createdAt); err != nil {
+				return fmt.Errorf("failed to scan notebook_chunks dedupe row id=%s notebook_id=%s chunk_id=%s: %w", id, nb, cid, err)
+			}
+			key := nb + "::" + cid
+			if seen[key] {
+				idsToDelete = append(idsToDelete, id)
+				continue
+			}
+			seen[key] = true
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("failed while iterating notebook_chunks dedupe rows: %w", err)
+		}
+
+		for _, id := range idsToDelete {
+			if _, err := tx.Exec(`DELETE FROM notebook_chunks WHERE id = ?`, id); err != nil {
+				return fmt.Errorf("failed to delete duplicate notebook_chunks row id=%s: %w", id, err)
+			}
+		}
+
+		// Create unique index (works on SQLite/Postgres with IF NOT EXISTS semantics for sqlite)
+		if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notebook_chunk_unique ON notebook_chunks(notebook_id, chunk_id)`); err != nil {
+			// Ignore duplicate index errors where they indicate index already exists.
+			if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+				return fmt.Errorf("failed to create unique index on notebook_chunks: %w", err)
+			}
 		}
 	}
 

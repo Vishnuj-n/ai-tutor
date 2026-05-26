@@ -160,7 +160,7 @@ func GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
 	}
 
 	rows, err := conn.Query(`
-		SELECT DISTINCT c.id, c.topic_id, c.parent_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
+		SELECT c.id, c.topic_id, c.parent_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
 		FROM notebook_chunks nc
 		JOIN chunks c ON c.id = nc.chunk_id
 		WHERE nc.notebook_id = ?
@@ -267,6 +267,45 @@ func GetParentSection(parentID string) (map[string]string, error) {
 		"heading": heading,
 		"content": content,
 	}, nil
+}
+
+// GetTopicIDBySectionID returns topic_id for a given parent/section id.
+func GetTopicIDBySectionID(sectionID string) (string, error) {
+	sectionID = strings.TrimSpace(sectionID)
+	if sectionID == "" {
+		return "", fmt.Errorf("invalid empty sectionID")
+	}
+	var topicID string
+	err := conn.QueryRow(`
+		SELECT topic_id
+		FROM parents
+		WHERE id = ?
+	`, sectionID).Scan(&topicID)
+	if err != nil {
+		return "", err
+	}
+	return topicID, nil
+}
+
+// GetFirstNotebookIDByTopicID returns the earliest notebook_id linked to a topic.
+// If no notebook is linked, returns sql.ErrNoRows.
+func GetFirstNotebookIDByTopicID(topicID string) (string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return "", fmt.Errorf("invalid empty topicID")
+	}
+	var notebookID string
+	err := conn.QueryRow(`
+		SELECT notebook_id
+		FROM notebook_topics
+		WHERE topic_id = ?
+		ORDER BY created_at ASC, notebook_id ASC
+		LIMIT 1
+	`, topicID).Scan(&notebookID)
+	if err != nil {
+		return "", err
+	}
+	return notebookID, nil
 }
 
 // GetTotalChunkTokens returns estimated total tokens for one topic.

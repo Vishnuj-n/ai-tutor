@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
+	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
 
@@ -34,6 +36,11 @@ func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, 
 }
 
 func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, startPage, endPage int, topicTitle string) map[string]interface{} {
+	generationSource := "manual_or_topic_api"
+	if strings.HasPrefix(topicID, "topic-") {
+		generationSource = "quiz_completion_auto"
+	}
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_trigger source=%s topicID=%s notebookID=%s startPage=%d endPage=%d", generationSource, strings.TrimSpace(topicID), strings.TrimSpace(notebookID), startPage, endPage)
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return map[string]interface{}{"error": "notebook ID is required"}
@@ -46,6 +53,7 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_auto_generation_batch generation_source=%s chunk_count=%d token_estimate=%d page_range=%d-%d", generationSource, len(contextChunks), tokenCount, startPage, endPage)
 	contextText := buildContextTextFromChunks(contextChunks)
 
 	llm, tier := s.selectLLM(contextText)
@@ -53,25 +61,58 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 		return map[string]interface{}{"error": "no LLM provider available (tier: " + tier + ")"}
 	}
 
-	targetCount := ScaledFlashcardCount(tokenCount)
-	prompt := buildMarathonFlashcardPrompt(notebookID, startPage, endPage, contextChunks, tokenCount, targetCount)
+	// Get model-specific token limits
+	modelName := providerModelName(llm)
+	maxInputTokens := 30000 // default fallback
+	maxOutputTokens := 3000 // default fallback
+
+	if provider, ok := llm.(*llmpkg.Provider); ok {
+		limits := provider.GetLimits()
+		maxInputTokens = limits.MaxInputTokens
+		maxOutputTokens = limits.MaxOutputTokens
+		utils.Warnf("[FLASHCARD_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
+	}
+
+	// Enforce strict token budget: cap at configured maximum to prevent oversized outputs
+	originalCount := ScaledFlashcardCount(tokenCount)
+	targetCount := originalCount
+	if targetCount > FlashcardCountMax {
+		targetCount = FlashcardCountMax
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_count_capped original=%d capped=%d max_configured=%d", originalCount, targetCount, FlashcardCountMax)
+	}
+
+	// Build prompt with token budgeting
+	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookID, startPage, endPage, contextChunks, targetCount, maxInputTokens)
+
+	// Log token estimates before generation
+	utils.Warnf("[FLASHCARD_PIPELINE] token_budget_estimate prompt_tokens=%d max_input=%d budget_used_pct=%.2f", promptTokenCount, maxInputTokens, float64(promptTokenCount)/float64(maxInputTokens)*100)
+
+	if promptTokenCount > maxInputTokens {
+		return map[string]interface{}{"error": fmt.Sprintf("prompt exceeds model context limit: %d > %d", promptTokenCount, maxInputTokens)}
+	}
 
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard generation failed: " + err.Error()}
 	}
+
+	// Validate output size before parsing
+	outputTokenEstimate := len(strings.Fields(raw))
+	utils.Warnf("[FLASHCARD_PIPELINE] output_validation output_tokens_est=%d max_output=%d", outputTokenEstimate, maxOutputTokens)
+
 	parsed, err := parseFlashcardLLMResponse(raw)
 	if err != nil {
 		return map[string]interface{}{"error": "flashcard parsing failed: " + err.Error()}
 	}
 
 	now := time.Now().Unix()
+	dueAt := now + 24*60*60 // Schedule new cards for delayed reinforcement, not same-day review.
 
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
 	states := make(map[string]models.FlashcardState, len(parsed.Cards))
-	allowedChunkIDs := make(map[string]struct{}, len(contextChunks))
-	for _, chunk := range contextChunks {
-		allowedChunkIDs[chunk.ChunkID] = struct{}{}
+	allowedChunkIDs := make(map[string]struct{}, len(includedChunkIDs))
+	for _, chunkID := range includedChunkIDs {
+		allowedChunkIDs[chunkID] = struct{}{}
 	}
 	for _, candidate := range parsed.Cards {
 		sourceChunkID := strings.TrimSpace(candidate.SourceChunkID)
@@ -100,7 +141,7 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 			SourceChunkID: sourceChunkID,
 			Prompt:        cardPrompt,
 			Answer:        answer,
-			DueAt:         now,
+			DueAt:         dueAt,
 			Suspended:     false,
 		})
 		states[id] = models.FlashcardState{}
@@ -113,10 +154,28 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 	if err != nil {
 		return map[string]interface{}{"error": fmt.Sprintf("failed to ensure topic %s (notebookID: %s, pages %d-%d): %s", topicID, notebookID, startPage, endPage, err.Error())}
 	}
+	err = db.EnsureNotebookTopic(notebookID, topicID)
+	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] failed to link topic to notebook topicID=%s notebookID=%s err=%v", topicID, notebookID, err)
+	}
+
 	cards, existing, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
 	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_persistence result=error topicID=%s notebookID=%s err=%v", topicID, notebookID, err)
 		return map[string]interface{}{"error": "failed to persist marathon flashcards: " + err.Error()}
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_persistence result=ok topicID=%s notebookID=%s cardCount=%d existing=%v", topicID, notebookID, len(cards), existing)
+
+	initialDueAt := dueAt
+	if existing {
+		initialDueAt = 0
+		for _, card := range cards {
+			if card.DueAt > 0 && (initialDueAt == 0 || card.DueAt < initialDueAt) {
+				initialDueAt = card.DueAt
+			}
+		}
+	}
+	utils.Warnf("[FLASHCARD_PIPELINE] deferred_new_cards_excluded notebookID=%s topicID=%s cardCount=%d initialDueAt=%d", notebookID, topicID, len(cards), initialDueAt)
 
 	cardIDs := make([]string, len(cards))
 	for i, card := range cards {
@@ -127,7 +186,7 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 		return map[string]interface{}{"error": "failed to fetch flashcard states: " + err.Error()}
 	}
 
-	return map[string]interface{}{
+	response := map[string]interface{}{
 		"notebook_id":       notebookID,
 		"existing":          existing,
 		"start_page":        startPage,
@@ -139,15 +198,32 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 		"llm_tier":          tier,
 		"generated_at_unix": now,
 	}
+	if initialDueAt > 0 {
+		response["initial_due_at"] = initialDueAt
+	}
+
+	return response
 }
 
-func buildMarathonFlashcardPrompt(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, tokenCount, targetCount int) string {
+func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {
+	// Base prompt overhead (instructions, format, etc.)
+	const baseOverheadTokens = 300
+	const safetyMarginTokens = 500 // Reserve for output tokens and safety margin
+
+	// Calculate available budget for chunks
+	availableBudget := maxInputTokens - baseOverheadTokens - safetyMarginTokens
+	if availableBudget < 1000 {
+		availableBudget = 1000 // Minimum budget for meaningful content
+	}
+
 	var b strings.Builder
-	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS). Return STRICT JSON only. No markdown.\n")
+	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS).\n")
+	b.WriteString("CRITICAL: Return ONLY valid JSON. No markdown. No code blocks. No explanations.\n")
+	b.WriteString("Output must start with { and end with }. No prefix or suffix text.\n")
 	fmt.Fprintf(&b, "Generate exactly %d flashcards covering pages %d-%d of notebook '%s'.\n",
 		targetCount, startPage, endPage, notebookID)
-	fmt.Fprintf(&b, "Content token count: %d\n", tokenCount)
-	b.WriteString(`JSON format: {"cards":[{"source_chunk_id":string,"prompt":string,"answer":string}]}` + "\n")
+	b.WriteString("\n=== JSON FORMAT (FOLLOW EXACTLY) ===\n")
+	b.WriteString(`{"cards":[{"source_chunk_id":"chunk_123","prompt":"What is X?","answer":"X is..."},{"source_chunk_id":"chunk_456","prompt":"How does Y work?","answer":"Y works by..."}]}` + "\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
 	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")
 	b.WriteString("\n=== PROMPT QUALITY ===\n")
@@ -157,21 +233,50 @@ func buildMarathonFlashcardPrompt(notebookID string, startPage, endPage int, con
 	b.WriteString("- Answers must be short (1-2 sentences max, grounded in source).\n")
 	b.WriteString("- source_chunk_id must exactly match one chunk_id from the provided chunk list.\n")
 	b.WriteString("\n=== SOURCE CHUNKS ===\n")
-	const maxContextChunks = 120
-	limit := len(contextChunks)
-	if limit > maxContextChunks {
-		limit = maxContextChunks
-	}
-	for i := 0; i < limit; i++ {
-		chunk := contextChunks[i]
+
+	// Trim chunks based on token budget
+	currentTokens := baseOverheadTokens
+	var includedChunks []models.ChunkWithContext
+	var includedChunkIDs []string
+	truncatedCount := 0
+
+	for _, chunk := range contextChunks {
 		text := strings.TrimSpace(chunk.Text)
 		if text == "" {
 			continue
 		}
+
+		// Estimate tokens for this chunk with formatting
+		chunkLine := fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
+		chunkTokens, err := embeddings.CountTokens(chunkLine)
+		if err != nil {
+			// Fallback to word count if tokenization fails
+			chunkTokens = len(strings.Fields(chunkLine))
+		}
+
+		// Check if adding this chunk would exceed budget
+		if currentTokens+chunkTokens > availableBudget {
+			truncatedCount++
+			continue
+		}
+
+		includedChunks = append(includedChunks, chunk)
+		includedChunkIDs = append(includedChunkIDs, chunk.ChunkID)
+		currentTokens += chunkTokens
+	}
+
+	// Add chunks to prompt
+	for _, chunk := range includedChunks {
+		text := strings.TrimSpace(chunk.Text)
 		fmt.Fprintf(&b, "- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
 	}
-	if len(contextChunks) > maxContextChunks {
-		b.WriteString("[...additional chunks truncated...]\n")
+
+	if truncatedCount > 0 {
+		fmt.Fprintf(&b, "[...%d additional chunks truncated to stay within token budget...]\n", truncatedCount)
 	}
-	return b.String()
+
+	utils.Warnf("[FLASHCARD_PIPELINE] chunk_trimming total_chunks=%d included=%d truncated=%d budget_used=%d available=%d",
+		len(contextChunks), len(includedChunks), truncatedCount, currentTokens, availableBudget)
+
+	return b.String(), currentTokens, includedChunkIDs
 }

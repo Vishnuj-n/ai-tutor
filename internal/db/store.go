@@ -123,7 +123,8 @@ func InitWithVectorDimension(embeddingDim int32) error {
 	return createVectorTable()
 }
 
-// QueryDueReviewCards counts cards due by the given time, scoped to existing topics
+// QueryDueReviewCards counts cards due by the given time, scoped to existing topics.
+// Excludes cards already linked to pending/active review tasks to avoid double-counting.
 func QueryDueReviewCards(now int64) (int, error) {
 	var count int
 	err := conn.QueryRow(`
@@ -133,6 +134,14 @@ func QueryDueReviewCards(now int64) (int, error) {
 		WHERE fc.suspended = 0
 		  AND fc.due_at IS NOT NULL
 		  AND fc.due_at <= ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM review_task_cards rtc
+			JOIN study_queue sq ON sq.id = rtc.task_id
+			WHERE rtc.card_id = fc.id
+			  AND sq.task_type = 'FLASHCARD_REVIEW'
+			  AND sq.status IN ('PENDING', 'ACTIVE')
+		  )
 	`, now).Scan(&count)
 	return count, err
 }
@@ -291,6 +300,20 @@ func GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]mo
 		limit = maxReviewSessionCards
 	}
 	return getDueReviewCardsForNotebookRepo(notebookID, now, limit)
+}
+
+func GetNextDueReviewNotebook(now int64) (string, int, error) {
+	if now <= 0 {
+		return "", 0, fmt.Errorf("current time is required")
+	}
+	return getNextDueReviewNotebookRepo(now)
+}
+
+func GetDueReviewCardCountsByNotebook(now int64) (map[string]int, error) {
+	if now <= 0 {
+		return nil, fmt.Errorf("current time is required")
+	}
+	return getDueReviewCardCountsByNotebookRepo(now)
 }
 
 func CreateReviewSession(notebookID string) (*models.StudyQueueTask, bool, error) {

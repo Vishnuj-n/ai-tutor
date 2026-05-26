@@ -225,6 +225,20 @@ func UpdateNotebookTitle(notebookID string, title string) error {
 	return nil
 }
 
+// EnsureNotebookTopic links a topic to a notebook if not already linked.
+func EnsureNotebookTopic(notebookID, topicID string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	topicID = strings.TrimSpace(topicID)
+	if notebookID == "" || topicID == "" {
+		return fmt.Errorf("notebook id and topic id are required")
+	}
+	_, err := conn.Exec(`
+		INSERT OR IGNORE INTO notebook_topics (notebook_id, topic_id)
+		VALUES (?, ?)
+	`, notebookID, topicID)
+	return err
+}
+
 // IngestNotebookContent performs a transactional relational commit for notebook sections/chunks.
 func IngestNotebookContent(notebookID string, topicID string, parents []NotebookParentInput, chunks []NotebookChunkInput) error {
 	notebookID = strings.TrimSpace(notebookID)

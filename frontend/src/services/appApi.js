@@ -55,10 +55,6 @@ export function initializeReadingSession(taskID, notebookID, topicID, startPage,
   return appBridge().InitializeReadingSession(taskID, notebookID || '', topicID || '', startPage || 0, endPage || 0)
 }
 
-export function validateReadingCompletion(taskID, finalPage) {
-  return appBridge().ValidateReadingCompletion(taskID, finalPage)
-}
-
 export async function completeReading(taskID) {
   console.warn('[COMPLETE_SESSION] appApi.completeReading request', { taskID })
   try {
@@ -87,11 +83,11 @@ export function submitQuizAttempt(taskID, answers) {
   return appBridge().SubmitQuizAttempt(taskID, answers)
 }
 
-export function getTodayPlan() {
-  return appBridge().GetTodayPlan()
+export function generateFlashcardsForQuizTask(taskID) {
+  return appBridge().GenerateFlashcardsForQuizTask(taskID)
 }
 
-export function getDailyAgenda() {
+export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
@@ -144,8 +140,8 @@ export function generateReviewTasks(notebookID) {
   return appBridge().GenerateReviewTasks(notebookID)
 }
 
-export function getReviewSession(taskID) {
-  return appBridge().GetReviewSession(taskID)
+export function getReviewSession(taskID, notebookID = '') {
+  return appBridge().GetReviewSession(taskID, notebookID)
 }
 
 export function recordCardReview(taskID, cardID, rating) {

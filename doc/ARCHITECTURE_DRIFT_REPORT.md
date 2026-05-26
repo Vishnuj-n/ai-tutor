@@ -402,23 +402,26 @@ Follow-up inserts:
 
 ## 12. Phased Cleanup Plan
 
-### Phase 1: Investigation (Low Risk)
-- [ ] Verify no callers for `notebook/orchestration.go`
-- [ ] Verify no callers for `notebook_orchestration_repo.go`
-- [ ] Check if marathon methods fully replaced in studyService
+### Phase 1: Investigation (Low Risk) ✅ COMPLETED
+- [x] Verify no callers for `notebook/orchestration.go` - thin pass-through confirmed
+- [x] Verify no callers for `notebook_orchestration_repo.go` - orphaned, can remove
+- [x] Check if marathon methods fully replaced in studyService - confirmed still in use
 
-### Phase 2: Documentation Fixes (Zero Risk)
+### Phase 2: Cleanup Executed ✅ COMPLETED
+- [x] Flattened notebook pass-through layer in notebook_endpoints.go
+- [x] Removed deprecated `ValidateReadingCompletion()` from app.go
+- [x] Removed `validateReadingCompletion()` and `getDailyAgenda()` from appApi.js
+- [x] Updated Dashboard.vue to use `getTodayPlan()` directly
+
+### Phase 3: Removal (Medium Risk) - PENDING
+- [ ] Remove `internal/notebook/orchestration.go` (after removing remaining internal callers)
+- [ ] Remove `internal/db/notebook_orchestration_repo.go`
+- [ ] Keep marathon_repo.go - still has real consumers
+- [ ] Keep notebook_topic_tree_repo.go - still has real consumers
+
+### Phase 4: Documentation (Low Risk) - PENDING
 - [ ] Update SCHEMA.md with current tables
 - [ ] Add queue lifecycle documentation to ARCHITECTURE.md
-
-### Phase 3: Removal (Medium Risk)
-- [ ] Remove premature/orphaned files after verification
-- [ ] Remove legacy marathon_repo.go if fully replaced
-- [ ] Remove notebook_topic_tree_repo.go if fully replaced
-
-### Phase 4: Consolidation (Optional)
-- [ ] Evaluate marathon endpoints vs queue-based flows
-- [ ] Consider deprecating GetTodayPlan merge pattern
 
 ---
 

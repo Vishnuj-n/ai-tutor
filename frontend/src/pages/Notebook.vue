@@ -130,20 +130,6 @@
           <p class="priority-hint">Higher-priority notebooks appear earlier in your study queue.</p>
         </div>
 
-        <div class="modal-topics-preview">
-          <h4>Topics Preview</h4>
-          <div v-if="draftChapters.length > 0" class="topics-list">
-            <div v-for="(chapter, index) in draftChapters" :key="`topic-preview-${index}`" class="topic-preview-item">
-              <span class="topic-number">{{ index + 1 }}</span>
-              <span class="topic-title">{{ chapter.title }}</span>
-              <span class="topic-pages">p. {{ chapter.start_page }}-{{ chapter.end_page }}</span>
-            </div>
-          </div>
-          <div v-else class="topics-empty">
-            <p>No topics defined yet. Add chapters above to generate topics.</p>
-          </div>
-        </div>
-
         <div v-if="draftError" class="error-message modal-error">{{ draftError }}</div>
 
         <div class="chapter-table-wrap">
