@@ -367,7 +367,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"deferred_review_cards": plan.DeferredReviewCards, "active_topics": plan.ActiveTopics,
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
-		"insights_available": false, "plan_source": "scheduler-v2-context-locked",
+		"insights_available": false, "plan_source": "queue-materialized",
 	}
 }
 
@@ -419,23 +419,6 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		Priority:        task.Priority,
 		Meta:            meta,
 	}
-}
-
-func (a *App) GetNextTask(notebookID string) map[string]interface{} {
-	if strings.TrimSpace(notebookID) == "" {
-		return map[string]interface{}{"error": "notebook ID is required", "code": 400}
-	}
-	task, err := db.GetNextTask(notebookID)
-	if err != nil {
-		if err == db.ErrNoPendingTasks {
-			return map[string]interface{}{
-				"error": "ErrNoPendingTasks",
-				"code":  204,
-			}
-		}
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"task": task}
 }
 
 func (a *App) ActivateTask(taskID string) map[string]interface{} {
@@ -669,7 +652,6 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 		"navigation": map[string]interface{}{
 			"can_go_prev": currentPage > task.StartPage,
 			"can_go_next": currentPage < task.EndPage,
-			// Note: can_complete removed - trust-based completion, user decides when done
 		},
 	}
 }
@@ -903,31 +885,6 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	return a.studyService.GenerateMarathonFlashcardsWithTopic(topicID, notebookID, startPage, endPage)
 }
 
-// ---------- Reader / existing flows ----------
-
-func (a *App) CompleteReadingSession(topicID string, startPage int, targetPage int) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	return a.studyService.CompleteReadingSession(topicID, startPage, targetPage)
-}
-
-func (a *App) GetFlashcards(topicID string, dueOnly bool) map[string]interface{} {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return map[string]interface{}{"error": "topic ID is required"}
-	}
-	var now int64
-	if dueOnly {
-		now = time.Now().Unix()
-	}
-	cards, err := db.GetFlashcardsForTopic(topicID, dueOnly, now)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch flashcards: " + err.Error()}
-	}
-	return map[string]interface{}{"topic_id": topicID, "cards": cards}
-}
-
 func (a *App) GenerateReviewTasks(notebookID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -1028,26 +985,6 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 	return map[string]interface{}{"ok": true}
 }
 
-func (a *App) RecordFlashcardReview(cardID string, rating string) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	cardID = strings.TrimSpace(cardID)
-	rating = strings.ToLower(strings.TrimSpace(rating))
-	if cardID == "" {
-		return map[string]interface{}{"error": "flashcard ID is required"}
-	}
-	ratingCode, ok := mapReviewRating(rating)
-	if !ok {
-		return map[string]interface{}{"error": "rating must be one of again, hard, good, easy"}
-	}
-	card, state, reviewLogID, err := a.studyService.ApplyFlashcardReview(cardID, ratingCode)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to update flashcard review: " + err.Error()}
-	}
-	return map[string]interface{}{"card": card, "state": state, "review_log_id": reviewLogID}
-}
-
 func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} {
 	questionID = strings.TrimSpace(questionID)
 	userAnswer = strings.TrimSpace(userAnswer)
@@ -1137,21 +1074,6 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
-}
-
-func mapReviewRating(rating string) (int, bool) {
-	switch rating {
-	case "again":
-		return scheduler.Again, true
-	case "hard":
-		return scheduler.Hard, true
-	case "good":
-		return scheduler.Good, true
-	case "easy":
-		return scheduler.Easy, true
-	default:
-		return 0, false
-	}
 }
 
 func normalizeQuizAnswer(answer string, options []string) string {

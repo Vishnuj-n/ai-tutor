@@ -68,7 +68,18 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
 	}
 	state.ElapsedDays = elapsedDays
-	nextState := scheduler.NextFSRSState(*state, ratingCode)
+
+	var lastReviewedAt int64
+	if tx != nil {
+		err = tx.QueryRow(`SELECT COALESCE(MAX(reviewed_at), 0) FROM fsrs_review_log WHERE activity_type = 'flashcard' AND reference_id = ?`, cardID).Scan(&lastReviewedAt)
+	} else {
+		err = db.GetConnection().QueryRow(`SELECT COALESCE(MAX(reviewed_at), 0) FROM fsrs_review_log WHERE activity_type = 'flashcard' AND reference_id = ?`, cardID).Scan(&lastReviewedAt)
+	}
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("failed to retrieve last reviewed time: %w", err)
+	}
+
+	nextState := scheduler.NextFSRSState(*state, ratingCode, time.Now(), card.DueAt, lastReviewedAt)
 	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {
 		dueAt = now

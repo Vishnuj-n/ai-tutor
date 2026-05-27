@@ -125,7 +125,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { activateTask, completeReviewSession, getNotebooks, generateMarathonFlashcards, getReviewSession, recordCardReview, recordFlashcardReview } from '../services/appApi.js'
+import { activateTask, completeReviewSession, getNotebooks, generateMarathonFlashcards, getReviewSession, recordCardReview } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
@@ -210,18 +210,13 @@ async function rate(ratingKey) {
     rating: ratingKey,
   })
   try {
-    let res
     if (queueMode.value) {
-      res = await recordCardReview(reviewTaskID.value, card.card_id, validRating.value)
-    } else {
-      res = await recordFlashcardReview(card.id, ratingKey)
-    }
-    if (res.error) {
-      error.value = `Failed to save review: ${res.error}`
-      return
-    }
-    flipped.value = false
-    if (queueMode.value) {
+      const res = await recordCardReview(reviewTaskID.value, card.card_id, validRating.value)
+      if (res.error) {
+        error.value = `Failed to save review: ${res.error}`
+        return
+      }
+      flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)
       if (sessionRemaining.value <= 0) {
         const completeRes = await completeReviewSession(reviewTaskID.value)
@@ -234,9 +229,10 @@ async function rate(ratingKey) {
         return
       }
       await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
-    } else {
-      reviewIndex.value++
+      return
     }
+    flipped.value = false
+    reviewIndex.value++
   } catch (e) {
     error.value = `Failed to save review: ${e?.message ?? 'Unknown error'}`
   } finally {

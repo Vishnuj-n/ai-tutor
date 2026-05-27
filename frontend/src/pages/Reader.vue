@@ -53,12 +53,12 @@
             <button class="secondary" :disabled="!reader.canGoPrev.value" @click="goPrev">Prev</button>
             <span>Page {{ reader.currentPage.value }} / {{ reader.pageCount.value }}</span>
             <button class="secondary" :disabled="!reader.canGoNext.value" @click="goNext">Next</button>
-            <button v-if="isTaskFlow" class="primary" :disabled="!canComplete" @click="completeSession">
+            <button v-if="isTaskFlow" class="primary" :disabled="reader.loadingBundle.value || completingSession.value || !activeTaskID.value" @click="completeSession">
               {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
             </button>
           </div>
         </div>
-        <p v-if="isTaskFlow && reader.hasLockedWindow.value" class="lock-meta">Reading Window: Pages {{ reader.lockedStartPage.value }}-{{ reader.lockedTargetPage.value }}</p>
+        <p v-if="isTaskFlow && reader.hasNavigationBounds.value" class="lock-meta">Reading Window: Pages {{ reader.navigationMinPage.value }}-{{ reader.navigationMaxPage.value }}</p>
 
         <div v-if="reader.loadingBundle.value" class="empty">Loading document...</div>
         <div v-else-if="!reader.pdfVisible.value" class="empty">PDF not available for selected notebook/topic.</div>
@@ -149,19 +149,10 @@ const completionError = ref('')
 const iframeKey = ref(0)
 const activeTaskID = ref('')
 
-// Computed: can complete session (trust-based, user decides when done)
 const isTaskFlow = computed(() => !!routeTaskID.value)
-const canComplete = computed(() => {
-  // Trust-based: completable any time task flow is active and session is loaded.
-  // hasLockedWindow is a navigation constraint only — not a completion gate.
-  return isTaskFlow.value &&
-    !reader.loadingBundle.value &&
-    !completingSession.value &&
-    !reader.globalError.value
-})
 
-// Trust-based completion: user decides when reading is complete
-// Page navigation is for UI only, not gated
+// Trust-based completion: user decides when reading is complete.
+// Page navigation is for UI only and does not gate completion.
 
 // Initialize on mount
 onMounted(async () => {
@@ -203,11 +194,11 @@ onMounted(async () => {
     routeTaskID: routeTaskID.value
   })
   console.log('[Reader] After init - reader state:', {
-    lockedStartPage: reader.lockedStartPage.value,
-    lockedTargetPage: reader.lockedTargetPage.value,
+    navigationMinPage: reader.navigationMinPage.value,
+    navigationMaxPage: reader.navigationMaxPage.value,
     currentPage: reader.currentPage.value,
-    hasLockedWindow: reader.hasLockedWindow.value,
-    navigation: reader.navigation.value
+    hasNavigationBounds: reader.hasNavigationBounds.value,
+    navigationState: reader.navigationState.value
   })
   if (init) {
     iframeKey.value++
@@ -238,7 +229,7 @@ function onNotebookChange() {
 }
 
 async function completeSession() {
-  if (!canComplete.value) return
+  if (completingSession.value || reader.loadingBundle.value || !activeTaskID.value) return
 
   completionError.value = ''
   completionMessage.value = ''

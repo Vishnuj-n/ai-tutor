@@ -1,158 +1,61 @@
 package scheduler
 
 import (
-	"math"
+	"time"
 
 	"ai-tutor/internal/models"
+
+	fsrs "github.com/open-spaced-repetition/go-fsrs/v4"
 )
 
+// Standard FSRS rating definitions mapping straight to your app inputs
 const (
-	Again = 1
-	Hard  = 2
-	Good  = 3
-	Easy  = 4
+	Again = int(fsrs.Again) // 1
+	Hard  = int(fsrs.Hard)  // 2
+	Good  = int(fsrs.Good)  // 3
+	Easy  = int(fsrs.Easy)  // 4
 )
 
-const (
-	FSRSStateNew        = 0
-	FSRSStateLearning   = 1
-	FSRSStateReview     = 2
-	FSRSStateRelearning = 3
-)
+// NextFSRSState calls the official open-spaced-repetition engine using your model helpers.
+func NextFSRSState(state models.FlashcardState, rating int, now time.Time, dueAt, lastReviewedAt int64) models.FlashcardState {
+	// 1. Initialize the official engine configuration parameters
+	p := fsrs.DefaultParam()
+	p.RequestRetention = 0.9 // Enforces our 90% retention profile target
+	engine := fsrs.NewFSRS(p)
 
-// NextFSRSState applies one pure FSRS-style transition.
-func NextFSRSState(current models.FlashcardState, rating int) models.FlashcardState {
-	state := normalizeFSRSState(current)
+	// 2. Use your model's existing function to convert data types to go-fsrs format
+	fsrsCard := models.FlashcardStateToCard(state, dueAt, lastReviewedAt)
 
-	elapsedDays := state.ElapsedDays
-	if elapsedDays == 0 {
-		elapsedDays = state.ScheduledDays
-	}
-	if state.Reps == 0 {
-		elapsedDays = 0
-	}
-	state.ElapsedDays = maxInt(0, elapsedDays)
-	state.Reps++
-
-	if rating == Again {
-		state.Lapses++
+	// Fallback mechanism for brand new cards flowing into the scheduling window
+	if state.Reps == 0 || fsrsCard.Due.IsZero() {
+		fsrsCard.Due = now
 	}
 
-	if state.Reps == 1 {
-		return firstReviewState(state, rating)
-	}
-	return nextReviewState(state, rating)
-}
-
-func normalizeFSRSState(state models.FlashcardState) models.FlashcardState {
-	if state.Difficulty <= 0 {
-		state.Difficulty = 5
-	}
-	if state.Stability < 0 {
-		state.Stability = 0
-	}
-	if state.StateCode < FSRSStateNew || state.StateCode > FSRSStateRelearning {
-		state.StateCode = FSRSStateNew
-	}
-	return state
-}
-
-func firstReviewState(state models.FlashcardState, rating int) models.FlashcardState {
-	switch rating {
-	case Again:
-		state.Stability = 0.1
-		state.Difficulty = 7.5
-		state.ScheduledDays = 0
-		state.StateCode = FSRSStateLearning
-	case Hard:
-		state.Stability = 0.5
-		state.Difficulty = 6.5
-		state.ScheduledDays = 1
-		state.StateCode = FSRSStateLearning
-	case Good:
-		state.Stability = 1.2
-		state.Difficulty = 5.5
-		state.ScheduledDays = 3
-		state.StateCode = FSRSStateReview
-	case Easy:
-		state.Stability = 2.5
-		state.Difficulty = 4.5
-		state.ScheduledDays = 5
-		state.StateCode = FSRSStateReview
-	default:
-		return firstReviewState(state, Good)
-	}
-	return state
-}
-
-func nextReviewState(state models.FlashcardState, rating int) models.FlashcardState {
-	retrievability := estimateRetrievability(state.ElapsedDays, state.Stability)
-
-	switch rating {
-	case Again:
-		state.Difficulty = clampFloat(state.Difficulty+0.8, 1, 10)
-		state.Stability = clampFloat(state.Stability*0.45, 0.1, 36500)
-		state.ScheduledDays = 1
-		state.StateCode = FSRSStateRelearning
-	case Hard:
-		state.Difficulty = clampFloat(state.Difficulty+0.15, 1, 10)
-		state.Stability = clampFloat(state.Stability*hardStabilityFactor(retrievability), 0.1, 36500)
-		state.ScheduledDays = maxInt(1, int(math.Round(state.Stability*1.2)))
-		state.StateCode = FSRSStateReview
-	case Good:
-		state.Difficulty = clampFloat(state.Difficulty-0.1, 1, 10)
-		state.Stability = clampFloat(state.Stability*goodStabilityFactor(retrievability), 0.1, 36500)
-		state.ScheduledDays = maxInt(1, int(math.Round(state.Stability)))
-		state.StateCode = FSRSStateReview
-	case Easy:
-		state.Difficulty = clampFloat(state.Difficulty-0.25, 1, 10)
-		state.Stability = clampFloat(state.Stability*easyStabilityFactor(retrievability), 0.1, 36500)
-		state.ScheduledDays = maxInt(2, int(math.Round(state.Stability*1.3)))
-		state.StateCode = FSRSStateReview
-	default:
-		return nextReviewState(state, Good)
+	// 3. Compute all 4 timeline variations simultaneously
+	schedulingCards, err := engine.Repeat(fsrsCard, now)
+	if err != nil {
+		return state
 	}
 
-	return state
-}
+	// 4. Extract the exact button response clicked by the user
+	chosenRecord := schedulingCards[fsrs.Rating(rating)]
 
-func estimateRetrievability(elapsedDays int, stability float64) float64 {
-	if stability <= 0 {
-		return 0
+	// 5. Use your model's existing converter to translate the results back to your database struct
+	updatedState := models.CardToFlashcardState(chosenRecord.Card)
+
+	// Track the operational increments that go-fsrs handles internally
+	if !chosenRecord.Card.LastReview.IsZero() {
+		elapsedDays := int(now.Sub(chosenRecord.Card.LastReview).Hours() / 24)
+		if elapsedDays < 0 {
+			elapsedDays = 0
+		}
+		updatedState.ElapsedDays = elapsedDays
+	} else if lastReviewedAt > 0 {
+		elapsedSeconds := now.Unix() - lastReviewedAt
+		if elapsedSeconds > 0 {
+			updatedState.ElapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+		}
 	}
-	// TODO: Replace with exact FSRS v4 forgetting curve/exponent constants if product wants parity.
-	r := math.Exp(-float64(maxInt(0, elapsedDays)) / stability)
-	return clampFloat(r, 0, 1)
-}
 
-func hardStabilityFactor(retrievability float64) float64 {
-	// TODO: Replace with exact FSRS v4 hard update equation when finalized.
-	return 1.2 + 0.2*retrievability
-}
-
-func goodStabilityFactor(retrievability float64) float64 {
-	// TODO: Replace with exact FSRS v4 good update equation when finalized.
-	return 1.8 + 0.5*retrievability
-}
-
-func easyStabilityFactor(retrievability float64) float64 {
-	// TODO: Replace with exact FSRS v4 easy update equation when finalized.
-	return 2.3 + 0.7*retrievability
-}
-
-func clampFloat(v, minV, maxV float64) float64 {
-	if v < minV {
-		return minV
-	}
-	if v > maxV {
-		return maxV
-	}
-	return v
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return updatedState
 }

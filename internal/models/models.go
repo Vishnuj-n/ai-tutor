@@ -502,11 +502,10 @@ type PageBounds struct {
 	PageCount   int `json:"page_count"`
 }
 
-// NavigationState indicates what actions are available.
+// NavigationState indicates available page navigation state.
 type NavigationState struct {
-	CanGoPrev   bool `json:"can_go_prev"`
-	CanGoNext   bool `json:"can_go_next"`
-	CanComplete bool `json:"can_complete"`
+	CanGoPrev bool `json:"can_go_prev"`
+	CanGoNext bool `json:"can_go_next"`
 }
 
 // ReadingSessionResponse is returned by InitializeReadingSession.
