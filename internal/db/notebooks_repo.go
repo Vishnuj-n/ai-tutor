@@ -661,12 +661,7 @@ func deleteNotebookRepo(notebookID string) error {
 		return err
 	}
 
-	// Delete notebook_chunks entries (foreign key to notebooks)
-	if _, err := tx.Exec(`
-		DELETE FROM notebook_chunks WHERE notebook_id = ?
-	`, notebookID); err != nil {
-		return err
-	}
+
 
 	parentIDs := make(map[string]struct{})
 	chunkIDs := make([]string, 0)
@@ -720,8 +715,10 @@ func deleteNotebookRepo(notebookID string) error {
 		}
 	}
 
-	_, err = tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID)
-	if err != nil {
+	// Delete notebook_chunks entries (foreign key to notebooks)
+	if _, err := tx.Exec(`
+		DELETE FROM notebook_chunks WHERE notebook_id = ?
+	`, notebookID); err != nil {
 		return err
 	}
 

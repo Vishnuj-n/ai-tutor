@@ -235,6 +235,24 @@ func GetFlashcardByIDTx(tx *sql.Tx, cardID string) (*models.Flashcard, *models.F
 	return getFlashcardByIDRepoTx(tx, cardID)
 }
 
+// GetLastFlashcardReviewTime retrieves the last review time for a flashcard.
+func GetLastFlashcardReviewTime(cardID string) (int64, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return 0, fmt.Errorf("flashcard id is required")
+	}
+	return getLastFlashcardReviewTimeRepo(cardID)
+}
+
+// GetLastFlashcardReviewTimeTx retrieves the last review time for a flashcard within a transaction.
+func GetLastFlashcardReviewTimeTx(tx *sql.Tx, cardID string) (int64, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return 0, fmt.Errorf("flashcard id is required")
+	}
+	return getLastFlashcardReviewTimeRepoTx(tx, cardID)
+}
+
 // GetFlashcardStatesByIDs returns a map of flashcard states keyed by card ID for the given card IDs
 func GetFlashcardStatesByIDs(cardIDs []string) (map[string]models.FlashcardState, error) {
 	if len(cardIDs) == 0 {
@@ -258,7 +276,7 @@ func GetFlashcardStatesByIDs(cardIDs []string) (map[string]models.FlashcardState
 }
 
 // UpdateFlashcardReview updates scheduling state after a review grade.
-func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	cardID = strings.TrimSpace(cardID)
 	if cardID == "" {
 		return fmt.Errorf("flashcard id is required")
@@ -266,10 +284,10 @@ func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, stat
 	if dueAt <= 0 {
 		return fmt.Errorf("due time is required")
 	}
-	return updateFlashcardReviewRepo(cardID, dueAt, expectedDueAt, state, reviewLog)
+	return updateFlashcardReviewRepo(cardID, dueAt, expectedDueAt, expectedStateJSON, state, reviewLog)
 }
 
-func UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+func UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	cardID = strings.TrimSpace(cardID)
 	if cardID == "" {
 		return fmt.Errorf("flashcard id is required")
@@ -277,7 +295,7 @@ func UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDue
 	if dueAt <= 0 {
 		return fmt.Errorf("due time is required")
 	}
-	return updateFlashcardReviewRepoTx(tx, cardID, dueAt, expectedDueAt, state, reviewLog)
+	return updateFlashcardReviewRepoTx(tx, cardID, dueAt, expectedDueAt, expectedStateJSON, state, reviewLog)
 }
 
 func GetExistingReviewTaskForNotebook(notebookID string) (*models.StudyQueueTask, error) {

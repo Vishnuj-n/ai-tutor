@@ -701,14 +701,21 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	}
 
 	// Generate quiz from full assigned chunk range (no page validation)
-	chunkIDs, err := db.GetChunkIDsForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
+	chunks, err := db.GetChunksForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
 	if err != nil {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup error taskID=%s err=%v", taskID, err)
 		return map[string]interface{}{"error": err.Error()}
 	}
 
+	chunkIDs := make([]string, 0, len(chunks))
+	chunkTextByID := make(map[string]string, len(chunks))
+	for _, chunk := range chunks {
+		chunkIDs = append(chunkIDs, chunk.ID)
+		chunkTextByID[chunk.ID] = chunk.Text
+	}
+
 	utils.Warnf("[QUIZ] CompleteReading before GenerateQuizSync taskID=%s topicID=%s chunkCount=%d", taskID, task.TopicID, len(chunkIDs))
-	quizPayload, err := a.studyService.GenerateQuizSync(task.TopicID, chunkIDs, nil)
+	quizPayload, err := a.studyService.GenerateQuizSync(task.TopicID, chunkIDs, chunkTextByID)
 	if err != nil {
 		utils.Warnf("[QUIZ] CompleteReading GenerateQuizSync error taskID=%s err=%v", taskID, err)
 		return map[string]interface{}{"error": err.Error()}
@@ -885,20 +892,6 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	return a.studyService.GenerateMarathonFlashcardsWithTopic(topicID, notebookID, startPage, endPage)
 }
 
-func (a *App) GenerateReviewTasks(notebookID string) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation trigger=manual_api notebookID=%s", strings.TrimSpace(notebookID))
-	tasks, err := a.studyService.GenerateReviewTasks(notebookID)
-	if err != nil {
-		utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation result=error notebookID=%s err=%v", strings.TrimSpace(notebookID), err)
-		return map[string]interface{}{"error": err.Error()}
-	}
-	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation result=ok notebookID=%s createdTasks=%d", strings.TrimSpace(notebookID), len(tasks))
-	return map[string]interface{}{"tasks": tasks}
-}
-
 func (a *App) GetReviewSession(taskID string, notebookID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -983,73 +976,6 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{"ok": true}
-}
-
-func (a *App) ScoreAnswer(questionID, userAnswer string) map[string]interface{} {
-	questionID = strings.TrimSpace(questionID)
-	userAnswer = strings.TrimSpace(userAnswer)
-	if questionID == "" || userAnswer == "" {
-		return map[string]interface{}{"error": "question ID and user answer are required"}
-	}
-	question, err := db.GetQuestionByID(questionID)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch question: " + err.Error()}
-	}
-	if question == nil {
-		return map[string]interface{}{"error": "question not found"}
-	}
-	expected := normalizeQuizAnswer(question.CorrectAnswer, question.Options)
-	actual := normalizeQuizAnswer(userAnswer, question.Options)
-	correct := expected != "" && expected == actual
-	hint := question.Hint
-	if hint == "" {
-		hint = "Review the cited section and compare each option against the source."
-	}
-	score := models.QuizScore{
-		QuestionID: question.ID, Correct: correct, Score: 0,
-		Expected: question.CorrectAnswer, Feedback: question.Explanation,
-		Hint: hint, UserAnswer: userAnswer, SourceHeading: question.SourceHeading,
-	}
-	if correct {
-		score.Score = 100
-		if score.Hint == "Review the cited section and compare each option against the source." {
-			score.Hint = "Great job. Move to the next question."
-		}
-	} else if strings.TrimSpace(question.Explanation) == "" {
-		score.Feedback = "That answer is not correct."
-	}
-	tx, err := db.GetConnection().Begin()
-	if err != nil {
-		return map[string]interface{}{"error": "failed to begin transaction: " + err.Error()}
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	if err := db.SaveUserAnswerTx(tx, score); err != nil {
-		return map[string]interface{}{"error": "failed to save score: " + err.Error()}
-	}
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	fsrsResult, err := a.studyService.LogReviewTx(tx, question.TopicID, "quiz_question", question.ID, question.SourceChunkID, score.Score)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to update quiz FSRS: " + err.Error()}
-	}
-	if err := tx.Commit(); err != nil {
-		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
-	}
-	committed = true
-	return map[string]interface{}{
-		"question_id": score.QuestionID, "correct": score.Correct,
-		"score": score.Score, "expected": score.Expected,
-		"feedback": score.Feedback, "hint": score.Hint,
-		"user_answer": score.UserAnswer, "source_heading": score.SourceHeading,
-		"fsrsRating": fsrsResult["fsrs_rating"], "scheduled_days": fsrsResult["scheduled_days"],
-		"next_review_at": fsrsResult["next_review_at"], "review_log_id": fsrsResult["review_log_id"],
-	}
 }
 
 func (a *App) LogReview(topicID, activityType, referenceID, sourceChunkID string, score int) map[string]interface{} {

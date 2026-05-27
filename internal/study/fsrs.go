@@ -66,21 +66,6 @@ func (s *StudyService) logReview(tx *sql.Tx, topicID, activityType, referenceID,
 		stateBeforeJSON = string(beforeBytes)
 		lastReviewedAt = current.GetLastReviewedAt()
 		dueAtTimestamp = current.GetDueAt()
-		elapsedDays := 0
-		// Use last_reviewed_at for proper spacing calculation, fallback to due_at if missing
-		if lastReviewedAt > 0 {
-			elapsedSeconds := time.Now().Unix() - lastReviewedAt
-			if elapsedSeconds > 0 {
-				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
-			}
-		} else if dueAtTimestamp > 0 {
-			// Fallback to due_at if last_reviewed_at is not available
-			elapsedSeconds := time.Now().Unix() - dueAtTimestamp
-			if elapsedSeconds > 0 {
-				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
-			}
-		}
-		state.ElapsedDays = elapsedDays
 	}
 
 	nextState := scheduler.NextFSRSState(state, ratingCode, time.Now(), dueAtTimestamp, lastReviewedAt)

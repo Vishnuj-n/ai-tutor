@@ -191,7 +191,7 @@ func getFlashcardStatesByIDsRepo(cardIDs []string) (map[string]models.FlashcardS
 	return states, nil
 }
 
-func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
@@ -211,8 +211,8 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, 
 	result, err := tx.Exec(`
 		UPDATE fsrs_cards
 		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND due_at = ?
-	`, string(stateJSON), dueAt, cardID, expectedDueAt)
+		WHERE id = ? AND due_at = ? AND state_json = ?
+	`, string(stateJSON), dueAt, cardID, expectedDueAt, expectedStateJSON)
 	if err != nil {
 		return err
 	}
@@ -257,7 +257,7 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, 
 	return nil
 }
 
-func updateFlashcardReviewRepoTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+func updateFlashcardReviewRepoTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
@@ -266,8 +266,8 @@ func updateFlashcardReviewRepoTx(tx *sql.Tx, cardID string, dueAt int64, expecte
 	result, err := tx.Exec(`
 		UPDATE fsrs_cards
 		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND due_at = ?
-	`, string(stateJSON), dueAt, cardID, expectedDueAt)
+		WHERE id = ? AND due_at = ? AND state_json = ?
+	`, string(stateJSON), dueAt, cardID, expectedDueAt, expectedStateJSON)
 	if err != nil {
 		return err
 	}
@@ -398,4 +398,24 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 	committed = true
 
 	return cardsIfNotExist, false, nil
+}
+
+func getLastFlashcardReviewTimeRepo(cardID string) (int64, error) {
+	var lastReviewedAt int64
+	err := conn.QueryRow(`
+		SELECT COALESCE(MAX(reviewed_at), 0)
+		FROM fsrs_review_log
+		WHERE activity_type = 'flashcard' AND reference_id = ?
+	`, cardID).Scan(&lastReviewedAt)
+	return lastReviewedAt, err
+}
+
+func getLastFlashcardReviewTimeRepoTx(tx *sql.Tx, cardID string) (int64, error) {
+	var lastReviewedAt int64
+	err := tx.QueryRow(`
+		SELECT COALESCE(MAX(reviewed_at), 0)
+		FROM fsrs_review_log
+		WHERE activity_type = 'flashcard' AND reference_id = ?
+	`, cardID).Scan(&lastReviewedAt)
+	return lastReviewedAt, err
 }

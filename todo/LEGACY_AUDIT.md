@@ -32,7 +32,7 @@ Each section follows one pipeline end-to-end and flags:
 | 1 | `Dashboard.vue` line ~25 | **RESOLVED** | Header terminology updated to `"Study Queue"` / `"Today's Tasks"`. |
 | 2 | `app.go:GetTodayPlan` | **DRIFT** | Calls `scheduler.BuildTodayPlan` then immediately discards its `.Tasks` if queue rows exist. The scheduler result is only used for `DueReviewCards` / `ReviewMinutes`. This dual-path is confusing — the scheduler is effectively dead for task listing. |
 | 3 | `app.go:GetTodayPlan` | **RESOLVED** | `plan_source` updated to remove deprecated terminology. |
-| 4 | `Dashboard.vue` `startTask` | **DRIFT** | Falls back to `routePath = '/dashboard'` for unknown action types silently. Should surface an explicit error to the user per the "Return explicit errors" rule. |
+| 4 | `Dashboard.vue` `startTask` | **RESOLVED** | Surface explicit visual error to user for unknown action types instead of silent redirect. |
 
 ---
 
@@ -97,10 +97,10 @@ Each section follows one pipeline end-to-end and flags:
 | # | Location | Severity | Issue |
 |---|----------|----------|-------|
 | 10 | `app.go:GenerateQuizForPageRange` | **LEGACY** | Exposed Wails binding for manual quiz generation by page range. Creates a **synthetic topic ID** (`quiz-manual-{notebookID}-p{start}-{end}`) and calls `GenerateQuizSync`. This synthetic topic is never linked to the queue. The result is returned raw to the frontend with no task lifecycle. This is a side-channel that bypasses the queue — violates invariant #1. |
-| 11 | `app.go:GenerateQuizSync` | **LEGACY** | Exposed Wails binding that generates a quiz payload without any task context. Returns raw `quiz_task` payload. No queue row is created. Used by `Quiz.vue` in manual mode. Side-channel — violates invariant #1. |
-| 12 | `quiz_sync.go:GenerateQuizSync` | **DRIFT** | The `chunkTextByID` parameter is `nil` when called from `CompleteReading`, causing a fallback DB lookup (`db.GetChunksForTopic`). This is a second DB round-trip that could be avoided by passing the already-fetched chunk text. |
-| 13 | `quiz_sync.go:GenerateQuizSync` | **DRIFT** | Hardcodes `"Generate exactly 5 multiple-choice questions"` in the prompt string. Sprint 14 goal was density-scaled question count (`scaledQuizQuestionCount`). The scaling function exists in `service.go` but is **not used** in `GenerateQuizSync`. |
-| 14 | `db/study_queue_repo.go:SaveQuizAttemptTx` | **DRIFT** | `quiz_attempts` table stores `answers_json` as a raw JSON blob. There is no per-question FSRS update during `SubmitQuizAttempt` — FSRS is only updated via `ScoreAnswer` (the per-question scoring path in `app.go`). The two scoring paths are inconsistent. |
+| 11 | `app.go:GenerateQuizSync` | **KEEP** | Manual quiz payload generation is intentionally allowed outside the queue. |
+| 12 | `quiz_sync.go:GenerateQuizSync` | **RESOLVED** | Optimized reading completion to fetch chunks with text in a single query, passing `chunkTextByID` directly to `GenerateQuizSync`. |
+| 13 | `quiz_sync.go:GenerateQuizSync` | **RESOLVED** | Density-scaled question count (scaledQuizQuestionCount) is wired into the prompt in `GenerateQuizSync`. |
+| 14 | `db/study_queue_repo.go:SaveQuizAttemptTx` | **RESOLVED** | Removed inconsistent `ScoreAnswer` endpoint and FSRS logging to ensure consistent non-FSRS-updating quiz paths. |
 
 ---
 
@@ -129,8 +129,8 @@ Each section follows one pipeline end-to-end and flags:
 | 15 | `Flashcards.vue` | **KEEP** | Manual generation tabs are intentional. Comprehensive (page-range) and Semantic Discovery are allowed side-channels for manual study; they intentionally bypass the queue. |
 | 16 | `app.go:RecordFlashcardReview` | **RESOLVED** | Standalone flashcard review binding removed; queue review uses `RecordCardReview`. |
 | 17 | `app.go:GetFlashcards` | **RESOLVED** | Standalone flashcard fetch binding removed. |
-| 18 | `app.go:GenerateReviewTasks` | **DRIFT** | Exposed Wails binding that manually triggers review task creation for a notebook. This is a manual side-trigger outside the queue's normal materialization path. Should only be needed for debugging. |
-| 19 | `db/review_session_repo.go:createReviewSessionRepo` | **DRIFT** | Uses `cards[0].TopicID` as the `topic_id` for the FLASHCARD_REVIEW task. If the session spans multiple topics (multi-topic notebook), only the first card's topic is recorded. This is a data quality issue. |
+| 18 | `app.go:GenerateReviewTasks` | **RESOLVED** | Removed redundant manual triggers; sessions are materialized automatically on synthetic tasks. |
+| 19 | `db/review_session_repo.go:createReviewSessionRepo` | **RESOLVED** | Multi-topic session stores empty/null `topic_id` in study_queue, resolving data quality issue. |
 
 ---
 
@@ -164,7 +164,7 @@ Each section follows one pipeline end-to-end and flags:
 | 1 | `Dashboard.vue` | RESOLVED | Terminology updated to "Study Queue" / "Today's Tasks" |
 | 2 | `app.go:GetTodayPlan` | DRIFT | Scheduler result discarded; dual-path confusing |
 | 3 | `app.go:GetTodayPlan` | RESOLVED | `plan_source` renamed to non-deprecated value |
-| 4 | `Dashboard.vue:startTask` | DRIFT | Silent fallback to dashboard for unknown action types |
+| 4 | `Dashboard.vue:startTask` | RESOLVED | Surface explicit visual error to user for unknown action types |
 | 5 | `db/study_queue_repo.go:ValidateReadingCompletion` | RESOLVED | Deprecated helper removed |
 | 6 | `db/study_queue_repo.go:CompleteReading` | RESOLVED | Legacy completion helper removed |
 | 7 | `app.go:CompleteReadingSession` | RESOLVED | Legacy Wails binding removed |
@@ -172,14 +172,14 @@ Each section follows one pipeline end-to-end and flags:
 | 9 | `useReaderBase.js` | DRIFT | Composable may be dead code — needs verification |
 | 10 | `app.go:GenerateQuizForPageRange` | KEEP | Manual quiz generation is intentionally allowed outside the queue. |
 | 11 | `app.go:GenerateQuizSync` | KEEP | Manual quiz payload generation is intentionally allowed outside the queue. |
-| 12 | `quiz_sync.go:GenerateQuizSync` | DRIFT | Unnecessary second DB round-trip for chunk text |
-| 13 | `quiz_sync.go:GenerateQuizSync` | DRIFT | Hardcoded 5 questions — density scaling not wired in |
-| 14 | `quiz_sync.go:SubmitQuizAttempt` | DRIFT | Per-question FSRS not updated during batch submission |
+| 12 | `quiz_sync.go:GenerateQuizSync` | RESOLVED | Optimize reading completion to fetch chunks with text |
+| 13 | `quiz_sync.go:GenerateQuizSync` | RESOLVED | Wired scaledQuizQuestionCount into prompt |
+| 14 | `quiz_sync.go:SubmitQuizAttempt` | RESOLVED | Removed inconsistent ScoreAnswer and FSRS log paths |
 | 15 | `Flashcards.vue` | KEEP | Comprehensive + Semantic tabs are intentionally manual (no queue lifecycle) |
 | 16 | `app.go:RecordFlashcardReview` | RESOLVED | Standalone review binding removed |
 | 17 | `app.go:GetFlashcards` | RESOLVED | Standalone flashcard fetch removed |
-| 18 | `app.go:GenerateReviewTasks` | DRIFT | Manual review task trigger outside normal queue path |
-| 19 | `db/review_session_repo.go` | DRIFT | Multi-topic session uses only first card's topic_id |
+| 18 | `app.go:GenerateReviewTasks` | RESOLVED | Removed manual triggers; sessions materialize automatically |
+| 19 | `db/review_session_repo.go` | RESOLVED | Multi-topic session uses empty topic_id |
 | 20 | `Socratic.vue:buildSocraticQuestion` | DRIFT | Prompt construction on frontend, should be backend |
 | 21 | `Socratic.vue` | DRIFT | Uses generic `askAI` not a dedicated Socratic endpoint |
 | 22 | `app.go:AskAI` | DRIFT | No routing differentiation between Reader AI and Socratic |

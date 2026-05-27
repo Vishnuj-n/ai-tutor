@@ -13,21 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func (s *StudyService) GenerateReviewTasks(notebookID string) ([]models.StudyQueueTask, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook ID is required")
-	}
-	task, _, err := db.CreateReviewSession(notebookID)
-	if err != nil {
-		return nil, err
-	}
-	if task == nil {
-		return []models.StudyQueueTask{}, nil
-	}
-	return []models.StudyQueueTask{*task}, nil
-}
-
 func (s *StudyService) GetReviewSession(taskID string) (*models.ReviewSession, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -71,9 +56,9 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 
 	var lastReviewedAt int64
 	if tx != nil {
-		err = tx.QueryRow(`SELECT COALESCE(MAX(reviewed_at), 0) FROM fsrs_review_log WHERE activity_type = 'flashcard' AND reference_id = ?`, cardID).Scan(&lastReviewedAt)
+		lastReviewedAt, err = db.GetLastFlashcardReviewTimeTx(tx, cardID)
 	} else {
-		err = db.GetConnection().QueryRow(`SELECT COALESCE(MAX(reviewed_at), 0) FROM fsrs_review_log WHERE activity_type = 'flashcard' AND reference_id = ?`, cardID).Scan(&lastReviewedAt)
+		lastReviewedAt, err = db.GetLastFlashcardReviewTime(cardID)
 	}
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to retrieve last reviewed time: %w", err)
@@ -100,11 +85,11 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		StateAfterJSON:  string(stateAfterJSONBytes),
 	}
 	if tx != nil {
-		if err := db.UpdateFlashcardReviewTx(tx, cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
+		if err := db.UpdateFlashcardReviewTx(tx, cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
 			return nil, nil, "", err
 		}
 	} else {
-		if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
+		if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
 			return nil, nil, "", err
 		}
 	}
