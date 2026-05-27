@@ -18,7 +18,7 @@ const (
 )
 
 // NextFSRSState calls the official open-spaced-repetition engine using your model helpers.
-func NextFSRSState(state models.FlashcardState, rating int, now time.Time, dueAt, lastReviewedAt int64) models.FlashcardState {
+func NextFSRSState(state models.FlashcardState, rating int, now time.Time, dueAt, lastReviewedAt int64) (models.FlashcardState, error) {
 	// 1. Initialize the official engine configuration parameters
 	p := fsrs.DefaultParam()
 	p.RequestRetention = 0.9 // Enforces our 90% retention profile target
@@ -39,7 +39,7 @@ func NextFSRSState(state models.FlashcardState, rating int, now time.Time, dueAt
 	schedulingCards, err := engine.Repeat(fsrsCard, now)
 	if err != nil {
 		log.Printf("FSRS error: engine.Repeat failed: %v (card: %+v, now: %v)", err, fsrsCard, now)
-		return state
+		return state, err
 	}
 
 	// 4. Extract the exact button response clicked by the user
@@ -62,5 +62,5 @@ func NextFSRSState(state models.FlashcardState, rating int, now time.Time, dueAt
 		}
 	}
 
-	return updatedState
+	return updatedState, nil
 }

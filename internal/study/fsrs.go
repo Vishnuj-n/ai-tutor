@@ -68,7 +68,10 @@ func (s *StudyService) logReview(tx *sql.Tx, topicID, activityType, referenceID,
 		dueAtTimestamp = current.GetDueAt()
 	}
 
-	nextState := scheduler.NextFSRSState(state, ratingCode, time.Now(), dueAtTimestamp, lastReviewedAt)
+	nextState, err := scheduler.NextFSRSState(state, ratingCode, time.Now(), dueAtTimestamp, lastReviewedAt)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().Unix()
 	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {

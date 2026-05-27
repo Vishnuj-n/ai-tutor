@@ -7,11 +7,20 @@ import (
 	"ai-tutor/internal/models"
 )
 
+func mustNextState(t *testing.T, state models.FlashcardState, rating int, now time.Time, dueAt, lastReviewedAt int64) models.FlashcardState {
+	t.Helper()
+	s, err := NextFSRSState(state, rating, now, dueAt, lastReviewedAt)
+	if err != nil {
+		t.Fatalf("NextFSRSState failed: %v", err)
+	}
+	return s
+}
+
 func TestNextFSRSStateFirstReviewProducesValidStateForAllRatings(t *testing.T) {
 	ratings := []int{Again, Hard, Good, Easy}
 	for _, rating := range ratings {
 		t.Run(ratingName(rating), func(t *testing.T) {
-			state := NextFSRSState(models.FlashcardState{}, rating, time.Now(), 0, 0)
+			state := mustNextState(t, models.FlashcardState{}, rating, time.Now(), 0, 0)
 			if state.Reps != 1 {
 				t.Fatalf("expected reps=1, got %d", state.Reps)
 			}
@@ -30,13 +39,13 @@ func TestNextFSRSStateFirstReviewProducesValidStateForAllRatings(t *testing.T) {
 
 func TestNextFSRSStateRepeatedReviewsIncreaseRepsAndAgainIncrementsLapses(t *testing.T) {
 	t0 := time.Now()
-	state := NextFSRSState(models.FlashcardState{}, Good, t0, 0, 0)
+	state := mustNextState(t, models.FlashcardState{}, Good, t0, 0, 0)
 	if state.Reps != 1 {
 		t.Fatalf("expected reps after first review = 1, got %d", state.Reps)
 	}
 
 	t1 := t0.Add(24 * time.Hour)
-	next := NextFSRSState(state, Good, t1, t0.Unix(), t0.Unix())
+	next := mustNextState(t, state, Good, t1, t0.Unix(), t0.Unix())
 	if next.Reps != 2 {
 		t.Fatalf("expected reps after second review = 2, got %d", next.Reps)
 	}
@@ -45,7 +54,7 @@ func TestNextFSRSStateRepeatedReviewsIncreaseRepsAndAgainIncrementsLapses(t *tes
 	}
 
 	t2 := t1.Add(24 * time.Hour)
-	lapsed := NextFSRSState(next, Again, t2, t1.Unix(), t1.Unix())
+	lapsed := mustNextState(t, next, Again, t2, t1.Unix(), t1.Unix())
 	if lapsed.Reps != 3 {
 		t.Fatalf("expected reps after again = 3, got %d", lapsed.Reps)
 	}
