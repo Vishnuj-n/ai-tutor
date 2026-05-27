@@ -661,8 +661,6 @@ func deleteNotebookRepo(notebookID string) error {
 		return err
 	}
 
-
-
 	parentIDs := make(map[string]struct{})
 	chunkIDs := make([]string, 0)
 	parentRows, err := tx.Query(`

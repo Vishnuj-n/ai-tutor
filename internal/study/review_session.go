@@ -64,7 +64,10 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		return nil, nil, "", fmt.Errorf("failed to retrieve last reviewed time: %w", err)
 	}
 
-	nextState := scheduler.NextFSRSState(*state, ratingCode, time.Now(), card.DueAt, lastReviewedAt)
+	nextState, err := scheduler.NextFSRSState(*state, ratingCode, time.Now(), card.DueAt, lastReviewedAt)
+	if err != nil {
+		return nil, nil, "", err
+	}
 	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {
 		dueAt = now
