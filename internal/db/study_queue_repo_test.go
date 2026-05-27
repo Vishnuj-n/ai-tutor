@@ -514,6 +514,19 @@ func TestRereadTaskCanBeLoadedAndCompletedThroughReaderHelpers(t *testing.T) {
 	if quizTaskID == "" {
 		t.Fatalf("expected quiz task ID to be set")
 	}
+	fetchedTask, err := GetTaskByID(quizTaskID)
+	if err != nil {
+		t.Fatalf("failed to fetch task by ID: %v", err)
+	}
+	if fetchedTask == nil {
+		t.Fatalf("expected task to be found, got nil")
+	}
+	if fetchedTask.TaskType != models.StudyTaskTypeQuiz {
+		t.Fatalf("expected task type %s, got %s", models.StudyTaskTypeQuiz, fetchedTask.TaskType)
+	}
+	if fetchedTask.ID != quizTaskID {
+		t.Fatalf("expected task ID %s, got %s", quizTaskID, fetchedTask.ID)
+	}
 }
 
 func TestCreateReviewSessionDueCardBatchingAndDuplicatePrevention(t *testing.T) {

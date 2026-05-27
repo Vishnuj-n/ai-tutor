@@ -270,10 +270,26 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 		return nil, false, err
 	}
 
+	// Determine if the session spans a single topic or multiple topics
+	sessionTopicID := ""
+	if len(cards) > 0 {
+		sameTopic := true
+		firstTopic := cards[0].TopicID
+		for _, card := range cards {
+			if card.TopicID != firstTopic {
+				sameTopic = false
+				break
+			}
+		}
+		if sameTopic {
+			sessionTopicID = firstTopic
+		}
+	}
+
 	task := &models.StudyQueueTask{
 		ID:          uuid.NewString(),
 		NotebookID:  notebookID,
-		TopicID:     cards[0].TopicID,
+		TopicID:     sessionTopicID,
 		TaskType:    models.StudyTaskTypeFlashcardReview,
 		Status:      models.StudyTaskStatusPending,
 		Priority:    0,

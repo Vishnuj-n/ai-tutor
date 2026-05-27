@@ -108,9 +108,6 @@ export function generateComprehensiveExam(notebookID, startPage, endPage) {
   return appBridge().GenerateComprehensiveExam(notebookID, startPage, endPage)
 }
 
-export function scoreAnswer(questionID, userAnswer) {
-  return appBridge().ScoreAnswer(questionID, userAnswer)
-}
 
 export function generateShortAnswerPrompt(topicID) {
   return appBridge().GenerateShortAnswerPrompt(topicID)
@@ -124,9 +121,6 @@ export function logReview(topicID, activityType, referenceID, sourceChunkID, sco
   return appBridge().LogReview(topicID, activityType, referenceID, sourceChunkID, score)
 }
 
-export function generateReviewTasks(notebookID) {
-  return appBridge().GenerateReviewTasks(notebookID)
-}
 
 export function getReviewSession(taskID, notebookID = '') {
   return appBridge().GetReviewSession(taskID, notebookID)

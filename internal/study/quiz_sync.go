@@ -156,22 +156,26 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		}
 	}
 
+	totalWordCount := 0
 	contextParts := make([]string, 0, len(normalizedChunkIDs))
 	for _, chunkID := range normalizedChunkIDs {
 		text := strings.TrimSpace(chunkTextByID[chunkID])
 		if text == "" {
 			continue
 		}
+		totalWordCount += len(strings.Fields(text))
 		contextParts = append(contextParts, fmt.Sprintf("- chunk_id: %s | text: %s", chunkID, text))
 	}
 	if len(contextParts) == 0 {
 		return models.QuizTaskPayload{}, fmt.Errorf("no chunk context found for quiz generation")
 	}
 
+	targetCount := scaledQuizQuestionCount(totalWordCount)
+
 	prompt := strings.Join([]string{
 		"You are an AI tutor quiz generator.",
 		"Return STRICT JSON only.",
-		"Generate exactly 5 multiple-choice questions from the provided chunks.",
+		fmt.Sprintf("Generate exactly %d multiple-choice questions from the provided chunks.", targetCount),
 		"Each question must have exactly 4 options.",
 		"correct_answer must match one option exactly.",
 		"JSON schema: {\"questions\":[{\"source_chunk_id\":string,\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string}]}",

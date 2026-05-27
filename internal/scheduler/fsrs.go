@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"log"
 	"time"
 
 	"ai-tutor/internal/models"
@@ -31,9 +32,13 @@ func NextFSRSState(state models.FlashcardState, rating int, now time.Time, dueAt
 		fsrsCard.Due = now
 	}
 
+	// Keep track of the pre-transition last review timestamp
+	originalLastReview := fsrsCard.LastReview
+
 	// 3. Compute all 4 timeline variations simultaneously
 	schedulingCards, err := engine.Repeat(fsrsCard, now)
 	if err != nil {
+		log.Printf("FSRS error: engine.Repeat failed: %v (card: %+v, now: %v)", err, fsrsCard, now)
 		return state
 	}
 
@@ -43,9 +48,9 @@ func NextFSRSState(state models.FlashcardState, rating int, now time.Time, dueAt
 	// 5. Use your model's existing converter to translate the results back to your database struct
 	updatedState := models.CardToFlashcardState(chosenRecord.Card)
 
-	// Track the operational increments that go-fsrs handles internally
-	if !chosenRecord.Card.LastReview.IsZero() {
-		elapsedDays := int(now.Sub(chosenRecord.Card.LastReview).Hours() / 24)
+	// Track the operational increments that go-fsrs handles internally using pre-transition timestamp
+	if !originalLastReview.IsZero() {
+		elapsedDays := int(now.Sub(originalLastReview).Hours() / 24)
 		if elapsedDays < 0 {
 			elapsedDays = 0
 		}
