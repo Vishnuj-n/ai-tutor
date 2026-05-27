@@ -67,7 +67,7 @@ Each section follows one pipeline end-to-end and flags:
 | 6 | `db/study_queue_repo.go:CompleteReading` | **RESOLVED** | Legacy completion helper removed; queue flow uses `CompleteReadingWithGeneratedQuiz`. |
 | 7 | `app.go:CompleteReadingSession` | **RESOLVED** | Legacy pre-queue binding removed. |
 | 8 | `app.go:GetNextTask` | **RESOLVED** | Legacy Wails binding removed. |
-| 9 | `useReaderBase.js` | **DRIFT** | Composable exists but `Reader.vue` was recently refactored. Need to verify it is still used — if not, it is dead code. |
+| 9 | `useReaderBase.js` | **RESOLVED** | Verified: actively imported and used by `Reader.vue` to manage reading session state. |
 
 ---
 
@@ -97,7 +97,8 @@ Each section follows one pipeline end-to-end and flags:
 | # | Location | Severity | Issue |
 |---|----------|----------|-------|
 | 10 | `app.go:GenerateQuizForPageRange` | **LEGACY** | Exposed Wails binding for manual quiz generation by page range. Creates a **synthetic topic ID** (`quiz-manual-{notebookID}-p{start}-{end}`) and calls `GenerateQuizSync`. This synthetic topic is never linked to the queue. The result is returned raw to the frontend with no task lifecycle. This is a side-channel that bypasses the queue — violates invariant #1. |
-| 11 | `app.go:GenerateQuizSync` | **KEEP** | Manual quiz payload generation is intentionally allowed outside the queue. |
+| 11 | `app.go:GenerateQuizSync` | **LEGACY** | Bypasses queue, violates invariant #1 as a manual quiz side-channel. |
+| 11b | `quiz_sync.go:GenerateQuizSync` | **DRIFT** | Needs chunkTextByID nil fallback during manual quiz generation. |
 | 12 | `quiz_sync.go:GenerateQuizSync` | **RESOLVED** | Optimized reading completion to fetch chunks with text in a single query, passing `chunkTextByID` directly to `GenerateQuizSync`. |
 | 13 | `quiz_sync.go:GenerateQuizSync` | **RESOLVED** | Density-scaled question count (scaledQuizQuestionCount) is wired into the prompt in `GenerateQuizSync`. |
 | 14 | `db/study_queue_repo.go:SaveQuizAttemptTx` | **RESOLVED** | Removed inconsistent `ScoreAnswer` endpoint and FSRS logging to ensure consistent non-FSRS-updating quiz paths. |
@@ -169,9 +170,10 @@ Each section follows one pipeline end-to-end and flags:
 | 6 | `db/study_queue_repo.go:CompleteReading` | RESOLVED | Legacy completion helper removed |
 | 7 | `app.go:CompleteReadingSession` | RESOLVED | Legacy Wails binding removed |
 | 8 | `app.go:GetNextTask` | RESOLVED | Legacy Wails binding removed |
-| 9 | `useReaderBase.js` | DRIFT | Composable may be dead code — needs verification |
-| 10 | `app.go:GenerateQuizForPageRange` | KEEP | Manual quiz generation is intentionally allowed outside the queue. |
-| 11 | `app.go:GenerateQuizSync` | KEEP | Manual quiz payload generation is intentionally allowed outside the queue. |
+| 9 | `useReaderBase.js` | RESOLVED | Actively used in `Reader.vue` |
+| 10 | `app.go:GenerateQuizForPageRange` | LEGACY | Bypasses queue, violates invariant #1 |
+| 11 | `app.go:GenerateQuizSync` | LEGACY | Bypasses queue, violates invariant #1 |
+| 11b | `quiz_sync.go:GenerateQuizSync` | DRIFT | Needs chunkTextByID nil fallback |
 | 12 | `quiz_sync.go:GenerateQuizSync` | RESOLVED | Optimize reading completion to fetch chunks with text |
 | 13 | `quiz_sync.go:GenerateQuizSync` | RESOLVED | Wired scaledQuizQuestionCount into prompt |
 | 14 | `quiz_sync.go:SubmitQuizAttempt` | RESOLVED | Removed inconsistent ScoreAnswer and FSRS log paths |
@@ -193,7 +195,7 @@ Each section follows one pipeline end-to-end and flags:
 - (Resolved) Legacy standalone flashcard review/fetch removed
 
 ### P0A — Manual side-channels (explicitly kept)
-- **#10, #11** — `GenerateQuizForPageRange` + `GenerateQuizSync` are allowed manual paths (no queue lifecycle)
+- **#10, #11** — `GenerateQuizForPageRange` + `GenerateQuizSync` classified as LEGACY (bypass queue)
 - **#15** — `Flashcards.vue` Comprehensive/Semantic tabs are allowed manual paths (no queue lifecycle)
 
 ### P1 — Dead Code (safe to delete)
