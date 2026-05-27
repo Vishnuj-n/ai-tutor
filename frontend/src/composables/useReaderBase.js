@@ -148,17 +148,9 @@ export function useReaderBase(taskID) {
         return null
       }
 
-      // STRICT VALIDATION: Fail-loud if backend contract is violated
+      // STRICT VALIDATION: Fail-loud if backend contract is violated on critical fields
       if (!result.task) {
         globalError.value = 'Contract violation: missing task data'
-        return null
-      }
-      if (!result.bundle) {
-        globalError.value = 'Contract violation: missing bundle data'
-        return null
-      }
-      if (!Array.isArray(result.bundle.sections) || result.bundle.sections.length === 0) {
-        globalError.value = 'Contract violation: missing or empty bundle sections'
         return null
       }
       if (!result.page_bounds || typeof result.page_bounds !== 'object') {
@@ -170,11 +162,17 @@ export function useReaderBase(taskID) {
         return null
       }
 
+      // Treat missing/empty bundle as recoverable
+      let bundle = null
+      if (result.bundle && Array.isArray(result.bundle.sections) && result.bundle.sections.length > 0) {
+        bundle = result.bundle
+      }
+      globalError.value = '' // clear globalError
+
       // Apply initialized state
       const task = result.task
       const navigationBounds = result.page_bounds
       const nav = result.navigation
-      const bundle = result.bundle
 
 
       // Validate task has required fields
@@ -198,14 +196,14 @@ export function useReaderBase(taskID) {
       navigationState.value = nav
 
 
-      // Apply bundle data (guaranteed by strict validation above)
-      topicTitle.value = bundle.topic_title || task.topic_title || 'Reader'
-      notebookUrl.value = bundle.notebook_url || ''
-      fileType.value = (bundle.file_type || '').toLowerCase()
-      pageCount.value = Math.max(1, Number(bundle.page_count) || 1)
-      topicStartPage.value = Number(bundle.topic_start_page ?? 0)
-      topicEndPage.value = Number(bundle.topic_end_page ?? 0)
-      sections.value = bundle.sections
+      // Apply bundle data safely (bundle might be null/empty)
+      topicTitle.value = bundle?.topic_title || task.topic_title || 'Reader'
+      notebookUrl.value = bundle?.notebook_url || ''
+      fileType.value = (bundle?.file_type || '').toLowerCase()
+      pageCount.value = Math.max(1, Number(bundle?.page_count) || 1)
+      topicStartPage.value = Number(bundle?.topic_start_page ?? 0)
+      topicEndPage.value = Number(bundle?.topic_end_page ?? 0)
+      sections.value = bundle?.sections || []
       activeSection.value = sections.value[0] || null
 
       return {
