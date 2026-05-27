@@ -18,8 +18,8 @@
 
     <article class="status-strip">
       <div>
-        <p class="eyebrow">Today's Mission</p>
-        <h1>Daily Agenda</h1>
+        <p class="eyebrow">Study Queue</p>
+        <h1>Today's Tasks</h1>
       </div>
       <div v-if="dueReviewCards > 0" class="review-stats">
         <p class="review-count">{{ dueReviewCards }} cards due for review</p>
@@ -143,7 +143,7 @@ async function loadAgenda() {
     })
   } catch (err) {
     console.error('[DASHBOARD] loadAgenda catch', err)
-    error.value = err.message || 'Failed to load daily agenda'
+    error.value = err.message || 'Failed to load tasks'
   } finally {
     loading.value = false
   }

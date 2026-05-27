@@ -211,8 +211,8 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, 
 	result, err := tx.Exec(`
 		UPDATE fsrs_cards
 		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND due_at = ? AND state_json = ?
-	`, string(stateJSON), dueAt, cardID, expectedDueAt, reviewLog.StateBeforeJSON)
+		WHERE id = ? AND due_at = ?
+	`, string(stateJSON), dueAt, cardID, expectedDueAt)
 	if err != nil {
 		return err
 	}
@@ -266,8 +266,8 @@ func updateFlashcardReviewRepoTx(tx *sql.Tx, cardID string, dueAt int64, expecte
 	result, err := tx.Exec(`
 		UPDATE fsrs_cards
 		SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND due_at = ? AND state_json = ?
-	`, string(stateJSON), dueAt, cardID, expectedDueAt, reviewLog.StateBeforeJSON)
+		WHERE id = ? AND due_at = ?
+	`, string(stateJSON), dueAt, cardID, expectedDueAt)
 	if err != nil {
 		return err
 	}

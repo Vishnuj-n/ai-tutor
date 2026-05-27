@@ -39,10 +39,6 @@ export function askReaderAI(topicID, notebookID, question, scope, currentPage, c
   )
 }
 
-export function completeReadingSession(topicID, startPage, targetPage) {
-  return appBridge().CompleteReadingSession(topicID, startPage, targetPage)
-}
-
 export function activateTask(taskID) {
   return appBridge().ActivateTask(taskID)
 }
@@ -126,14 +122,6 @@ export function scoreShortAnswer(questionID, userAnswer) {
 
 export function logReview(topicID, activityType, referenceID, sourceChunkID, score) {
   return appBridge().LogReview(topicID, activityType, referenceID, sourceChunkID, score)
-}
-
-export function getFlashcards(topicID, dueOnly = true) {
-  return appBridge().GetFlashcards(topicID, dueOnly)
-}
-
-export function recordFlashcardReview(cardID, rating) {
-  return appBridge().RecordFlashcardReview(cardID, rating)
 }
 
 export function generateReviewTasks(notebookID) {

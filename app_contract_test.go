@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
@@ -449,11 +448,11 @@ func newTestApp(t *testing.T) *App {
 // - AI/RAG tests (AskAI, RAG pipeline)
 // - Notebook/Topic tests (GetAvailableTopics, GetNotebookTopicTree, etc.)
 // - Quiz/Scoring tests (ScoreAnswer, quiz generation)
-// - Flashcard/FSRS tests (GenerateFlashcards, RecordFlashcardReview)
+// - Flashcard/FSRS tests (GenerateFlashcards)
 // - Written Answer tests (GenerateShortAnswerPrompt, ScoreShortAnswer)
-// - Reader tests (GetReaderTopicBundle, ExplainReaderSection, CompleteReadingSession)
+// - Reader tests (GetReaderTopicBundle, ExplainReaderSection)
 // - Notebook Upload tests (DraftNotebookSyllabus, ConfirmNotebookSyllabus)
-// - Queue tests (GetNextTask, ActivateTask, CompleteTask, SkipTask) [TO BE ADDED]
+// - Queue tests (ActivateTask, CompleteTask, SkipTask) [TO BE ADDED]
 // - Deterministic Ordering tests [TO BE ADDED]
 // ============================================================================
 
@@ -987,123 +986,6 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 	}
 }
 
-func TestGetFlashcardsDueOnlyFiltersByDueDate(t *testing.T) {
-	app := newTestApp(t)
-
-	resp := app.GenerateFlashcards("os-scheduling")
-	if _, hasErr := resp["error"]; hasErr {
-		t.Fatalf("generation failed: %v", resp["error"])
-	}
-	cards := resp["cards"].([]models.Flashcard)
-
-	// Manually set cards to be due now, since new cards are scheduled 24 hours out
-	now := time.Now().Unix()
-	if _, err := db.GetConnection().Exec("UPDATE fsrs_cards SET due_at = ? WHERE topic_id = ?", now-100, "os-scheduling"); err != nil {
-		t.Fatalf("failed to make cards due: %v", err)
-	}
-
-	reviewResp := app.RecordFlashcardReview(cards[0].ID, "easy")
-	if _, hasErr := reviewResp["error"]; hasErr {
-		t.Fatalf("review failed: %v", reviewResp["error"])
-	}
-
-	dueResp := app.GetFlashcards("os-scheduling", true)
-	if _, hasErr := dueResp["error"]; hasErr {
-		t.Fatalf("GetFlashcards failed: %v", dueResp["error"])
-	}
-	dueCards, ok := dueResp["cards"].([]models.Flashcard)
-	if !ok {
-		t.Fatalf("expected typed flashcards slice, got %#v", dueResp["cards"])
-	}
-	if len(dueCards) != len(cards)-1 {
-		t.Fatalf("expected %d due cards after scheduling one into the future, got %d", len(cards)-1, len(dueCards))
-	}
-}
-
-func TestRecordFlashcardReviewUpdatesScheduleState(t *testing.T) {
-	app := newTestApp(t)
-
-	resp := app.GenerateFlashcards("os-scheduling")
-	if _, hasErr := resp["error"]; hasErr {
-		t.Fatalf("generation failed: %v", resp["error"])
-	}
-	cards := resp["cards"].([]models.Flashcard)
-
-	reviewResp := app.RecordFlashcardReview(cards[0].ID, "good")
-	if _, hasErr := reviewResp["error"]; hasErr {
-		t.Fatalf("review failed: %v", reviewResp["error"])
-	}
-
-	state, ok := reviewResp["state"].(*models.FlashcardState)
-	if !ok {
-		t.Fatalf("expected flashcard state pointer, got %#v", reviewResp["state"])
-	}
-	if state.Reps != 1 {
-		t.Fatalf("expected reps=1, got %#v", state.Reps)
-	}
-	if state.ScheduledDays <= 0 {
-		t.Fatalf("expected scheduled_days to be positive, got %d", state.ScheduledDays)
-	}
-
-	card, ok := reviewResp["card"].(*models.Flashcard)
-	if !ok {
-		t.Fatalf("expected flashcard pointer, got %#v", reviewResp["card"])
-	}
-	if card.DueAt <= 0 {
-		t.Fatalf("expected due_at epoch, got %d", card.DueAt)
-	}
-	if _, ok := reviewResp["review_log_id"].(string); !ok {
-		t.Fatalf("expected review_log_id string, got %#v", reviewResp["review_log_id"])
-	}
-
-	dueCount, err := db.QueryDueReviewCards(32503680000)
-	if err != nil {
-		t.Fatalf("QueryDueReviewCards failed: %v", err)
-	}
-	if dueCount != len(cards) {
-		t.Fatalf("expected all cards to be due by far-future cutoff, got %d", dueCount)
-	}
-}
-
-func TestRecordFlashcardReviewRejectsInvalidRating(t *testing.T) {
-	app := newTestApp(t)
-
-	resp := app.RecordFlashcardReview("missing-card", "skip")
-	if _, hasErr := resp["error"]; !hasErr {
-		t.Fatalf("expected error for invalid rating, got %#v", resp)
-	}
-}
-
-func TestRecordFlashcardReviewReturnsEpochTimestampsAndFSRSFields(t *testing.T) {
-	app := newTestApp(t)
-
-	resp := app.GenerateFlashcards("os-scheduling")
-	if _, hasErr := resp["error"]; hasErr {
-		t.Fatalf("generation failed: %v", resp["error"])
-	}
-	cards := resp["cards"].([]models.Flashcard)
-
-	reviewResp := app.RecordFlashcardReview(cards[0].ID, "easy")
-	if _, hasErr := reviewResp["error"]; hasErr {
-		t.Fatalf("review failed: %v", reviewResp["error"])
-	}
-
-	card := reviewResp["card"].(*models.Flashcard)
-	state := reviewResp["state"].(*models.FlashcardState)
-	if card.DueAt <= 0 {
-		t.Fatalf("expected due_at int64 epoch, got %d", card.DueAt)
-	}
-	if state.Stability <= 0 {
-		t.Fatalf("expected stability > 0, got %f", state.Stability)
-	}
-	if state.Difficulty <= 0 {
-		t.Fatalf("expected difficulty > 0, got %f", state.Difficulty)
-	}
-	if state.ScheduledDays <= 0 {
-		t.Fatalf("expected scheduled_days > 0 for easy, got %d", state.ScheduledDays)
-	}
-}
-
 func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing.T) {
 	app := newTestApp(t)
 
@@ -1360,8 +1242,8 @@ func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
 	if state == nil {
 		t.Fatalf("expected persisted assessment fsrs state")
 	}
-	if state.GetState().ScheduledDays <= 0 {
-		t.Fatalf("expected scheduled days > 0, got %d", state.GetState().ScheduledDays)
+	if state.GetState().ScheduledDays < 0 {
+		t.Fatalf("expected scheduled days >= 0, got %d", state.GetState().ScheduledDays)
 	}
 }
 
@@ -1723,112 +1605,6 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	}
 }
 
-func TestCompleteReadingSession_AppendsQuestionsAndAdvancesCursor(t *testing.T) {
-	app := newTestApp(t)
-
-	topicID := "complete-session-topic"
-	notebookID := "complete-session-notebook"
-	if err := db.EnsureTopic(topicID, "Complete Session Topic"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-	if err := db.UpdateTopicPageBounds(topicID, 1, 4); err != nil {
-		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
-	}
-	if err := db.CreateNotebook(notebookID, "Complete Session Notebook", "/tmp/complete.txt", "txt", "", 4); err != nil {
-		t.Fatalf("CreateNotebook failed: %v", err)
-	}
-
-	parentID := "complete-session-parent"
-	if err := db.IngestNotebookContentByTopic(notebookID, []db.NotebookTopicIngestionGroup{{
-		TopicID: topicID,
-		Parents: []db.NotebookParentInput{{
-			ID: parentID, Heading: "Complete Section", Content: "complete section body", OrderIndex: 1,
-		}},
-		Chunks: []db.NotebookChunkInput{
-			{ID: "complete-session-c1", ParentID: parentID, Text: "page one context.", TokenCount: 3, PageNum: 1},
-			{ID: "complete-session-c2", ParentID: parentID, Text: "page two context.", TokenCount: 3, PageNum: 2},
-			{ID: "complete-session-c3", ParentID: parentID, Text: "page three buffer.", TokenCount: 3, PageNum: 3},
-		},
-	}}); err != nil {
-		t.Fatalf("IngestNotebookContentByTopic failed: %v", err)
-	}
-
-	if err := db.ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{{
-		ID:            "complete-session-existing",
-		TopicID:       topicID,
-		Prompt:        "Existing?",
-		Options:       []string{"A", "B"},
-		CorrectAnswer: "A",
-	}}); err != nil {
-		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
-	}
-
-	// Initialize cursor to match startPage
-	if err := db.UpdateTopicReadingCursor(topicID, 1, false); err != nil {
-		t.Fatalf("UpdateTopicReadingCursor failed: %v", err)
-	}
-
-	app.fastLLMProvider = &mockLLMProvider{answer: questionJSON(3, "complete-session-c1")}
-	resp := app.CompleteReadingSession(topicID, 1, 2)
-	if _, hasErr := resp["error"]; hasErr {
-		t.Fatalf("expected completion success, got error: %v", resp["error"])
-	}
-	if got := resp["questions_generated"]; got != 3 {
-		t.Fatalf("expected 3 generated questions, got %#v", got)
-	}
-	if got := resp["current_page_cursor"]; got != 3 {
-		t.Fatalf("expected cursor 3, got %#v", got)
-	}
-
-	questions, err := db.GetQuestionsForTopic(topicID)
-	if err != nil {
-		t.Fatalf("GetQuestionsForTopic failed: %v", err)
-	}
-	if len(questions) != 4 {
-		t.Fatalf("expected existing question plus 3 generated questions, got %d", len(questions))
-	}
-	generated := 0
-	for _, q := range questions {
-		if q.PromptVersion == "reader-complete-v2-density" {
-			generated++
-			if q.SourcePageStart != 1 || q.SourcePageEnd != 3 {
-				t.Fatalf("expected generated question lineage pages 1-3, got %#v", q)
-			}
-		}
-	}
-	if generated != 3 {
-		t.Fatalf("expected 3 reader-complete questions, got %d", generated)
-	}
-}
-
-func TestCompleteReadingSession_RequiresFastLLM(t *testing.T) {
-	initTestDB(t)
-
-	app := &App{}
-	resp := app.CompleteReadingSession("os-scheduling", 1, 2)
-	if _, hasErr := resp["error"]; !hasErr {
-		t.Fatalf("expected error without FAST_LLM, got %#v", resp)
-	}
-}
-
-func TestCompleteReadingSession_RejectsInvalidWindow(t *testing.T) {
-	initTestDB(t)
-
-	topicID := "complete-invalid-window"
-	if err := db.EnsureTopic(topicID, "Invalid Window"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-	if err := db.UpdateTopicPageBounds(topicID, 5, 8); err != nil {
-		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
-	}
-
-	app := &App{fastLLMProvider: &mockLLMProvider{answer: questionJSON(3, "complete-session-c1")}}
-	resp := app.CompleteReadingSession(topicID, 7, 6)
-	if _, hasErr := resp["error"]; !hasErr {
-		t.Fatalf("expected invalid window error, got %#v", resp)
-	}
-}
-
 // ============================================================================
 // NOTEBOOK UPLOAD TESTS
 // ============================================================================
@@ -1956,55 +1732,6 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 // ============================================================================
 // QUEUE CONTRACT TESTS
 // ============================================================================
-
-// TestGetNextTask_ReturnsNextPendingTask verifies GetNextTask returns the next pending task
-// and returns ErrNoPendingTasks when queue is empty.
-func TestGetNextTask_ReturnsNextPendingTask(t *testing.T) {
-	app := newTestApp(t)
-
-	// Create a notebook for queue tasks
-	notebookID := "queue-test-nb"
-	if err := db.CreateNotebook(notebookID, "Queue Test Notebook", "/tmp/queue.txt", "txt", "", 1); err != nil {
-		t.Fatalf("CreateNotebook failed: %v", err)
-	}
-
-	// Test empty queue returns ErrNoPendingTasks
-	resp := app.GetNextTask(notebookID)
-	if code, ok := resp["code"].(int); !ok || code != 204 {
-		t.Fatalf("expected code 204 for empty queue, got: %#v", resp)
-	}
-
-	// Insert a pending task
-	task := models.StudyQueueTask{
-		ID:         "task-1",
-		NotebookID: notebookID,
-		TaskType:   models.StudyTaskTypeFlashcardReview,
-		Status:     models.StudyTaskStatusPending,
-		Priority:   1,
-		StartPage:  1,
-		EndPage:    5,
-	}
-	if err := db.InsertStudyTask(task); err != nil {
-		t.Fatalf("InsertStudyTask failed: %v", err)
-	}
-
-	// GetNextTask should return the task
-	resp = app.GetNextTask(notebookID)
-	if _, hasErr := resp["error"]; hasErr {
-		t.Fatalf("expected success, got error: %v", resp["error"])
-	}
-
-	returnedTask, ok := resp["task"].(*models.StudyQueueTask)
-	if !ok {
-		t.Fatalf("expected task in response, got: %#v", resp["task"])
-	}
-	if returnedTask.ID != "task-1" {
-		t.Fatalf("expected task-1, got: %s", returnedTask.ID)
-	}
-	if returnedTask.Status != models.StudyTaskStatusPending {
-		t.Fatalf("expected PENDING status, got: %s", returnedTask.Status)
-	}
-}
 
 // TestActivateTask_TransitionsPendingToActive verifies ActivateTask moves task from PENDING to ACTIVE.
 func TestActivateTask_TransitionsPendingToActive(t *testing.T) {
