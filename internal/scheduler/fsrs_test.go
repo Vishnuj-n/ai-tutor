@@ -2,15 +2,25 @@ package scheduler
 
 import (
 	"testing"
+	"time"
 
 	"ai-tutor/internal/models"
 )
+
+func mustNextState(t *testing.T, state models.FlashcardState, rating int, now time.Time, dueAt, lastReviewedAt int64) models.FlashcardState {
+	t.Helper()
+	s, err := NextFSRSState(state, rating, now, dueAt, lastReviewedAt)
+	if err != nil {
+		t.Fatalf("NextFSRSState failed: %v", err)
+	}
+	return s
+}
 
 func TestNextFSRSStateFirstReviewProducesValidStateForAllRatings(t *testing.T) {
 	ratings := []int{Again, Hard, Good, Easy}
 	for _, rating := range ratings {
 		t.Run(ratingName(rating), func(t *testing.T) {
-			state := NextFSRSState(models.FlashcardState{}, rating)
+			state := mustNextState(t, models.FlashcardState{}, rating, time.Now(), 0, 0)
 			if state.Reps != 1 {
 				t.Fatalf("expected reps=1, got %d", state.Reps)
 			}
@@ -20,24 +30,22 @@ func TestNextFSRSStateFirstReviewProducesValidStateForAllRatings(t *testing.T) {
 			if state.Stability <= 0 {
 				t.Fatalf("expected stability > 0, got %f", state.Stability)
 			}
-			if rating == Again {
-				if state.Lapses != 1 {
-					t.Fatalf("expected lapses=1 for again, got %d", state.Lapses)
-				}
-			} else if state.Lapses != 0 {
-				t.Fatalf("expected lapses=0 for first non-again review, got %d", state.Lapses)
+			if state.Lapses != 0 {
+				t.Fatalf("expected lapses=0 for first review, got %d", state.Lapses)
 			}
 		})
 	}
 }
 
 func TestNextFSRSStateRepeatedReviewsIncreaseRepsAndAgainIncrementsLapses(t *testing.T) {
-	state := NextFSRSState(models.FlashcardState{}, Good)
+	t0 := time.Now()
+	state := mustNextState(t, models.FlashcardState{}, Good, t0, 0, 0)
 	if state.Reps != 1 {
 		t.Fatalf("expected reps after first review = 1, got %d", state.Reps)
 	}
 
-	next := NextFSRSState(state, Good)
+	t1 := t0.Add(24 * time.Hour)
+	next := mustNextState(t, state, Good, t1, t0.Unix(), t0.Unix())
 	if next.Reps != 2 {
 		t.Fatalf("expected reps after second review = 2, got %d", next.Reps)
 	}
@@ -45,7 +53,8 @@ func TestNextFSRSStateRepeatedReviewsIncreaseRepsAndAgainIncrementsLapses(t *tes
 		t.Fatalf("expected positive scheduled_days after repeated good review, got %d", next.ScheduledDays)
 	}
 
-	lapsed := NextFSRSState(next, Again)
+	t2 := t1.Add(24 * time.Hour)
+	lapsed := mustNextState(t, next, Again, t2, t1.Unix(), t1.Unix())
 	if lapsed.Reps != 3 {
 		t.Fatalf("expected reps after again = 3, got %d", lapsed.Reps)
 	}

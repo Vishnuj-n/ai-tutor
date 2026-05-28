@@ -55,6 +55,8 @@ func (s *StudyService) logReview(tx *sql.Tx, topicID, activityType, referenceID,
 
 	state := models.FlashcardState{}
 	stateBeforeJSON := "{}"
+	var lastReviewedAt int64
+	var dueAtTimestamp int64
 	if current != nil {
 		state = current.GetState()
 		beforeBytes, marshalErr := json.Marshal(state)
@@ -62,25 +64,14 @@ func (s *StudyService) logReview(tx *sql.Tx, topicID, activityType, referenceID,
 			return nil, marshalErr
 		}
 		stateBeforeJSON = string(beforeBytes)
-		elapsedDays := 0
-		// Use last_reviewed_at for proper spacing calculation, fallback to due_at if missing
-		lastReviewedAt := current.GetLastReviewedAt()
-		if lastReviewedAt > 0 {
-			elapsedSeconds := time.Now().Unix() - lastReviewedAt
-			if elapsedSeconds > 0 {
-				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
-			}
-		} else if current.GetDueAt() > 0 {
-			// Fallback to due_at if last_reviewed_at is not available
-			elapsedSeconds := time.Now().Unix() - current.GetDueAt()
-			if elapsedSeconds > 0 {
-				elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
-			}
-		}
-		state.ElapsedDays = elapsedDays
+		lastReviewedAt = current.GetLastReviewedAt()
+		dueAtTimestamp = current.GetDueAt()
 	}
 
-	nextState := scheduler.NextFSRSState(state, ratingCode)
+	nextState, err := scheduler.NextFSRSState(state, ratingCode, time.Now(), dueAtTimestamp, lastReviewedAt)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().Unix()
 	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {

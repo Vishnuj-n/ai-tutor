@@ -13,21 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func (s *StudyService) GenerateReviewTasks(notebookID string) ([]models.StudyQueueTask, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook ID is required")
-	}
-	task, _, err := db.CreateReviewSession(notebookID)
-	if err != nil {
-		return nil, err
-	}
-	if task == nil {
-		return []models.StudyQueueTask{}, nil
-	}
-	return []models.StudyQueueTask{*task}, nil
-}
-
 func (s *StudyService) GetReviewSession(taskID string) (*models.ReviewSession, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -68,7 +53,21 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		elapsedDays = int(elapsedSeconds / (24 * 60 * 60))
 	}
 	state.ElapsedDays = elapsedDays
-	nextState := scheduler.NextFSRSState(*state, ratingCode)
+
+	var lastReviewedAt int64
+	if tx != nil {
+		lastReviewedAt, err = db.GetLastFlashcardReviewTimeTx(tx, cardID)
+	} else {
+		lastReviewedAt, err = db.GetLastFlashcardReviewTime(cardID)
+	}
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("failed to retrieve last reviewed time: %w", err)
+	}
+
+	nextState, err := scheduler.NextFSRSState(*state, ratingCode, time.Now(), card.DueAt, lastReviewedAt)
+	if err != nil {
+		return nil, nil, "", err
+	}
 	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {
 		dueAt = now
@@ -89,11 +88,11 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		StateAfterJSON:  string(stateAfterJSONBytes),
 	}
 	if tx != nil {
-		if err := db.UpdateFlashcardReviewTx(tx, cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
+		if err := db.UpdateFlashcardReviewTx(tx, cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
 			return nil, nil, "", err
 		}
 	} else {
-		if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, nextState, reviewLog); err != nil {
+		if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
 			return nil, nil, "", err
 		}
 	}
