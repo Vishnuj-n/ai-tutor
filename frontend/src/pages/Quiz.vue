@@ -292,6 +292,36 @@ async function submitQuiz() {
   }
   submitting.value = true
   error.value = ''
+
+  if (!taskID.value) {
+    // Stateless frontend scoring for manual quizzes (so they do not touch the study queue)
+    try {
+      let correctCount = 0
+      questions.value.forEach((q) => {
+        if (typeof answers.value[q.id] === 'string' &&
+            typeof q.correct_answer === 'string' &&
+            answers.value[q.id].trim().toLowerCase() === q.correct_answer.trim().toLowerCase()) {
+          correctCount++
+        }
+      })
+      const score = Math.round((correctCount / questions.value.length) * 100)
+      result.value = {
+        score,
+        passed: score >= 70,
+        passing_score: 70,
+        correct_count: correctCount,
+        total_count: questions.value.length,
+        feedback: score >= 70 ? 'Strong work. You can move forward.' : 'Review the missed concepts and retry the material.'
+      }
+      submitted.value = true
+    } catch (err) {
+      error.value = err?.message || 'Failed to grade manual quiz.'
+    } finally {
+      submitting.value = false
+    }
+    return
+  }
+
   try {
     const payload = questions.value.map((q) => ({
       question_id: q.id,

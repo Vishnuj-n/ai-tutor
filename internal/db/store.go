@@ -177,6 +177,7 @@ func UpsertDailyStudyMinutes(minutes int) error {
 }
 
 // CreateFlashcards stores a new set of flashcards for one topic.
+// Used by: app_contract_test.go (test-only coverage, production code path utilizes GetOrCreateFlashcardsForTopic)
 func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -303,7 +304,14 @@ func GetExistingReviewTaskForNotebook(notebookID string) (*models.StudyQueueTask
 	if notebookID == "" {
 		return nil, fmt.Errorf("notebook id is required")
 	}
-	return getExistingReviewTaskForNotebookRepo(notebookID)
+	task, err := fetchExistingReviewTask(conn, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	if task != nil {
+		utils.LogReviewSessionResume(task.ID, string(task.Status))
+	}
+	return task, nil
 }
 
 func GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
@@ -599,44 +607,36 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 		return nil
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	stmt, err := tx.Prepare(`
-		UPDATE chunks SET embedding_ref = ? WHERE id = ?
-	`)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = stmt.Close()
-	}()
-
-	for _, item := range items {
-		if item.ChunkID == "" {
-			err = fmt.Errorf("chunk id is required for all batch items")
-			return err
-		}
-
-		res, err := stmt.Exec(item.Hash, item.ChunkID)
+	return withTx(func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare(`
+			UPDATE chunks SET embedding_ref = ? WHERE id = ?
+		`)
 		if err != nil {
 			return err
 		}
-		rowsAffected, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rowsAffected == 0 {
-			return fmt.Errorf("no rows inserted for chunk_id %s", item.ChunkID)
-		}
-	}
+		defer func() {
+			_ = stmt.Close()
+		}()
 
-	return tx.Commit()
+		for _, item := range items {
+			if item.ChunkID == "" {
+				return fmt.Errorf("chunk id is required for all batch items")
+			}
+
+			res, err := stmt.Exec(item.Hash, item.ChunkID)
+			if err != nil {
+				return err
+			}
+			rowsAffected, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rowsAffected == 0 {
+				return fmt.Errorf("no rows inserted for chunk_id %s", item.ChunkID)
+			}
+		}
+		return nil
+	})
 }
 
 // GetChunkEmbeddingRef returns the stored embedding_ref hash for a topic-scoped chunk.

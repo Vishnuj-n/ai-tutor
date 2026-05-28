@@ -197,9 +197,7 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 	if boundsErr != nil {
 		topicStartPage, topicEndPage = 0, 0
 	}
-	if bundle.NotebookURL != "" {
-		bundle.NotebookURL = notebookAssetURL(bundle.NotebookURL)
-	}
+
 	lightSections := make([]map[string]interface{}, 0, len(bundle.Sections))
 	for _, s := range bundle.Sections {
 		lightSections = append(lightSections, map[string]interface{}{
@@ -242,6 +240,24 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 		"answer": result.Answer, "cited_sections": result.CitedSections,
 		"chunks_retrieved": result.ChunksRetrieved, "sections_used": result.SectionsUsed,
 	}
+}
+
+func (a *App) AskSocratic(topicID string, question string) map[string]interface{} {
+	if !a.aiReady {
+		reason := a.aiInitError
+		if reason == "" {
+			reason = "local AI runtime is not ready"
+		}
+		return map[string]interface{}{"error": "Socratic Tutor unavailable: " + reason}
+	}
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	res, err := a.studyService.AskSocratic(topicID, question)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return res
 }
 
 func (a *App) ExplainReaderSection(sectionID string, question string) map[string]interface{} {
@@ -313,10 +329,6 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		return map[string]interface{}{"error": "scheduler not initialized"}
 	}
 	now := time.Now()
-	plan, err := a.scheduler.BuildTodayPlan(now)
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
 
 	// Canonical queue recovery/materialization path for dashboard:
 	// if ACTIVE/PENDING queue tasks exist, surface those directly.
@@ -329,37 +341,105 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	queueTasks := make([]models.ScheduledTask, 0, len(activeQueueTasks)+len(pendingQueueTasks))
-	actionCounts := make(map[string]int)
-	for _, q := range activeQueueTasks {
-		task := queueTaskToScheduledTask(q)
-		queueTasks = append(queueTasks, task)
-		actionCounts[task.ActionType]++
-	}
-	for _, q := range pendingQueueTasks {
-		task := queueTaskToScheduledTask(q)
-		queueTasks = append(queueTasks, task)
-		actionCounts[task.ActionType]++
-	}
-	utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
-	utils.Warnf("[TODAY_PLAN] planner aggregation dueReviewCards=%d reviewMinutes=%d schedulerTasks=%d queueActionCounts=%v", plan.DueReviewCards, plan.ReviewMinutes, len(plan.Tasks), actionCounts)
-	if actionCounts["flashcard_review"] > 0 {
-		utils.Warnf("[FLASHCARD_PIPELINE] today_plan_review_detected flashcard_review_count=%d", actionCounts["flashcard_review"])
-	}
-	if len(queueTasks) > 0 {
-		plan.Tasks = queueTasks
-		plan.IsEstimate = false
+	var plan *models.TodayPlan
+	if len(activeQueueTasks) > 0 || len(pendingQueueTasks) > 0 {
+		// Bypass scheduler's synthetic BuildTodayPlan to save DB scan and token budget cycles.
+		// Query due review cards and daily minutes directly.
+		dueCards, err := db.QueryDueReviewCards(now.Unix())
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		dailyStudyMinutes, err := db.GetDailyStudyMinutes()
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		if dailyStudyMinutes <= 0 {
+			dailyStudyMinutes = scheduler.DefaultDailyStudyMinutes
+		}
+
+		totalDueCards := dueCards
+		reviewBudget := int(math.Ceil(float64(dueCards) * scheduler.ReviewMinutesPerCard))
+		proportionalCap := int(float64(dailyStudyMinutes) * scheduler.MaxReviewMinutesRatio)
+		safeReviewBudget := reviewBudget
+		if safeReviewBudget > proportionalCap {
+			safeReviewBudget = proportionalCap
+		}
+		if safeReviewBudget > scheduler.MaxReviewMinutesSession {
+			safeReviewBudget = scheduler.MaxReviewMinutesSession
+		}
+		materializedCards := int(float64(safeReviewBudget) / scheduler.ReviewMinutesPerCard)
+		if materializedCards > dueCards {
+			materializedCards = dueCards
+		}
+		deferredCards := totalDueCards - materializedCards
+		if deferredCards < 0 {
+			deferredCards = 0
+		}
+
+		queueTasks := make([]models.ScheduledTask, 0, len(activeQueueTasks)+len(pendingQueueTasks))
+		actionCounts := make(map[string]int)
+		activeTopicsMap := make(map[string]bool)
+
+		for _, q := range activeQueueTasks {
+			task := queueTaskToScheduledTask(q)
+			queueTasks = append(queueTasks, task)
+			actionCounts[task.ActionType]++
+			if q.Title != "" {
+				activeTopicsMap[q.Title] = true
+			}
+		}
+		for _, q := range pendingQueueTasks {
+			task := queueTaskToScheduledTask(q)
+			queueTasks = append(queueTasks, task)
+			actionCounts[task.ActionType]++
+			if q.Title != "" {
+				activeTopicsMap[q.Title] = true
+			}
+		}
+
+		activeTopics := make([]string, 0, len(activeTopicsMap))
+		for topicTitle := range activeTopicsMap {
+			activeTopics = append(activeTopics, topicTitle)
+		}
+
 		learningMinutes := 0
-		for _, task := range plan.Tasks {
+		for _, task := range queueTasks {
 			learningMinutes += task.EstimateMinutes
 		}
-		plan.LearningMinutes = learningMinutes
+
+		plan = &models.TodayPlan{
+			Date:                now.Format("2006-01-02"),
+			TotalMinutes:        dailyStudyMinutes,
+			ReviewMinutes:       safeReviewBudget,
+			LearningMinutes:     learningMinutes,
+			DueReviewCards:      materializedCards,
+			TotalDueReviewCards: totalDueCards,
+			DeferredReviewCards: deferredCards,
+			ActiveTopics:        activeTopics,
+			Tasks:               queueTasks,
+			IsEstimate:          false,
+		}
+
+		utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
+		utils.Warnf("[TODAY_PLAN] planner aggregation dueReviewCards=%d reviewMinutes=%d queueActionCounts=%v", plan.DueReviewCards, plan.ReviewMinutes, actionCounts)
+		if actionCounts["flashcard_review"] > 0 {
+			utils.Warnf("[FLASHCARD_PIPELINE] today_plan_review_detected flashcard_review_count=%d", actionCounts["flashcard_review"])
+		}
+	} else {
+		// Fallback to synthetic scheduler plan if queue is empty
+		syntheticPlan, err := a.scheduler.BuildTodayPlan(now)
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		plan = syntheticPlan
+		utils.Warnf("[TODAY_PLAN] synthetic plan fallback taskCount=%d", len(plan.Tasks))
 	}
 
 	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
 	for idx, task := range plan.Tasks {
 		utils.Warnf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
 	}
+
 	return map[string]interface{}{
 		"date": plan.Date, "total_minutes": plan.TotalMinutes,
 		"review_minutes": plan.ReviewMinutes, "learning_minutes": plan.LearningMinutes,
@@ -683,23 +763,6 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 
-	queueTask, err := db.GetTaskByID(taskID)
-	if err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			utils.Warnf("[COMPLETE_SESSION] CompleteReading GetTaskByID error: task not found taskID=%s", taskID)
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		default:
-			utils.Warnf("[COMPLETE_SESSION] CompleteReading GetTaskByID error taskID=%s err=%v", taskID, err)
-			return map[string]interface{}{"error": err.Error()}
-		}
-	}
-	utils.Warnf("[COMPLETE_SESSION] CompleteReading queue task loaded taskID=%s status=%s type=%s", taskID, queueTask.Status, queueTask.TaskType)
-	if queueTask.Status != models.StudyTaskStatusActive {
-		utils.Warnf("[COMPLETE_SESSION] CompleteReading rejected non-active task taskID=%s status=%s", taskID, queueTask.Status)
-		return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
-	}
-
 	// Generate quiz from full assigned chunk range (no page validation)
 	chunks, err := db.GetChunksForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
 	if err != nil {
@@ -1000,20 +1063,6 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
-}
-
-func normalizeQuizAnswer(answer string, options []string) string {
-	ans := strings.TrimSpace(strings.ToLower(answer))
-	if ans == "" {
-		return ""
-	}
-	if len(ans) == 1 {
-		idx := int(ans[0] - 'a')
-		if idx >= 0 && idx < len(options) {
-			return strings.ToLower(strings.TrimSpace(options[idx]))
-		}
-	}
-	return ans
 }
 
 func resolveAppDir() (string, error) {

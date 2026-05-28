@@ -425,24 +425,14 @@ func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) e
 // CompleteTask marks ACTIVE task as terminal and inserts explicit follow-up tasks transactionally.
 func CompleteTask(taskID string, result models.CompletionResult) error {
 	utils.Warnf("[QUEUE] CompleteTask transaction start taskID=%s", strings.TrimSpace(taskID))
-	tx, err := conn.Begin()
-	if err != nil {
-		utils.Warnf("[QUEUE] CompleteTask transaction begin error taskID=%s err=%v", strings.TrimSpace(taskID), err)
-		return err
-	}
-	defer func() {
-		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
-			utils.Warnf("[QUEUE] CompleteTask rollback error taskID=%s err=%v", strings.TrimSpace(taskID), err)
+	err := withTx(func(tx *sql.Tx) error {
+		if err := CompleteTaskTx(tx, taskID, result); err != nil {
+			utils.Warnf("[QUEUE] CompleteTask transaction error taskID=%s err=%v", strings.TrimSpace(taskID), err)
+			return err
 		}
-	}()
-
-	if err := CompleteTaskTx(tx, taskID, result); err != nil {
-		utils.Warnf("[QUEUE] CompleteTask transaction error taskID=%s err=%v", strings.TrimSpace(taskID), err)
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		utils.Warnf("[QUEUE] CompleteTask tx commit error taskID=%s err=%v", strings.TrimSpace(taskID), err)
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 	utils.Warnf("[QUEUE] CompleteTask tx commit success taskID=%s", strings.TrimSpace(taskID))
@@ -606,42 +596,36 @@ func PersistReadingProgress(taskID string, finalPage int) (bool, error) {
 		finalPage = task.EndPage
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return false, err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	_, err = tx.Exec(`
-		INSERT INTO reading_progress (task_id, current_page, last_accessed_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(task_id) DO UPDATE
-		SET current_page = excluded.current_page,
-		    last_accessed_at = CURRENT_TIMESTAMP
-	`, task.TaskID, finalPage)
-	if err != nil {
-		return false, err
-	}
-
-	// Synchronize topics.current_page_cursor to keep both cursor systems aligned
-	if task.TopicID != "" {
+	err = withTx(func(tx *sql.Tx) error {
 		_, err = tx.Exec(`
-			UPDATE topics
-			SET current_page_cursor = ?,
-			    updated_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND current_page_cursor < ?
-		`, finalPage, task.TopicID, finalPage)
+			INSERT INTO reading_progress (task_id, current_page, last_accessed_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(task_id) DO UPDATE
+			SET current_page = excluded.current_page,
+			    last_accessed_at = CURRENT_TIMESTAMP
+		`, task.TaskID, finalPage)
 		if err != nil {
-			return false, err
+			return err
 		}
-	}
 
-	if err = tx.Commit(); err != nil {
+		// Synchronize topics.current_page_cursor to keep both cursor systems aligned
+		if task.TopicID != "" {
+			_, err = tx.Exec(`
+				UPDATE topics
+				SET current_page_cursor = ?,
+				    updated_at = CURRENT_TIMESTAMP
+				WHERE id = ? AND current_page_cursor < ?
+			`, finalPage, task.TopicID, finalPage)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
 		return false, err
 	}
-
 	return reachedEnd, nil
 }
 
@@ -704,96 +688,51 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 		return "", ErrTaskNotActive
 	}
 
-	// Begin transaction to ensure atomicity of cursor update and task completion
-	tx, err := conn.Begin()
-	if err != nil {
-		return "", fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
-			utils.Warnf("[COMPLETE_READING] rollback error taskID=%s err=%v", taskID, err)
-		}
-	}()
-
-	// Synchronize topics.current_page_cursor to keep both cursor systems aligned.
-	// Completion is authoritative for the assigned reading window, so cursor must
-	// advance to at least end_page to prevent scheduler rematerializing the same window.
-	if seed.TopicID != "" {
-		cursorAfterCompletion := currentPage
-		if seed.EndPage > cursorAfterCompletion {
-			cursorAfterCompletion = seed.EndPage
-		}
-		_, err = tx.Exec(`
-			UPDATE topics
-			SET current_page_cursor = ?,
-			    updated_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND current_page_cursor < ?
-		`, cursorAfterCompletion, seed.TopicID, cursorAfterCompletion)
-		if err != nil {
-			return "", fmt.Errorf("failed to synchronize topic cursor: %w", err)
-		}
-	}
-
 	quizTaskID := uuid.NewString()
-	err = CompleteTaskTx(tx, seed.ID, models.CompletionResult{
-		Status: models.StudyTaskStatusCompleted,
-		FollowUps: []models.StudyQueueTask{
-			{
-				ID:          quizTaskID,
-				NotebookID:  seed.NotebookID,
-				TopicID:     seed.TopicID,
-				TaskType:    models.StudyTaskTypeQuiz,
-				Status:      models.StudyTaskStatusPending,
-				Priority:    0,
-				PayloadJSON: string(payloadBytes),
-				StartPage:   seed.StartPage,
-				EndPage:     seed.EndPage,
+	err = withTx(func(tx *sql.Tx) error {
+		// Synchronize topics.current_page_cursor to keep both cursor systems aligned.
+		// Completion is authoritative for the assigned reading window, so cursor must
+		// advance to at least end_page to prevent scheduler rematerializing the same window.
+		if seed.TopicID != "" {
+			cursorAfterCompletion := currentPage
+			if seed.EndPage > cursorAfterCompletion {
+				cursorAfterCompletion = seed.EndPage
+			}
+			_, err = tx.Exec(`
+				UPDATE topics
+				SET current_page_cursor = ?,
+				    updated_at = CURRENT_TIMESTAMP
+				WHERE id = ? AND current_page_cursor < ?
+			`, cursorAfterCompletion, seed.TopicID, cursorAfterCompletion)
+			if err != nil {
+				return fmt.Errorf("failed to synchronize topic cursor: %w", err)
+			}
+		}
+
+		err = CompleteTaskTx(tx, seed.ID, models.CompletionResult{
+			Status: models.StudyTaskStatusCompleted,
+			FollowUps: []models.StudyQueueTask{
+				{
+					ID:          quizTaskID,
+					NotebookID:  seed.NotebookID,
+					TopicID:     seed.TopicID,
+					TaskType:    models.StudyTaskTypeQuiz,
+					Status:      models.StudyTaskStatusPending,
+					Priority:    0,
+					PayloadJSON: string(payloadBytes),
+					StartPage:   seed.StartPage,
+					EndPage:     seed.EndPage,
+				},
 			},
-		},
+		})
+		if err != nil {
+			return err
+		}
+		return nil
 	})
+
 	if err != nil {
 		return "", err
 	}
-
-	if err = tx.Commit(); err != nil {
-		return "", fmt.Errorf("failed to commit transaction: %w", err)
-	}
 	return quizTaskID, nil
-}
-
-func GetChunkIDsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return nil, fmt.Errorf("topic id is required")
-	}
-	if startPage <= 0 || endPage <= 0 {
-		return nil, fmt.Errorf("start page and end page must be positive")
-	}
-	if startPage > endPage {
-		startPage, endPage = endPage, startPage
-	}
-	rows, err := conn.Query(`
-		SELECT id
-		FROM chunks
-		WHERE topic_id = ? AND page_num BETWEEN ? AND ?
-		ORDER BY page_num ASC, id ASC
-	`, topicID, startPage, endPage)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-	ids := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return ids, nil
 }

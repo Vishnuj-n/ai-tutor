@@ -100,7 +100,7 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
 import {
-  askAI as askAIRequest,
+  askSocratic,
   getAvailableTopics as fetchAvailableTopics,
   getNotebooks as fetchNotebooks,
 } from '../services/appApi'
@@ -214,7 +214,7 @@ async function submitQuestion() {
   await scrollToBottom()
 
   try {
-    const result = await askAIRequest(topicID, buildSocraticQuestion(question))
+    const result = await askSocratic(topicID, question)
 
     if (result.error) {
       messages.value.push({
@@ -235,19 +235,6 @@ async function submitQuestion() {
     isLoading.value = false
     await scrollToBottom()
   }
-}
-
-const SOCRATIC_INSTRUCTIONS = [
-  'You are a Socratic tutor.',
-  '- Begin with a short, probing question that helps the student analyze the topic.',
-  '- Follow with a concise hint that is grounded only in the selected material and retrieval scope.',
-  '- Do not provide the final answer unless the student explicitly requests it.',
-  '- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.',
-  '',
-]
-
-function buildSocraticQuestion(question) {
-  return [...SOCRATIC_INSTRUCTIONS, `Student question: ${question}`].join('\n')
 }
 
 function handleComposerKeydown(event) {

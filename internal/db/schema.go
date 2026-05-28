@@ -157,6 +157,7 @@ func InitSchema(tx *sql.Tx) error {
 			indexing_status TEXT DEFAULT 'PENDING',
 			page_count INTEGER,
 			chunk_count INTEGER DEFAULT 0,
+			syllabus_draft_json TEXT,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
@@ -327,7 +328,9 @@ func InitSchema(tx *sql.Tx) error {
 		if err != nil {
 			return fmt.Errorf("failed to query notebook_chunks for dedupe: %w", err)
 		}
-		defer rows.Close()
+		defer func() {
+			_ = rows.Close()
+		}()
 		seen := make(map[string]bool)
 		var idsToDelete []string
 		for rows.Next() {
