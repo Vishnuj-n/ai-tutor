@@ -242,6 +242,24 @@ func (a *App) AskAI(topicID string, question string) map[string]interface{} {
 	}
 }
 
+func (a *App) AskSocratic(topicID string, question string) map[string]interface{} {
+	if !a.aiReady {
+		reason := a.aiInitError
+		if reason == "" {
+			reason = "local AI runtime is not ready"
+		}
+		return map[string]interface{}{"error": "Socratic Tutor unavailable: " + reason}
+	}
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	res, err := a.studyService.AskSocratic(topicID, question)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return res
+}
+
 func (a *App) ExplainReaderSection(sectionID string, question string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}

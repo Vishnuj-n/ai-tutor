@@ -23,6 +23,10 @@ export function askAI(topicID, question) {
   return appBridge().AskAI(topicID, question)
 }
 
+export function askSocratic(topicID, question) {
+  return appBridge().AskSocratic(topicID, question)
+}
+
 export function explainReaderSection(sectionID, question = '') {
   return appBridge().ExplainReaderSection(sectionID, question)
 }
