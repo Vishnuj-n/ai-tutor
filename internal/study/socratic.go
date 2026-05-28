@@ -139,5 +139,65 @@ func resolveSocraticLineage(topicID string, parentIDs []string) (string, int, in
 	return sourceHeading, sourcePageStart, sourcePageEnd
 }
 
+// AskSocratic processes a conversational query in Socratic Tutor mode, completely statelessly.
+func (s *StudyService) AskSocratic(topicID string, question string) (map[string]interface{}, error) {
+	topicID = strings.TrimSpace(topicID)
+	question = strings.TrimSpace(question)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic ID is required")
+	}
+	if question == "" {
+		return nil, fmt.Errorf("question is required")
+	}
+	if s.fastLLMProvider == nil {
+		return nil, fmt.Errorf("FAST_LLM provider not initialized")
+	}
+	if s.retrievalEngine == nil {
+		return nil, fmt.Errorf("retrieval engine not initialized")
+	}
+
+	// 1. Semantic search for relevant chunks
+	const topK = 5
+	results, err := s.retrievalEngine.SemanticSearch(topicID, question, topK, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("retrieval failed: %w", err)
+	}
+
+	// 2. Build retrieved material context and citations
+	contextText, citations := buildReaderContext(results)
+
+	// 3. Prepend Socratic instructions (moved from frontend)
+	socraticPrompt := strings.Join([]string{
+		"You are a Socratic tutor.",
+		"- Begin with a short, probing question that helps the student analyze the topic.",
+		"- Follow with a concise hint that is grounded only in the selected material and retrieval scope.",
+		"- Do not provide the final answer unless the student explicitly requests it.",
+		"- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.",
+		"",
+		"Retrieved material:",
+		contextText,
+		"",
+		"Student question: " + question,
+		"",
+		"Response:",
+	}, "\n")
+
+	// 4. Generate answer using heavy LLM provider (to ensure high quality guiding responses)
+	llm := s.heavyLLMProvider
+	if llm == nil {
+		llm = s.fastLLMProvider
+	}
+	answer, err := llm.GenerateAnswer(socraticPrompt)
+	if err != nil {
+		return nil, fmt.Errorf("Socratic response generation failed: %w", err)
+	}
+
+	return map[string]interface{}{
+		"answer":         answer,
+		"cited_sections": citations,
+	}, nil
+}
+
 // Ensure retrieval import is used (the Engine type lives there).
 var _ *retrieval.Engine
+

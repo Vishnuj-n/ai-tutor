@@ -54,7 +54,7 @@
 
     <template v-else-if="tasks.length === 0 && hasActiveStudyContent">
       <article class="card state-card victory-card">
-        <h2>Mission Complete!</h2>
+        <h2>Tasks Complete!</h2>
         <p class="muted">You've completed all tasks for today. Great work!</p>
       </article>
     </template>
