@@ -9,7 +9,6 @@ import (
 // It uses recover() for panic guarding to ensure proper rollback if a panic occurs during
 // the transaction in the same goroutine (e.g., from a nil pointer dereference or index out of bounds).
 // Panics from spawned/background goroutines must recover themselves; this defer will not catch them.
-// nolint:unused // Infrastructure helper for future transaction consolidation
 func withTx(fn func(*sql.Tx) error) error {
 	tx, err := conn.Begin()
 	if err != nil {

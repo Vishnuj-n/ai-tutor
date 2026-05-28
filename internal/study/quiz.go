@@ -77,7 +77,7 @@ func (s *StudyService) GenerateMarathonQuiz(notebookID string, startPage, endPag
 			utils.Warnf("Skipping quiz question: source_chunk_id '%s' not found in allowed chunks (total allowed: %d)", sourceChunkID, len(allowedChunkIDs))
 			continue
 		}
-		matchedOption, ok := resolveCorrectOption(q.CorrectAnswer, q.Options)
+		matchedOption, ok := ResolveCorrectOption(q.CorrectAnswer, q.Options)
 		if !ok {
 			continue
 		}
