@@ -26,10 +26,10 @@ export function useReaderBase(taskID) {
   const sections = ref([])
   const activeSection = ref(null)
 
-  // Locked window state (task flow only)
-  const lockedStartPage = ref(0)
-  const lockedTargetPage = ref(0)
-  const navigation = ref(null)
+  // Navigation bounds for task-flow sessions.
+  const navigationMinPage = ref(0)
+  const navigationMaxPage = ref(0)
+  const navigationState = ref(null)
 
   // Computed
   const selectedNotebook = computed(() =>
@@ -60,22 +60,22 @@ export function useReaderBase(taskID) {
 
   const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
 
-  const hasLockedWindow = computed(() =>
-    lockedStartPage.value > 0 && lockedTargetPage.value >= lockedStartPage.value
+  const hasNavigationBounds = computed(() =>
+    navigationMinPage.value > 0 && navigationMaxPage.value >= navigationMinPage.value
   )
 
   const canGoPrev = computed(() => {
     if (!pdfVisible.value) return false
-    if (hasLockedWindow.value) {
-      return currentPage.value > Math.max(1, lockedStartPage.value)
+    if (hasNavigationBounds.value) {
+      return currentPage.value > Math.max(1, navigationMinPage.value)
     }
     return currentPage.value > 1
   })
 
   const canGoNext = computed(() => {
     if (!pdfVisible.value) return false
-    if (hasLockedWindow.value) {
-      return currentPage.value < Math.min(pageCount.value, lockedTargetPage.value)
+    if (hasNavigationBounds.value) {
+      return currentPage.value < Math.min(pageCount.value, navigationMaxPage.value)
     }
     return currentPage.value < Math.max(1, pageCount.value)
   })
@@ -148,33 +148,31 @@ export function useReaderBase(taskID) {
         return null
       }
 
-      // STRICT VALIDATION: Fail-loud if backend contract is violated
+      // STRICT VALIDATION: Fail-loud if backend contract is violated on critical fields
       if (!result.task) {
         globalError.value = 'Contract violation: missing task data'
         return null
       }
-      if (!result.bundle) {
-        globalError.value = 'Contract violation: missing bundle data'
-        return null
-      }
-      if (!Array.isArray(result.bundle.sections) || result.bundle.sections.length === 0) {
-        globalError.value = 'Contract violation: missing or empty bundle sections'
-        return null
-      }
       if (!result.page_bounds || typeof result.page_bounds !== 'object') {
-        globalError.value = 'Contract violation: missing page_bounds'
+        globalError.value = 'Contract violation: missing navigation bounds'
         return null
       }
       if (!result.navigation || typeof result.navigation !== 'object') {
-        globalError.value = 'Contract violation: missing navigation data'
+        globalError.value = 'Contract violation: missing navigation state'
         return null
       }
 
+      // Treat missing/empty bundle as recoverable
+      let bundle = null
+      if (result.bundle && Array.isArray(result.bundle.sections) && result.bundle.sections.length > 0) {
+        bundle = result.bundle
+      }
+      globalError.value = '' // clear globalError
+
       // Apply initialized state
       const task = result.task
-      const bounds = result.page_bounds
+      const navigationBounds = result.page_bounds
       const nav = result.navigation
-      const bundle = result.bundle
 
 
       // Validate task has required fields
@@ -187,30 +185,30 @@ export function useReaderBase(taskID) {
       selectedTopicID.value = task.topic_id
 
       // Validate bounds have valid values
-      const validStart = Number(bounds.start_page) || 1
-      const validEnd = Number(bounds.end_page) || validStart
-      const validCurrent = Number(bounds.current_page) || validStart
+      const validStart = Number(navigationBounds.start_page) || 1
+      const validEnd = Number(navigationBounds.end_page) || validStart
+      const validCurrent = Number(navigationBounds.current_page) || validStart
 
 
-      lockedStartPage.value = validStart
-      lockedTargetPage.value = validEnd
+      navigationMinPage.value = validStart
+      navigationMaxPage.value = validEnd
       currentPage.value = Math.min(Math.max(validCurrent, validStart), validEnd)
-      navigation.value = nav
+      navigationState.value = nav
 
 
-      // Apply bundle data (guaranteed by strict validation above)
-      topicTitle.value = bundle.topic_title || task.topic_title || 'Reader'
-      notebookUrl.value = bundle.notebook_url || ''
-      fileType.value = (bundle.file_type || '').toLowerCase()
-      pageCount.value = Math.max(1, Number(bundle.page_count) || 1)
-      topicStartPage.value = Number(bundle.topic_start_page ?? 0)
-      topicEndPage.value = Number(bundle.topic_end_page ?? 0)
-      sections.value = bundle.sections
+      // Apply bundle data safely (bundle might be null/empty)
+      topicTitle.value = bundle?.topic_title || task.topic_title || 'Reader'
+      notebookUrl.value = bundle?.notebook_url || ''
+      fileType.value = (bundle?.file_type || '').toLowerCase()
+      pageCount.value = Math.max(1, Number(bundle?.page_count) || 1)
+      topicStartPage.value = Number(bundle?.topic_start_page ?? 0)
+      topicEndPage.value = Number(bundle?.topic_end_page ?? 0)
+      sections.value = bundle?.sections || []
       activeSection.value = sections.value[0] || null
 
       return {
         task,
-        bounds,
+        navigationBounds,
         navigation: nav,
         bundle
       }
@@ -240,8 +238,8 @@ export function useReaderBase(taskID) {
         return false
       }
 
-      // In task flow, do not clobber state initialized by locked-window session setup.
-      if (hasLockedWindow.value) {
+      // In task flow, do not clobber state initialized by the task-session navigation bounds.
+      if (hasNavigationBounds.value) {
         return true
       }
 
@@ -254,7 +252,7 @@ export function useReaderBase(taskID) {
       sections.value = Array.isArray(result?.sections) ? result.sections : []
       activeSection.value = sections.value[0] || null
 
-      // Set page to topic start page (browse mode - no locked window)
+      // Set page to topic start page (browse mode - no task navigation bounds)
       const topicStart = Number(result?.topic_start_page) || 1
       currentPage.value = topicStart
       return true
@@ -286,10 +284,10 @@ export function useReaderBase(taskID) {
     activeSection.value = section
     const page = Number(section?.page_num)
     if (Number.isFinite(page) && page > 0) {
-      if (hasLockedWindow.value) {
-        const lockedMin = Math.max(1, Number(lockedStartPage.value) || 1)
-        const lockedMax = Math.max(lockedMin, Number(lockedTargetPage.value) || lockedMin)
-        currentPage.value = Math.min(Math.max(lockedMin, page), lockedMax)
+      if (hasNavigationBounds.value) {
+        const minPage = Math.max(1, Number(navigationMinPage.value) || 1)
+        const maxPage = Math.max(minPage, Number(navigationMaxPage.value) || minPage)
+        currentPage.value = Math.min(Math.max(minPage, page), maxPage)
       } else {
         currentPage.value = Math.min(Math.max(1, page), pageCount.value)
       }
@@ -321,9 +319,9 @@ export function useReaderBase(taskID) {
     topicEndPage,
     sections,
     activeSection,
-    lockedStartPage,
-    lockedTargetPage,
-    navigation,
+    navigationMinPage,
+    navigationMaxPage,
+    navigationState,
 
     // Computed
     selectedNotebook,
@@ -331,7 +329,7 @@ export function useReaderBase(taskID) {
     availableTopics,
     selectedTopicTitle,
     pdfVisible,
-    hasLockedWindow,
+    hasNavigationBounds,
     canGoPrev,
     canGoNext,
     pdfSource,

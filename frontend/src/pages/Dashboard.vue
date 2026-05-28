@@ -16,10 +16,21 @@
       </div>
     </article>
 
+    <!-- Action error banner -->
+    <article v-if="actionError" class="card error-banner">
+      <div class="error-content">
+        <span class="error-icon">⚠</span>
+        <div class="error-text">
+          <p class="error-title">Error starting task</p>
+          <p class="error-subtitle">{{ actionError }}</p>
+        </div>
+      </div>
+    </article>
+
     <article class="status-strip">
       <div>
-        <p class="eyebrow">Today's Mission</p>
-        <h1>Daily Agenda</h1>
+        <p class="eyebrow">Study Queue</p>
+        <h1>Today's Tasks</h1>
       </div>
       <div v-if="dueReviewCards > 0" class="review-stats">
         <p class="review-count">{{ dueReviewCards }} cards due for review</p>
@@ -83,6 +94,7 @@ const route = useRoute()
 
 const loading = ref(true)
 const error = ref('')
+const actionError = ref('')
 const tasks = ref([])
 const hasActiveStudyContent = ref(false)
 const dueReviewCards = ref(0)
@@ -109,6 +121,7 @@ async function loadAgenda() {
     console.warn('[DASHBOARD] loadAgenda refetch start')
     loading.value = true
     error.value = ''
+    actionError.value = ''
 
     const response = await getTodayPlan()
     console.warn('[DASHBOARD] loadAgenda backend response', response)
@@ -143,7 +156,7 @@ async function loadAgenda() {
     })
   } catch (err) {
     console.error('[DASHBOARD] loadAgenda catch', err)
-    error.value = err.message || 'Failed to load daily agenda'
+    error.value = err.message || 'Failed to load tasks'
   } finally {
     loading.value = false
   }
@@ -179,12 +192,13 @@ function startTask(task) {
   } else if (action === 'reread') {
     routePath = '/reader'
   } else {
-    // Unknown action type: surface feedback and fall back to dashboard
+    // Unknown action type: surface feedback and do not navigate
     const display = task.action_type || '(empty)'
+    actionError.value = `Unknown task action type: ${display}`
     if (import.meta.env.DEV) {
-      console.warn(`Unknown task action: ${display} for task ${task.id}. Redirecting to dashboard.`)
+      console.warn(`Unknown task action: ${display} for task ${task.id}. Navigation canceled.`)
     }
-    routePath = '/dashboard'
+    return
   }
 
   console.warn('[DASHBOARD] startTask navigation', { routePath, query, task })
@@ -301,6 +315,50 @@ function startTask(task) {
 }
 
 .flashcard-success-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--on-surface);
+}
+
+/* Action error banner */
+.error-banner {
+  background: color-mix(in srgb, #dc2626 10%, var(--surface-container-lowest));
+  border: 1px solid color-mix(in srgb, #dc2626 25%, transparent);
+}
+
+.error-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 4px;
+}
+
+.error-icon {
+  width: 40px;
+  height: 40px;
+  background: #dc2626;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.error-text {
+  flex: 1;
+}
+
+.error-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #dc2626;
+}
+
+.error-subtitle {
   margin: 0;
   font-size: 14px;
   color: var(--on-surface);

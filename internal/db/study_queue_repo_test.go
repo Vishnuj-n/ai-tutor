@@ -358,12 +358,12 @@ func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 		t.Fatalf("expected current page to initialize at start page, got %d", task.CurrentPage)
 	}
 
-	ok, err := ValidateReadingCompletion("task-reading", 7)
+	ok, err := PersistReadingProgress("task-reading", 7)
 	if err != nil {
-		t.Fatalf("ValidateReadingCompletion failed: %v", err)
+		t.Fatalf("PersistReadingProgress failed: %v", err)
 	}
 	if ok {
-		t.Fatalf("expected ValidateReadingCompletion to return false before end page")
+		t.Fatalf("expected PersistReadingProgress to return false before end page")
 	}
 
 	task, err = GetReadingTask("task-reading")
@@ -374,36 +374,12 @@ func TestReadingTaskProgressValidationAndCompletion(t *testing.T) {
 		t.Fatalf("expected persisted current page 7, got %d", task.CurrentPage)
 	}
 
-	ok, err = ValidateReadingCompletion("task-reading", 8)
+	ok, err = PersistReadingProgress("task-reading", 8)
 	if err != nil {
-		t.Fatalf("ValidateReadingCompletion at end page failed: %v", err)
+		t.Fatalf("PersistReadingProgress at end page failed: %v", err)
 	}
 	if !ok {
-		t.Fatalf("expected ValidateReadingCompletion to return true at end page")
-	}
-
-	if err := ActivateTask("task-reading"); err != nil {
-		t.Fatalf("ActivateTask failed: %v", err)
-	}
-	// Manual completion now allowed even before end page
-	if err := CompleteReading("task-reading"); err != nil {
-		t.Fatalf("CompleteReading expected to succeed for manual completion, got: %v", err)
-	}
-
-	var status string
-	if err := conn.QueryRow(`SELECT status FROM study_queue WHERE id = ?`, "task-reading").Scan(&status); err != nil {
-		t.Fatalf("query reading task status failed: %v", err)
-	}
-	if status != "COMPLETED" {
-		t.Fatalf("expected reading task status COMPLETED, got %s", status)
-	}
-
-	var quizCount int
-	if err := conn.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE topic_id = ? AND task_type = 'QUIZ' AND status = 'PENDING'`, "topic-r").Scan(&quizCount); err != nil {
-		t.Fatalf("query quiz follow-up failed: %v", err)
-	}
-	if quizCount != 1 {
-		t.Fatalf("expected one pending QUIZ follow-up, got %d", quizCount)
+		t.Fatalf("expected PersistReadingProgress to return true at end page")
 	}
 }
 
@@ -503,8 +479,17 @@ func TestRereadTaskCanBeLoadedAndCompletedThroughReaderHelpers(t *testing.T) {
 		t.Fatalf("unexpected reread task bounds: %#v", task)
 	}
 
-	if err := CompleteReading("task-reread-reader"); err != nil {
-		t.Fatalf("CompleteReading reread failed: %v", err)
+	quizTaskID, err := CompleteReadingWithGeneratedQuiz("task-reread-reader", models.QuizTaskPayload{
+		PassingScore: 70,
+		Questions: []models.QuizTaskQuestion{{
+			ID:            "reread-q1",
+			Prompt:        "Q1",
+			Options:       []string{"A", "B"},
+			CorrectAnswer: "A",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteReadingWithGeneratedQuiz reread failed: %v", err)
 	}
 
 	var status string
@@ -525,6 +510,22 @@ func TestRereadTaskCanBeLoadedAndCompletedThroughReaderHelpers(t *testing.T) {
 	}
 	if quizCount != 1 {
 		t.Fatalf("expected one follow-up QUIZ after reread completion, got %d", quizCount)
+	}
+	if quizTaskID == "" {
+		t.Fatalf("expected quiz task ID to be set")
+	}
+	fetchedTask, err := GetTaskByID(quizTaskID)
+	if err != nil {
+		t.Fatalf("failed to fetch task by ID: %v", err)
+	}
+	if fetchedTask == nil {
+		t.Fatalf("expected task to be found, got nil")
+	}
+	if fetchedTask.TaskType != models.StudyTaskTypeQuiz {
+		t.Fatalf("expected task type %s, got %s", models.StudyTaskTypeQuiz, fetchedTask.TaskType)
+	}
+	if fetchedTask.ID != quizTaskID {
+		t.Fatalf("expected task ID %s, got %s", quizTaskID, fetchedTask.ID)
 	}
 }
 
