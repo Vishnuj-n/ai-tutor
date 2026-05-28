@@ -32,56 +32,42 @@ func insertQuestionsInTx(tx *sql.Tx, topicID string, questions []models.QuizQues
 }
 
 func replaceQuestionsForTopicRepo(topicID string, questions []models.QuizQuestion) error {
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	return withTx(func(tx *sql.Tx) error {
+		// Delete dependent user answers first to maintain foreign key integrity
+		if _, err := tx.Exec(`
+			DELETE FROM user_answers
+			WHERE question_id IN (SELECT id FROM questions WHERE topic_id = ?)
+		`, topicID); err != nil {
+			return err
 		}
-	}()
 
-	// Delete dependent user answers first to maintain foreign key integrity
-	if _, err = tx.Exec(`
-		DELETE FROM user_answers
-		WHERE question_id IN (SELECT id FROM questions WHERE topic_id = ?)
-	`, topicID); err != nil {
-		return err
-	}
+		// Clean up assessment entries for the questions being deleted
+		if _, err := tx.Exec(`
+			DELETE FROM assessment_fsrs
+			WHERE activity_type = 'quiz_question' 
+			AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
+		`, topicID); err != nil {
+			return err
+		}
 
-	// Clean up assessment entries for the questions being deleted
-	if _, err = tx.Exec(`
-		DELETE FROM assessment_fsrs
-		WHERE activity_type = 'quiz_question' 
-		AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
-	`, topicID); err != nil {
-		return err
-	}
+		if _, err := tx.Exec(`
+			DELETE FROM fsrs_review_log
+			WHERE activity_type = 'quiz_question' 
+			AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
+		`, topicID); err != nil {
+			return err
+		}
 
-	if _, err = tx.Exec(`
-		DELETE FROM fsrs_review_log
-		WHERE activity_type = 'quiz_question' 
-		AND reference_id IN (SELECT id FROM questions WHERE topic_id = ?)
-	`, topicID); err != nil {
-		return err
-	}
+		// Now safe to delete the questions
+		if _, err := tx.Exec(`DELETE FROM questions WHERE topic_id = ?`, topicID); err != nil {
+			return err
+		}
 
-	// Now safe to delete the questions
-	if _, err = tx.Exec(`DELETE FROM questions WHERE topic_id = ?`, topicID); err != nil {
-		return err
-	}
-
-	if err = insertQuestionsInTx(tx, topicID, questions); err != nil {
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+		if err := insertQuestionsInTx(tx, topicID, questions); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
@@ -137,26 +123,9 @@ func getQuestionsForTopicRepo(topicID string) ([]models.QuizQuestion, error) {
 }
 
 func appendQuestionsForTopicRepo(topicID string, questions []models.QuizQuestion) error {
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	if err = insertQuestionsInTx(tx, topicID, questions); err != nil {
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+	return withTx(func(tx *sql.Tx) error {
+		return insertQuestionsInTx(tx, topicID, questions)
+	})
 }
 
 func getQuestionByIDRepo(questionID string) (*models.QuizQuestion, error) {
@@ -245,9 +214,6 @@ func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 }
 
 func saveWrittenAnswerRepo(answer models.WrittenAnswer) error {
-	if conn == nil {
-		return fmt.Errorf("database not initialized")
-	}
 	_, err := conn.Exec(`
 		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
 		VALUES (?, ?, ?, ?, ?, ?)

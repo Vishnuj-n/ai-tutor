@@ -197,7 +197,7 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) != 4 || strings.TrimSpace(q.CorrectAnswer) == "" {
 			continue
 		}
-		matchedOption, ok := resolveCorrectOption(q.CorrectAnswer, q.Options)
+		matchedOption, ok := ResolveCorrectOption(q.CorrectAnswer, q.Options)
 		if !ok {
 			continue
 		}

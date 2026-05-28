@@ -502,7 +502,7 @@ func parseShortAnswerScoreLLMResponse(raw string) (*shortAnswerScoreLLMResponse,
 	return &out, nil
 }
 
-func resolveCorrectOption(correctAnswer string, options []string) (string, bool) {
+func ResolveCorrectOption(correctAnswer string, options []string) (string, bool) {
 	canonical := strings.TrimSpace(strings.ToLower(correctAnswer))
 	for _, opt := range options {
 		if strings.TrimSpace(strings.ToLower(opt)) == canonical {
@@ -510,72 +510,6 @@ func resolveCorrectOption(correctAnswer string, options []string) (string, bool)
 		}
 	}
 	return "", false
-}
-
-func semanticSnippetByTokens(content string, maxTokens int) (string, error) {
-	trimmed := strings.TrimSpace(content)
-	if maxTokens <= 0 || trimmed == "" {
-		return "", nil
-	}
-	tokens, err := embeddings.CountTokens(trimmed)
-	if err != nil {
-		return "", fmt.Errorf("failed to count tokens: %w", err)
-	}
-	if tokens <= maxTokens {
-		return trimmed, nil
-	}
-	truncated, err := embeddings.TruncateToTokens(trimmed, maxTokens)
-	if err != nil {
-		return "", fmt.Errorf("failed to truncate to tokens: %w", err)
-	}
-	truncatedTokens, err := embeddings.CountTokens(truncated)
-	if err != nil {
-		return "", fmt.Errorf("failed to count truncated tokens: %w", err)
-	}
-	if truncatedTokens > maxTokens {
-		conservativeLimit := maxTokens - 10
-		if conservativeLimit > 0 {
-			conservative, err := embeddings.TruncateToTokens(trimmed, conservativeLimit)
-			if err != nil {
-				return "", fmt.Errorf("failed to truncate conservatively: %w", err)
-			}
-			conservativeTokens, verifyErr := embeddings.CountTokens(conservative)
-			if verifyErr != nil {
-				return "", fmt.Errorf("failed to count conservative tokens: %w", verifyErr)
-			}
-			if conservativeTokens <= maxTokens {
-				truncated = conservative
-				truncatedTokens = conservativeTokens
-			}
-		}
-	}
-	best := strings.LastIndex(truncated, ". ")
-	if idx := strings.LastIndex(truncated, "\n"); idx > best {
-		best = idx
-	}
-	if idx := strings.LastIndex(truncated, "? "); idx > best {
-		best = idx
-	}
-	if idx := strings.LastIndex(truncated, "! "); idx > best {
-		best = idx
-	}
-	if best > len(truncated)/2 {
-		candidate := strings.TrimSpace(truncated[:best+1])
-		if candidate != "" {
-			candidateWithEllipsis := candidate + "..."
-			candidateTokens, err := embeddings.CountTokens(candidateWithEllipsis)
-			if err != nil {
-				return "", fmt.Errorf("failed to count candidate tokens: %w", err)
-			}
-			if candidateTokens <= maxTokens {
-				return candidateWithEllipsis, nil
-			}
-		}
-	}
-	if truncatedTokens <= maxTokens {
-		return truncated, nil
-	}
-	return "", fmt.Errorf("truncated text exceeds maxTokens: %d > %d", truncatedTokens, maxTokens)
 }
 
 // ---------- Env-configurable density thresholds ----------
@@ -630,7 +564,7 @@ func ScaledFlashcardCount(wordCount int) int {
 }
 
 // buildPageBoundedContext fetches structured chunk context for a notebook page range
-// and returns (chunks, tokenCount, error) with hard token budget enforcement.
+// and returns (chunks, tokenCount, error).
 // This is the canonical bounded context pipeline used by both manual and automatic flashcard generation.
 func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
 	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext entry notebookID=%s page_range=%d-%d", notebookID, startPage, endPage)
@@ -638,49 +572,17 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to load page-bounded context: %w", err)
 	}
-	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext raw_chunks=%d before_budget_enforcement", len(chunks))
+	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext raw_chunks=%d", len(chunks))
 	if len(chunks) == 0 {
 		// Return empty response instead of error for marathon mode compatibility
 		return []models.ChunkWithContext{}, 0, nil
 	}
 
-	// Enforce hard token budget during assembly
-	// Use conservative default since we don't have model context here
-	// The actual budget enforcement happens in buildMarathonFlashcardPromptWithBudget
-	const maxContextTokens = 8000
-	const baseOverhead = 200 // Estimated tokens for prompt template and instructions
+	// Calculate final token count for all chunks
+	finalTokenCount := calculatePromptTokenCount(chunks)
+	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext exit chunks=%d token_count=%d", len(chunks), finalTokenCount)
 
-	var budgetedChunks []models.ChunkWithContext
-	currentTokens := baseOverhead
-
-	for _, chunk := range chunks {
-		text := strings.TrimSpace(chunk.Text)
-		if text == "" {
-			continue
-		}
-
-		// Estimate tokens for this chunk with formatting
-		chunkLine := fmt.Sprintf("- chunk_id: %s | page_num: %d | text: %s\n", chunk.ChunkID, chunk.PageNum, text)
-		chunkTokens, err := embeddings.CountTokens(chunkLine)
-		if err != nil {
-			// Fallback to word count if tokenization fails
-			chunkTokens = len(strings.Fields(chunkLine))
-		}
-
-		// Check if adding this chunk would exceed budget
-		if currentTokens+chunkTokens > maxContextTokens {
-			break
-		}
-
-		budgetedChunks = append(budgetedChunks, chunk)
-		currentTokens += chunkTokens
-	}
-
-	// Calculate final token count
-	finalTokenCount := calculatePromptTokenCount(budgetedChunks)
-	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext exit budgeted_chunks=%d token_count=%d raw_chunks=%d truncated=%d", len(budgetedChunks), finalTokenCount, len(chunks), len(chunks)-len(budgetedChunks))
-
-	return budgetedChunks, finalTokenCount, nil
+	return chunks, finalTokenCount, nil
 }
 
 // calculatePromptTokenCount estimates the actual token count that will be sent to the LLM

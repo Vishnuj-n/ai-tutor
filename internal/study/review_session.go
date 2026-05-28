@@ -121,7 +121,7 @@ func (s *StudyService) RecordCardReview(taskID, cardID string, rating int) (int,
 		}
 	}()
 
-	task, err := getTaskForReviewTx(tx, taskID)
+	task, err := db.GetTaskByIDTx(tx, taskID)
 	if err != nil {
 		return 0, err
 	}
@@ -157,26 +157,4 @@ func (s *StudyService) CompleteReviewSession(taskID string) error {
 		return fmt.Errorf("task ID is required")
 	}
 	return db.CompleteReviewSession(taskID)
-}
-
-func getTaskForReviewTx(tx *sql.Tx, taskID string) (*models.StudyQueueTask, error) {
-	task := &models.StudyQueueTask{}
-	err := tx.QueryRow(`
-		SELECT
-			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
-			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
-			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
-		FROM study_queue
-		WHERE id = ?
-	`, taskID).Scan(
-		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
-		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
-	)
-	if err == sql.ErrNoRows {
-		return nil, db.ErrTaskNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return task, nil
 }
