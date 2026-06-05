@@ -356,10 +356,12 @@ Extracts text and creates chunks.
 {
   "topic_id": "topic-uuid",
   "title": "Neural Networks",
-  "blocks_created": 12,
+  "chunks_created": 12,
   "tasks_inserted": 12
 }
 ```
+
+**Legacy note:** Older responses used the key `blocks_created`; the current naming is `chunks_created` (see `doc/SCHEMA.md` for mapping).
 
 ---
 

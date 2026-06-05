@@ -186,6 +186,7 @@ Task shape:
 2. Check for errors in task completion
 
 **If RAG fails:**
-1. Check `blocks` table for content
-2. Check `block_vectors` for embeddings
+1. Check `chunks` table for content
+2. Check the RAG embedding store (sqlite-vec) for embeddings
 3. Verify `block_id` in task context
+**Note:** The live schema uses `chunks` + `parents` and an external/virtual embedding store (see `doc/SCHEMA.md`). Replace `blocks` → `chunks` and `block_vectors` → RAG embedding store where applicable.

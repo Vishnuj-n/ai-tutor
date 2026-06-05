@@ -1,5 +1,7 @@
 # AI Tutor RAG Architecture
 
+**Legacy term note:** Older docs referred to `blocks` and `block_vectors`. The live schema uses `parents` + `chunks` for content and an external/virtual embedding store (see `doc/SCHEMA.md` for mapping). This document uses the current names `chunks` / `parents` and refers to embedding storage as the RAG embedding store or `sqlite-vec` where applicable.
+
 ## 1. Purpose
 
 ### What
@@ -39,9 +41,9 @@ The app is a guided tutor, not a chatbot. Retrieval must support the learning fl
 
 The pipeline consumes:
 
-- Active `block_id` from current task context
+- Active `block_id` (alias for chunk id) from current task context
 - User question or explain request
-- Topic content from `blocks` table (sliding window chunks)
+- Topic content from `chunks` table (sliding window chunks)
 - Token budget and output constraints
 
 ### Why
@@ -52,18 +54,18 @@ RAG must be deterministic about what it can see and how much it can send to the 
 
 - The UI sends the active `block_id` with the request (from current task)
 - Backend validates that the block exists
-- Retrieval queries the `block_vectors` table filtered by `block_id` scope
+- Retrieval queries the RAG embedding store (sqlite-vec virtual table) filtered by `block_id` scope
 - Return full block content for context (no parent expansion needed with sliding window)
 
 ## 4. Content Structure
 
 ### What
 
-Source material is stored in **blocks** created by **sliding window chunking**:
+Source material is stored in **chunks** (with `parents` for section headings) created by **sliding window chunking**:
 
-- **Block**: Content unit of ~2500 words with 200-word overlap
-- **Storage**: `blocks` table with `block_type = CHUNK`
-- **Retrieval**: Top-k blocks from `block_vectors` within `block_id` scope
+- **Chunk**: Content unit of ~2500 words with 200-word overlap
+- **Storage**: `chunks` table with `parent_id` referencing `parents` for section headings
+- **Retrieval**: Top-k chunks via the RAG embedding store (sqlite-vec) within `block_id` scope
 
 ### Why
 
@@ -81,7 +83,7 @@ We intentionally simplified from semantic chunking:
 Text → [2500 words] → [2500 words with 200 overlap] → [next 2500 words]...
 ```
 
-**Storage in `blocks` table:**
+**Storage in `chunks` table:**
 
 | Field | Purpose |
 |-------|---------|
@@ -94,9 +96,9 @@ Text → [2500 words] → [2500 words with 200 overlap] → [next 2500 words]...
 | `start_page`, `end_page` | Page provenance |
 
 **Retrieval scope:**
-- Retrieve from `block_vectors` table
-- Filter by `block_id` (from active task context)
-- Expand to full block content before prompt assembly
+- Retrieve from the RAG embedding store (sqlite-vec virtual table)
+- Filter by `block_id` (chunk id from active task context)
+- Expand to full chunk content before prompt assembly
 
 **What changed:**
 - Removed: parent-child hierarchy, semantic boundaries, LLM-drafted sections
@@ -137,7 +139,7 @@ Heuristic scoring contract:
 
 ### What
 
-Embeddings are stored in a `sqlite-vec` virtual table. Retrieval is simplified with block-based scope.
+Embeddings are stored in a `sqlite-vec` virtual table (RAG embedding store). Retrieval is simplified with chunk-based scope.
 
 ### Why
 
@@ -149,14 +151,13 @@ Embeddings are stored in a `sqlite-vec` virtual table. Retrieval is simplified w
 
 **Storage:**
 - Single SQLite connection with vec0 extension loaded (`db.Init()`)
-- `block_vectors` table maps blocks to embeddings
-- Embeddings stored as JSON strings for database/sql compatibility
+- Embeddings stored in the sqlite-vec virtual table (RAG embedding store); relational rows reference chunk ids and maintain metadata
 
 **Retrieval (Simplified):**
-1. Get `block_id` from current task context
-2. Query `block_vectors` for that specific block's embedding
+1. Get `block_id` (chunk id) from current task context
+2. Query the sqlite-vec embedding store for that chunk's vector
 3. Calculate similarity to query embedding
-4. Return block content directly (no parent expansion)
+4. Return chunk content directly (no parent expansion)
 
 **Changes from previous architecture:**
 - Removed: two-step pre-filtering, parent expansion, page_num bounds checking
@@ -274,7 +275,7 @@ The app stays simpler, more predictable, and easier to maintain.
 
 ### What
 
-The retrieval layer depends on `blocks` and `block_vectors` tables.
+The retrieval layer depends on the content stored as `chunks` (and `parents` for section headings) and on the RAG embedding store (sqlite-vec virtual table).
 
 ### Why
 
@@ -282,32 +283,12 @@ RAG should be traceable back to the source material and the current study state.
 
 ### How
 
-- `blocks` table stores content with `block_type = CHUNK`
-- `block_vectors` stores embeddings by `block_id`
-- Current task provides `block_id` for scoped retrieval
-- UI shows block reference for traceability
+- `chunks` table stores content; `parents` holds section headings and hierarchy
+- Embeddings live in the sqlite-vec virtual table (RAG embedding store) and are referenced from `chunks` via `embedding_ref`
+- Current task provides `block_id` (a chunk id) for scoped retrieval
+- UI shows chunk reference for traceability
 
-**Schema:**
-
-```sql
--- Content blocks (sliding window chunks)
-CREATE TABLE blocks (
-  id TEXT PRIMARY KEY,
-  topic_id TEXT NOT NULL,
-  block_type TEXT NOT NULL,  -- 'CHUNK', 'QUIZ', 'FLASHCARD'
-  content TEXT,
-  word_count INTEGER,
-  order_index INTEGER,
-  start_page INTEGER,
-  end_page INTEGER,
-  created_at INTEGER
-);
-
--- Embeddings via sqlite-vec
-CREATE VIRTUAL TABLE block_vectors USING vec0(
-  embedding float[384]
-);
-```
+**Schema implementation:** See `internal/db/schema.go` for the authoritative table definitions and `internal/rag` for the embedding/retrieval implementation.
 
 **Note:** Previous `importance_score` and `weakness_score` hooks removed. Scoring now handled by FSRS state on cards or quiz results.
 
