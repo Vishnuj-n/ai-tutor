@@ -186,6 +186,7 @@ const selectedNotebookID = ref('')
 const startPage = ref(1)
 const endPage = ref(10)
 const generating = ref(false)
+const manualPassingScore = ref(70)
 
 const taskID = computed(() => {
   if (typeof route.query.taskId === 'string' && route.query.taskId.trim() !== '') {
@@ -276,6 +277,12 @@ async function generateManualQuiz() {
       return
     }
     questions.value = Array.isArray(res.questions) ? res.questions : []
+    // Respect backend-supplied passing score when available; default to 70
+    if (typeof res.passing_score === 'number' && !isNaN(res.passing_score) && res.passing_score > 0) {
+      manualPassingScore.value = Math.round(res.passing_score)
+    } else {
+      manualPassingScore.value = 70
+    }
     if (questions.value.length === 0) {
       error.value = 'No questions generated. Try a different page range.'
     }
@@ -307,11 +314,11 @@ async function submitQuiz() {
       const score = Math.round((correctCount / questions.value.length) * 100)
       result.value = {
         score,
-        passed: score >= 70,
-        passing_score: 70,
+        passed: score >= manualPassingScore.value,
+        passing_score: manualPassingScore.value,
         correct_count: correctCount,
         total_count: questions.value.length,
-        feedback: score >= 70 ? 'Strong work. You can move forward.' : 'Review the missed concepts and retry the material.'
+        feedback: score >= manualPassingScore.value ? 'Strong work. You can move forward.' : 'Review the missed concepts and retry the material.'
       }
       submitted.value = true
     } catch (err) {

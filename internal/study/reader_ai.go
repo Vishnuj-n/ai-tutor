@@ -176,7 +176,15 @@ func readerScopeLabel(scope ReaderRetrievalScope) string {
 }
 
 func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
-	var builder strings.Builder
+	blocks, citations := buildReaderContextBlocks(results)
+	return strings.TrimSpace(strings.Join(blocks, "\n\n")), citations
+}
+
+// buildReaderContextBlocks returns the sequence of section blocks (as strings)
+// and a parallel list of citation labels. This allows callers to truncate the
+// context while keeping citations synchronized to included blocks.
+func buildReaderContextBlocks(results []retrieval.SearchResult) ([]string, []string) {
+	blocks := make([]string, 0, len(results))
 	citations := make([]string, 0, len(results))
 	seenParents := make(map[string]bool)
 
@@ -200,27 +208,28 @@ func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
 			heading = "Section"
 		}
 		if startPage > 0 && endPage > 0 {
-			fmt.Fprintf(&builder, "[%s | pages %d-%d]\n%s\n\n", heading, startPage, endPage, strings.TrimSpace(result.Text))
+			blocks = append(blocks, fmt.Sprintf("[%s | pages %d-%d]\n%s", heading, startPage, endPage, strings.TrimSpace(result.Text)))
 			citations = append(citations, fmt.Sprintf("%s (pages %d-%d)", heading, startPage, endPage))
 		} else {
-			fmt.Fprintf(&builder, "[%s]\n%s\n\n", heading, strings.TrimSpace(result.Text))
+			blocks = append(blocks, fmt.Sprintf("[%s]\n%s", heading, strings.TrimSpace(result.Text)))
 			citations = append(citations, heading)
 		}
 		seenParents[result.ParentID] = true
 	}
 
-	if builder.Len() == 0 {
+	// Fallback: if no parent sections were included, return raw result texts
+	if len(blocks) == 0 {
 		for _, result := range results {
 			text := strings.TrimSpace(result.Text)
 			if text == "" {
 				continue
 			}
-			builder.WriteString(text)
-			builder.WriteString("\n\n")
+			blocks = append(blocks, text)
+			citations = append(citations, "")
 		}
 	}
 
-	return strings.TrimSpace(builder.String()), citations
+	return blocks, citations
 }
 
 func resolveReaderSectionScope(sectionID string) (string, string, int, int, error) {
