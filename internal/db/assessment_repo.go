@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -248,6 +249,9 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 }
 
 func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	if tx == nil {
+		return errors.New("transaction not initialized")
+	}
 	_, err := tx.Exec(`
 		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -301,6 +305,9 @@ func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
 	if trimmedAnswer == "" {
 		return fmt.Errorf("user answer is required")
+	}
+	if tx == nil {
+		return errors.New("transaction not initialized")
 	}
 	return saveWrittenAnswerRepoTx(tx, answer)
 }

@@ -746,6 +746,9 @@ func saveQuizAttemptRepo(attempt models.QuizAttemptRecord) error {
 }
 
 func saveQuizAttemptRepoTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
+	if tx == nil {
+		return fmt.Errorf("nil tx passed to saveQuizAttemptRepoTx")
+	}
 	_, err := tx.Exec(`
 		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -795,6 +798,8 @@ func SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	if attempt.CompletedAt <= 0 {
 		return fmt.Errorf("completed at is required")
 	}
+	if tx == nil {
+		return fmt.Errorf("nil tx passed to SaveQuizAttemptTx")
+	}
 	return saveQuizAttemptRepoTx(tx, attempt)
 }
-
