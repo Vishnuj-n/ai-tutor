@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "SCHEMA.md",
+                "file": "NOTE.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "SCHEMA"
+              "title": "NOTE"
             }
           }
         ]
@@ -53,7 +53,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "",
+                "query": "note",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -183,17 +183,21 @@
       "bases:Create new base": false
     }
   },
-  "active": "50e5613e93f70a39",
+  "active": "3a9cbebc74032973",
   "lastOpenFiles": [
+    "CLAUDE.md",
+    "ARCHITECTURE.md",
+    "APP_FLOW.md",
+    "AGENTS.md",
+    "AGENT_MAP.md",
+    "DESIGN.md",
     "PLATFORM_SUPPORT.md",
+    "PROJECT_STRUCTURE.md",
+    "SCHEMA.md",
     "PLAN_SCOPE.md",
     "ARCHITECTURE_DRIFT_REPORT.md",
-    "ARCHITECTURE.md",
     "SPRINT.md",
     "SPRINT_HISTORY.md",
-    "SCHEMA.md",
-    "AGENTS.md",
-    "TODO.md",
-    "AGENT_MAP.md"
+    "TODO.md"
   ]
 }

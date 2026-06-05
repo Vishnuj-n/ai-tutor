@@ -481,29 +481,16 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 		}
 	}
 
-	parentThermo := "parent-thermo"
-	parentNewton := "parent-newton"
-	parentRenaissance := "parent-renaissance"
-	if err := db.CreateParentSection(parentThermo, "topic-thermo", "Thermo", 1, "heat"); err != nil {
-		t.Fatalf("CreateParentSection thermo failed: %v", err)
-	}
-	if err := db.CreateParentSection(parentNewton, "topic-newton", "Newton", 1, "motion"); err != nil {
-		t.Fatalf("CreateParentSection newton failed: %v", err)
-	}
-	if err := db.CreateParentSection(parentRenaissance, "topic-renaissance", "Renaissance", 1, "history"); err != nil {
-		t.Fatalf("CreateParentSection renaissance failed: %v", err)
-	}
-
 	chunkThermo := "chunk-thermo"
 	chunkNewton := "chunk-newton"
 	chunkRenaissance := "chunk-renaissance"
-	if err := db.CreateChunk(chunkThermo, "topic-thermo", parentThermo, "thermo chunk", 2, 1); err != nil {
+	if err := db.CreateChunk(chunkThermo, "topic-thermo", "thermo chunk", 2, 1); err != nil {
 		t.Fatalf("CreateChunk thermo failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkNewton, "topic-newton", parentNewton, "newton chunk", 2, 2); err != nil {
+	if err := db.CreateChunk(chunkNewton, "topic-newton", "newton chunk", 2, 2); err != nil {
 		t.Fatalf("CreateChunk newton failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkRenaissance, "topic-renaissance", parentRenaissance, "renaissance chunk", 2, 3); err != nil {
+	if err := db.CreateChunk(chunkRenaissance, "topic-renaissance", "renaissance chunk", 2, 3); err != nil {
 		t.Fatalf("CreateChunk renaissance failed: %v", err)
 	}
 
@@ -891,13 +878,8 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
-	parentID := "parent-reader"
-	if err := db.CreateParentSection(parentID, topicID, "Introduction", 1, "intro text"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-
 	chunkID := "chunk-reader"
-	if err := db.CreateChunk(chunkID, topicID, parentID, "chunk content", 2, 1); err != nil {
+	if err := db.CreateChunk(chunkID, topicID, "chunk content", 2, 1); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}
 
@@ -953,14 +935,14 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 	found := false
 	for _, sec := range sections {
 		if sectionMap, ok := sec.(map[string]interface{}); ok {
-			if heading, ok := sectionMap["heading"].(string); ok && heading == "Introduction" {
+			if heading, ok := sectionMap["heading"].(string); ok && heading == "Page 1" {
 				found = true
 				break
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("expected to find section with heading 'Introduction' in sections: %#v", sections)
+		t.Fatalf("expected to find section with heading 'Page 1' in sections: %#v", sections)
 	}
 }
 
@@ -986,7 +968,6 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 
 	notebookID := "reader-ai-nb"
 	topicID := "reader-ai-topic"
-	parentID := "reader-ai-parent"
 	chunkID := "reader-ai-chunk"
 
 	if err := db.EnsureTopic(topicID, "Reader AI Topic"); err != nil {
@@ -998,10 +979,7 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	if err := db.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if err := db.CreateParentSection(parentID, topicID, "Reader Scope Section", 1, "Reader scope section content"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-	if err := db.CreateChunk(chunkID, topicID, parentID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
+	if err := db.CreateChunk(chunkID, topicID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}
 	if err := db.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
@@ -1010,7 +988,6 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	app.retrievalEngine.AddChunk(models.Chunk{
 		ID:       chunkID,
 		TopicID:  topicID,
-		ParentID: parentID,
 		Text:     "Round robin stays fair by rotating time slices.",
 		PageNum:  3,
 	})

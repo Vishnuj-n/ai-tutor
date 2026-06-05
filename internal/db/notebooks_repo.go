@@ -31,27 +31,17 @@ func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int
 	return err
 }
 
-// NotebookParentInput is a parent section row used by notebook ingestion transactions.
-type NotebookParentInput struct {
-	ID         string
-	Heading    string
-	Content    string
-	OrderIndex int
-}
-
 // NotebookChunkInput is a chunk row used by notebook ingestion transactions.
 type NotebookChunkInput struct {
 	ID         string
-	ParentID   string
 	Text       string
 	TokenCount int
 	PageNum    int
 }
 
-// NotebookTopicIngestionGroup contains topic-scoped parent/chunk rows for one notebook ingestion run.
+// NotebookTopicIngestionGroup contains topic-scoped chunk rows for one notebook ingestion run.
 type NotebookTopicIngestionGroup struct {
 	TopicID string
-	Parents []NotebookParentInput
 	Chunks  []NotebookChunkInput
 }
 
@@ -59,37 +49,18 @@ type sqlExecer interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
-func insertParentRow(exec sqlExecer, topicID string, parent NotebookParentInput) error {
-	_, err := exec.Exec(`
-		INSERT INTO parents (id, topic_id, heading, order_index, content_text)
-		VALUES (?, ?, ?, ?, ?)
-	`, parent.ID, topicID, parent.Heading, parent.OrderIndex, parent.Content)
-	return err
-}
-
 func insertChunkRow(exec sqlExecer, topicID string, chunk NotebookChunkInput) error {
 	_, err := exec.Exec(`
-		INSERT INTO chunks (id, topic_id, parent_id, chunk_text, page_num, token_count, importance_score, weakness_score)
-		VALUES (?, ?, ?, ?, ?, ?, 0, 0)
-	`, chunk.ID, topicID, chunk.ParentID, chunk.Text, chunk.PageNum, chunk.TokenCount)
+		INSERT INTO chunks (id, topic_id, chunk_text, page_num, token_count, importance_score, weakness_score)
+		VALUES (?, ?, ?, ?, ?, 0, 0)
+	`, chunk.ID, topicID, chunk.Text, chunk.PageNum, chunk.TokenCount)
 	return err
-}
-
-// CreateParentSection inserts a parent section row.
-func CreateParentSection(id, topicID, heading string, orderIndex int, content string) error {
-	return insertParentRow(conn, topicID, NotebookParentInput{
-		ID:         id,
-		Heading:    heading,
-		Content:    content,
-		OrderIndex: orderIndex,
-	})
 }
 
 // CreateChunk inserts a chunk row.
-func CreateChunk(id, topicID, parentID, text string, tokenCount int, pageNum int) error {
+func CreateChunk(id, topicID, text string, tokenCount int, pageNum int) error {
 	return insertChunkRow(conn, topicID, NotebookChunkInput{
 		ID:         id,
-		ParentID:   parentID,
 		Text:       text,
 		PageNum:    pageNum,
 		TokenCount: tokenCount,
@@ -239,26 +210,7 @@ func EnsureNotebookTopic(notebookID, topicID string) error {
 	return err
 }
 
-// IngestNotebookContent performs a transactional relational commit for notebook sections/chunks.
-func IngestNotebookContent(notebookID string, topicID string, parents []NotebookParentInput, chunks []NotebookChunkInput) error {
-	notebookID = strings.TrimSpace(notebookID)
-	topicID = strings.TrimSpace(topicID)
-	if notebookID == "" {
-		return fmt.Errorf("notebook id is required")
-	}
-	if topicID == "" {
-		return fmt.Errorf("topic id is required")
-	}
 
-	group := NotebookTopicIngestionGroup{
-		TopicID: topicID,
-		Parents: parents,
-		Chunks:  chunks,
-	}
-
-	// Route legacy single-topic ingestion through the multi-topic transaction path.
-	return IngestNotebookContentByTopic(notebookID, []NotebookTopicIngestionGroup{group})
-}
 
 // IngestNotebookContentByTopic ingests notebook content into multiple topic buckets in one transaction.
 func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicIngestionGroup) error {
@@ -564,13 +516,9 @@ func ingestNotebookContentByTopicRepo(notebookID string, groups []NotebookTopicI
 			return err
 		}
 
-		parentPrefix := fmt.Sprintf("nbp_%s_%%", notebookID)
 		chunkPrefix := fmt.Sprintf("nbc_%s_%%", notebookID)
 
 		if _, err := tx.Exec("DELETE FROM chunks WHERE id LIKE ?", chunkPrefix); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("DELETE FROM parents WHERE id LIKE ?", parentPrefix); err != nil {
 			return err
 		}
 
@@ -578,12 +526,6 @@ func ingestNotebookContentByTopicRepo(notebookID string, groups []NotebookTopicI
 		for _, group := range groups {
 			if group.TopicID == "" {
 				return fmt.Errorf("topic id is required for each ingestion group")
-			}
-
-			for _, parent := range group.Parents {
-				if err := insertParentRowRepo(tx, group.TopicID, parent); err != nil {
-					return err
-				}
 			}
 
 			for _, chunk := range group.Chunks {
@@ -640,10 +582,9 @@ func deleteNotebookRepo(notebookID string) error {
 			return err
 		}
 
-		parentIDs := make(map[string]struct{})
 		chunkIDs := make([]string, 0)
-		parentRows, err := tx.Query(`
-			SELECT DISTINCT c.parent_id, c.id
+		chunkRows, err := tx.Query(`
+			SELECT DISTINCT c.id
 			FROM chunks c
 			WHERE c.topic_id IN (
 				SELECT topic_id FROM notebook_topics WHERE notebook_id = ?
@@ -655,21 +596,19 @@ func deleteNotebookRepo(notebookID string) error {
 			return err
 		}
 
-		for parentRows.Next() {
-			var parentID string
+		for chunkRows.Next() {
 			var chunkID string
-			if scanErr := parentRows.Scan(&parentID, &chunkID); scanErr != nil {
-				_ = parentRows.Close()
+			if scanErr := chunkRows.Scan(&chunkID); scanErr != nil {
+				_ = chunkRows.Close()
 				return scanErr
 			}
-			parentIDs[parentID] = struct{}{}
 			chunkIDs = append(chunkIDs, chunkID)
 		}
-		if rowsErr := parentRows.Err(); rowsErr != nil {
-			_ = parentRows.Close()
+		if rowsErr := chunkRows.Err(); rowsErr != nil {
+			_ = chunkRows.Close()
 			return rowsErr
 		}
-		_ = parentRows.Close()
+		_ = chunkRows.Close()
 
 		hasChunkVectors := false
 		if exists, tableErr := doesTableExistTxRepo(tx, "chunk_vectors"); tableErr != nil {
@@ -719,22 +658,6 @@ func deleteNotebookRepo(notebookID string) error {
 			return err
 		}
 
-		for parentID := range parentIDs {
-			var count int
-			if countErr := tx.QueryRow(`
-				SELECT COUNT(*) FROM chunks WHERE parent_id = ?
-			`, parentID).Scan(&count); countErr != nil {
-				return countErr
-			}
-			if count == 0 {
-				if _, delParentErr := tx.Exec(`
-					DELETE FROM parents WHERE id = ?
-				`, parentID); delParentErr != nil {
-					return delParentErr
-				}
-			}
-		}
-
 		topicRows, err := tx.Query(`
 			SELECT id
 			FROM topics
@@ -760,13 +683,6 @@ func deleteNotebookRepo(notebookID string) error {
 		_ = topicRows.Close()
 
 		for _, topicID := range autoTopicIDs {
-			var parentCount int
-			if parentCountErr := tx.QueryRow(`
-				SELECT COUNT(*) FROM parents WHERE topic_id = ?
-			`, topicID).Scan(&parentCount); parentCountErr != nil {
-				return parentCountErr
-			}
-
 			var chunkCount int
 			if chunkCountErr := tx.QueryRow(`
 				SELECT COUNT(*) FROM chunks WHERE topic_id = ?
@@ -774,7 +690,7 @@ func deleteNotebookRepo(notebookID string) error {
 				return chunkCountErr
 			}
 
-			if parentCount == 0 && chunkCount == 0 {
+			if chunkCount == 0 {
 				if _, delProgressErr := tx.Exec(`
 					DELETE FROM topic_progress WHERE topic_id = ?
 				`, topicID); delProgressErr != nil {
@@ -791,19 +707,11 @@ func deleteNotebookRepo(notebookID string) error {
 	})
 }
 
-func insertParentRowRepo(exec sqlExecer, topicID string, parent NotebookParentInput) error {
-	_, err := exec.Exec(`
-		INSERT INTO parents (id, topic_id, heading, order_index, content_text)
-		VALUES (?, ?, ?, ?, ?)
-	`, parent.ID, topicID, parent.Heading, parent.OrderIndex, parent.Content)
-	return err
-}
-
 func insertChunkRowRepo(exec sqlExecer, topicID string, chunk NotebookChunkInput) error {
 	_, err := exec.Exec(`
-		INSERT INTO chunks (id, topic_id, parent_id, chunk_text, page_num, token_count, importance_score, weakness_score)
-		VALUES (?, ?, ?, ?, ?, ?, 0, 0)
-	`, chunk.ID, topicID, chunk.ParentID, chunk.Text, chunk.PageNum, chunk.TokenCount)
+		INSERT INTO chunks (id, topic_id, chunk_text, page_num, token_count, importance_score, weakness_score)
+		VALUES (?, ?, ?, ?, ?, 0, 0)
+	`, chunk.ID, topicID, chunk.Text, chunk.PageNum, chunk.TokenCount)
 	return err
 }
 
@@ -880,7 +788,7 @@ func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPa
 	}
 
 	rows, err := conn.Query(`
-		SELECT c.id, c.parent_id, nc.page_num, c.chunk_text
+		SELECT c.id, nc.page_num, c.chunk_text
 		FROM notebook_chunks nc
 		JOIN chunks c ON c.id = nc.chunk_id
 		WHERE nc.notebook_id = ?
@@ -895,7 +803,7 @@ func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPa
 	chunks := make([]models.ChunkWithContext, 0)
 	for rows.Next() {
 		var chunk models.ChunkWithContext
-		if err := rows.Scan(&chunk.ChunkID, &chunk.ParentID, &chunk.PageNum, &chunk.Text); err != nil {
+		if err := rows.Scan(&chunk.ChunkID, &chunk.PageNum, &chunk.Text); err != nil {
 			return nil, fmt.Errorf("scan structured chunk: %w", err)
 		}
 		chunks = append(chunks, chunk)
