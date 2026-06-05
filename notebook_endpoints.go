@@ -428,11 +428,6 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "chunk ingestion failed: " + err.Error()}
 	}
 
-	if a.embedStore != nil {
-		for _, chunk := range allChunks {
-			a.embedStore.AddChunk(chunk)
-		}
-	}
 
 	status := "chunked"
 	emitIngestionProgress(a, ingestionProgressPayload{

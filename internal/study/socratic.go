@@ -244,12 +244,17 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 			break
 		}
 
-		// If we truncated everything away, fall back to using the first block
-		// truncated to a small number of tokens so the prompt isn't empty.
+		// If everything was truncated away, only fall back within remaining budget.
 		if len(newBlocks) == 0 && len(blocks) > 0 {
-			if truncated, err := embeddings.TruncateToTokens(blocks[0], 128); err == nil && strings.TrimSpace(truncated) != "" {
-				newBlocks = append(newBlocks, truncated)
-				newCitations = append(newCitations, citations[0])
+			safeLimit := available
+			if safeLimit > 128 {
+				safeLimit = 128
+			}
+			if safeLimit > 0 {
+				if truncated, err := embeddings.TruncateToTokens(blocks[0], safeLimit); err == nil && strings.TrimSpace(truncated) != "" {
+					newBlocks = append(newBlocks, truncated)
+					newCitations = append(newCitations, citations[0])
+				}
 			}
 		}
 

@@ -11,7 +11,10 @@
         <span class="flashcard-success-icon">✓</span>
         <div class="flashcard-success-text">
           <p class="flashcard-success-title">Flashcards generated successfully!</p>
-          <p class="flashcard-success-subtitle">{{ flashcardsJustCreated }} cards scheduled for spaced repetition. They'll appear here when due.</p>
+          <p class="flashcard-success-subtitle">
+            {{ flashcardsJustCreated }} cards scheduled for spaced repetition. They'll appear here
+            when due.
+          </p>
         </div>
       </div>
     </article>
@@ -62,7 +65,9 @@
     <template v-else-if="tasks.length === 0">
       <article class="card state-card">
         <h2>No tasks yet</h2>
-        <p class="muted">Upload and confirm a notebook syllabus to generate your first agenda tasks.</p>
+        <p class="muted">
+          Upload and confirm a notebook syllabus to generate your first agenda tasks.
+        </p>
       </article>
     </template>
 
@@ -74,8 +79,24 @@
             <span class="task-estimate">{{ task.estimate_minutes }} min</span>
           </div>
           <h3>{{ task.title }}</h3>
-          <p class="task-meta">{{ task.meta ? task.meta : (task.start_page !== undefined && task.start_page !== null && task.end_page !== undefined && task.end_page !== null ? 'Pages ' + task.start_page + '-' + task.end_page : 'Pages N/A') }}</p>
-          <button type="button" class="primary-btn" :aria-label="'Start task ' + (task.title || task.id)" @click="startTask(task)">
+          <p class="task-meta">
+            {{
+              task.meta
+                ? task.meta
+                : task.start_page !== undefined &&
+                    task.start_page !== null &&
+                    task.end_page !== undefined &&
+                    task.end_page !== null
+                  ? 'Pages ' + task.start_page + '-' + task.end_page
+                  : 'Pages N/A'
+            }}
+          </p>
+          <button
+            type="button"
+            class="primary-btn"
+            :aria-label="'Start task ' + (task.title || task.id)"
+            @click="startTask(task)"
+          >
             Start
           </button>
         </article>
@@ -134,7 +155,16 @@ async function loadAgenda() {
     dueReviewCards.value = response.due_review_cards || 0
     console.warn('[DASHBOARD] loadAgenda task list length', tasks.value.length)
     console.warn('[DASHBOARD] loadAgenda top pending task', tasks.value[0] || null)
-    console.warn('[DASHBOARD] loadAgenda task ids', tasks.value.map((task) => ({ id: task.id, action_type: task.action_type, status: task.status, topic_id: task.topic_id, notebook_id: task.notebook_id })))
+    console.warn(
+      '[DASHBOARD] loadAgenda task ids',
+      tasks.value.map((task) => ({
+        id: task.id,
+        action_type: task.action_type,
+        status: task.status,
+        topic_id: task.topic_id,
+        notebook_id: task.notebook_id,
+      }))
+    )
     const actionCounts = tasks.value.reduce((acc, task) => {
       const key = String(task?.action_type || '').toLowerCase() || 'unknown'
       acc[key] = (acc[key] || 0) + 1
@@ -461,7 +491,9 @@ function startTask(task) {
   font-size: 15px;
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
-  transition: transform 0.14s ease, filter 0.14s ease;
+  transition:
+    transform 0.14s ease,
+    filter 0.14s ease;
   align-self: flex-start;
 }
 

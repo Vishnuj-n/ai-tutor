@@ -15,7 +15,7 @@
 <script setup>
 defineProps({
   disabled: { type: Boolean, default: false },
-  loading:  { type: Boolean, default: false },
+  loading: { type: Boolean, default: false },
 })
 
 defineEmits(['click'])
@@ -36,7 +36,9 @@ defineEmits(['click'])
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: transform 0.14s ease, filter 0.14s ease;
+  transition:
+    transform 0.14s ease,
+    filter 0.14s ease;
   white-space: nowrap;
 }
 
@@ -63,7 +65,9 @@ defineEmits(['click'])
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .visually-hidden {

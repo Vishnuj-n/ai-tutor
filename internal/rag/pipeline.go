@@ -149,6 +149,9 @@ func (p *Pipeline) ProcessQuery(topicID, userQuestion string, startPage, endPage
 	return result, nil
 }
 
+// buildPrompt assembles the final LLM prompt from the retrieval context, respecting the
+// maxPromptTokens budget. It iterates parent sections and trims content that would overflow,
+// returning the prompt string and the ordered list of parent IDs that were included.
 func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string, []string, error) {
 	sectionText := ""
 	usedParentIDs := make([]string, 0, len(ctx.ParentIDs))
@@ -213,6 +216,8 @@ func buildPrompt(topicTitle, userQuestion string, ctx RetrievalContext) (string,
 	return prompt, usedParentIDs, nil
 }
 
+// formatPrompt renders the final prompt string injected into the LLM.
+// It enforces grounding rules: the model must answer only from retrieved material.
 func formatPrompt(topicTitle, sectionText, userQuestion string) string {
 	return fmt.Sprintf(`You are an expert AI tutor. Your role is to teach clearly, not comprehensively.
 
@@ -247,6 +252,8 @@ Student's question: %s
 Answer:`, topicTitle, sectionText, userQuestion)
 }
 
+// trimToTokenBudget progressively shortens candidate until the complete prompt fits within tokenLimit.
+// It respects sentence boundaries where possible and falls back to whitespace-boundary trimming.
 func trimToTokenBudget(topicTitle, userQuestion, existingSections, candidate string, tokenLimit int) (string, error) {
 	if tokenLimit <= 0 || candidate == "" {
 		return "", nil
@@ -299,15 +306,20 @@ func trimToTokenBudget(topicTitle, userQuestion, existingSections, candidate str
 	return strings.TrimSpace(trimmed), nil
 }
 
+// countPromptTokens returns the token count for the given prompt string using the ONNX tokenizer.
 func countPromptTokens(prompt string) (int, error) {
 	return embeddings.CountTokens(prompt)
 }
 
+// shortPromptID returns the first 8 bytes of the SHA-256 hash of prompt, hex-encoded.
+// Used for log correlation without leaking prompt contents.
 func shortPromptID(prompt string) string {
 	sum := sha256.Sum256([]byte(prompt))
 	return hex.EncodeToString(sum[:8])
 }
 
+// dropLastSentence removes the last sentence from text, scanning backwards for '.', '!', or '?'.
+// Returns an empty string if no sentence boundary is found.
 func dropLastSentence(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -329,6 +341,7 @@ func dropLastSentence(text string) string {
 	return ""
 }
 
+// trimByWhitespace removes the last word from text by finding the trailing whitespace boundary.
 func trimByWhitespace(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -353,6 +366,8 @@ func trimByWhitespace(text string) string {
 	return trimmed
 }
 
+// trimBySentenceOrWhitespace progressively shortens text by dropping sentences,
+// then words, until the string is smaller than the original. Returns "" if nothing can be removed.
 func trimBySentenceOrWhitespace(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -376,6 +391,7 @@ func trimBySentenceOrWhitespace(text string) string {
 	return ""
 }
 
+// endsWithSentenceBoundary reports whether text ends with '.', '!', or '?'.
 func endsWithSentenceBoundary(text string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {

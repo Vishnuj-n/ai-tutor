@@ -1,8 +1,5 @@
 <template>
-  <StudyPageLayout
-    eyebrow="Assessment"
-    title="Written Assessment"
-  >
+  <StudyPageLayout eyebrow="Assessment" title="Written Assessment">
     <!-- Toolbar: notebook selector -->
     <template #toolbar>
       <div class="toolbar-field">
@@ -39,7 +36,6 @@
 
     <!-- ── COMPREHENSIVE TAB ───────────────────── -->
     <section v-if="activeTab === 'comprehensive'" class="tab-content">
-
       <!-- Config panel: idle / pre-question state -->
       <div v-if="!question" class="config-panel">
         <p class="config-panel__hint">
@@ -89,7 +85,9 @@
         <!-- Question card -->
         <article class="question-card">
           <p class="question-prompt">{{ question.prompt }}</p>
-          <span class="source-badge">Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span>
+          <span class="source-badge"
+            >Pages {{ question.sourcePageStart }}–{{ question.sourcePageEnd }}</span
+          >
         </article>
 
         <!-- Answer textarea -->
@@ -107,12 +105,7 @@
 
         <!-- Actions row -->
         <div class="form-footer">
-          <button
-            id="wa-discard-btn"
-            class="ghost-btn"
-            :disabled="scoring"
-            @click="reset"
-          >
+          <button id="wa-discard-btn" class="ghost-btn" :disabled="scoring" @click="reset">
             Discard
           </button>
           <button
@@ -147,22 +140,19 @@
         <p class="result-panel__feedback">{{ result.feedback }}</p>
 
         <div class="form-footer">
-          <button id="wa-new-btn" class="primary-btn" @click="reset">
-            New Question
-          </button>
+          <button id="wa-new-btn" class="primary-btn" @click="reset">New Question</button>
         </div>
       </article>
-
     </section>
 
     <!-- ── EXPLORER TAB (stub) ────────────────── -->
     <section v-else class="tab-content stub-panel">
       <p class="eyebrow-inline">Coming in Phase 2</p>
       <p class="stub-text">
-        Semantic Discovery will surface concept clusters and generate targeted questions across your notebooks.
+        Semantic Discovery will surface concept clusters and generate targeted questions across your
+        notebooks.
       </p>
     </section>
-
   </StudyPageLayout>
 </template>
 
@@ -171,20 +161,24 @@ import { ref, computed, onMounted } from 'vue'
 import { getNotebooks, generateComprehensiveExam, scoreShortAnswer } from '../services/appApi.js'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
-const notebooks          = ref([])
+const notebooks = ref([])
 const selectedNotebookID = ref('')
-const activeTab          = ref('comprehensive')
-const startPage          = ref(1)
-const endPage            = ref(10)
-const loading            = ref(false)
-const scoring            = ref(false)
-const error              = ref('')
-const question           = ref(null)
-const userAnswer         = ref('')
-const result             = ref(null)
+const activeTab = ref('comprehensive')
+const startPage = ref(1)
+const endPage = ref(10)
+const loading = ref(false)
+const scoring = ref(false)
+const error = ref('')
+const question = ref(null)
+const userAnswer = ref('')
+const result = ref(null)
 
-const canGenerate = computed(() =>
-  selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
+const canGenerate = computed(
+  () =>
+    selectedNotebookID.value &&
+    startPage.value > 0 &&
+    endPage.value >= startPage.value &&
+    !loading.value
 )
 
 const scoreClass = computed(() => {
@@ -197,8 +191,10 @@ const scoreClass = computed(() => {
 onMounted(async () => {
   try {
     const res = await getNotebooks()
-    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
-  } catch { error.value = 'Failed to load notebooks.' }
+    notebooks.value = Array.isArray(res) ? res.filter((n) => !n.error) : []
+  } catch {
+    error.value = 'Failed to load notebooks.'
+  }
 })
 
 async function generate() {
@@ -208,8 +204,15 @@ async function generate() {
   userAnswer.value = ''
   loading.value = true
   try {
-    const res = await generateComprehensiveExam(selectedNotebookID.value, startPage.value, endPage.value)
-    if (res.error) { error.value = res.error; return }
+    const res = await generateComprehensiveExam(
+      selectedNotebookID.value,
+      startPage.value,
+      endPage.value
+    )
+    if (res.error) {
+      error.value = res.error
+      return
+    }
     question.value = {
       questionId: res.questionID,
       prompt: res.prompt,
@@ -219,7 +222,7 @@ async function generate() {
       endPage: res.end_page,
       llmTier: res.llm_tier,
       sourcePageStart: res.source_page_start,
-      sourcePageEnd: res.source_page_end
+      sourcePageEnd: res.source_page_end,
     }
   } catch (e) {
     error.value = e?.message ?? 'Exam generation failed.'
@@ -237,14 +240,17 @@ async function submitAnswer() {
   scoring.value = true
   try {
     const res = await scoreShortAnswer(question.value.questionId, userAnswer.value.trim())
-    if (res.error) { error.value = res.error; return }
+    if (res.error) {
+      error.value = res.error
+      return
+    }
     result.value = {
       questionId: res.question_id,
       prompt: res.prompt,
       score: res.score,
       feedback: res.feedback,
       fsrsRating: res.fsrsRating,
-      scheduledDays: res.scheduled_days
+      scheduledDays: res.scheduled_days,
     }
   } catch (e) {
     error.value = e?.message ?? 'Scoring failed.'
@@ -323,7 +329,9 @@ function reset() {
   color: var(--muted-text);
   background: transparent;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .mode-tab:hover:not(.mode-tab--active) {
@@ -344,8 +352,14 @@ function reset() {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Config panel ─────────────────────────────── */
@@ -502,7 +516,9 @@ function reset() {
   font-weight: 600;
   color: var(--muted-text);
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .ghost-btn:hover:not(:disabled) {
@@ -526,7 +542,9 @@ function reset() {
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   cursor: pointer;
-  transition: transform 0.14s ease, filter 0.14s ease;
+  transition:
+    transform 0.14s ease,
+    filter 0.14s ease;
   white-space: nowrap;
 }
 
@@ -580,9 +598,15 @@ function reset() {
 }
 
 /* Score tonal colors */
-.score--great .score-num { color: #16a34a; }
-.score--ok    .score-num { color: #ea580c; }
-.score--low   .score-num { color: #dc2626; }
+.score--great .score-num {
+  color: #16a34a;
+}
+.score--ok .score-num {
+  color: #ea580c;
+}
+.score--low .score-num {
+  color: #dc2626;
+}
 
 /* FSRS chip */
 .fsrs-chip {
