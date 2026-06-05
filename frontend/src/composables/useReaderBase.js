@@ -181,12 +181,10 @@ export function useReaderBase(taskID) {
 
       // Treat missing/empty bundle as recoverable
       let bundle = null
-      if (
-        result.bundle &&
-        Array.isArray(result.bundle.sections) &&
-        result.bundle.sections.length > 0
-      ) {
-        bundle = result.bundle
+         if (result.bundle && typeof result.bundle === 'object') {        bundle = {
+          ...result.bundle,
+          sections: Array.isArray(result.bundle.sections) ? result.bundle.sections : [],
+        }
       }
       globalError.value = '' // clear globalError
 
