@@ -8,8 +8,8 @@
 defineProps({
   message: {
     type: String,
-    default: ''
-  }
+    default: '',
+  },
 })
 </script>
 

@@ -17,8 +17,8 @@
 
 <script setup>
 defineProps({
-  eyebrow:  { type: String, default: '' },
-  title:    { type: String, required: true },
+  eyebrow: { type: String, default: '' },
+  title: { type: String, required: true },
   subtitle: { type: String, default: '' },
 })
 </script>

@@ -19,7 +19,9 @@
           {{ saving ? 'Saving...' : 'Save' }}
         </button>
       </div>
-      <p class="hint">Used by scheduler math: review budget first, then context-locked reading pages.</p>
+      <p class="hint">
+        Used by scheduler math: review budget first, then context-locked reading pages.
+      </p>
       <p v-if="error" class="error-text">{{ error }}</p>
       <p v-if="success" class="success-text">{{ success }}</p>
     </article>

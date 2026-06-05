@@ -15,7 +15,6 @@ import (
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
-	"ai-tutor/internal/rag"
 	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/scheduler"
 	"ai-tutor/internal/study"
@@ -281,50 +280,7 @@ func initCleanTestDB(t *testing.T) {
 	})
 }
 
-func initTestPipeline(t *testing.T) *rag.Pipeline {
-	t.Helper()
-	initTestDB(t)
 
-	embedStore := rag.NewEmbeddingStore(nil)
-	topicIDs, err := db.GetAllTopicIDs()
-	if err != nil {
-		t.Fatalf("failed to list topic IDs: %v", err)
-	}
-
-	for _, topicID := range topicIDs {
-		chunks, chunksErr := db.GetChunksForTopic(topicID)
-		if chunksErr != nil {
-			t.Fatalf("failed to get chunks for topic %s: %v", topicID, chunksErr)
-		}
-		for _, chunk := range chunks {
-			embedStore.AddChunk(chunk)
-		}
-	}
-
-	mockLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			http.NotFound(w, r)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{
-					"message": map[string]string{"content": "Round Robin gives each process a fixed time slice."},
-				},
-			},
-		})
-	}))
-	t.Cleanup(mockLLM.Close)
-
-	t.Setenv("LLM_BASE_URL", mockLLM.URL)
-	t.Setenv("LLM_API_KEY", "test-key")
-	t.Setenv("LLM_MODEL", "test-model")
-
-	provider := llm.NewProvider(llm.LoadConfigFromEnv())
-	return rag.NewPipeline(embedStore, provider)
-}
 
 func initTestProvider(t *testing.T) *llm.Provider {
 	t.Helper()
@@ -405,7 +361,6 @@ func newTestApp(t *testing.T) *App {
 	}
 
 	// Initialize retrieval engine (required by study service)
-	embedStore := rag.NewEmbeddingStore(nil)
 	topicIDs, err := db.GetAllTopicIDs()
 	if err != nil {
 		t.Fatalf("failed to list topic IDs: %v", err)
@@ -416,7 +371,6 @@ func newTestApp(t *testing.T) *App {
 			t.Fatalf("failed to get chunks for topic %s: %v", topicID, chunksErr)
 		}
 		for _, chunk := range chunks {
-			embedStore.AddChunk(chunk)
 			if app.retrievalEngine == nil {
 				app.retrievalEngine = retrieval.NewEngine(nil)
 			}
@@ -445,12 +399,11 @@ func newTestApp(t *testing.T) *App {
 // pass without premature churn.
 //
 // Domain sections:
-// - AI/RAG tests (AskAI, RAG pipeline)
 // - Notebook/Topic tests (GetAvailableTopics, GetNotebookTopicTree, etc.)
 // - Quiz/Scoring tests (ScoreAnswer, quiz generation)
 // - Flashcard/FSRS tests (GenerateFlashcards)
-// - Written Answer tests (GenerateShortAnswerPrompt, ScoreShortAnswer)
-// - Reader tests (GetReaderTopicBundle, ExplainReaderSection)
+// - Written Answer tests (ScoreShortAnswer)
+// - Reader tests (GetReaderTopicBundle)
 // - Notebook Upload tests (DraftNotebookSyllabus, ConfirmNotebookSyllabus)
 // - Queue tests (ActivateTask, CompleteTask, SkipTask) [TO BE ADDED]
 // - Deterministic Ordering tests [TO BE ADDED]
@@ -459,50 +412,6 @@ func newTestApp(t *testing.T) *App {
 // ============================================================================
 // AI/RAG TESTS
 // ============================================================================
-
-func TestAskAIResponseShape(t *testing.T) {
-	app := &App{ragPipeline: initTestPipeline(t), aiReady: true}
-
-	resp := app.AskAI("os-scheduling", "What is Round Robin scheduling?")
-
-	if _, hasError := resp["error"]; hasError {
-		t.Fatalf("expected success response, got error: %v", resp["error"])
-	}
-
-	if _, ok := resp["answer"].(string); !ok {
-		t.Fatalf("expected answer string, got: %#v", resp["answer"])
-	}
-
-	switch cited := resp["cited_sections"].(type) {
-	case []string:
-		// valid typed response
-	case []interface{}:
-		for idx, item := range cited {
-			if _, ok := item.(string); !ok {
-				t.Fatalf("expected cited_sections[%d] to be string, got: %#v", idx, item)
-			}
-		}
-	default:
-		t.Fatalf("expected cited_sections []string or []interface{}, got: %#v", resp["cited_sections"])
-	}
-
-	if _, ok := resp["chunks_retrieved"].(int); !ok {
-		t.Fatalf("expected chunks_retrieved int, got: %#v", resp["chunks_retrieved"])
-	}
-
-	if _, ok := resp["sections_used"].(int); !ok {
-		t.Fatalf("expected sections_used int, got: %#v", resp["sections_used"])
-	}
-}
-
-func TestAskAIInvalidTopicReturnsError(t *testing.T) {
-	app := &App{ragPipeline: initTestPipeline(t), aiReady: true}
-
-	resp := app.AskAI("missing-topic", "Any question")
-	if _, ok := resp["error"].(string); !ok {
-		t.Fatalf("expected error string for invalid topic, got: %#v", resp)
-	}
-}
 
 func TestGetAvailableTopicsFromDB(t *testing.T) {
 	initTestDB(t)
@@ -633,20 +542,6 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 	}
 	if len(historyTopics) != 1 || historyTopics[0] != "The Renaissance" {
 		t.Fatalf("unexpected history topics: %#v", historyTopics)
-	}
-}
-
-func TestAskAINotReadyReturnsError(t *testing.T) {
-	app := &App{aiReady: false, aiInitError: "missing runtime assets"}
-
-	resp := app.AskAI("os-scheduling", "What is RR?")
-	err, ok := resp["error"].(string)
-	if !ok {
-		t.Fatalf("expected error string, got: %#v", resp)
-	}
-
-	if err == "" {
-		t.Fatalf("expected non-empty error message")
 	}
 }
 
@@ -848,81 +743,6 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 // WRITTEN ANSWER TESTS
 // ============================================================================
 
-func TestGenerateShortAnswerPrompt_Success(t *testing.T) {
-	app := newTestApp(t)
-	if err := db.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	mockLLM := &mockLLMProvider{
-		answer: `{"prompt":"What is the primary purpose of scheduling in OS?"}`,
-	}
-	app.fastLLMProvider = mockLLM
-
-	mockRAG := &mockRAGPipeline{
-		result: &rag.Response{
-			Answer: `{"prompt":"What is the primary purpose of scheduling in OS?"}`,
-		},
-	}
-	app.ragPipeline = mockRAG
-
-	result := app.GenerateShortAnswerPrompt("os-scheduling")
-
-	if err, ok := result["error"]; ok {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-
-	prompt, ok := result["prompt"].(string)
-	if !ok || prompt == "" {
-		t.Fatalf("expected non-empty prompt string, got: %v", result["prompt"])
-	}
-
-	topicID, ok := result["topicID"].(string)
-	if !ok || topicID != "os-scheduling" {
-		t.Fatalf("expected topicID to be 'os-scheduling', got: %v", topicID)
-	}
-
-	questionID, ok := result["questionID"].(string)
-	if !ok || questionID == "" {
-		t.Fatalf("expected non-empty questionID, got: %v", result["questionID"])
-	}
-	writtenQuestion, err := db.GetWrittenQuestionByID(questionID)
-	if err != nil {
-		t.Fatalf("GetWrittenQuestionByID failed: %v", err)
-	}
-	if writtenQuestion == nil {
-		t.Fatalf("expected persisted written question for id=%s", questionID)
-		return // Explicit return to satisfy staticcheck SA5011
-	}
-	if writtenQuestion.TopicID != "os-scheduling" {
-		t.Fatalf("expected persisted topicID os-scheduling, got: %s", writtenQuestion.TopicID)
-	}
-}
-
-func TestGenerateShortAnswerPrompt_EmptyTopicID(t *testing.T) {
-	app := newTestApp(t)
-
-	result := app.GenerateShortAnswerPrompt("")
-
-	if err, ok := result["error"].(string); !ok || err == "" {
-		t.Fatalf("expected error for empty topicID, got: %v", result)
-	}
-
-	if !strings.Contains(result["error"].(string), "topic ID is required") {
-		t.Fatalf("expected 'topic ID is required' error, got: %v", result["error"])
-	}
-}
-
-func TestGenerateShortAnswerPrompt_WhitespaceTopicID(t *testing.T) {
-	app := newTestApp(t)
-
-	result := app.GenerateShortAnswerPrompt("   ")
-
-	if err, ok := result["error"].(string); !ok || err == "" {
-		t.Fatalf("expected error for whitespace-only topicID, got: %v", result)
-	}
-}
-
 // TestGenerateShortAnswerPrompt_NoLLMProvider removed - study service now has fallback behavior
 
 // TestGenerateShortAnswerPrompt_NoRAGPipeline removed - study service now has fallback behavior
@@ -1082,18 +902,6 @@ func extractFirstChunkID(prompt string) string {
 	return strings.TrimSpace(rest[:end])
 }
 
-type mockRAGPipeline struct {
-	result *rag.Response
-	err    error
-}
-
-func (m *mockRAGPipeline) ProcessQuery(topicID, question string, startPage, endPage int) (*rag.Response, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.result, nil
-}
-
 // ============================================================================
 // READER TESTS
 // ============================================================================
@@ -1203,71 +1011,6 @@ func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
 }
 
 // Contract tests for ExplainReaderSection
-func TestExplainReaderSection_Success(t *testing.T) {
-	app := newTestApp(t)
-
-	topicID := "test-topic-explain"
-	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	parentID := "parent-explain"
-	if err := db.CreateParentSection(parentID, topicID, "Section Title", 1, "section content"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-	if err := db.CreateChunk("chunk-explain", topicID, parentID, "section content about grounded retrieval", 8, 1); err != nil {
-		t.Fatalf("CreateChunk failed: %v", err)
-	}
-
-	resp := app.ExplainReaderSection(parentID, "What is this section about?")
-
-	if _, hasErr := resp["error"]; hasErr {
-		t.Fatalf("expected success, got error: %v", resp["error"])
-	}
-
-	if _, ok := resp["answer"].(string); !ok {
-		t.Fatalf("expected answer string, got: %#v", resp["answer"])
-	}
-}
-
-func TestExplainReaderSection_InvalidSection(t *testing.T) {
-	app := newTestApp(t)
-
-	resp := app.ExplainReaderSection("nonexistent-section", "Any question?")
-
-	if _, hasErr := resp["error"]; !hasErr {
-		t.Fatalf("expected error for invalid section, got: %#v", resp)
-	}
-}
-
-func TestExplainReaderSection_EmptyQuestion(t *testing.T) {
-	app := newTestApp(t)
-
-	topicID := "test-topic-explain-empty"
-	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	parentID := "parent-explain-empty"
-	if err := db.CreateParentSection(parentID, topicID, "Section", 1, "content"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-	if err := db.CreateChunk("chunk-explain-empty", topicID, parentID, "content for the reader explanation fallback path", 8, 1); err != nil {
-		t.Fatalf("CreateChunk failed: %v", err)
-	}
-
-	// Should succeed with empty question (uses default explanation)
-	resp := app.ExplainReaderSection(parentID, "")
-
-	if _, hasErr := resp["error"]; hasErr {
-		t.Fatalf("expected success with empty question, got error: %v", resp["error"])
-	}
-
-	if _, ok := resp["answer"].(string); !ok {
-		t.Fatalf("expected answer string for empty question, got: %#v", resp["answer"])
-	}
-}
-
 func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	app := newTestApp(t)
 

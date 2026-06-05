@@ -32,15 +32,9 @@ type llmProviderInterface interface {
 	GenerateAnswer(prompt string) (string, error)
 }
 
-type ragPipelineInterface interface {
-	ProcessQuery(topicID, question string, startPage, endPage int) (*rag.Response, error)
-}
-
 // App is the thin Wails bridge — no business logic lives here.
 type App struct {
 	ctx               context.Context
-	ragPipeline       ragPipelineInterface
-	embedStore        *rag.EmbeddingStore
 	embedder          *embeddings.OnnxEmbedder
 	retrievalEngine   *retrieval.Engine
 	fastLLMProvider   llmProviderInterface
@@ -133,9 +127,6 @@ func (a *App) startup(ctx context.Context) {
 	// Init shared retrieval engine for Socratic + Reader scoped chat.
 	a.retrievalEngine = retrieval.NewEngine(embedder)
 
-	// Init topic-scoped RAG pipeline (used by AskAI).
-	embedStore := rag.NewEmbeddingStore(embedder)
-	a.embedStore = embedStore
 	topicIDs, err := db.GetAllTopicIDs()
 	if err != nil {
 		utils.Warnf("could not list topics for lexical fallback: %v", err)
@@ -148,7 +139,6 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		for _, tid := range topicIDs {
 			for _, c := range chunksByTopic[tid] {
-				embedStore.AddChunk(c)
 				a.retrievalEngine.AddChunk(c)
 			}
 		}
@@ -159,7 +149,6 @@ func (a *App) startup(ctx context.Context) {
 	a.fastLLMProvider = fastLLMProvider
 	a.heavyLLMProvider = heavyLLMProvider
 
-	a.ragPipeline = rag.NewPipeline(embedStore, heavyLLMProvider)
 	a.studyService = study.NewStudyService(study.Config{
 		FastLLMProvider:  fastLLMProvider,
 		HeavyLLMProvider: heavyLLMProvider,
@@ -178,14 +167,6 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
-}
-
-func (a *App) GetTopicContent(topicID string) map[string]interface{} {
-	content, err := db.GetTopicContent(topicID)
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return content
 }
 
 func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string]interface{} {
@@ -221,27 +202,6 @@ func (a *App) GetAvailableTopics() []map[string]string {
 	return topics
 }
 
-func (a *App) AskAI(topicID string, question string) map[string]interface{} {
-	if !a.aiReady {
-		reason := a.aiInitError
-		if reason == "" {
-			reason = "local AI runtime is not ready"
-		}
-		return map[string]interface{}{"error": "Ask AI unavailable: " + reason}
-	}
-	if a.ragPipeline == nil {
-		return map[string]interface{}{"error": "RAG pipeline not initialized"}
-	}
-	result, err := a.ragPipeline.ProcessQuery(topicID, question, 0, 0)
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{
-		"answer": result.Answer, "cited_sections": result.CitedSections,
-		"chunks_retrieved": result.ChunksRetrieved, "sections_used": result.SectionsUsed,
-	}
-}
-
 func (a *App) AskSocratic(topicID string, question string) map[string]interface{} {
 	if !a.aiReady {
 		reason := a.aiInitError
@@ -258,13 +218,6 @@ func (a *App) AskSocratic(topicID string, question string) map[string]interface{
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return res
-}
-
-func (a *App) ExplainReaderSection(sectionID string, question string) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	return a.studyService.ExplainReaderSection(sectionID, question)
 }
 
 func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPage, chapterStartPage, chapterEndPage int) map[string]interface{} {
@@ -568,21 +521,6 @@ func (a *App) GetQueueState(notebookID string) map[string]interface{} {
 	return map[string]interface{}{"queue_state": state}
 }
 
-func (a *App) GetReadingTask(taskID string) map[string]interface{} {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return map[string]interface{}{"error": "task ID is required", "code": 400}
-	}
-	task, err := db.GetReadingTask(taskID)
-	if err != nil {
-		if err == db.ErrTaskNotFound {
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		}
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"task": task}
-}
-
 // InitializeReadingSession consolidates task activation, reading task loading,
 // and page bounds resolution into a single canonical backend call.
 // Accepts the full routing context so scheduler-suggested tasks (not yet in study_queue)
@@ -831,17 +769,6 @@ func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int
 	return a.studyService.GenerateQuizForPageRange(notebookID, startPage, endPage)
 }
 
-func (a *App) GenerateQuizSync(topicID string, chunkIDs []string) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	payload, err := a.studyService.GenerateQuizSync(topicID, chunkIDs, nil)
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"quiz_task": payload}
-}
-
 func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -911,13 +838,6 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 }
 
 // ---------- Marathon Mode endpoints (Phase 1 new) ----------
-
-func (a *App) GenerateMarathonQuiz(notebookID string, startPage, endPage int) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	return a.studyService.GenerateMarathonQuiz(notebookID, startPage, endPage)
-}
 
 func (a *App) GenerateMarathonFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
 	if a.studyService == nil {
@@ -1041,23 +961,6 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{"ok": true}
-}
-
-func (a *App) LogReview(topicID, activityType, referenceID, sourceChunkID string, score int) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	if err := a.studyService.LogReview(topicID, activityType, referenceID, sourceChunkID, score); err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"ok": true}
-}
-
-func (a *App) GenerateShortAnswerPrompt(topicID string) map[string]interface{} {
-	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
-	}
-	return a.studyService.GenerateShortAnswerPrompt(topicID)
 }
 
 func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {

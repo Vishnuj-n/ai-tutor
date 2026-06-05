@@ -32,7 +32,6 @@
 
       <p v-if="selectionHint" class="selection-hint">{{ selectionHint }}</p>
 
-
       <div ref="threadRef" class="chat-thread">
         <div v-if="messages.length === 0" class="empty-state">
           <h3>Start the Socratic conversation</h3>
@@ -52,7 +51,9 @@
             </div>
 
             <div
-              v-if="message.role === 'assistant' && message.citations && message.citations.length > 0"
+              v-if="
+                message.role === 'assistant' && message.citations && message.citations.length > 0
+              "
               class="citations"
             >
               <p class="citation-label">Citations</p>
@@ -645,4 +646,3 @@ h1 {
   }
 }
 </style>
-

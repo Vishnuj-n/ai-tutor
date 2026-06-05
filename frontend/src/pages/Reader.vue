@@ -5,7 +5,9 @@
       <h1>{{ reader.topicTitle.value }}</h1>
       <p class="meta">
         <span>{{ reader.sections.value.length }} sections</span>
-        <span v-if="reader.selectedNotebookTitle.value">Notebook: {{ reader.selectedNotebookTitle.value }}</span>
+        <span v-if="reader.selectedNotebookTitle.value"
+          >Notebook: {{ reader.selectedNotebookTitle.value }}</span
+        >
         <span v-if="isTaskFlow" class="task-badge">Task Mode</span>
         <span v-else class="browse-badge">Browse Mode</span>
       </p>
@@ -15,9 +17,21 @@
     <article v-if="!isTaskFlow" class="panel controls">
       <label class="field">
         <span>Notebook</span>
-        <select v-model="reader.selectedNotebookID.value" :disabled="reader.loadingTree.value || reader.notebookTree.value.length === 0 || reader.loadingBundle.value" @change="onNotebookChange()">
+        <select
+          v-model="reader.selectedNotebookID.value"
+          :disabled="
+            reader.loadingTree.value ||
+            reader.notebookTree.value.length === 0 ||
+            reader.loadingBundle.value
+          "
+          @change="onNotebookChange()"
+        >
           <option disabled value="">Select notebook</option>
-          <option v-for="notebook in reader.notebookTree.value" :key="notebook.notebook_id" :value="notebook.notebook_id">
+          <option
+            v-for="notebook in reader.notebookTree.value"
+            :key="notebook.notebook_id"
+            :value="notebook.notebook_id"
+          >
             {{ notebook.title }}
           </option>
         </select>
@@ -25,11 +39,23 @@
 
       <label class="field">
         <span>Topic</span>
-        <select v-model="reader.selectedTopicID.value" :disabled="reader.loadingTree.value || reader.availableTopics.value.length === 0 || reader.loadingBundle.value" @change="reader.loadBundle()">
+        <select
+          v-model="reader.selectedTopicID.value"
+          :disabled="
+            reader.loadingTree.value ||
+            reader.availableTopics.value.length === 0 ||
+            reader.loadingBundle.value
+          "
+          @change="reader.loadBundle()"
+        >
           <option disabled value="">
             {{ reader.availableTopics.value.length === 0 ? 'No topics available' : 'Select topic' }}
           </option>
-          <option v-for="topic in reader.availableTopics.value" :key="topic.topic_id" :value="topic.topic_id">
+          <option
+            v-for="topic in reader.availableTopics.value"
+            :key="topic.topic_id"
+            :value="topic.topic_id"
+          >
             {{ topic.title }}
           </option>
         </select>
@@ -50,36 +76,64 @@
         <div class="stage-head">
           <h2>Document Stage</h2>
           <div class="pager">
-            <button class="secondary" :disabled="!reader.canGoPrev.value" @click="goPrev">Prev</button>
+            <button class="secondary" :disabled="!reader.canGoPrev.value" @click="goPrev">
+              Prev
+            </button>
             <span>Page {{ reader.currentPage.value }} / {{ reader.pageCount.value }}</span>
-            <button class="secondary" :disabled="!reader.canGoNext.value" @click="goNext">Next</button>
-            <button v-if="isTaskFlow" class="primary" :disabled="reader.loadingBundle.value || completingSession.value || !activeTaskID.value" @click="completeSession">
+            <button class="secondary" :disabled="!reader.canGoNext.value" @click="goNext">
+              Next
+            </button>
+            <button
+              v-if="isTaskFlow"
+              class="primary"
+              :disabled="
+                reader.loadingBundle.value || completingSession.value || !activeTaskID.value
+              "
+              @click="completeSession"
+            >
               {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
             </button>
           </div>
         </div>
-        <p v-if="isTaskFlow && reader.hasNavigationBounds.value" class="lock-meta">Reading Window: Pages {{ reader.navigationMinPage.value }}-{{ reader.navigationMaxPage.value }}</p>
+        <p v-if="isTaskFlow && reader.hasNavigationBounds.value" class="lock-meta">
+          Reading Window: Pages {{ reader.navigationMinPage.value }}-{{
+            reader.navigationMaxPage.value
+          }}
+        </p>
 
         <div v-if="reader.loadingBundle.value" class="empty">Loading document...</div>
-        <div v-else-if="!reader.pdfVisible.value" class="empty">PDF not available for selected notebook/topic.</div>
+        <div v-else-if="!reader.pdfVisible.value" class="empty">
+          PDF not available for selected notebook/topic.
+        </div>
         <div v-else class="pdf-wrap">
-          <iframe :key="iframeKey" class="pdf-frame" :src="reader.pdfSource.value" title="Notebook PDF"></iframe>
+          <iframe
+            :key="iframeKey"
+            class="pdf-frame"
+            :src="reader.pdfSource.value"
+            title="Notebook PDF"
+          ></iframe>
         </div>
 
-        <p v-if="isTaskFlow && completionMessage" class="completion-message">{{ completionMessage }}</p>
+        <p v-if="isTaskFlow && completionMessage" class="completion-message">
+          {{ completionMessage }}
+        </p>
         <p v-if="isTaskFlow && completionError" class="error">{{ completionError }}</p>
       </article>
 
       <aside class="panel chat" :class="{ closed: chat.chatCollapsed.value }">
         <div class="chat-head">
           <h2>AI Chat</h2>
-          <button class="ghost" @click="chat.toggleChat">{{ chat.chatCollapsed.value ? 'Expand' : 'Collapse' }}</button>
+          <button class="ghost" @click="chat.toggleChat">
+            {{ chat.chatCollapsed.value ? 'Expand' : 'Collapse' }}
+          </button>
         </div>
 
         <template v-if="!chat.chatCollapsed.value">
           <p class="chat-context">
             Using topic <strong>{{ reader.selectedTopicTitle.value || 'None' }}</strong>
-            <span v-if="reader.selectedNotebookTitle.value">from {{ reader.selectedNotebookTitle.value }}</span>
+            <span v-if="reader.selectedNotebookTitle.value"
+              >from {{ reader.selectedNotebookTitle.value }}</span
+            >
           </p>
 
           <div class="scope-bar">
@@ -95,7 +149,12 @@
           </div>
 
           <div ref="chat.messagesPane" class="messages">
-            <article v-for="(msg, idx) in chat.chatMessages.value" :key="idx" class="msg" :class="msg.role">
+            <article
+              v-for="(msg, idx) in chat.chatMessages.value"
+              :key="idx"
+              class="msg"
+              :class="msg.role"
+            >
               <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
               <p v-if="msg.role === 'user'">{{ msg.text }}</p>
               <div v-else class="markdown-body" v-html="chat.renderMarkdown(msg.text)"></div>
@@ -113,7 +172,15 @@
             ></textarea>
           </label>
 
-          <button class="primary" :disabled="chat.chatLoading.value || !chat.chatInput.value.trim() || !reader.selectedTopicID.value" @click="sendChat">
+          <button
+            class="primary"
+            :disabled="
+              chat.chatLoading.value ||
+              !chat.chatInput.value.trim() ||
+              !reader.selectedTopicID.value
+            "
+            @click="sendChat"
+          >
             {{ chat.chatLoading.value ? 'Thinking...' : 'Send' }}
           </button>
         </template>
@@ -171,14 +238,14 @@ onMounted(async () => {
     notebookId: route.query.notebookId || route.query.notebook_id,
     topicId: route.query.topicId || route.query.topic_id,
     startPage: parseInt(route.query.startPage || route.query.start_page) || 0,
-    endPage: parseInt(route.query.endPage || route.query.end_page) || 0
+    endPage: parseInt(route.query.endPage || route.query.end_page) || 0,
   }
   console.log('[Reader] Task flow - extracted query:', JSON.stringify(query))
   console.warn('[Reader] Task flow - pre-init state', {
     routeTaskID: routeTaskID.value,
     fullPath: route.fullPath,
     query,
-    isTaskFlow: isTaskFlow.value
+    isTaskFlow: isTaskFlow.value,
   })
 
   const init = await reader.initializeSession(query)
@@ -186,19 +253,19 @@ onMounted(async () => {
   console.warn('[READER_INIT_CLIENT] initializeSession payload ids', {
     routeQueryTaskId: route.query.taskId,
     routeQueryTask_id: route.query.task_id,
-    canonicalTaskIDFromInit: init?.task?.task_id || init?.task?.id || null
+    canonicalTaskIDFromInit: init?.task?.task_id || init?.task?.id || null,
   })
   activeTaskID.value = init?.task?.task_id || init?.task?.id || routeTaskID.value
   console.warn('[READER_INIT_CLIENT] activeTaskID assigned', {
     assignedActiveTaskID: activeTaskID.value,
-    routeTaskID: routeTaskID.value
+    routeTaskID: routeTaskID.value,
   })
   console.log('[Reader] After init - reader state:', {
     navigationMinPage: reader.navigationMinPage.value,
     navigationMaxPage: reader.navigationMaxPage.value,
     currentPage: reader.currentPage.value,
     hasNavigationBounds: reader.hasNavigationBounds.value,
-    navigationState: reader.navigationState.value
+    navigationState: reader.navigationState.value,
   })
   if (init) {
     iframeKey.value++
@@ -242,7 +309,7 @@ async function completeSession() {
       routeQueryTask_id: route.query.task_id,
       routeTaskIDComputed: routeTaskID.value,
       activeTaskID: activeTaskID.value,
-      actualArg: taskIDForCompletion
+      actualArg: taskIDForCompletion,
     })
     const done = await completeReading(taskIDForCompletion)
     console.warn('[COMPLETE_SESSION] completeSession() completeReading response', done)
@@ -252,7 +319,10 @@ async function completeSession() {
     }
     const nextRoute = done?.quiz_task_id ? `/quiz?taskId=${done.quiz_task_id}` : '/dashboard'
     // Completion writes the follow-up quiz into the queue; navigation follows the existing route behavior.
-    console.warn('[COMPLETE_SESSION] completeSession() before router.push', { nextRoute, quizTaskID: done?.quiz_task_id || null })
+    console.warn('[COMPLETE_SESSION] completeSession() before router.push', {
+      nextRoute,
+      quizTaskID: done?.quiz_task_id || null,
+    })
     await router.push(nextRoute)
     console.warn('[COMPLETE_SESSION] completeSession() router.push resolved', { nextRoute })
   } catch (err) {
@@ -270,7 +340,7 @@ async function sendChat() {
     notebookID: reader.selectedNotebookID.value,
     currentPage: reader.currentPage.value,
     chapterStartPage: reader.topicStartPage.value,
-    chapterEndPage: reader.topicEndPage.value
+    chapterEndPage: reader.topicEndPage.value,
   })
 }
 </script>
@@ -748,4 +818,3 @@ button:disabled {
   }
 }
 </style>
-

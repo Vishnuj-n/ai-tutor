@@ -72,7 +72,7 @@ export function useChat() {
 
       chatMessages.value.push({
         role: 'assistant',
-        text: result?.answer || 'No answer returned.'
+        text: result?.answer || 'No answer returned.',
       })
 
       // Auto-scroll to bottom
@@ -114,6 +114,6 @@ export function useChat() {
     clearChat,
     sendMessage,
     canChat,
-    renderMarkdown
+    renderMarkdown,
   }
 }

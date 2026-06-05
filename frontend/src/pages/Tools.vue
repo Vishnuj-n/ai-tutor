@@ -210,11 +210,11 @@ h2 {
     gap: 12px;
     padding: 20px 24px;
   }
-  
+
   .utility-meta {
     margin-top: 0;
   }
-  
+
   .page {
     padding: 40px 24px;
   }

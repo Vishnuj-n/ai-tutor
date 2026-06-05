@@ -7,10 +7,6 @@ function appBridge() {
   return bridge
 }
 
-export function getTopicContent(topicID) {
-  return appBridge().GetTopicContent(topicID)
-}
-
 export function getReaderTopicBundle(topicID, notebookID = '') {
   return appBridge().GetReaderTopicBundle(topicID, notebookID)
 }
@@ -19,19 +15,19 @@ export function getAvailableTopics() {
   return appBridge().GetAvailableTopics()
 }
 
-export function askAI(topicID, question) {
-  return appBridge().AskAI(topicID, question)
-}
-
 export function askSocratic(topicID, question) {
   return appBridge().AskSocratic(topicID, question)
 }
 
-export function explainReaderSection(sectionID, question = '') {
-  return appBridge().ExplainReaderSection(sectionID, question)
-}
-
-export function askReaderAI(topicID, notebookID, question, scope, currentPage, chapterStartPage, chapterEndPage) {
+export function askReaderAI(
+  topicID,
+  notebookID,
+  question,
+  scope,
+  currentPage,
+  chapterStartPage,
+  chapterEndPage
+) {
   return appBridge().AskReaderAI(
     topicID,
     notebookID || '',
@@ -47,12 +43,14 @@ export function activateTask(taskID) {
   return appBridge().ActivateTask(taskID)
 }
 
-export function getReadingTask(taskID) {
-  return appBridge().GetReadingTask(taskID)
-}
-
 export function initializeReadingSession(taskID, notebookID, topicID, startPage, endPage) {
-  return appBridge().InitializeReadingSession(taskID, notebookID || '', topicID || '', startPage || 0, endPage || 0)
+  return appBridge().InitializeReadingSession(
+    taskID,
+    notebookID || '',
+    topicID || '',
+    startPage || 0,
+    endPage || 0
+  )
 }
 
 export async function completeReading(taskID) {
@@ -73,10 +71,6 @@ export function getTask(taskID) {
 
 export function generateQuizForPageRange(notebookID, startPage, endPage) {
   return appBridge().GenerateQuizForPageRange(notebookID, startPage, endPage)
-}
-
-export function generateQuizSync(topicID, chunkIDs) {
-  return appBridge().GenerateQuizSync(topicID, chunkIDs)
 }
 
 export function submitQuizAttempt(taskID, answers) {
@@ -100,10 +94,6 @@ export function updateDailyStudyMinutes(minutes) {
 }
 
 // Comprehensive Mode endpoints (Phase 1)
-export function generateMarathonQuiz(notebookID, startPage, endPage) {
-  return appBridge().GenerateMarathonQuiz(notebookID, startPage, endPage)
-}
-
 export function generateMarathonFlashcards(notebookID, startPage, endPage) {
   return appBridge().GenerateMarathonFlashcards(notebookID, startPage, endPage)
 }
@@ -112,19 +102,9 @@ export function generateComprehensiveExam(notebookID, startPage, endPage) {
   return appBridge().GenerateComprehensiveExam(notebookID, startPage, endPage)
 }
 
-
-export function generateShortAnswerPrompt(topicID) {
-  return appBridge().GenerateShortAnswerPrompt(topicID)
-}
-
 export function scoreShortAnswer(questionID, userAnswer) {
   return appBridge().ScoreShortAnswer(questionID, userAnswer)
 }
-
-export function logReview(topicID, activityType, referenceID, sourceChunkID, score) {
-  return appBridge().LogReview(topicID, activityType, referenceID, sourceChunkID, score)
-}
-
 
 export function getReviewSession(taskID, notebookID = '') {
   return appBridge().GetReviewSession(taskID, notebookID)
