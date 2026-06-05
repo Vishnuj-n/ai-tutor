@@ -342,6 +342,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 
 	var plan *models.TodayPlan
+	planSource := "queue-materialized"
 	if len(activeQueueTasks) > 0 || len(pendingQueueTasks) > 0 {
 		// Bypass scheduler's synthetic BuildTodayPlan to save DB scan and token budget cycles.
 		// Query due review cards and daily minutes directly.
@@ -432,6 +433,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 			return map[string]interface{}{"error": err.Error()}
 		}
 		plan = syntheticPlan
+		planSource = "scheduler-fallback"
 		utils.Warnf("[TODAY_PLAN] synthetic plan fallback taskCount=%d", len(plan.Tasks))
 	}
 
@@ -447,7 +449,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"deferred_review_cards": plan.DeferredReviewCards, "active_topics": plan.ActiveTopics,
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
-		"insights_available": false, "plan_source": "queue-materialized",
+		"insights_available": false, "plan_source": planSource,
 	}
 }
 

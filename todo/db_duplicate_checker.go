@@ -94,10 +94,13 @@ func analyzeFile(filename string, analysis *DuplicateAnalysis) {
 				}
 
 				if x.Recv != nil && len(x.Recv.List) > 0 {
-					if starExpr, ok := x.Recv.List[0].Type.(*ast.StarExpr); ok {
-						if ident, ok := starExpr.X.(*ast.Ident); ok {
+					switch recvType := x.Recv.List[0].Type.(type) {
+					case *ast.StarExpr:
+						if ident, ok := recvType.X.(*ast.Ident); ok {
 							funcInfo.Receiver = ident.Name
 						}
+					case *ast.Ident:
+						funcInfo.Receiver = recvType.Name
 					}
 				}
 
@@ -131,15 +134,28 @@ func findSimilarities(analysis *DuplicateAnalysis) {
 		"Test Helpers":       {"Setup", "Teardown", "Mock", "Stub"},
 	}
 
+	totalFunctionCount := 0
+	for _, funcs := range analysis.Functions {
+		totalFunctionCount += len(funcs)
+	}
+
 	for pattern, keywords := range patterns {
 		files := make(map[string]bool)
+		matchCount := 0
 		for funcName := range analysis.Functions {
+			matched := false
 			for _, keyword := range keywords {
 				if strings.Contains(funcName, keyword) {
-					for _, funcInfo := range analysis.Functions[funcName] {
-						files[funcInfo.File] = true
-					}
+					matched = true
+					break
 				}
+			}
+			if !matched {
+				continue
+			}
+			for _, funcInfo := range analysis.Functions[funcName] {
+				files[funcInfo.File] = true
+				matchCount++
 			}
 		}
 
@@ -149,11 +165,16 @@ func findSimilarities(analysis *DuplicateAnalysis) {
 				fileList = append(fileList, filepath.Base(file))
 			}
 
+			similarity := 0.0
+			if totalFunctionCount > 0 {
+				similarity = float64(matchCount) / float64(totalFunctionCount)
+			}
+
 			analysis.Similarities = append(analysis.Similarities, Similarity{
 				Type:        "Pattern",
 				Name:        pattern,
 				Files:       fileList,
-				Similarity:  0.8,
+				Similarity:  similarity,
 				Description: fmt.Sprintf("Multiple files implement %s pattern", pattern),
 			})
 		}
@@ -216,7 +237,7 @@ func printRedundantImports(analysis *DuplicateAnalysis) {
 
 	commonImports := make(map[string]int)
 	for imp, files := range analysis.Imports {
-		if len(files) >= 3 && !strings.Contains(imp, "std") {
+		if len(files) >= 3 && strings.Contains(imp, ".") {
 			commonImports[imp] = len(files)
 		}
 	}
@@ -248,20 +269,6 @@ func printSimilarities(analysis *DuplicateAnalysis) {
 
 func printRecommendations(analysis *DuplicateAnalysis) {
 	fmt.Println("💡 RECOMMENDATIONS:")
-
-	repoFiles := 0
-	testFiles := 0
-
-	for funcName := range analysis.Functions {
-		for _, funcInfo := range analysis.Functions[funcName] {
-			if strings.Contains(funcInfo.File, "_repo.go") {
-				repoFiles++
-			}
-			if strings.Contains(funcInfo.File, "_test.go") {
-				testFiles++
-			}
-		}
-	}
 
 	fmt.Printf("  📊 Found %d repository files\n", countUniqueFiles(analysis.Functions, "_repo.go"))
 	fmt.Printf("  🧪 Found %d test files\n", countUniqueFiles(analysis.Functions, "_test.go"))
