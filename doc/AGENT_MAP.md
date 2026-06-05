@@ -237,7 +237,7 @@ func SubmitAssessment(blockID string, answers []Answer) (*AssessmentResult, erro
 - Extract text from PDF
 - Extract chapter boundaries
 - Sliding window chunking (2500 words, 200 overlap)
-- Create blocks in database
+ - Create chunks in database (legacy docs may call these `blocks`)
 - Insert READING tasks into queue
 
 **Does NOT:**
@@ -247,8 +247,8 @@ func SubmitAssessment(blockID string, answers []Answer) (*AssessmentResult, erro
 **API:**
 ```go
 func ProcessPDF(filePath string) (*ProcessingResult, error)
-func CreateChunks(text string, topicID string) ([]Block, error)
-func InsertReadingTasks(blocks []Block) error
+func CreateChunks(text string, topicID string) ([]Chunk, error)
+func InsertReadingTasks(chunks []Chunk) error
 ```
 
 ---

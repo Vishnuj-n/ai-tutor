@@ -3,10 +3,13 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"ai-tutor/internal/models"
+
+	"github.com/google/uuid"
 )
 
 // AssessmentFSRSRecord represents the shared FSRS state for an assessment
@@ -54,9 +57,6 @@ func (r *AssessmentFSRSRecord) GetLastReviewedAt() int64 {
 }
 
 func createWrittenQuestionRepo(question models.WrittenQuestion) error {
-	if conn == nil {
-		return fmt.Errorf("database not initialized")
-	}
 	var sourceChunkID interface{}
 	if strings.TrimSpace(question.SourceChunkID) == "" {
 		sourceChunkID = nil
@@ -74,9 +74,6 @@ func createWrittenQuestionRepo(question models.WrittenQuestion) error {
 }
 
 func getWrittenQuestionByIDRepo(questionID string) (*models.WrittenQuestion, error) {
-	if conn == nil {
-		return nil, fmt.Errorf("database not initialized")
-	}
 	var question models.WrittenQuestion
 	err := conn.QueryRow(`
 		SELECT id, topic_id, prompt, COALESCE(source_chunk_id, ''), COALESCE(source_heading, ''), COALESCE(source_page_start, 0),
@@ -136,78 +133,59 @@ func getAssessmentFSRSStateFromQuerier(q querier, activityType, referenceID, sou
 }
 
 func getAssessmentFSRSStateRepo(activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
-	if conn == nil {
-		return nil, fmt.Errorf("database not initialized")
-	}
 	return getAssessmentFSRSStateFromQuerier(conn, activityType, referenceID, sourceChunkID)
 }
 
 func upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
-	if conn == nil {
-		return fmt.Errorf("database not initialized")
-	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("encode assessment fsrs state: %w", err)
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	return withTx(func(tx *sql.Tx) error {
+		var existingID string
+		if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, topicID).Scan(&existingID); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("topic not found: %s", topicID)
+			}
+			return err
 		}
-	}()
 
-	var existingID string
-	if err = tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, topicID).Scan(&existingID); err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("topic not found: %s", topicID)
+		normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
+		var sourceChunkIDValue interface{}
+		if normalizedSourceChunkID == "" {
+			sourceChunkIDValue = nil // Use NULL for empty strings
+		} else {
+			sourceChunkIDValue = normalizedSourceChunkID
 		}
-		return err
-	}
 
-	normalizedSourceChunkID := strings.TrimSpace(sourceChunkID)
-	var sourceChunkIDValue interface{}
-	if normalizedSourceChunkID == "" {
-		sourceChunkIDValue = nil // Use NULL for empty strings
-	} else {
-		sourceChunkIDValue = normalizedSourceChunkID
-	}
+		if _, err = tx.Exec(`
+			INSERT INTO assessment_fsrs (
+				activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(activity_type, reference_id, source_chunk_id) DO UPDATE SET
+				topic_id = excluded.topic_id,
+				source_chunk_id = excluded.source_chunk_id,
+				state_json = excluded.state_json,
+				due_at = excluded.due_at,
+				last_reviewed_at = excluded.last_reviewed_at,
+				updated_at = CURRENT_TIMESTAMP
+		`, activityType, referenceID, topicID, sourceChunkIDValue, string(stateJSON), dueAt, reviewedAt); err != nil {
+			return err
+		}
 
-	if _, err = tx.Exec(`
-		INSERT INTO assessment_fsrs (
-			activity_type, reference_id, topic_id, source_chunk_id, state_json, due_at, last_reviewed_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(activity_type, reference_id, source_chunk_id) DO UPDATE SET
-			topic_id = excluded.topic_id,
-			source_chunk_id = excluded.source_chunk_id,
-			state_json = excluded.state_json,
-			due_at = excluded.due_at,
-			last_reviewed_at = excluded.last_reviewed_at,
-			updated_at = CURRENT_TIMESTAMP
-	`, activityType, referenceID, topicID, sourceChunkIDValue, string(stateJSON), dueAt, reviewedAt); err != nil {
-		return err
-	}
+		if _, err = tx.Exec(`
+			INSERT INTO fsrs_review_log (
+				id, topic_id, activity_type, reference_id, reviewed_at, rating,
+				scheduled_days, state_before_json, state_after_json
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, reviewLog.ID, topicID, reviewLog.ActivityType, reviewLog.ReferenceID, reviewLog.ReviewedAt,
+			reviewLog.Rating, reviewLog.ScheduledDays, reviewLog.StateBeforeJSON, reviewLog.StateAfterJSON); err != nil {
+			return err
+		}
 
-	if _, err = tx.Exec(`
-		INSERT INTO fsrs_review_log (
-			id, topic_id, activity_type, reference_id, reviewed_at, rating,
-			scheduled_days, state_before_json, state_after_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, reviewLog.ID, topicID, reviewLog.ActivityType, reviewLog.ReferenceID, reviewLog.ReviewedAt,
-		reviewLog.Rating, reviewLog.ScheduledDays, reviewLog.StateBeforeJSON, reviewLog.StateAfterJSON); err != nil {
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+		return nil
+	})
 }
 
 func getAssessmentFSRSStateRepoTx(tx *sql.Tx, activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
@@ -268,4 +246,68 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 	}
 
 	return nil
+}
+
+func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	if tx == nil {
+		return errors.New("transaction not initialized")
+	}
+	_, err := tx.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		answer.QuestionID,
+		answer.UserAnswer,
+		answer.Score,
+		answer.Feedback,
+		answer.SourceHeading,
+	)
+	return err
+}
+
+func saveWrittenAnswerRepo(answer models.WrittenAnswer) error {
+	_, err := conn.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		answer.QuestionID,
+		answer.UserAnswer,
+		answer.Score,
+		answer.Feedback,
+		answer.SourceHeading,
+	)
+	return err
+}
+
+// SaveWrittenAnswer stores a scored written response.
+func SaveWrittenAnswer(answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveWrittenAnswerRepo(answer)
+}
+
+// SaveWrittenAnswerTx stores a scored written response within a transaction.
+func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	if tx == nil {
+		return errors.New("transaction not initialized")
+	}
+	return saveWrittenAnswerRepoTx(tx, answer)
 }

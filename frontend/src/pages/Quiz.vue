@@ -31,19 +31,30 @@
     </article>
 
     <!-- Manual controls: page range + generate -->
-    <div
-      v-else-if="!taskID && !generating && questions.length === 0"
-      class="config-panel"
-    >
+    <div v-else-if="!taskID && !generating && questions.length === 0" class="config-panel">
       <p class="config-panel__hint">Enter the page range to generate quiz questions from.</p>
       <div class="config-panel__row">
         <div class="number-field">
           <label class="field-label" for="quiz-start">Start Page</label>
-          <input id="quiz-start" v-model.number="startPage" class="ghost-input" type="number" min="1" :disabled="loading" />
+          <input
+            id="quiz-start"
+            v-model.number="startPage"
+            class="ghost-input"
+            type="number"
+            min="1"
+            :disabled="loading"
+          />
         </div>
         <div class="number-field">
           <label class="field-label" for="quiz-end">End Page</label>
-          <input id="quiz-end" v-model.number="endPage" class="ghost-input" type="number" min="1" :disabled="loading" />
+          <input
+            id="quiz-end"
+            v-model.number="endPage"
+            class="ghost-input"
+            type="number"
+            min="1"
+            :disabled="loading"
+          />
         </div>
         <button
           id="quiz-generate-btn"
@@ -73,20 +84,37 @@
       <p v-if="result.feedback" class="result-panel__feedback">{{ result.feedback }}</p>
 
       <!-- Flashcard generation pending message (only when passed and flashcards pending) -->
-      <div v-if="result.passed && result.flashcards_pending" class="result-panel__flashcard-success">
+      <div
+        v-if="result.passed && result.flashcards_pending"
+        class="result-panel__flashcard-success"
+      >
         <p class="flashcard-success-title">Flashcards scheduled for generation.</p>
-        <p class="flashcard-success-detail">Click Continue to generate flashcards for spaced repetition.</p>
-        <p class="flashcard-success-hint">These cards will appear in your dashboard when they're due for review.</p>
+        <p class="flashcard-success-detail">
+          Click Continue to generate flashcards for spaced repetition.
+        </p>
+        <p class="flashcard-success-hint">
+          These cards will appear in your dashboard when they're due for review.
+        </p>
       </div>
 
       <!-- Flashcard generation success message (only when generated during Continue) -->
-      <div v-if="result.passed && !result.flashcards_pending && result.flashcards_generated > 0" class="result-panel__flashcard-success">
+      <div
+        v-if="result.passed && !result.flashcards_pending && result.flashcards_generated > 0"
+        class="result-panel__flashcard-success"
+      >
         <p class="flashcard-success-title">Flashcards generated successfully.</p>
-        <p class="flashcard-success-detail">{{ result.flashcards_generated }} review cards scheduled for spaced repetition.</p>
-        <p class="flashcard-success-hint">These cards will appear in your dashboard when they're due for review.</p>
+        <p class="flashcard-success-detail">
+          {{ result.flashcards_generated }} review cards scheduled for spaced repetition.
+        </p>
+        <p class="flashcard-success-hint">
+          These cards will appear in your dashboard when they're due for review.
+        </p>
       </div>
 
-      <div v-if="result.passed && result.flashcards_generation_error" class="result-panel__reread-message">
+      <div
+        v-if="result.passed && result.flashcards_generation_error"
+        class="result-panel__reread-message"
+      >
         Flashcard generation failed: {{ result.flashcards_generation_message || 'Unknown error' }}
       </div>
 
@@ -117,11 +145,7 @@
 
     <!-- Quiz form -->
     <form v-else class="quiz-form" @submit.prevent="submitQuiz">
-      <article
-        v-for="(q, index) in questions"
-        :key="q.id"
-        class="question-card"
-      >
+      <article v-for="(q, index) in questions" :key="q.id" class="question-card">
         <p class="question-prompt">
           <span class="question-num">{{ index + 1 }}</span>
           {{ q.prompt }}
@@ -164,7 +188,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { activateTask, getTask, submitQuizAttempt, getNotebooks, generateQuizForPageRange, generateFlashcardsForQuizTask } from '../services/appApi'
+import {
+  activateTask,
+  getTask,
+  submitQuizAttempt,
+  getNotebooks,
+  generateQuizForPageRange,
+  generateFlashcardsForQuizTask,
+} from '../services/appApi'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
 const route = useRoute()
@@ -186,6 +217,7 @@ const selectedNotebookID = ref('')
 const startPage = ref(1)
 const endPage = ref(10)
 const generating = ref(false)
+const manualPassingScore = ref(70)
 
 const taskID = computed(() => {
   if (typeof route.query.taskId === 'string' && route.query.taskId.trim() !== '') {
@@ -201,11 +233,17 @@ const allAnswered = computed(() => {
   if (questions.value.length === 0) {
     return false
   }
-  return questions.value.every((q) => typeof answers.value[q.id] === 'string' && answers.value[q.id].trim() !== '')
+  return questions.value.every(
+    (q) => typeof answers.value[q.id] === 'string' && answers.value[q.id].trim() !== ''
+  )
 })
 
-const canGenerateManual = computed(() =>
-  selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !generating.value
+const canGenerateManual = computed(
+  () =>
+    selectedNotebookID.value &&
+    startPage.value > 0 &&
+    endPage.value >= startPage.value &&
+    !generating.value
 )
 
 onMounted(async () => {
@@ -220,8 +258,10 @@ onMounted(async () => {
 async function loadNotebooks() {
   try {
     const res = await getNotebooks()
-    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
-  } catch { error.value = 'Failed to load notebooks.' }
+    notebooks.value = Array.isArray(res) ? res.filter((n) => !n.error) : []
+  } catch {
+    error.value = 'Failed to load notebooks.'
+  }
 }
 
 async function loadQuizTask() {
@@ -247,9 +287,10 @@ async function loadQuizTask() {
     }
 
     taskMeta.value = task
-    const payload = typeof task.payload_json === 'string' && task.payload_json.trim() !== ''
-      ? JSON.parse(task.payload_json)
-      : null
+    const payload =
+      typeof task.payload_json === 'string' && task.payload_json.trim() !== ''
+        ? JSON.parse(task.payload_json)
+        : null
 
     questions.value = Array.isArray(payload?.questions) ? payload.questions : []
     answers.value = {}
@@ -270,12 +311,26 @@ async function generateManualQuiz() {
   result.value = null
   generating.value = true
   try {
-    const res = await generateQuizForPageRange(selectedNotebookID.value, startPage.value, endPage.value)
+    const res = await generateQuizForPageRange(
+      selectedNotebookID.value,
+      startPage.value,
+      endPage.value
+    )
     if (res.error) {
       error.value = res.error
       return
     }
     questions.value = Array.isArray(res.questions) ? res.questions : []
+    // Respect backend-supplied passing score when available; default to 70
+    if (
+      typeof res.passing_score === 'number' &&
+      !isNaN(res.passing_score) &&
+      res.passing_score > 0
+    ) {
+      manualPassingScore.value = Math.round(res.passing_score)
+    } else {
+      manualPassingScore.value = 70
+    }
     if (questions.value.length === 0) {
       error.value = 'No questions generated. Try a different page range.'
     }
@@ -292,6 +347,41 @@ async function submitQuiz() {
   }
   submitting.value = true
   error.value = ''
+
+  if (!taskID.value) {
+    // Stateless frontend scoring for manual quizzes (so they do not touch the study queue)
+    try {
+      let correctCount = 0
+      questions.value.forEach((q) => {
+        if (
+          typeof answers.value[q.id] === 'string' &&
+          typeof q.correct_answer === 'string' &&
+          answers.value[q.id].trim().toLowerCase() === q.correct_answer.trim().toLowerCase()
+        ) {
+          correctCount++
+        }
+      })
+      const score = Math.round((correctCount / questions.value.length) * 100)
+      result.value = {
+        score,
+        passed: score >= manualPassingScore.value,
+        passing_score: manualPassingScore.value,
+        correct_count: correctCount,
+        total_count: questions.value.length,
+        feedback:
+          score >= manualPassingScore.value
+            ? 'Strong work. You can move forward.'
+            : 'Review the missed concepts and retry the material.',
+      }
+      submitted.value = true
+    } catch (err) {
+      error.value = err?.message || 'Failed to grade manual quiz.'
+    } finally {
+      submitting.value = false
+    }
+    return
+  }
+
   try {
     const payload = questions.value.map((q) => ({
       question_id: q.id,
@@ -662,7 +752,9 @@ async function handleContinue() {
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   cursor: pointer;
-  transition: transform 0.14s ease, filter 0.14s ease;
+  transition:
+    transform 0.14s ease,
+    filter 0.14s ease;
   white-space: nowrap;
 }
 

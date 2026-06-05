@@ -177,6 +177,7 @@ func UpsertDailyStudyMinutes(minutes int) error {
 }
 
 // CreateFlashcards stores a new set of flashcards for one topic.
+// Used by: app_contract_test.go (test-only coverage, production code path utilizes GetOrCreateFlashcardsForTopic)
 func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
@@ -204,18 +205,6 @@ func CountFlashcardsForTopic(topicID string) (int, error) {
 		return 0, fmt.Errorf("topic id is required")
 	}
 	return countFlashcardsForTopicRepo(topicID)
-}
-
-// GetFlashcardsForTopic returns topic-scoped flashcards, optionally only those due now.
-func GetFlashcardsForTopic(topicID string, dueOnly bool, now int64) ([]models.Flashcard, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return nil, fmt.Errorf("topic id is required")
-	}
-	if dueOnly && now <= 0 {
-		return nil, fmt.Errorf("current time is required when filtering due flashcards")
-	}
-	return getFlashcardsForTopicRepo(topicID, dueOnly, now)
 }
 
 // GetFlashcardByID returns one flashcard and its scheduler state.
@@ -303,7 +292,14 @@ func GetExistingReviewTaskForNotebook(notebookID string) (*models.StudyQueueTask
 	if notebookID == "" {
 		return nil, fmt.Errorf("notebook id is required")
 	}
-	return getExistingReviewTaskForNotebookRepo(notebookID)
+	task, err := fetchExistingReviewTask(conn, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	if task != nil {
+		utils.LogReviewSessionResume(task.ID, string(task.Status))
+	}
+	return task, nil
 }
 
 func GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
@@ -599,44 +595,36 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 		return nil
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	stmt, err := tx.Prepare(`
-		UPDATE chunks SET embedding_ref = ? WHERE id = ?
-	`)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = stmt.Close()
-	}()
-
-	for _, item := range items {
-		if item.ChunkID == "" {
-			err = fmt.Errorf("chunk id is required for all batch items")
-			return err
-		}
-
-		res, err := stmt.Exec(item.Hash, item.ChunkID)
+	return withTx(func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare(`
+			UPDATE chunks SET embedding_ref = ? WHERE id = ?
+		`)
 		if err != nil {
 			return err
 		}
-		rowsAffected, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rowsAffected == 0 {
-			return fmt.Errorf("no rows inserted for chunk_id %s", item.ChunkID)
-		}
-	}
+		defer func() {
+			_ = stmt.Close()
+		}()
 
-	return tx.Commit()
+		for _, item := range items {
+			if item.ChunkID == "" {
+				return fmt.Errorf("chunk id is required for all batch items")
+			}
+
+			res, err := stmt.Exec(item.Hash, item.ChunkID)
+			if err != nil {
+				return err
+			}
+			rowsAffected, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rowsAffected == 0 {
+				return fmt.Errorf("no rows inserted for chunk_id %s", item.ChunkID)
+			}
+		}
+		return nil
+	})
 }
 
 // GetChunkEmbeddingRef returns the stored embedding_ref hash for a topic-scoped chunk.
@@ -684,68 +672,6 @@ func GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {
 	return refs, nil
 }
 
-// ReplaceQuestionsForTopic replaces generated quiz questions for a topic in one transaction.
-func ReplaceQuestionsForTopic(topicID string, questions []models.QuizQuestion) error {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return fmt.Errorf("topic id is required")
-	}
-
-	normalized := make([]models.QuizQuestion, 0, len(questions))
-	for _, q := range questions {
-		q.TopicID = strings.TrimSpace(q.TopicID)
-		if q.TopicID == "" {
-			q.TopicID = topicID
-		} else if q.TopicID != topicID {
-			return fmt.Errorf("question topic id must match topic id")
-		}
-		normalized = append(normalized, q)
-	}
-
-	return replaceQuestionsForTopicRepo(topicID, normalized)
-}
-
-// AppendQuestionsForTopic appends generated quiz questions without deleting existing rows.
-func AppendQuestionsForTopic(topicID string, questions []models.QuizQuestion) error {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return fmt.Errorf("topic id is required")
-	}
-	if len(questions) == 0 {
-		return fmt.Errorf("at least one question is required")
-	}
-
-	normalized := make([]models.QuizQuestion, 0, len(questions))
-	for _, q := range questions {
-		q.TopicID = strings.TrimSpace(q.TopicID)
-		if q.TopicID == "" {
-			q.TopicID = topicID
-		} else if q.TopicID != topicID {
-			return fmt.Errorf("question topic id must match topic id")
-		}
-		normalized = append(normalized, q)
-	}
-
-	return appendQuestionsForTopicRepo(topicID, normalized)
-}
-
-// GetQuestionsForTopic returns generated quiz questions for a topic.
-func GetQuestionsForTopic(topicID string) ([]models.QuizQuestion, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return nil, fmt.Errorf("topic id is required")
-	}
-	return getQuestionsForTopicRepo(topicID)
-}
-
-// GetQuestionByID returns a single quiz question by ID.
-func GetQuestionByID(questionID string) (*models.QuizQuestion, error) {
-	questionID = strings.TrimSpace(questionID)
-	if questionID == "" {
-		return nil, fmt.Errorf("question id is required")
-	}
-	return getQuestionByIDRepo(questionID)
-}
 
 // CreateWrittenQuestion stores one persisted written assessment prompt.
 func CreateWrittenQuestion(question models.WrittenQuestion) error {
@@ -815,96 +741,3 @@ func UpsertAssessmentFSRSReviewTx(tx *sql.Tx, activityType, referenceID, topicID
 	return upsertAssessmentFSRSReviewRepoTx(tx, activityType, referenceID, topicID, sourceChunkID, state, dueAt, reviewedAt, reviewLog)
 }
 
-// SaveUserAnswer stores a scored quiz response.
-func SaveUserAnswer(score models.QuizScore) error {
-	score.QuestionID = strings.TrimSpace(score.QuestionID)
-	if score.QuestionID == "" {
-		return fmt.Errorf("question id is required")
-	}
-	// Validate UserAnswer without mutating original free-text input
-	trimmedAnswer := strings.TrimSpace(score.UserAnswer)
-	if trimmedAnswer == "" {
-		return fmt.Errorf("user answer is required")
-	}
-	return saveUserAnswerRepo(score)
-}
-
-// SaveUserAnswerTx stores a scored quiz response within a transaction.
-func SaveUserAnswerTx(tx *sql.Tx, score models.QuizScore) error {
-	score.QuestionID = strings.TrimSpace(score.QuestionID)
-	if score.QuestionID == "" {
-		return fmt.Errorf("question id is required")
-	}
-	// Validate UserAnswer without mutating original free-text input
-	trimmedAnswer := strings.TrimSpace(score.UserAnswer)
-	if trimmedAnswer == "" {
-		return fmt.Errorf("user answer is required")
-	}
-	return saveUserAnswerRepoTx(tx, score)
-}
-
-// SaveWrittenAnswer stores a scored written response.
-func SaveWrittenAnswer(answer models.WrittenAnswer) error {
-	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
-	if answer.QuestionID == "" {
-		return fmt.Errorf("question id is required")
-	}
-	// Validate UserAnswer without mutating original free-text input
-	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
-	if trimmedAnswer == "" {
-		return fmt.Errorf("user answer is required")
-	}
-	return saveWrittenAnswerRepo(answer)
-}
-
-// SaveWrittenAnswerTx stores a scored written response within a transaction.
-func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
-	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
-	if answer.QuestionID == "" {
-		return fmt.Errorf("question id is required")
-	}
-	// Validate UserAnswer without mutating original free-text input
-	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
-	if trimmedAnswer == "" {
-		return fmt.Errorf("user answer is required")
-	}
-	return saveWrittenAnswerRepoTx(tx, answer)
-}
-
-func SaveQuizAttempt(attempt models.QuizAttemptRecord) error {
-	attempt.ID = strings.TrimSpace(attempt.ID)
-	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
-	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
-	if attempt.ID == "" {
-		return fmt.Errorf("attempt id is required")
-	}
-	if attempt.TaskID == "" {
-		return fmt.Errorf("task id is required")
-	}
-	if attempt.AnswersJSON == "" {
-		return fmt.Errorf("answers json is required")
-	}
-	if attempt.CompletedAt <= 0 {
-		return fmt.Errorf("completed at is required")
-	}
-	return saveQuizAttemptRepo(attempt)
-}
-
-func SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
-	attempt.ID = strings.TrimSpace(attempt.ID)
-	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
-	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
-	if attempt.ID == "" {
-		return fmt.Errorf("attempt id is required")
-	}
-	if attempt.TaskID == "" {
-		return fmt.Errorf("task id is required")
-	}
-	if attempt.AnswersJSON == "" {
-		return fmt.Errorf("answers json is required")
-	}
-	if attempt.CompletedAt <= 0 {
-		return fmt.Errorf("completed at is required")
-	}
-	return saveQuizAttemptRepoTx(tx, attempt)
-}

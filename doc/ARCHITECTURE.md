@@ -134,6 +134,8 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 
 ### Core Tables
 
+**Legacy term note:** Older documentation used the term `blocks` and `block_vectors`. The live schema uses `parents` + `chunks` and an embedding store; see `doc/SCHEMA.md` for exact mappings.
+
 **study_queue (NEW - The Central Queue)**
 | Field | Type | Description |
 |-------|------|-------------|
@@ -149,9 +151,9 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 **Supporting Tables**
 
 - `topics` - id, title, status, start_page, end_page, current_page_cursor, created_at
-- `blocks` - id, topic_id, block_type, content, word_count, order_index
-- `quiz_sets` - id, topic_id, block_id, payload_json, created_at
-- `fsrs_cards` - id, topic_id, block_id, prompt, answer, state_json, due_at
+- `chunks` / `parents` - id, topic_id, parent_id, chunk_text, word_count, order_index
+- `questions` - id, topic_id, source_chunk_id, prompt, options_json, correct_answer
+- `fsrs_cards` - id, topic_id, source_chunk_id, prompt, answer, state_json, due_at
 - `app_events` (optional, prunable) - id, event_type, payload_json, created_at
 
 ### What the Queue Replaces
@@ -231,7 +233,7 @@ Maintains control, cost, and predictable behavior.
 5. Build a structured prompt with:
    - User question
    - Topic metadata
-   - Retrieved context blocks
+  - Retrieved context chunks
    - Output constraints
 6. Execute one LLM request.
 7. Return response with citations/section labels.
@@ -582,7 +584,7 @@ Users must keep studying even without network access.
 ### How
 
 **Offline enabled:**
-- Reading from `blocks` table
+- Reading from `chunks` table
 - FSRS review cycles (queue-driven)
 - Queue progress tracking
 
