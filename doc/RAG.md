@@ -55,7 +55,7 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - The UI sends the active `block_id` with the request (from current task)
 - Backend validates that the block exists
 - Retrieval queries the RAG embedding store (sqlite-vec virtual table) filtered by `block_id` scope
-- Return full block content for context (no parent expansion needed with sliding window)
+- Return full block content for context (expand matched child chunks to their parent sections)
 
 ## 4. Content Structure
 
@@ -145,7 +145,7 @@ Embeddings are stored in a `sqlite-vec` virtual table (RAG embedding store). Ret
 
 - SQLite extensions are connection-scoped, single persistent connection required
 - The `sqlite-vec` virtual table requires integer rowids
-- Simplified retrieval: no parent expansion needed with sliding window chunks
+  - Simplified retrieval: expand matched child chunks to their parent sections when assembling context
 
 ### How
 
@@ -157,7 +157,7 @@ Embeddings are stored in a `sqlite-vec` virtual table (RAG embedding store). Ret
 1. Get `block_id` (chunk id) from current task context
 2. Query the sqlite-vec embedding store for that chunk's vector
 3. Calculate similarity to query embedding
-4. Return chunk content directly (no parent expansion)
+4. Return chunk content directly after expanding matched child chunks to their parent sections when assembling context
 
 **Changes from previous architecture:**
 - Removed: two-step pre-filtering, parent expansion, page_num bounds checking

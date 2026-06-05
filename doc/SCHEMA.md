@@ -373,7 +373,7 @@ Singleton table for global preferences.
 The live schema no longer uses the legacy table names. Mapping (old → current):
 
 - `blocks` → `parents` + `chunks` (section headings and granular content chunks)
-- `quiz_sets` → `questions` (multiple-choice questions; see `questions.options_json` / `questions.payload_json`)
+- `quiz_sets` → `questions` (multiple-choice questions; see `questions.options_json`)
 - `sources` → `notebooks` (source documents are stored in `notebooks` and linked via `notebook_chunks` / `notebook_topics`)
 - `app_config` → `user_settings` (singleton configuration stored in `user_settings`)
 - `block_vectors` → embeddings managed by the RAG embedding store; `chunks.embedding_ref` holds references to external/vector storage
