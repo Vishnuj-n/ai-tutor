@@ -2,438 +2,389 @@
 
 ## Overview
 
-SQLite is the source of truth. The `study_queue` table drives all user flows. All tables support the persistent queue architecture.
+SQLite is the source of truth. The current schema is centered on the persistent `study_queue`, with content ingestion, quiz generation, FSRS retention, and user settings stored in a small set of explicit tables.
 
----
+This document matches the tables created in `internal/db/schema.go`.
 
-## Core Queue Table
+## Table Map
+
+| Layer         | Tables                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| Queue         | `study_queue`, `reading_progress`, `review_task_cards`                                                       |
+| Content       | `notebooks`, `topics`, `parents`, `chunks`, `notebook_topics`, `notebook_chunks`, `topic_progress`           |
+| Assessment    | `questions`, `user_answers`, `quiz_attempts`, `reread_attempts`, `written_questions`, `written_user_answers` |
+| Retention     | `fsrs_cards`, `fsrs_review_log`, `assessment_fsrs`                                                           |
+| Configuration | `user_settings`                                                                                              |
+
+## Queue Tables
 
 ### `study_queue`
 
-The central queue that drives all application flow.
+Central task table for the application.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `id` | TEXT PRIMARY KEY | Unique task identifier (UUID) |
-| `notebook_id` | TEXT NOT NULL | Reference to notebooks for priority biasing |
-| `topic_id` | TEXT | Reference to topic for task context |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Unique task identifier |
+| `notebook_id` | TEXT NOT NULL | Parent notebook |
+| `topic_id` | TEXT | Optional task context |
 | `task_type` | TEXT NOT NULL | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
 | `status` | TEXT NOT NULL | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED` |
-| `priority` | INTEGER DEFAULT 0 | Lower = higher priority (0 = urgent) |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | When task was created |
-| `activated_at` | TIMESTAMP | When task became ACTIVE (NULL if never active) |
-| `completed_at` | TIMESTAMP | When task was completed (NULL if pending) |
-| `payload_json` | TEXT | Optional JSON payload for task-specific data |
-| `start_page` | INTEGER | Start page for READING tasks |
-| `end_page` | INTEGER | End page for READING tasks |
+| `priority` | INTEGER DEFAULT 0 | Lower values sort first |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+| `activated_at` | TIMESTAMP | When task became active |
+| `completed_at` | TIMESTAMP | When task finished |
+| `payload_json` | TEXT | Optional task payload |
+| `start_page` | INTEGER | Reading start page |
+| `end_page` | INTEGER | Reading end page |
 
-**Indexes:**
+**Indexes**
+
 ```sql
 CREATE INDEX idx_study_queue_status_priority_created ON study_queue(status, priority, created_at);
 CREATE INDEX idx_study_queue_notebook_status ON study_queue(notebook_id, status);
 ```
 
-**Task Types:**
+### `reading_progress`
 
-| Type | Purpose | Created By | Layer |
-|------|---------|------------|-------|
-| `READING` | Read a content block | Ingestion pipeline | Reading |
-| `QUIZ` | Take a generated quiz | Reading completion | Reading |
-| `REREAD` | Revisit material (remediation) | Failed quiz | Reading |
-| `FLASHCARD_REVIEW` | Review due flashcards (block-level) | FSRS scheduler | Retention |
-| `EXAMINER` | Written assessment | Mastery threshold | Retention |
+Per-task reading cursor.
 
-**Task Status Values:**
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | TEXT PRIMARY KEY | Reference to `study_queue(id)` |
+| `current_page` | INTEGER DEFAULT 0 | Last visited page |
+| `last_accessed_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
 
-| Status | Meaning | Transition |
-|--------|---------|------------|
-| `PENDING` | Waiting in queue | → ACTIVE (on open) |
-| `ACTIVE` | Currently being worked | → COMPLETED/SKIPPED/FAILED |
-| `COMPLETED` | Successfully finished | Terminal |
-| `SKIPPED` | User bypassed task | Terminal, auditable |
-| `FAILED` | Quiz generation failed or error | Terminal, can retry |
+### `review_task_cards`
 
----
+Links a flashcard review task to the cards selected for that session.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | TEXT NOT NULL | Reference to `study_queue(id)` |
+| `card_id` | TEXT NOT NULL | Reference to `fsrs_cards(id)` |
+| `status` | TEXT NOT NULL DEFAULT 'pending' | Per-card session state |
+
+Primary key: `(task_id, card_id)`.
 
 ## Content Tables
 
 ### `notebooks`
 
-Top-level container for study materials (multi-notebook support).
+Top-level container for uploaded study material.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `id` | TEXT PRIMARY KEY | Unique notebook identifier |
-| `title` | TEXT NOT NULL | Notebook name |
-| `priority` | INTEGER DEFAULT 5 | 1-10 (higher = more frequent in queue) |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Notebook identifier |
+| `title` | TEXT NOT NULL | Notebook title |
+| `file_path` | TEXT NOT NULL | Local file path |
+| `file_type` | TEXT DEFAULT 'pdf' | File type |
+| `topic_id` | TEXT | Primary topic reference |
+| `priority` | INTEGER DEFAULT 5 | Queue bias for this notebook |
+| `status` | TEXT DEFAULT 'uploaded' | Notebook status |
+| `indexing_status` | TEXT DEFAULT 'PENDING' | Ingestion state |
+| `page_count` | INTEGER | Page count if known |
+| `chunk_count` | INTEGER DEFAULT 0 | Number of chunks created |
+| `syllabus_draft_json` | TEXT | Draft syllabus payload |
+| `uploaded_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Upload time |
 
 ### `topics`
 
-Organizational unit for study material within a notebook.
+Topic or section container.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `id` | TEXT PRIMARY KEY | Unique topic identifier |
-| `notebook_id` | TEXT NOT NULL | Parent notebook reference |
-| `title` | TEXT NOT NULL | Topic name |
-| `status` | TEXT | `unseen`, `reading`, `learned` |
-| `start_page` | INTEGER | First page in source |
-| `end_page` | INTEGER | Last page in source |
-| `current_page_cursor` | INTEGER | Last read position |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Topic identifier |
+| `title` | TEXT NOT NULL | Topic title |
+| `status` | TEXT DEFAULT 'reading' | Topic status |
+| `start_page` | INTEGER DEFAULT 0 | Start page |
+| `end_page` | INTEGER DEFAULT 0 | End page |
+| `current_page_cursor` | INTEGER DEFAULT 0 | Latest reading cursor |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
-### `blocks`
+### `parents`
 
-Content blocks created by sliding window chunking.
+Stores hierarchical headings for a topic.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `id` | TEXT PRIMARY KEY | Unique block identifier |
-| `topic_id` | TEXT NOT NULL | Parent topic reference |
-| `block_type` | TEXT NOT NULL | `CHUNK`, `QUIZ`, `FLASHCARD` |
-| `content` | TEXT | Text content or JSON payload |
-| `word_count` | INTEGER | For progress tracking |
-| `order_index` | INTEGER | Sequence within topic |
-| `start_page` | INTEGER | Source page start |
-| `end_page` | INTEGER | Source page end |
-| `reread_count` | INTEGER | Number of reread cycles completed |
-| `created_at` | INTEGER | Unix timestamp |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Parent heading identifier |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `heading` | TEXT | Heading text |
+| `order_index` | INTEGER | Ordering within a topic |
+| `content_text` | TEXT NOT NULL | Headline or section text |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
 
-**Block Storage:**
+### `chunks`
 
-| Field | Purpose |
-|-------|---------|
-| `id` | Unique block identifier |
-| `topic_id` | Parent topic reference |
-| `block_type` | `CHUNK`, `QUIZ`, `FLASHCARD` |
-| `content` | Text content or JSON payload |
-| `word_count` | For progress tracking |
-| `order_index` | Sequence within topic |
-| `start_page`, `end_page` | Page provenance |
-| `reread_count` | Number of reread cycles completed |
+Granular content chunks produced from the source document.
 
-**Indexes:**
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Chunk identifier |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `parent_id` | TEXT NOT NULL | Reference to `parents(id)` |
+| `chunk_text` | TEXT NOT NULL | Chunk content |
+| `page_num` | INTEGER DEFAULT 0 | Source page |
+| `token_count` | INTEGER DEFAULT 0 | Token count |
+| `importance_score` | REAL DEFAULT 0 | Relative importance |
+| `weakness_score` | REAL DEFAULT 0 | Weakness signal |
+| `embedding_ref` | TEXT | Reference used by retrieval code |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+
+**Indexes**
+
 ```sql
-CREATE INDEX idx_blocks_topic ON blocks(topic_id, order_index);
-CREATE INDEX idx_blocks_type ON blocks(block_type, topic_id);
+CREATE INDEX idx_chunks_topic_page_num ON chunks(topic_id, page_num);
 ```
 
-### `block_vectors`
+### `notebook_topics`
 
-Embedding storage via sqlite-vec virtual table.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `block_id` | TEXT | Reference to blocks table |
-| `embedding` | JSON | Float32 vector as JSON string |
-
----
-
-## Quiz Tables
-
-### `quiz_sets`
-
-Generated quiz content.
+Many-to-many link between notebooks and topics.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `id` | TEXT PRIMARY KEY | Quiz set identifier |
-| `topic_id` | TEXT NOT NULL | Parent topic |
-| `block_id` | TEXT | Source block reference |
-| `payload_json` | TEXT NOT NULL | Quiz questions/answers JSON |
-| `created_at` | INTEGER | Unix timestamp |
-| `score_threshold` | INTEGER | Pass threshold (default 70) |
+|---|---|---|
+| `notebook_id` | TEXT NOT NULL | Reference to `notebooks(id)` |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Link creation time |
+
+Primary key: `(notebook_id, topic_id)`.
+
+### `notebook_chunks`
+
+Many-to-many link between notebooks and chunks.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Link row identifier |
+| `notebook_id` | TEXT NOT NULL | Reference to `notebooks(id)` |
+| `chunk_id` | TEXT NOT NULL | Reference to `chunks(id)` |
+| `page_num` | INTEGER DEFAULT 0 | Source page |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Link creation time |
+
+Unique key: `(notebook_id, chunk_id)`.
+
+### `topic_progress`
+
+Topic-level learning metadata.
+
+| Field | Type | Description |
+|---|---|---|
+| `topic_id` | TEXT PRIMARY KEY | Reference to `topics(id)` |
+| `learned_at` | TIMESTAMP | When topic was marked learned |
+| `last_read_at` | TIMESTAMP | Last read time |
+| `mastery_score` | REAL DEFAULT 0 | Topic mastery score |
+| `review_enabled` | INTEGER DEFAULT 0 | Whether review is enabled |
+
+## Assessment Tables
+
+### `questions`
+
+Multiple-choice quiz questions.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Question identifier |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `source_chunk_id` | TEXT | Optional source chunk |
+| `prompt` | TEXT NOT NULL | Question prompt |
+| `options_json` | TEXT NOT NULL | Answer options payload |
+| `correct_answer` | TEXT NOT NULL | Correct option value |
+| `explanation` | TEXT | Answer explanation |
+| `hint` | TEXT | Hint text |
+| `source_heading` | TEXT | Source heading |
+| `source_snippet` | TEXT | Source excerpt |
+| `source_page_start` | INTEGER DEFAULT 0 | Source start page |
+| `source_page_end` | INTEGER DEFAULT 0 | Source end page |
+| `llm_model` | TEXT | Model used for generation |
+| `prompt_version` | TEXT | Prompt version |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+
+### `user_answers`
+
+Submitted answers for `questions`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Answer identifier |
+| `question_id` | TEXT NOT NULL | Reference to `questions(id)` |
+| `user_answer` | TEXT NOT NULL | Selected answer |
+| `is_correct` | INTEGER NOT NULL | Boolean flag |
+| `score` | INTEGER NOT NULL | Per-answer score |
+| `feedback` | TEXT | Feedback text |
+| `hint` | TEXT | Hint shown or returned |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Submission time |
 
 ### `quiz_attempts`
 
-User quiz submissions.
+Rollup of a completed quiz task.
 
 | Field | Type | Description |
-|-------|------|-------------|
+|---|---|---|
 | `id` | TEXT PRIMARY KEY | Attempt identifier |
-| `quiz_set_id` | TEXT NOT NULL | Reference to quiz_sets |
-| `score` | INTEGER | Percentage score (0-100) |
-| `passed` | BOOLEAN | Score >= threshold |
-| `answers_json` | TEXT | User answers |
-| `completed_at` | INTEGER | Unix timestamp |
+| `task_id` | TEXT NOT NULL | Reference to `study_queue(id)` |
+| `score` | INTEGER NOT NULL | Final score |
+| `passed` | INTEGER NOT NULL | Pass/fail flag |
+| `answers_json` | TEXT NOT NULL | Serialized answers |
+| `feedback` | TEXT | Attempt-level feedback |
+| `completed_at` | INTEGER NOT NULL | Completion timestamp |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Record creation time |
 
 ### `reread_attempts`
 
-Tracks automatic reread insertions per `topic_id`.
+Per-topic remediation counter.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `topic_id` | TEXT PRIMARY KEY | Topic being remediated |
-| `attempt_count` | INTEGER NOT NULL DEFAULT 0 | Number of automatic reread insertions used for this topic |
-| `last_attempt_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last time the count changed |
+|---|---|---|
+| `topic_id` | TEXT PRIMARY KEY | Reference to `topics(id)` |
+| `attempt_count` | INTEGER NOT NULL DEFAULT 0 | Automatic reread count |
+| `last_attempt_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
 
-**Semantics:**
-- Maximum automatic reread insertions = `3`
-- Attempts are tracked per `topic_id`
-- Failed active quizzes increment the count inside the same completion transaction
-- Counts `1..3` insert exactly one `REREAD` follow-up
-- Count `4+` inserts no `REREAD`; quiz completes with a manual-review recommendation only
-- Successful quiz completion resets the count to `0`
+### `written_questions`
 
----
+Written-response prompts.
 
-## Flashcard Tables
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Prompt identifier |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `prompt` | TEXT NOT NULL | Written prompt |
+| `source_chunk_id` | TEXT | Optional source chunk |
+| `source_heading` | TEXT | Source heading |
+| `source_page_start` | INTEGER DEFAULT 0 | Source start page |
+| `source_page_end` | INTEGER DEFAULT 0 | Source end page |
+| `llm_model` | TEXT | Model used for generation |
+| `prompt_version` | TEXT | Prompt version |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
+
+### `written_user_answers`
+
+Submitted written responses.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Answer identifier |
+| `written_question_id` | TEXT NOT NULL | Reference to `written_questions(id)` |
+| `user_answer` | TEXT NOT NULL | Answer text |
+| `score` | INTEGER NOT NULL | Evaluation score |
+| `feedback` | TEXT | Feedback text |
+| `source_heading` | TEXT | Source heading |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Submission time |
+
+## Retention Tables
 
 ### `fsrs_cards`
 
-Individual flashcards with FSRS state.
+Flashcards with FSRS state.
 
 | Field | Type | Description |
-|-------|------|-------------|
+|---|---|---|
 | `id` | TEXT PRIMARY KEY | Card identifier |
-| `topic_id` | TEXT NOT NULL | Parent topic |
-| `block_id` | TEXT | Source content block |
-| `prompt` | TEXT NOT NULL | Front of card |
-| `answer` | TEXT NOT NULL | Back of card |
-| `state_json` | TEXT | FSRS scheduling state |
-| `due_at` | INTEGER | Next review timestamp |
-| `created_at` | INTEGER | Unix timestamp |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `source_chunk_id` | TEXT | Optional source chunk |
+| `prompt` | TEXT NOT NULL | Card front |
+| `answer` | TEXT NOT NULL | Card back |
+| `state_json` | TEXT | FSRS state payload |
+| `due_at` | INTEGER | Next due timestamp |
+| `suspended` | BOOLEAN DEFAULT 0 | Whether the card is suspended |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
-**Indexes:**
+**Indexes**
+
 ```sql
+CREATE UNIQUE INDEX idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt);
+CREATE INDEX idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at);
 CREATE INDEX idx_fsrs_due ON fsrs_cards(due_at);
 CREATE INDEX idx_fsrs_topic ON fsrs_cards(topic_id);
 ```
 
 ### `fsrs_review_log`
 
-Audit trail of all reviews.
+Immutable review log for flashcards.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `id` | INTEGER PRIMARY KEY | Auto-increment |
-| `card_id` | TEXT NOT NULL | Reference to fsrs_cards |
-| `rating` | INTEGER | 1=Again, 2=Hard, 3=Good, 4=Easy |
-| `before_state` | TEXT | FSRS state before review |
-| `after_state` | TEXT | FSRS state after review |
-| `reviewed_at` | INTEGER | Unix timestamp |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Log identifier |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `activity_type` | TEXT NOT NULL | Review activity type |
+| `reference_id` | TEXT NOT NULL | Activity reference |
+| `reviewed_at` | INTEGER NOT NULL | Review timestamp |
+| `rating` | INTEGER NOT NULL | Review rating |
+| `scheduled_days` | INTEGER NOT NULL | Scheduled interval |
+| `state_before_json` | TEXT NOT NULL | State before review |
+| `state_after_json` | TEXT NOT NULL | State after review |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Record creation time |
 
----
+**Indexes**
 
-## Source Tables
+```sql
+CREATE INDEX idx_fsrs_review_log_activity_ref_reviewed_at ON fsrs_review_log(activity_type, reference_id, reviewed_at DESC);
+CREATE INDEX idx_fsrs_review_log_topic_reviewed_at ON fsrs_review_log(topic_id, reviewed_at DESC);
+```
 
-### `sources`
+### `assessment_fsrs`
 
-Original uploaded files.
+FSRS state for assessment activities.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `id` | TEXT PRIMARY KEY | Source file identifier |
-| `filename` | TEXT NOT NULL | Original filename |
-| `file_path` | TEXT | Local storage path |
-| `file_type` | TEXT | `pdf`, `txt`, `md` |
-| `page_count` | INTEGER | Total pages |
-| `created_at` | INTEGER | Unix timestamp |
+|---|---|---|
+| `activity_type` | TEXT NOT NULL | Activity type |
+| `reference_id` | TEXT NOT NULL | Assessment reference |
+| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `source_chunk_id` | TEXT | Optional source chunk |
+| `state_json` | TEXT NOT NULL | FSRS state payload |
+| `due_at` | INTEGER | Next due timestamp |
+| `last_reviewed_at` | INTEGER | Last review timestamp |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Record creation time |
+| `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
----
+Primary key: `(activity_type, reference_id, source_chunk_id)`.
 
-## Configuration Tables
+**Indexes**
 
-### `app_config`
+```sql
+CREATE INDEX idx_assessment_fsrs_topic_due_at ON assessment_fsrs(topic_id, due_at);
+```
 
-User settings and preferences.
+## Configuration Table
+
+### `user_settings`
+
+Singleton table for global preferences.
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `key` | TEXT PRIMARY KEY | Config key |
-| `value` | TEXT | Config value |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY CHECK (id = 1) | Singleton row key |
+| `daily_study_minutes` | INTEGER NOT NULL DEFAULT 90 | Daily study target |
+| `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
 
----
+## Key Relationships
 
-## Schema Design Principles
+- `notebooks` can link to one or more `topics` through `notebook_topics`.
+- `topics` own `parents`, `chunks`, `questions`, `written_questions`, `fsrs_cards`, `fsrs_review_log`, and `assessment_fsrs` rows.
+- `questions` and `written_questions` can reference `chunks` for source context.
+- `quiz_attempts` records the outcome of a `study_queue` quiz task.
+- `review_task_cards` binds a `FLASHCARD_REVIEW` queue task to the exact cards reviewed in that session.
 
-### 1. Queue-Centric
+## Legacy Terms Removed From The Current Schema
 
-All user flows originate from `study_queue`. The dashboard queries:
+The live schema no longer uses the legacy table names. Mapping (old → current):
 
-```sql
-SELECT * FROM study_queue 
-WHERE status = 'PENDING' 
-ORDER BY priority ASC, created_at ASC 
-LIMIT 1;
-```
+- `blocks` → `parents` + `chunks` (section headings and granular content chunks)
+- `quiz_sets` → `questions` (multiple-choice questions; see `questions.options_json`)
+- `sources` → `notebooks` (source documents are stored in `notebooks` and linked via `notebook_chunks` / `notebook_topics`)
+- `app_config` → `user_settings` (singleton configuration stored in `user_settings`)
+- `block_vectors` → embeddings managed by the RAG embedding store; `chunks.embedding_ref` holds references to external/vector storage
 
-### 2. Deterministic Task Types
+These mappings are documentation-only: the code and live schema already use the current table names. Before removing any legacy migration scripts or external references, verify there are no external systems (backups, ETL jobs, CI scripts) that still depend on the legacy names.
 
-Task types are explicit enums, not dynamic strings:
-- `READING` - Content consumption
-- `QUIZ` - Knowledge assessment
-- `REREAD` - Remediation
-- `FLASHCARD_REVIEW` - Spaced repetition
-- `EXAMINER` - Written assessment
+## Data Flow Summary
 
-### 3. Block-Based Content
-
-All content stored in `blocks` table with uniform schema:
-- `CHUNK` blocks for reading
-- `QUIZ` blocks for assessments
-- `FLASHCARD` blocks for review
-
-### 4. FSRS Integration
-
-FSRS is data-only for the **Retention Layer**:
-- Calculates due dates for flashcards and examiner tasks.
-- Updates `state_json` on cards.
-- Creates `FLASHCARD_REVIEW` tasks when `due_at <= now`.
-- Does NOT orchestrate flow.
-- Does NOT process quiz results or reading completion.
-
-### 5. Audit Trail
-
-Key tables have review logs:
-- `fsrs_review_log` - All card reviews
-- `quiz_attempts` - All quiz submissions
-- `app_events` (optional) - System events
-
-### 6. Multi-Notebook Priority Biasing
-
-Notebooks have priority (1-10, default 5). Higher priority notebooks surface more frequently in the queue.
-
-Queue ordering applies this priority hierarchy FIRST, then notebook priority as bias:
-
-| Order | Task Type | Rationale |
-|-------|-----------|-----------|
-| 1 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive |
-| 2 | `REREAD` | Remediation should be timely |
-| 3 | `QUIZ` | Assessment follows reading |
-| 4 | `READING` | New material after obligations |
-| 5 | `EXAMINER` | Optional advanced assessment |
-
-Within each tier, notebook priority biases ordering:
-
-```sql
--- Priority hierarchy with notebook bias
-SELECT * FROM study_queue sq
-LEFT JOIN notebooks n ON sq.notebook_id = n.id
-WHERE sq.status = 'PENDING'
-ORDER BY 
-  CASE sq.task_type
-    WHEN 'FLASHCARD_REVIEW' THEN 1
-    WHEN 'REREAD' THEN 2
-    WHEN 'QUIZ' THEN 3
-    WHEN 'READING' THEN 4
-    WHEN 'EXAMINER' THEN 5
-  END,
-  n.priority DESC,
-  sq.priority ASC,
-  sq.created_at ASC;
-```
-
-### 7. Task Lifecycle Semantics
-
-Explicit state transitions:
-
-```
-PENDING → ACTIVE (when user opens task)
-ACTIVE → COMPLETED (on success)
-ACTIVE → SKIPPED (on user skip)
-ACTIVE → FAILED (on error/generation failure)
-```
-
-**Crash Recovery:**
-- ACTIVE tasks older than timeout threshold (e.g., 30 minutes) revert to PENDING on startup
-- This ensures restart-safe queue recovery
-- `activated_at` timestamp tracks when task became active
-
-```sql
--- Crash recovery: reset stale ACTIVE tasks
-UPDATE study_queue 
-SET status = 'PENDING', activated_at = NULL
-WHERE status = 'ACTIVE' 
-  AND activated_at < (strftime('%s', 'now') - 1800); -- 30 min timeout
-```
-
-### 8. Dashboard Starvation Protection
-
-To prevent review monopolization (e.g., 500 flashcards blocking all reading):
-
-**Deterministic Balancing Rule:**
-After N review tasks (`FLASHCARD_REVIEW` or `REREAD`), allow one `READING` task.
-
-Recommended: N = 5 (after 5 reviews, surface 1 reading)
-
-This is a lightweight query-time bias, NOT autonomous orchestration.
-
-**Balancing rules are static SQL ordering constraints, not adaptive runtime systems.**
-
-### 9. Reading Completion (Trust-Based)
-
-Reading tasks use trust-based completion, with Quizzes belonging to the Reading Layer (assessment):
-
-- User decides when reading is complete
-- Complete Session button stays enabled during active reading task
-- `start_page` is authoritative for opening context
-- `end_page` is informational only (for reference)
-- `current_page_cursor` tracked for informational progress only
-- No enforced page-completion validation
-- No `currentPage >= endPage` gating
-- No surveillance logic, timers, or engagement tracking
-
-### 10. Flashcard Review Granularity
-
-**One `FLASHCARD_REVIEW` task = one review session for a block/chunk.**
-
-- Do NOT create one queue task per flashcard
-- A single task represents "review all due cards in this block"
-- Prevents queue explosion with many cards
-
----
-
-## What This Replaces
-
-| Old Approach | New Approach |
-|--------------|--------------|
-| Runtime-only queues | `study_queue` table |
-| Hidden orchestrators | Explicit orchestrator service |
-| In-memory session engines | Persistent SQLite state |
-| Proactive scheduling | Query-driven task fetching |
-| Complex state machines | Status enum transitions |
-
----
-
-## Query Examples
-
-### Get Dashboard Tasks
-```sql
-SELECT 
-  sq.id,
-  sq.task_type,
-  sq.priority,
-  t.title as topic_title,
-  b.word_count
-FROM study_queue sq
-LEFT JOIN topics t ON sq.related_id = t.id
-LEFT JOIN blocks b ON sq.block_id = b.id
-WHERE sq.status = 'PENDING'
-ORDER BY sq.priority ASC, sq.created_at ASC;
-```
-
-### Get Reading Progress
-```sql
-SELECT 
-  COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed,
-  COUNT(*) as total
-FROM study_queue
-WHERE task_type = 'READING' AND related_id = ?;
-```
-
-### Get Due Flashcards (Create Tasks)
-```sql
-SELECT * FROM fsrs_cards 
-WHERE due_at <= strftime('%s', 'now');
-```
-
-### Mark Task Complete
-```sql
-UPDATE study_queue 
-SET status = 'COMPLETED', completed_at = strftime('%s', 'now')
-WHERE id = ?;
-```
+1. Ingestion creates `notebooks`, `topics`, `parents`, and `chunks`.
+2. Study work is queued through `study_queue`.
+3. Quiz generation uses `questions` and `written_questions`; answers land in `user_answers` and `written_user_answers`.
+4. Quiz completion is rolled up in `quiz_attempts`, with `reread_attempts` tracking repeated remediation.
+5. Long-term retention is handled by `fsrs_cards`, `fsrs_review_log`, and `assessment_fsrs`.
+6. Session-specific review mappings live in `review_task_cards`, and per-task reading cursors live in `reading_progress`.

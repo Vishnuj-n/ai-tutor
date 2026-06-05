@@ -8,17 +8,18 @@ Single source of truth for project documentation. All architectural decisions, A
 
 ## Document Reference
 
-| File | Purpose | Read When |
-|------|---------|-----------|
-| `SPRINT.md` | Current sprint roadmap | Starting any work |
-| `SPRINT_HISTORY.md` | Completed sprints | Understanding history |
-| `ARCHITECTURE.md` | System architecture | Understanding big picture |
-| `AGENT_MAP.md` | Module responsibilities | Adding new features |
-| `SCHEMA.md` | Database schema | Writing DB queries |
-| `DATA_API.md` | API contracts | Implementing endpoints |
-| `APP_FLOW.md` | User flows | Building UI features |
-| `DESIGN.md` | UI/UX design | Frontend work |
-| `RAG.md` | Retrieval system | RAG changes |
+| File                | Purpose                 | Read When                 |
+| ------------------- | ----------------------- | ------------------------- |
+| `SPRINT.md`         | Current sprint roadmap  | Starting any work         |
+| `SPRINT_HISTORY.md` | Completed sprints       | Understanding history     |
+| `ARCHITECTURE.md`   | System architecture     | Understanding big picture |
+| `AGENT_MAP.md`      | Module responsibilities | Adding new features       |
+| `SCHEMA.md`         | Database schema         | Writing DB queries        |
+| `DATA_API.md`       | API contracts           | Implementing endpoints    |
+| `APP_FLOW.md`       | User flows              | Building UI features      |
+| `DESIGN.md`         | UI/UX design            | Frontend work             |
+| `RAG.md`            | Retrieval system        | RAG changes               |
+|                     |                         |                           |
 
 ---
 

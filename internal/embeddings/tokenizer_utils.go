@@ -162,3 +162,24 @@ func trimToSentenceBoundary(text string) string {
 
 	return text
 }
+
+// TokenApproxRatio represents the fallback character-to-token ratio (typically 4 characters per token).
+const TokenApproxRatio = 4
+
+// CountTokensFallback returns the token count using the tokenizer, falling back to character approximation if it fails.
+func CountTokensFallback(text string) int {
+	trimmedText := strings.TrimSpace(text)
+	if trimmedText == "" {
+		return 0
+	}
+
+	tokens, err := CountTokens(text)
+	if err != nil {
+		fallbackTokens := len(trimmedText) / TokenApproxRatio
+		if fallbackTokens < 1 {
+			fallbackTokens = 1
+		}
+		return fallbackTokens
+	}
+	return tokens
+}

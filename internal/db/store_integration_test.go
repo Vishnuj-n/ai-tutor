@@ -457,133 +457,6 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	}
 }
 
-func TestReplaceQuestionsForTopicRejectsTopicIDMismatch(t *testing.T) {
-	initDBForTest(t, true, 0)
-
-	topicID := "quiz-mismatch-topic"
-	if err := EnsureTopic(topicID, "Quiz Test Topic"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	// Seed a valid question in the target topic to make rollback assertion meaningful
-	seededQuestion := []models.QuizQuestion{
-		{
-			ID:            "seed-q1",
-			TopicID:       topicID,
-			Prompt:        "Seeded Question",
-			Options:       []string{"yes", "no"},
-			CorrectAnswer: "yes",
-			Explanation:   "This question tests rollback preservation",
-		},
-	}
-	if err := ReplaceQuestionsForTopic(topicID, seededQuestion); err != nil {
-		t.Fatalf("failed to seed question: %v", err)
-	}
-
-	// Create questions with mismatched TopicID
-	questions := []models.QuizQuestion{
-		{
-			ID:            "q1",
-			TopicID:       "different-topic",
-			Prompt:        "Question 1",
-			Options:       []string{"a", "b"},
-			CorrectAnswer: "a",
-			Explanation:   "Explanation",
-		},
-	}
-
-	// This should fail because question TopicID doesn't match the provided topicID
-	err := ReplaceQuestionsForTopic(topicID, questions)
-	if err == nil {
-		t.Fatal("expected ReplaceQuestionsForTopic to reject question with mismatched TopicID")
-	}
-	if !strings.Contains(err.Error(), "question topic id must match topic id") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-
-	// Verify the seeded question still exists (rollback preserved it)
-	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 1)
-
-	// Verify rollback atomicity: the target topic still exists (not deleted)
-	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, topicID, 1)
-
-	// Verify no cross-topic side effects: the mismatched topic should not have questions created
-	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, "different-topic", 0)
-
-	// Verify the mismatched topic was not auto-created during the failed insert attempt
-	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, "different-topic", 0)
-
-	// Test with valid matching TopicID (either explicit or "" to auto-assign)
-	validQuestions := []models.QuizQuestion{
-		{
-			ID:            "q2",
-			TopicID:       "", // Empty will be auto-assigned to topicID
-			Prompt:        "Question 2",
-			Options:       []string{"x", "y"},
-			CorrectAnswer: "x",
-			Explanation:   "Valid question",
-		},
-		{
-			ID:            "q3",
-			TopicID:       topicID, // Explicit match
-			Prompt:        "Question 3",
-			Options:       []string{"p", "q"},
-			CorrectAnswer: "p",
-			Explanation:   "Another valid question",
-		},
-	}
-
-	// This should succeed
-	err = ReplaceQuestionsForTopic(topicID, validQuestions)
-	if err != nil {
-		t.Fatalf("ReplaceQuestionsForTopic with matching TopicIDs failed: %v", err)
-	}
-
-	// Verify questions were inserted with correct TopicID
-	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE topic_id = ?`, topicID, 2)
-}
-
-func TestAppendQuestionsForTopicPreservesExistingQuestions(t *testing.T) {
-	initDBForTest(t, false, 0)
-
-	topicID := "quiz-append-topic"
-	if err := EnsureTopic(topicID, "Quiz Append Topic"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-
-	seed := []models.QuizQuestion{{
-		ID:            "append-seed",
-		TopicID:       topicID,
-		Prompt:        "Seed?",
-		Options:       []string{"A", "B"},
-		CorrectAnswer: "A",
-	}}
-	if err := ReplaceQuestionsForTopic(topicID, seed); err != nil {
-		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
-	}
-
-	next := []models.QuizQuestion{{
-		ID:              "append-next",
-		TopicID:         "",
-		Prompt:          "Next?",
-		Options:         []string{"C", "D"},
-		CorrectAnswer:   "C",
-		SourcePageStart: 2,
-		SourcePageEnd:   3,
-		PromptVersion:   "reader-complete-v1",
-	}}
-	if err := AppendQuestionsForTopic(topicID, next); err != nil {
-		t.Fatalf("AppendQuestionsForTopic failed: %v", err)
-	}
-
-	questions, err := GetQuestionsForTopic(topicID)
-	if err != nil {
-		t.Fatalf("GetQuestionsForTopic failed: %v", err)
-	}
-	if len(questions) != 2 {
-		t.Fatalf("expected existing and appended questions, got %#v", questions)
-	}
-}
 
 func TestGetChunkTextsForTopicPageRangeIncludesBufferPage(t *testing.T) {
 	initDBForTest(t, false, 0)
@@ -704,50 +577,6 @@ func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
 	}
 }
 
-func TestMacroQuizAssemblyFromStoredQuestionsP95Under100ms(t *testing.T) {
-	initDBForTest(t, false, 0)
-
-	topicID := "perf-quiz-topic"
-	if err := EnsureTopic(topicID, "Perf Quiz Topic"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-	questions := make([]models.QuizQuestion, 0, 80)
-	for i := 0; i < 80; i++ {
-		questions = append(questions, models.QuizQuestion{
-			ID:            fmt.Sprintf("perf-quiz-q%03d", i),
-			TopicID:       topicID,
-			Prompt:        fmt.Sprintf("Question %d?", i),
-			Options:       []string{"A", "B", "C", "D"},
-			CorrectAnswer: "A",
-			PromptVersion: "reader-complete-v1",
-		})
-	}
-	if err := AppendQuestionsForTopic(topicID, questions); err != nil {
-		t.Fatalf("AppendQuestionsForTopic failed: %v", err)
-	}
-
-	durations := make([]time.Duration, 0, 200)
-	for i := 0; i < 200; i++ {
-		started := time.Now()
-		got, err := GetQuestionsForTopic(topicID)
-		if err != nil {
-			t.Fatalf("GetQuestionsForTopic failed: %v", err)
-		}
-		if len(got) != len(questions) {
-			t.Fatalf("expected %d questions, got %d", len(questions), len(got))
-		}
-		durations = append(durations, time.Since(started))
-	}
-
-	// Skip test when PERF_RUN is not set, evaluate performance when it is set
-	if os.Getenv("PERF_RUN") == "" {
-		t.Skip("performance test disabled - run with PERF_RUN=1 to enable")
-	}
-
-	if p95Duration(durations) >= 100*time.Millisecond {
-		t.Fatalf("macro quiz assembly p95: %s exceeds threshold: 100ms", p95Duration(durations))
-	}
-}
 
 func p95Duration(durations []time.Duration) time.Duration {
 	if len(durations) == 0 {
@@ -1112,38 +941,6 @@ func TestInitEnablesForeignKeys(t *testing.T) {
 	}
 }
 
-func TestQuestionDeletionCascadesToUserAnswers(t *testing.T) {
-	initDBForTest(t, false, 0)
-
-	topicID := "cascade-quiz-topic"
-	if err := EnsureTopic(topicID, "Cascade Quiz Topic"); err != nil {
-		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-	if err := ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{{
-		ID:            "cascade-question",
-		TopicID:       topicID,
-		Prompt:        "Prompt?",
-		Options:       []string{"A", "B"},
-		CorrectAnswer: "A",
-	}}); err != nil {
-		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
-	}
-	if err := SaveUserAnswer(models.QuizScore{
-		QuestionID: "cascade-question",
-		Correct:    true,
-		Score:      100,
-		UserAnswer: "A",
-	}); err != nil {
-		t.Fatalf("SaveUserAnswer failed: %v", err)
-	}
-
-	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
-		t.Fatalf("topic delete failed: %v", err)
-	}
-
-	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE id = ?`, "cascade-question", 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM user_answers WHERE question_id = ?`, "cascade-question", 0)
-}
 
 func TestTopicDeletionCascadesToFSRSTables(t *testing.T) {
 	initDBForTest(t, false, 0)
@@ -1227,51 +1024,6 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 		t.Fatalf("initial UpdateTopicPageBounds failed: %v", err)
 	}
 
-	if err := ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{
-		{
-			ID:              "q-in-range",
-			TopicID:         topicID,
-			Prompt:          "In range?",
-			Options:         []string{"A", "B"},
-			CorrectAnswer:   "A",
-			SourcePageStart: 2,
-			SourcePageEnd:   3,
-		},
-		{
-			ID:              "q-out-range",
-			TopicID:         topicID,
-			Prompt:          "Out of range?",
-			Options:         []string{"A", "B"},
-			CorrectAnswer:   "A",
-			SourcePageStart: 8,
-			SourcePageEnd:   9,
-		},
-	}); err != nil {
-		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
-	}
-	if err := SaveUserAnswer(models.QuizScore{QuestionID: "q-out-range", Correct: false, Score: 0, UserAnswer: "B"}); err != nil {
-		t.Fatalf("SaveUserAnswer failed: %v", err)
-	}
-	if _, err := conn.Exec(`
-		INSERT INTO assessment_fsrs (activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at)
-		VALUES ('quiz_question', 'q-out-range', ?, '{}', 100, 50)
-	`, topicID); err != nil {
-		t.Fatalf("insert quiz assessment_fsrs failed: %v", err)
-	}
-	if err := InsertFSRSReviewLog(models.FSRSReviewLog{
-		ID:              "log-q-out-range",
-		TopicID:         topicID,
-		ActivityType:    "quiz_question",
-		ReferenceID:     "q-out-range",
-		ReviewedAt:      123,
-		Rating:          1,
-		ScheduledDays:   0,
-		StateBeforeJSON: `{}`,
-		StateAfterJSON:  `{}`,
-	}); err != nil {
-		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
-	}
-
 	if err := CreateWrittenQuestion(models.WrittenQuestion{
 		ID:              "written-in-range",
 		TopicID:         topicID,
@@ -1314,11 +1066,6 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 		t.Fatalf("shrink UpdateTopicPageBounds failed: %v", err)
 	}
 
-	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE id = ?`, "q-in-range", 1)
-	assertCountEquals(t, `SELECT COUNT(*) FROM questions WHERE id = ?`, "q-out-range", 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM user_answers WHERE question_id = ?`, "q-out-range", 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE activity_type = 'quiz_question' AND reference_id = ?`, "q-out-range", 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-q-out-range", 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-in-range", 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-out-range", 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE activity_type = 'written_question' AND reference_id = ?`, "written-out-range", 0)

@@ -55,107 +55,97 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 		return nil
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-
-	// Always rollback on exit. If tx.Commit() was already called, this safely returns sql.ErrTxDone.
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	// Prepare statements to prevent re-compilation in the loop
-	stmtGetRowID, err := tx.Prepare(`SELECT rowid FROM chunks WHERE id = ?`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare stmtGetRowID: %w", err)
-	}
-	defer func() {
-		if closeErr := stmtGetRowID.Close(); closeErr != nil {
-			log.Printf("warning: failed to close stmtGetRowID: %v", closeErr)
+	return withTx(func(tx *sql.Tx) error {
+		// Prepare statements to prevent re-compilation in the loop
+		stmtGetRowID, err := tx.Prepare(`SELECT rowid FROM chunks WHERE id = ?`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare stmtGetRowID: %w", err)
 		}
-	}()
-
-	stmtCheckExists, err := tx.Prepare(`SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare stmtCheckExists: %w", err)
-	}
-	defer func() {
-		if closeErr := stmtCheckExists.Close(); closeErr != nil {
-			log.Printf("warning: failed to close stmtCheckExists: %v", closeErr)
-		}
-	}()
-
-	stmtUpdateVector, err := tx.Prepare(`UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare stmtUpdateVector: %w", err)
-	}
-	defer func() {
-		if closeErr := stmtUpdateVector.Close(); closeErr != nil {
-			log.Printf("warning: failed to close stmtUpdateVector: %v", closeErr)
-		}
-	}()
-
-	stmtInsertVector, err := tx.Prepare(`INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare stmtInsertVector: %w", err)
-	}
-	defer func() {
-		if closeErr := stmtInsertVector.Close(); closeErr != nil {
-			log.Printf("warning: failed to close stmtInsertVector: %v", closeErr)
-		}
-	}()
-
-	stmtUpdateRef, err := tx.Prepare(`UPDATE chunks SET embedding_ref = ? WHERE id = ?`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare stmtUpdateRef: %w", err)
-	}
-	defer func() {
-		if closeErr := stmtUpdateRef.Close(); closeErr != nil {
-			log.Printf("warning: failed to close stmtUpdateRef: %v", closeErr)
-		}
-	}()
-
-	for _, item := range items {
-		if len(item.Vector) != int(embeddingDimension) {
-			return fmt.Errorf("vector dimension mismatch for chunk %s: got %d, expected %d", item.ChunkID, len(item.Vector), embeddingDimension)
-		}
-
-		vectorJSON, encodeErr := vectorToJSONRepo(item.Vector)
-		if encodeErr != nil {
-			return fmt.Errorf("failed to encode vector for chunk %s: %w", item.ChunkID, encodeErr)
-		}
-
-		var rowID int64
-		if scanErr := stmtGetRowID.QueryRow(item.ChunkID).Scan(&rowID); scanErr != nil {
-			return fmt.Errorf("failed to resolve chunk rowid for %s: %w", item.ChunkID, scanErr)
-		}
-
-		var exists int
-		countErr := stmtCheckExists.QueryRow(rowID).Scan(&exists)
-		if countErr != nil && countErr != sql.ErrNoRows {
-			return countErr
-		}
-
-		if exists > 0 {
-			if _, execErr := stmtUpdateVector.Exec(vectorJSON, rowID); execErr != nil {
-				return execErr
+		defer func() {
+			if closeErr := stmtGetRowID.Close(); closeErr != nil {
+				log.Printf("warning: failed to close stmtGetRowID: %v", closeErr)
 			}
-		} else {
-			if _, execErr := stmtInsertVector.Exec(rowID, vectorJSON); execErr != nil {
-				return execErr
+		}()
+
+		stmtCheckExists, err := tx.Prepare(`SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare stmtCheckExists: %w", err)
+		}
+		defer func() {
+			if closeErr := stmtCheckExists.Close(); closeErr != nil {
+				log.Printf("warning: failed to close stmtCheckExists: %v", closeErr)
+			}
+		}()
+
+		stmtUpdateVector, err := tx.Prepare(`UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare stmtUpdateVector: %w", err)
+		}
+		defer func() {
+			if closeErr := stmtUpdateVector.Close(); closeErr != nil {
+				log.Printf("warning: failed to close stmtUpdateVector: %v", closeErr)
+			}
+		}()
+
+		stmtInsertVector, err := tx.Prepare(`INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare stmtInsertVector: %w", err)
+		}
+		defer func() {
+			if closeErr := stmtInsertVector.Close(); closeErr != nil {
+				log.Printf("warning: failed to close stmtInsertVector: %v", closeErr)
+			}
+		}()
+
+		stmtUpdateRef, err := tx.Prepare(`UPDATE chunks SET embedding_ref = ? WHERE id = ?`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare stmtUpdateRef: %w", err)
+		}
+		defer func() {
+			if closeErr := stmtUpdateRef.Close(); closeErr != nil {
+				log.Printf("warning: failed to close stmtUpdateRef: %v", closeErr)
+			}
+		}()
+
+		for _, item := range items {
+			if len(item.Vector) != int(embeddingDimension) {
+				return fmt.Errorf("vector dimension mismatch for chunk %s: got %d, expected %d", item.ChunkID, len(item.Vector), embeddingDimension)
+			}
+
+			vectorJSON, encodeErr := vectorToJSONRepo(item.Vector)
+			if encodeErr != nil {
+				return fmt.Errorf("failed to encode vector for chunk %s: %w", item.ChunkID, encodeErr)
+			}
+
+			var rowID int64
+			if scanErr := stmtGetRowID.QueryRow(item.ChunkID).Scan(&rowID); scanErr != nil {
+				return fmt.Errorf("failed to resolve chunk rowid for %s: %w", item.ChunkID, scanErr)
+			}
+
+			var exists int
+			countErr := stmtCheckExists.QueryRow(rowID).Scan(&exists)
+			if countErr != nil && countErr != sql.ErrNoRows {
+				return countErr
+			}
+
+			if exists > 0 {
+				if _, execErr := stmtUpdateVector.Exec(vectorJSON, rowID); execErr != nil {
+					return execErr
+				}
+			} else {
+				if _, execErr := stmtInsertVector.Exec(rowID, vectorJSON); execErr != nil {
+					return execErr
+				}
+			}
+
+			if item.EmbeddingRef != "" {
+				if _, execErr := stmtUpdateRef.Exec(item.EmbeddingRef, item.ChunkID); execErr != nil {
+					return execErr
+				}
 			}
 		}
-
-		if item.EmbeddingRef != "" {
-			if _, execErr := stmtUpdateRef.Exec(item.EmbeddingRef, item.ChunkID); execErr != nil {
-				return execErr
-			}
-		}
-	}
-
-	err = tx.Commit()
-	return err
+		return nil
+	})
 }
 
 func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, startPage int, endPage int) ([]string, error) {

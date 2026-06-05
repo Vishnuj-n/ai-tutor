@@ -40,20 +40,38 @@
 
     <!-- ── COMPREHENSIVE TAB ───────────────────── -->
     <section v-if="activeTab === 'comprehensive'" class="tab-content">
-
       <!-- Config panel: page range -->
       <div v-if="!reviewing" class="config-panel">
         <p class="config-panel__hint">Enter the page range to extract flashcards from.</p>
         <div class="config-panel__row">
           <div class="number-field">
             <label class="field-label" for="fc-start">Start Page</label>
-            <input id="fc-start" v-model.number="startPage" class="ghost-input" type="number" min="1" :disabled="loading" />
+            <input
+              id="fc-start"
+              v-model.number="startPage"
+              class="ghost-input"
+              type="number"
+              min="1"
+              :disabled="loading"
+            />
           </div>
           <div class="number-field">
             <label class="field-label" for="fc-end">End Page</label>
-            <input id="fc-end" v-model.number="endPage" class="ghost-input" type="number" min="1" :disabled="loading" />
+            <input
+              id="fc-end"
+              v-model.number="endPage"
+              class="ghost-input"
+              type="number"
+              min="1"
+              :disabled="loading"
+            />
           </div>
-          <BaseButton id="fc-generate-btn" :disabled="!canGenerate" :loading="loading" @click="generate">
+          <BaseButton
+            id="fc-generate-btn"
+            :disabled="!canGenerate"
+            :loading="loading"
+            @click="generate"
+          >
             Generate Cards
           </BaseButton>
         </div>
@@ -79,7 +97,9 @@
             <!-- Front -->
             <div class="card-face card-front">
               <p class="card-text">{{ currentCard.prompt }}</p>
-              <button id="fc-reveal-btn" class="reveal-btn" @click="flipped = true">Show Answer</button>
+              <button id="fc-reveal-btn" class="reveal-btn" @click="flipped = true">
+                Show Answer
+              </button>
             </div>
             <!-- Back -->
             <div class="card-face card-back">
@@ -87,8 +107,8 @@
               <div class="rating-row">
                 <button
                   v-for="r in ratings"
-                  :key="r.key"
                   :id="`fc-rate-${r.key}`"
+                  :key="r.key"
                   :class="['rating-btn', `rating-btn--${r.key}`]"
                   :disabled="isSubmittingReview"
                   @click="rate(r.key)"
@@ -110,60 +130,71 @@
         </p>
         <BaseButton id="fc-new-session-btn" @click="reset">New Session</BaseButton>
       </div>
-
     </section>
 
     <!-- ── EXPLORER TAB (stub) ────────────────── -->
     <section v-else class="tab-content stub-panel">
       <p class="eyebrow-inline">Coming in Phase 2</p>
-      <p class="stub-text">Semantic Discovery will surface concept clusters across your notebooks.</p>
+      <p class="stub-text">
+        Semantic Discovery will surface concept clusters across your notebooks.
+      </p>
     </section>
-
   </StudyPageLayout>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { activateTask, completeReviewSession, getNotebooks, generateMarathonFlashcards, getReviewSession, recordCardReview } from '../services/appApi.js'
+import {
+  activateTask,
+  completeReviewSession,
+  getNotebooks,
+  generateMarathonFlashcards,
+  getReviewSession,
+  recordCardReview,
+} from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
-const route              = useRoute()
-const router             = useRouter()
-const notebooks          = ref([])
+const route = useRoute()
+const router = useRouter()
+const notebooks = ref([])
 const selectedNotebookID = ref('')
-const activeTab          = ref('comprehensive')
-const startPage          = ref(1)
-const endPage            = ref(10)
-const loading            = ref(false)
-const error              = ref('')
-const cards              = ref([])
-const reviewIndex        = ref(0)
-const reviewing          = ref(false)
-const flipped            = ref(false)
+const activeTab = ref('comprehensive')
+const startPage = ref(1)
+const endPage = ref(10)
+const loading = ref(false)
+const error = ref('')
+const cards = ref([])
+const reviewIndex = ref(0)
+const reviewing = ref(false)
+const flipped = ref(false)
 const isSubmittingReview = ref(false)
-const reviewTaskID       = ref('')
-const sessionRemaining   = ref(0)
-const queueMode          = computed(() => !!reviewTaskID.value)
+const reviewTaskID = ref('')
+const sessionRemaining = ref(0)
+const queueMode = computed(() => !!reviewTaskID.value)
 
 const ratings = [
   { key: 'again', label: '✕ Again', value: 1 },
-  { key: 'hard',  label: '~ Hard',  value: 2 },
-  { key: 'good',  label: '✓ Good',  value: 3 },
-  { key: 'easy',  label: '⚡ Easy', value: 4 },
+  { key: 'hard', label: '~ Hard', value: 2 },
+  { key: 'good', label: '✓ Good', value: 3 },
+  { key: 'easy', label: '⚡ Easy', value: 4 },
 ]
 
-const canGenerate  = computed(() =>
-  selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value && !loading.value
+const canGenerate = computed(
+  () =>
+    selectedNotebookID.value &&
+    startPage.value > 0 &&
+    endPage.value >= startPage.value &&
+    !loading.value
 )
-const currentCard  = computed(() => cards.value[reviewIndex.value] ?? null)
+const currentCard = computed(() => cards.value[reviewIndex.value] ?? null)
 
 onMounted(async () => {
   try {
     const res = await getNotebooks()
-    notebooks.value = Array.isArray(res) ? res.filter(n => !n.error) : []
+    notebooks.value = Array.isArray(res) ? res.filter((n) => !n.error) : []
   } catch {
     error.value = 'Failed to load notebooks.'
   }
@@ -180,8 +211,15 @@ async function generate() {
   reviewing.value = false
   loading.value = true
   try {
-    const res = await generateMarathonFlashcards(selectedNotebookID.value, startPage.value, endPage.value)
-    if (res.error) { error.value = res.error; return }
+    const res = await generateMarathonFlashcards(
+      selectedNotebookID.value,
+      startPage.value,
+      endPage.value
+    )
+    if (res.error) {
+      error.value = res.error
+      return
+    }
     cards.value = res.cards ?? []
     if (cards.value.length) reviewing.value = true
   } catch (e) {
@@ -196,7 +234,7 @@ async function rate(ratingKey) {
   if (!card || isSubmittingReview.value) return
 
   // Validate ratingKey against available ratings
-  const validRating = ratings.find(r => r.key === ratingKey)
+  const validRating = ratings.find((r) => r.key === ratingKey)
   if (!validRating) {
     error.value = 'Invalid rating selection. Please try again.'
     return
@@ -363,7 +401,9 @@ async function loadQueueSession(taskID, notebookID = '') {
   color: var(--muted-text);
   background: transparent;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .mode-tab:hover:not(.mode-tab--active) {
@@ -384,8 +424,14 @@ async function loadQueueSession(taskID, notebookID = '') {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Config panel ─────────────────────────────── */
@@ -543,7 +589,9 @@ async function loadQueueSession(taskID, notebookID = '') {
   color: var(--on-primary);
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   cursor: pointer;
-  transition: transform 0.14s ease, filter 0.14s ease;
+  transition:
+    transform 0.14s ease,
+    filter 0.14s ease;
 }
 
 .reveal-btn:hover {
@@ -570,7 +618,9 @@ async function loadQueueSession(taskID, notebookID = '') {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.1s ease, filter 0.12s ease;
+  transition:
+    transform 0.1s ease,
+    filter 0.12s ease;
   background: var(--surface-container-lowest);
   color: var(--on-surface);
 }

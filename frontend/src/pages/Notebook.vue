@@ -63,7 +63,11 @@
 
       <div v-if="!loading && notebooks.length > 0" class="notebook-grid">
         <div v-for="notebook in notebooks" :key="notebook.id" class="notebook-card">
-          <button class="btn-edit-pen" title="Edit notebook and chapters" @click="openSyllabusDraft(notebook.id, notebook.title)">
+          <button
+            class="btn-edit-pen"
+            title="Edit notebook and chapters"
+            @click="openSyllabusDraft(notebook.id, notebook.title)"
+          >
             ✎
           </button>
           <div class="notebook-header-card">
@@ -114,18 +118,31 @@
         </div>
 
         <p class="modal-warning">
-          Use absolute PDF page numbers. Page labels shown inside the PDF viewer may differ from file page numbers.
+          Use absolute PDF page numbers. Page labels shown inside the PDF viewer may differ from
+          file page numbers.
         </p>
 
         <div class="modal-title-edit">
           <label for="notebook-title">Notebook title</label>
-          <input id="notebook-title" v-model="draftNotebookTitle" type="text" class="chapter-input" placeholder="Notebook name" />
+          <input
+            id="notebook-title"
+            v-model="draftNotebookTitle"
+            type="text"
+            class="chapter-input"
+            placeholder="Notebook name"
+          />
         </div>
 
         <div class="modal-priority-edit">
           <label for="notebook-priority">Notebook priority (1-10)</label>
-          <select id="notebook-priority" v-model.number="draftNotebookPriority" class="priority-select-modal">
-            <option v-for="n in 10" :key="n" :value="n">{{ n }} - {{ n === 1 ? 'Lowest' : n === 10 ? 'Highest' : n === 5 ? 'Default' : '' }}</option>
+          <select
+            id="notebook-priority"
+            v-model.number="draftNotebookPriority"
+            class="priority-select-modal"
+          >
+            <option v-for="n in 10" :key="n" :value="n">
+              {{ n }} - {{ n === 1 ? 'Lowest' : n === 10 ? 'Highest' : n === 5 ? 'Default' : '' }}
+            </option>
           </select>
           <p class="priority-hint">Higher-priority notebooks appear earlier in your study queue.</p>
         </div>
@@ -145,7 +162,12 @@
             <tbody>
               <tr v-for="(chapter, index) in draftChapters" :key="`chapter-${index}`">
                 <td>
-                  <input v-model="chapter.title" type="text" class="chapter-input" placeholder="Chapter title" />
+                  <input
+                    v-model="chapter.title"
+                    type="text"
+                    class="chapter-input"
+                    placeholder="Chapter title"
+                  />
                 </td>
                 <td>
                   <input
@@ -168,7 +190,9 @@
                   />
                 </td>
                 <td>
-                  <button type="button" class="row-delete" @click="removeDraftChapter(index)">Delete</button>
+                  <button type="button" class="row-delete" @click="removeDraftChapter(index)">
+                    Delete
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -178,7 +202,12 @@
         <div class="modal-actions">
           <button type="button" class="btn-secondary" @click="addDraftChapter">Add Chapter</button>
           <button type="button" class="btn-secondary" @click="closeSyllabusModal">Cancel</button>
-          <button type="button" class="btn-primary" :disabled="isConfirmingDraft" @click="confirmSyllabusDraft">
+          <button
+            type="button"
+            class="btn-primary"
+            :disabled="isConfirmingDraft"
+            @click="confirmSyllabusDraft"
+          >
             {{ isConfirmingDraft ? 'Confirming...' : 'Confirm and Ingest' }}
           </button>
         </div>
@@ -225,7 +254,12 @@ import {
   updateNotebookPriority as apiUpdateNotebookPriority,
   deleteNotebook as apiDeleteNotebook,
 } from '../services/appApi'
-import { CanResolveFilePaths, EventsOff, EventsOn, ResolveFilePaths } from '../../wailsjs/runtime/runtime'
+import {
+  CanResolveFilePaths,
+  EventsOff,
+  EventsOn,
+  ResolveFilePaths,
+} from '../../wailsjs/runtime/runtime'
 
 const fileInput = ref(null)
 const isDragging = ref(false)
@@ -299,7 +333,11 @@ function handleIngestionProgress(payload) {
     ingestionNotebookID.value = payload.notebook_id
   }
 
-  if (ingestionNotebookID.value && payload.notebook_id && payload.notebook_id !== ingestionNotebookID.value) {
+  if (
+    ingestionNotebookID.value &&
+    payload.notebook_id &&
+    payload.notebook_id !== ingestionNotebookID.value
+  ) {
     return
   }
 
@@ -484,13 +522,14 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
 
     const chapters = Array.isArray(draft?.chapters) ? draft.chapters : []
     draftPageCount.value = Number(draft?.page_count) > 0 ? Number(draft.page_count) : 1
-    draftChapters.value = chapters.length > 0
-      ? chapters.map((ch) => ({
-        title: String(ch?.title || 'Untitled Chapter').trim() || 'Untitled Chapter',
-        start_page: Number(ch?.start_page) || 1,
-        end_page: Number(ch?.end_page) || 1,
-      }))
-      : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
+    draftChapters.value =
+      chapters.length > 0
+        ? chapters.map((ch) => ({
+            title: String(ch?.title || 'Untitled Chapter').trim() || 'Untitled Chapter',
+            start_page: Number(ch?.start_page) || 1,
+            end_page: Number(ch?.end_page) || 1,
+          }))
+        : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
 
     // Load notebook to get current priority
     const notebook = notebooks.value.find((nb) => nb.id === notebookID)
@@ -535,9 +574,10 @@ function closeSyllabusModal() {
 }
 
 function addDraftChapter() {
-  const start = draftChapters.value.length > 0
-    ? Number(draftChapters.value[draftChapters.value.length - 1].end_page) + 1
-    : 1
+  const start =
+    draftChapters.value.length > 0
+      ? Number(draftChapters.value[draftChapters.value.length - 1].end_page) + 1
+      : 1
   draftChapters.value.push({
     title: `Chapter ${draftChapters.value.length + 1}`,
     start_page: Math.min(start, draftPageCount.value),
@@ -551,7 +591,10 @@ function removeDraftChapter(index) {
 
 function sanitizeChapterPages(chapter) {
   chapter.start_page = Math.max(1, Math.min(Number(chapter.start_page) || 1, draftPageCount.value))
-  chapter.end_page = Math.max(chapter.start_page, Math.min(Number(chapter.end_page) || chapter.start_page, draftPageCount.value))
+  chapter.end_page = Math.max(
+    chapter.start_page,
+    Math.min(Number(chapter.end_page) || chapter.start_page, draftPageCount.value)
+  )
 }
 
 function chaptersEqual(a, b) {
@@ -599,7 +642,10 @@ async function confirmSyllabusDraft() {
 
   for (const chapter of sanitized) {
     chapter.start_page = Math.max(1, Math.min(chapter.start_page, draftPageCount.value))
-    chapter.end_page = Math.max(chapter.start_page, Math.min(chapter.end_page, draftPageCount.value))
+    chapter.end_page = Math.max(
+      chapter.start_page,
+      Math.min(chapter.end_page, draftPageCount.value)
+    )
   }
 
   const trimmedTitle = String(draftNotebookTitle.value || '').trim()
@@ -623,7 +669,10 @@ async function confirmSyllabusDraft() {
     }
 
     if (priorityChanged) {
-      const priorityResult = await apiUpdateNotebookPriority(draftNotebookID.value, draftNotebookPriority.value)
+      const priorityResult = await apiUpdateNotebookPriority(
+        draftNotebookID.value,
+        draftNotebookPriority.value
+      )
       if (priorityResult?.error) {
         throw new Error(priorityResult.error)
       }
@@ -1399,7 +1448,9 @@ function formatDate(dateString) {
 
 .toast-fade-enter-active,
 .toast-fade-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
 }
 
 .toast-fade-enter-from,
@@ -1442,7 +1493,9 @@ function formatDate(dateString) {
 
   .toast-fade-enter-active,
   .toast-fade-leave-active {
-    transition: opacity 0.25s ease, transform 0.25s ease;
+    transition:
+      opacity 0.25s ease,
+      transform 0.25s ease;
   }
 
   .toast-fade-enter-from,

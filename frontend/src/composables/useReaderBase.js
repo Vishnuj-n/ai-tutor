@@ -1,5 +1,9 @@
 import { ref, computed } from 'vue'
-import { getNotebookTopicTree, getReaderTopicBundle, initializeReadingSession } from '../services/appApi'
+import {
+  getNotebookTopicTree,
+  getReaderTopicBundle,
+  initializeReadingSession,
+} from '../services/appApi'
 
 /**
  * useReaderBase - Extracted base reader logic for task-flow-only reading sessions.
@@ -32,8 +36,8 @@ export function useReaderBase(taskID) {
   const navigationState = ref(null)
 
   // Computed
-  const selectedNotebook = computed(() =>
-    notebookTree.value.find((n) => n.notebook_id === selectedNotebookID.value) || null
+  const selectedNotebook = computed(
+    () => notebookTree.value.find((n) => n.notebook_id === selectedNotebookID.value) || null
   )
 
   const selectedNotebookTitle = computed(() => selectedNotebook.value?.title || '')
@@ -60,8 +64,8 @@ export function useReaderBase(taskID) {
 
   const pdfVisible = computed(() => fileType.value === 'pdf' && notebookUrl.value !== '')
 
-  const hasNavigationBounds = computed(() =>
-    navigationMinPage.value > 0 && navigationMaxPage.value >= navigationMinPage.value
+  const hasNavigationBounds = computed(
+    () => navigationMinPage.value > 0 && navigationMaxPage.value >= navigationMinPage.value
   )
 
   const canGoPrev = computed(() => {
@@ -130,21 +134,34 @@ export function useReaderBase(taskID) {
       // In backend-authoritative session model, 0 means "unspecified / hydrate from DB session state"
       // Reject only: negative values, or invalid ordering when both are specified
       if (startPage < 0 || endPage < 0) {
-        console.error('[useReaderBase] Invalid page bounds: negative values not allowed', { startPage, endPage })
+        console.error('[useReaderBase] Invalid page bounds: negative values not allowed', {
+          startPage,
+          endPage,
+        })
         globalError.value = `Invalid page bounds: negative values not allowed (startPage=${startPage}, endPage=${endPage})`
         return null
       }
       if (startPage > 0 && endPage > 0 && endPage < startPage) {
-        console.error('[useReaderBase] Invalid page bounds: endPage must be >= startPage when both specified', { startPage, endPage })
+        console.error(
+          '[useReaderBase] Invalid page bounds: endPage must be >= startPage when both specified',
+          { startPage, endPage }
+        )
         globalError.value = `Invalid page bounds: endPage=${endPage} must be >= startPage=${startPage} when both specified`
         return null
       }
 
-      const result = await initializeReadingSession(taskID.value, notebookId, topicId, startPage, endPage)
+      const result = await initializeReadingSession(
+        taskID.value,
+        notebookId,
+        topicId,
+        startPage,
+        endPage
+      )
 
       // Defensive: check ok flag first (backend contract)
       if (!result?.ok) {
-        globalError.value = result?.error || 'Failed to initialize reading session: backend returned not ok'
+        globalError.value =
+          result?.error || 'Failed to initialize reading session: backend returned not ok'
         return null
       }
 
@@ -164,8 +181,10 @@ export function useReaderBase(taskID) {
 
       // Treat missing/empty bundle as recoverable
       let bundle = null
-      if (result.bundle && Array.isArray(result.bundle.sections) && result.bundle.sections.length > 0) {
-        bundle = result.bundle
+         if (result.bundle && typeof result.bundle === 'object') {        bundle = {
+          ...result.bundle,
+          sections: Array.isArray(result.bundle.sections) ? result.bundle.sections : [],
+        }
       }
       globalError.value = '' // clear globalError
 
@@ -173,7 +192,6 @@ export function useReaderBase(taskID) {
       const task = result.task
       const navigationBounds = result.page_bounds
       const nav = result.navigation
-
 
       // Validate task has required fields
       if (!task.notebook_id || !task.topic_id) {
@@ -189,12 +207,10 @@ export function useReaderBase(taskID) {
       const validEnd = Number(navigationBounds.end_page) || validStart
       const validCurrent = Number(navigationBounds.current_page) || validStart
 
-
       navigationMinPage.value = validStart
       navigationMaxPage.value = validEnd
       currentPage.value = Math.min(Math.max(validCurrent, validStart), validEnd)
       navigationState.value = nav
-
 
       // Apply bundle data safely (bundle might be null/empty)
       topicTitle.value = bundle?.topic_title || task.topic_title || 'Reader'
@@ -210,7 +226,7 @@ export function useReaderBase(taskID) {
         task,
         navigationBounds,
         navigation: nav,
-        bundle
+        bundle,
       }
     } catch (err) {
       console.error('[useReaderBase] initializeSession error:', err)
@@ -341,6 +357,6 @@ export function useReaderBase(taskID) {
     goPrev,
     goNext,
     selectSection,
-    clampPage
+    clampPage,
   }
 }

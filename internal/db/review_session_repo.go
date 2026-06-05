@@ -51,36 +51,6 @@ func fetchExistingReviewTask(q querier, notebookID string) (*models.StudyQueueTa
 	return task, nil
 }
 
-func getExistingReviewTaskForNotebookRepo(notebookID string) (*models.StudyQueueTask, error) {
-	task := &models.StudyQueueTask{}
-	err := conn.QueryRow(`
-		SELECT
-			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
-			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
-			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0)
-		FROM study_queue
-		WHERE notebook_id = ?
-		  AND task_type = 'FLASHCARD_REVIEW'
-		  AND status IN ('PENDING', 'ACTIVE')
-		ORDER BY
-			CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
-			created_at ASC,
-			id ASC
-		LIMIT 1
-	`, notebookID).Scan(
-		&task.ID, &task.NotebookID, &task.TopicID, &task.TaskType, &task.Status, &task.Priority,
-		&task.CreatedAt, &task.ActivatedAt, &task.CompletedAt, &task.PayloadJSON, &task.StartPage, &task.EndPage,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	utils.LogReviewSessionResume(task.ID, string(task.Status))
-	return task, nil
-}
-
 func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
 	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan notebookID=%s now=%d limit=%d", notebookID, now, limit)
 	rows, err := conn.Query(`
@@ -174,7 +144,9 @@ func getDueReviewCardCountsByNotebookRepo(now int64) (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	counts := make(map[string]int)
 	for rows.Next() {
@@ -233,7 +205,7 @@ func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
 
 func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTask, bool, error) {
 	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation start notebookID=%s now=%d", notebookID, now)
-	if existing, err := getExistingReviewTaskForNotebookRepo(notebookID); err != nil {
+	if existing, err := fetchExistingReviewTask(conn, notebookID); err != nil {
 		return nil, false, err
 	} else if existing != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation reused_existing notebookID=%s taskID=%s status=%s", notebookID, existing.ID, existing.Status)
@@ -250,72 +222,77 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 		return nil, false, nil
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return nil, false, err
-	}
-	defer func() { _ = tx.Rollback() }()
+	var task *models.StudyQueueTask
+	var reused bool
+	err = withTx(func(tx *sql.Tx) error {
+		if existing, err := getExistingReviewTaskForNotebookTxRepo(tx, notebookID); err != nil {
+			return err
+		} else if existing != nil {
+			task = existing
+			reused = true
+			return nil
+		}
 
-	if existing, err := getExistingReviewTaskForNotebookTxRepo(tx, notebookID); err != nil {
-		return nil, false, err
-	} else if existing != nil {
-		return existing, true, nil
-	}
+		payloadBytes, err := json.Marshal(models.ReviewSessionPayload{
+			CardCount:     len(cards),
+			CreatedAtUnix: now,
+		})
+		if err != nil {
+			return err
+		}
 
-	payloadBytes, err := json.Marshal(models.ReviewSessionPayload{
-		CardCount:     len(cards),
-		CreatedAtUnix: now,
-	})
-	if err != nil {
-		return nil, false, err
-	}
-
-	// Determine if the session spans a single topic or multiple topics
-	sessionTopicID := ""
-	if len(cards) > 0 {
-		sameTopic := true
-		firstTopic := cards[0].TopicID
-		for _, card := range cards {
-			if card.TopicID != firstTopic {
-				sameTopic = false
-				break
+		// Determine if the session spans a single topic or multiple topics
+		sessionTopicID := ""
+		if len(cards) > 0 {
+			sameTopic := true
+			firstTopic := cards[0].TopicID
+			for _, card := range cards {
+				if card.TopicID != firstTopic {
+					sameTopic = false
+					break
+				}
+			}
+			if sameTopic {
+				sessionTopicID = firstTopic
 			}
 		}
-		if sameTopic {
-			sessionTopicID = firstTopic
+
+		task = &models.StudyQueueTask{
+			ID:          uuid.NewString(),
+			NotebookID:  notebookID,
+			TopicID:     sessionTopicID,
+			TaskType:    models.StudyTaskTypeFlashcardReview,
+			Status:      models.StudyTaskStatusPending,
+			Priority:    0,
+			PayloadJSON: string(payloadBytes),
 		}
-	}
-
-	task := &models.StudyQueueTask{
-		ID:          uuid.NewString(),
-		NotebookID:  notebookID,
-		TopicID:     sessionTopicID,
-		TaskType:    models.StudyTaskTypeFlashcardReview,
-		Status:      models.StudyTaskStatusPending,
-		Priority:    0,
-		PayloadJSON: string(payloadBytes),
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO study_queue (
-			id, notebook_id, topic_id, task_type, status, priority, payload_json
-		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?)
-	`, task.ID, task.NotebookID, task.TopicID, string(task.TaskType), string(task.Status), task.Priority, task.PayloadJSON); err != nil {
-		return nil, false, err
-	}
-	utils.Warnf("[FLASHCARD_PIPELINE] queue_insertion taskID=%s taskType=%s notebookID=%s topicID=%s cardCount=%d", task.ID, task.TaskType, task.NotebookID, task.TopicID, len(cards))
-
-	for _, card := range cards {
 		if _, err := tx.Exec(`
-			INSERT INTO review_task_cards (task_id, card_id, status)
-			VALUES (?, ?, 'pending')
-		`, task.ID, card.ID); err != nil {
-			return nil, false, err
+			INSERT INTO study_queue (
+				id, notebook_id, topic_id, task_type, status, priority, payload_json
+			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?)
+		`, task.ID, task.NotebookID, task.TopicID, string(task.TaskType), string(task.Status), task.Priority, task.PayloadJSON); err != nil {
+			return err
 		}
-	}
+		utils.Warnf("[FLASHCARD_PIPELINE] queue_insertion taskID=%s taskType=%s notebookID=%s topicID=%s cardCount=%d", task.ID, task.TaskType, task.NotebookID, task.TopicID, len(cards))
 
-	if err := tx.Commit(); err != nil {
+		for _, card := range cards {
+			if _, err := tx.Exec(`
+				INSERT INTO review_task_cards (task_id, card_id, status)
+				VALUES (?, ?, 'pending')
+			`, task.ID, card.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
 		return nil, false, err
 	}
+	if reused {
+		return task, true, nil
+	}
+
 	utils.LogReviewSession(task.ID, notebookID, strconv.Itoa(len(cards)), "session_created")
 	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation committed taskID=%s notebookID=%s linkedCards=%d", task.ID, notebookID, len(cards))
 	createdTask, err := GetTaskByID(task.ID)
@@ -447,46 +424,40 @@ func remainingReviewTaskCardsTxRepo(tx *sql.Tx, taskID string) (int, error) {
 }
 
 func completeReviewSessionRepo(taskID string) error {
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
+	return withTx(func(tx *sql.Tx) error {
+		task, err := GetTaskByIDTx(tx, taskID)
+		if err != nil {
+			return err
+		}
+		if task.TaskType != models.StudyTaskTypeFlashcardReview {
+			return fmt.Errorf("task %s is not a flashcard review task", taskID)
+		}
+		if task.Status != models.StudyTaskStatusActive {
+			return ErrTaskNotActive
+		}
 
-	task, err := getTaskByIDTxRepo(tx, taskID)
-	if err != nil {
-		return err
-	}
-	if task.TaskType != models.StudyTaskTypeFlashcardReview {
-		return fmt.Errorf("task %s is not a flashcard review task", taskID)
-	}
-	if task.Status != models.StudyTaskStatusActive {
-		return ErrTaskNotActive
-	}
+		remaining, err := remainingReviewTaskCardsTxRepo(tx, taskID)
+		if err != nil {
+			return err
+		}
+		if remaining > 0 {
+			return ErrReviewSessionOpen
+		}
 
-	remaining, err := remainingReviewTaskCardsTxRepo(tx, taskID)
-	if err != nil {
-		return err
-	}
-	if remaining > 0 {
-		return ErrReviewSessionOpen
-	}
-
-	if _, err := tx.Exec(`
-		UPDATE study_queue
-		SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND status = 'ACTIVE'
-	`, taskID); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	utils.LogReviewSession(taskID, "", "0", "session_completed")
-	return nil
+		if _, err := tx.Exec(`
+			UPDATE study_queue
+			SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND status = 'ACTIVE'
+		`, taskID); err != nil {
+			return err
+		}
+		utils.LogReviewSession(taskID, "", "0", "session_completed")
+		return nil
+	})
 }
 
-func getTaskByIDTxRepo(tx *sql.Tx, taskID string) (*models.StudyQueueTask, error) {
+// GetTaskByIDTx returns one queue task by ID within a transaction scope.
+func GetTaskByIDTx(tx *sql.Tx, taskID string) (*models.StudyQueueTask, error) {
 	task := &models.StudyQueueTask{}
 	err := tx.QueryRow(`
 		SELECT

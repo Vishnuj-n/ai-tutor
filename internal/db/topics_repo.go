@@ -41,44 +41,36 @@ func EnsureTopicsBatch(items []TopicBatchItem) error {
 		return nil
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	stmt, err := tx.Prepare(`
-		INSERT INTO topics (id, title, status)
-		VALUES (?, ?, 'reading')
-		ON CONFLICT(id) DO UPDATE SET title = excluded.title
-	`)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = stmt.Close()
-	}()
-
-	for _, item := range items {
-		id := strings.TrimSpace(item.TopicID)
-		if id == "" {
-			err = fmt.Errorf("topic id is required for all batch items")
-			return err
-		}
-		title := item.Title
-		if title == "" {
-			title = id
-		}
-
-		_, err = stmt.Exec(id, title)
+	return withTx(func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare(`
+			INSERT INTO topics (id, title, status)
+			VALUES (?, ?, 'reading')
+			ON CONFLICT(id) DO UPDATE SET title = excluded.title
+		`)
 		if err != nil {
 			return err
 		}
-	}
+		defer func() {
+			_ = stmt.Close()
+		}()
 
-	return tx.Commit()
+		for _, item := range items {
+			id := strings.TrimSpace(item.TopicID)
+			if id == "" {
+				return fmt.Errorf("topic id is required for all batch items")
+			}
+			title := item.Title
+			if title == "" {
+				title = id
+			}
+
+			_, err = stmt.Exec(id, title)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // UpdateTopicPageBounds stores deterministic chapter bounds for a topic.
@@ -98,123 +90,16 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		startPage, endPage = endPage, startPage
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	// Determine if cursor needs initialization and detect shrinkage
-	var previousStart int
-	var previousEnd int
-	var currentCursor int
-	if err := tx.QueryRow(`
-		SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
-		FROM topics WHERE id = ?
-	`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); err != nil && err != sql.ErrNoRows {
-		return err
-	}
-
-	// Check if bounds shrunk (start moved forward OR end moved backward)
-	shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
-		(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
-
-	// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
-	var newCursor int
-	if currentCursor == 0 {
-		newCursor = startPage
-		if newCursor < 0 {
-			newCursor = 0
-		}
-	} else {
-		// Clamp cursor to new bounds
-		if currentCursor < startPage {
-			newCursor = startPage
-		} else if currentCursor > endPage {
-			newCursor = endPage
-		} else {
-			newCursor = currentCursor
-		}
-	}
-
-	// Update bounds and cursor
-	result, err := tx.Exec(`
-		UPDATE topics
-		SET start_page = ?, end_page = ?, current_page_cursor = ?
-		WHERE id = ?
-	`, startPage, endPage, newCursor, topicID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return sql.ErrNoRows
-	}
-
-	if shrunk {
-		if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
-			return err
-		}
-	}
-
-	return tx.Commit()
-}
-
-// TopicPageBoundsBatchItem represents topic page bounds to be updated in batch
-type TopicPageBoundsBatchItem struct {
-	TopicID   string
-	StartPage int
-	EndPage   int
-}
-
-// UpdateTopicPageBoundsBatch updates page bounds for multiple topics in a single transaction
-func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
-	if len(items) == 0 {
-		return nil
-	}
-
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	for _, item := range items {
-		topicID := strings.TrimSpace(item.TopicID)
-		if topicID == "" {
-			err = fmt.Errorf("topic id is required for all batch items")
-			return err
-		}
-
-		startPage := item.StartPage
-		endPage := item.EndPage
-		if startPage < 0 {
-			startPage = 0
-		}
-		if endPage < 0 {
-			endPage = 0
-		}
-		if startPage > endPage {
-			startPage, endPage = endPage, startPage
-		}
-
-		// Check current cursor and detect shrinkage
+	return withTx(func(tx *sql.Tx) error {
+		// Determine if cursor needs initialization and detect shrinkage
 		var previousStart int
 		var previousEnd int
 		var currentCursor int
-		if cursorErr := tx.QueryRow(`
+		if err := tx.QueryRow(`
 			SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
 			FROM topics WHERE id = ?
-		`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
-			return cursorErr
+		`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); err != nil && err != sql.ErrNoRows {
+			return err
 		}
 
 		// Check if bounds shrunk (start moved forward OR end moved backward)
@@ -240,7 +125,7 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 		}
 
 		// Update bounds and cursor
-		res, err := tx.Exec(`
+		result, err := tx.Exec(`
 			UPDATE topics
 			SET start_page = ?, end_page = ?, current_page_cursor = ?
 			WHERE id = ?
@@ -248,12 +133,13 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 		if err != nil {
 			return err
 		}
-		rowsAffected, err := res.RowsAffected()
+
+		rowsAffected, err := result.RowsAffected()
 		if err != nil {
 			return err
 		}
 		if rowsAffected == 0 {
-			return fmt.Errorf("no rows updated for topicID %s", topicID)
+			return sql.ErrNoRows
 		}
 
 		if shrunk {
@@ -261,57 +147,103 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 				return err
 			}
 		}
+		return nil
+	})
+}
+
+// TopicPageBoundsBatchItem represents topic page bounds to be updated in batch
+type TopicPageBoundsBatchItem struct {
+	TopicID   string
+	StartPage int
+	EndPage   int
+}
+
+// UpdateTopicPageBoundsBatch updates page bounds for multiple topics in a single transaction
+func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
+	if len(items) == 0 {
+		return nil
 	}
 
-	return tx.Commit()
+	return withTx(func(tx *sql.Tx) error {
+		for _, item := range items {
+			topicID := strings.TrimSpace(item.TopicID)
+			if topicID == "" {
+				return fmt.Errorf("topic id is required for all batch items")
+			}
+
+			startPage := item.StartPage
+			endPage := item.EndPage
+			if startPage < 0 {
+				startPage = 0
+			}
+			if endPage < 0 {
+				endPage = 0
+			}
+			if startPage > endPage {
+				startPage, endPage = endPage, startPage
+			}
+
+			// Check current cursor and detect shrinkage
+			var previousStart int
+			var previousEnd int
+			var currentCursor int
+			if cursorErr := tx.QueryRow(`
+				SELECT COALESCE(start_page, 0), COALESCE(end_page, 0), COALESCE(current_page_cursor, 0)
+				FROM topics WHERE id = ?
+			`, topicID).Scan(&previousStart, &previousEnd, &currentCursor); cursorErr != nil && cursorErr != sql.ErrNoRows {
+				return cursorErr
+			}
+
+			// Check if bounds shrunk (start moved forward OR end moved backward)
+			shrunk := (previousStart > 0 && startPage > 0 && startPage > previousStart) ||
+				(previousEnd > 0 && endPage > 0 && endPage < previousEnd)
+
+			// Initialize cursor to startPage if uninitialized (0), otherwise clamp to new bounds
+			var newCursor int
+			if currentCursor == 0 {
+				newCursor = startPage
+				if newCursor < 0 {
+					newCursor = 0
+				}
+			} else {
+				// Clamp cursor to new bounds
+				if currentCursor < startPage {
+					newCursor = startPage
+				} else if currentCursor > endPage {
+					newCursor = endPage
+				} else {
+					newCursor = currentCursor
+				}
+			}
+
+			// Update bounds and cursor
+			res, err := tx.Exec(`
+				UPDATE topics
+				SET start_page = ?, end_page = ?, current_page_cursor = ?
+				WHERE id = ?
+			`, startPage, endPage, newCursor, topicID)
+			if err != nil {
+				return err
+			}
+			rowsAffected, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rowsAffected == 0 {
+				return fmt.Errorf("no rows updated for topicID %s", topicID)
+			}
+
+			if shrunk {
+				if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage int, endPage int) error {
-	if _, err := tx.Exec(`
-		DELETE FROM user_answers
-		WHERE question_id IN (
-			SELECT id
-			FROM questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range user answers: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		DELETE FROM fsrs_review_log
-		WHERE activity_type = 'quiz_question'
-		  AND reference_id IN (
-			SELECT id
-			FROM questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range quiz review logs: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		DELETE FROM assessment_fsrs
-		WHERE activity_type = 'quiz_question'
-		  AND reference_id IN (
-			SELECT id
-			FROM questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range quiz fsrs state: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		DELETE FROM questions
-		WHERE topic_id = ?
-		  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range questions: %w", err)
-	}
 
 	if _, err := tx.Exec(`
 		DELETE FROM fsrs_review_log
@@ -682,61 +614,52 @@ func AppendQuestionsAndAdvanceCursor(topicID string, questions []models.QuizQues
 		nextCursor = 0
 	}
 
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
+	return withTx(func(tx *sql.Tx) error {
+		// Append questions first
+		for _, q := range questions {
+			if q.TopicID != topicID {
+				return fmt.Errorf("question topic_id %s does not match target topic %s", q.TopicID, topicID)
+			}
+			optionsJSON, marshalErr := json.Marshal(q.Options)
+			if marshalErr != nil {
+				return fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+			}
 
-	// Append questions first
-	for _, q := range questions {
-		if q.TopicID != topicID {
-			err = fmt.Errorf("question topic_id %s does not match target topic %s", q.TopicID, topicID)
+			if _, err := tx.Exec(`
+				INSERT INTO questions (
+					id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
+					source_page_start, source_page_end, llm_model, prompt_version
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
+				q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
+				return err
+			}
+		}
+
+		// Update cursor
+		status := "reading"
+		if markLearned {
+			status = "learned"
+		}
+
+		result, err := tx.Exec(`
+			UPDATE topics
+			SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, nextCursor, status, topicID)
+		if err != nil {
 			return err
 		}
-		optionsJSON, marshalErr := json.Marshal(q.Options)
-		if marshalErr != nil {
-			err = fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
 			return err
 		}
-
-		if _, err = tx.Exec(`
-			INSERT INTO questions (
-				id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
-				source_page_start, source_page_end, llm_model, prompt_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
-			q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
-			return err
+		if rowsAffected == 0 {
+			return fmt.Errorf("topic not found: %s", topicID)
 		}
-	}
-
-	// Update cursor
-	status := "reading"
-	if markLearned {
-		status = "learned"
-	}
-
-	result, err := tx.Exec(`
-		UPDATE topics
-		SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, nextCursor, status, topicID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("topic not found: %s", topicID)
-	}
-
-	return tx.Commit()
+		return nil
+	})
 }
 
 // DeleteTopic removes a topic and all associated data
@@ -746,71 +669,48 @@ func DeleteTopic(topicID string) error {
 		return fmt.Errorf("topic id is required")
 	}
 
-	// Begin transaction for atomic deletion
-	tx, err := conn.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
+	return withTx(func(tx *sql.Tx) error {
+		// Delete dependent tables in order to respect foreign key constraints
 
-	// Delete dependent tables in order to respect foreign key constraints
+		// Delete notebook_chunks (via chunks)
+		if _, err := tx.Exec("DELETE FROM notebook_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE topic_id = ?)", topicID); err != nil {
+			return fmt.Errorf("failed to delete notebook_chunks: %w", err)
+		}
 
-	// Delete user_answers (via questions)
-	if _, err = tx.Exec("DELETE FROM user_answers WHERE question_id IN (SELECT id FROM questions WHERE topic_id = ?)", topicID); err != nil {
-		return fmt.Errorf("failed to delete user_answers: %w", err)
-	}
+		// Delete fsrs_review_log
+		if _, err := tx.Exec("DELETE FROM fsrs_review_log WHERE topic_id = ?", topicID); err != nil {
+			return fmt.Errorf("failed to delete fsrs_review_log: %w", err)
+		}
 
-	// Delete notebook_chunks (via chunks)
-	if _, err = tx.Exec("DELETE FROM notebook_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE topic_id = ?)", topicID); err != nil {
-		return fmt.Errorf("failed to delete notebook_chunks: %w", err)
-	}
+		// Delete fsrs_cards
+		if _, err := tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", topicID); err != nil {
+			return fmt.Errorf("failed to delete fsrs_cards: %w", err)
+		}
 
-	// Delete fsrs_review_log
-	if _, err = tx.Exec("DELETE FROM fsrs_review_log WHERE topic_id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to delete fsrs_review_log: %w", err)
-	}
+		// Delete topic_progress
+		if _, err := tx.Exec("DELETE FROM topic_progress WHERE topic_id = ?", topicID); err != nil {
+			return fmt.Errorf("failed to delete topic_progress: %w", err)
+		}
 
-	// Delete fsrs_cards
-	if _, err = tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to delete fsrs_cards: %w", err)
-	}
+		// Delete chunks
+		if _, err := tx.Exec("DELETE FROM chunks WHERE topic_id = ?", topicID); err != nil {
+			return fmt.Errorf("failed to delete chunks: %w", err)
+		}
 
-	// Delete questions
-	if _, err = tx.Exec("DELETE FROM questions WHERE topic_id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to delete questions: %w", err)
-	}
+		// Delete parents
+		if _, err := tx.Exec("DELETE FROM parents WHERE topic_id = ?", topicID); err != nil {
+			return fmt.Errorf("failed to delete parents: %w", err)
+		}
 
-	// Delete topic_progress
-	if _, err = tx.Exec("DELETE FROM topic_progress WHERE topic_id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to delete topic_progress: %w", err)
-	}
+		// Update notebooks that reference this topic to null
+		if _, err := tx.Exec("UPDATE notebooks SET topic_id = NULL WHERE topic_id = ?", topicID); err != nil {
+			return fmt.Errorf("failed to update notebooks: %w", err)
+		}
 
-	// Delete chunks
-	if _, err = tx.Exec("DELETE FROM chunks WHERE topic_id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to delete chunks: %w", err)
-	}
-
-	// Delete parents
-	if _, err = tx.Exec("DELETE FROM parents WHERE topic_id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to delete parents: %w", err)
-	}
-
-	// Update notebooks that reference this topic to null
-	if _, err = tx.Exec("UPDATE notebooks SET topic_id = NULL WHERE topic_id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to update notebooks: %w", err)
-	}
-
-	// Finally delete the topic
-	if _, err = tx.Exec("DELETE FROM topics WHERE id = ?", topicID); err != nil {
-		return fmt.Errorf("failed to delete topic: %w", err)
-	}
-
-	// Commit the transaction
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return nil
+		// Finally delete the topic
+		if _, err := tx.Exec("DELETE FROM topics WHERE id = ?", topicID); err != nil {
+			return fmt.Errorf("failed to delete topic: %w", err)
+		}
+		return nil
+	})
 }
