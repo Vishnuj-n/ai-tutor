@@ -578,7 +578,12 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 		return []models.ChunkWithContext{}, 0, nil
 	}
 
-	// Calculate final token count for all chunks
+	const maxContextChunks = 120
+	if len(chunks) > maxContextChunks {
+		chunks = chunks[:maxContextChunks]
+	}
+
+	// Calculate final token count for the bounded chunk set
 	finalTokenCount := calculatePromptTokenCount(chunks)
 	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext exit chunks=%d token_count=%d", len(chunks), finalTokenCount)
 
