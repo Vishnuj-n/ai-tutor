@@ -736,3 +736,65 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	}
 	return quizTaskID, nil
 }
+
+func saveQuizAttemptRepo(attempt models.QuizAttemptRecord) error {
+	_, err := conn.Exec(`
+		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
+	return err
+}
+
+func saveQuizAttemptRepoTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
+	_, err := tx.Exec(`
+		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
+	return err
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func SaveQuizAttempt(attempt models.QuizAttemptRecord) error {
+	attempt.ID = strings.TrimSpace(attempt.ID)
+	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
+	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
+	if attempt.ID == "" {
+		return fmt.Errorf("attempt id is required")
+	}
+	if attempt.TaskID == "" {
+		return fmt.Errorf("task id is required")
+	}
+	if attempt.AnswersJSON == "" {
+		return fmt.Errorf("answers json is required")
+	}
+	if attempt.CompletedAt <= 0 {
+		return fmt.Errorf("completed at is required")
+	}
+	return saveQuizAttemptRepo(attempt)
+}
+
+func SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
+	attempt.ID = strings.TrimSpace(attempt.ID)
+	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
+	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
+	if attempt.ID == "" {
+		return fmt.Errorf("attempt id is required")
+	}
+	if attempt.TaskID == "" {
+		return fmt.Errorf("task id is required")
+	}
+	if attempt.AnswersJSON == "" {
+		return fmt.Errorf("answers json is required")
+	}
+	if attempt.CompletedAt <= 0 {
+		return fmt.Errorf("completed at is required")
+	}
+	return saveQuizAttemptRepoTx(tx, attempt)
+}
+

@@ -17,7 +17,6 @@ import (
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
-	"ai-tutor/internal/rag"
 	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/runtime"
 	"ai-tutor/internal/scheduler"
@@ -114,7 +113,7 @@ func (a *App) startup(ctx context.Context) {
 			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
 				utils.Warnf("could not initialize vector table: %v", err)
 			} else {
-				indexer := rag.NewVectorIndexer(embedder, rag.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
+				indexer := retrieval.NewVectorIndexer(embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
 				go func() {
 					if err := indexer.IndexAllTopics(); err != nil {
 						utils.Warnf("vector indexing failed: %v", err)
