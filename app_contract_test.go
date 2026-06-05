@@ -783,24 +783,6 @@ func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
 		t.Fatalf("CreateWrittenQuestion failed: %v", err)
 	}
 
-	// Also insert into questions table to satisfy foreign key constraint for user_answers
-	if err := db.ReplaceQuestionsForTopic(topicID, []models.QuizQuestion{{
-		ID:              "written-q-1",
-		TopicID:         topicID,
-		Prompt:          "Explain why round robin improves fairness.",
-		Options:         []string{},
-		CorrectAnswer:   "",
-		Explanation:     "",
-		Hint:            "",
-		SourceHeading:   "CPU Scheduling",
-		SourceSnippet:   "",
-		SourcePageStart: 2,
-		SourcePageEnd:   3,
-		LLMModel:        "test-model",
-		PromptVersion:   "test-v1",
-	}}); err != nil {
-		t.Fatalf("ReplaceQuestionsForTopic failed: %v", err)
-	}
 
 	result := app.ScoreShortAnswer("written-q-1", "It gives each process a time slice.")
 	if errMsg, ok := result["error"]; ok {

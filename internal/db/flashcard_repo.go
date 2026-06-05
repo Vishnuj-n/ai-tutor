@@ -39,55 +39,6 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 	})
 }
 
-func getFlashcardsForTopicRepo(topicID string, dueOnly bool, now int64) ([]models.Flashcard, error) {
-	query := `
-		SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, answer, COALESCE(due_at, 0), suspended
-		FROM fsrs_cards
-		WHERE topic_id = ?
-		  AND suspended = 0
-	`
-	args := []interface{}{topicID}
-	if dueOnly {
-		query += `
-		  AND due_at IS NOT NULL
-		  AND due_at <= ?
-		`
-		args = append(args, now)
-	}
-	query += `
-		ORDER BY
-			CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,
-			due_at ASC,
-			created_at ASC,
-			id ASC
-	`
-
-	rows, err := conn.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	cards := make([]models.Flashcard, 0)
-	for rows.Next() {
-		var card models.Flashcard
-		var suspended bool
-		if err := rows.Scan(&card.ID, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
-			return nil, err
-		}
-		card.Suspended = suspended
-		cards = append(cards, card)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return cards, nil
-}
-
 func getFlashcardByIDRepo(cardID string) (*models.Flashcard, *models.FlashcardState, error) {
 	return getFlashcardByIDQuerier(conn, cardID)
 }

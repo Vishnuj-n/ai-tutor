@@ -244,51 +244,6 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 }
 
 func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage int, endPage int) error {
-	if _, err := tx.Exec(`
-		DELETE FROM user_answers
-		WHERE question_id IN (
-			SELECT id
-			FROM questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range user answers: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		DELETE FROM fsrs_review_log
-		WHERE activity_type = 'quiz_question'
-		  AND reference_id IN (
-			SELECT id
-			FROM questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range quiz review logs: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		DELETE FROM assessment_fsrs
-		WHERE activity_type = 'quiz_question'
-		  AND reference_id IN (
-			SELECT id
-			FROM questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range quiz fsrs state: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		DELETE FROM questions
-		WHERE topic_id = ?
-		  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range questions: %w", err)
-	}
 
 	if _, err := tx.Exec(`
 		DELETE FROM fsrs_review_log
@@ -717,11 +672,6 @@ func DeleteTopic(topicID string) error {
 	return withTx(func(tx *sql.Tx) error {
 		// Delete dependent tables in order to respect foreign key constraints
 
-		// Delete user_answers (via questions)
-		if _, err := tx.Exec("DELETE FROM user_answers WHERE question_id IN (SELECT id FROM questions WHERE topic_id = ?)", topicID); err != nil {
-			return fmt.Errorf("failed to delete user_answers: %w", err)
-		}
-
 		// Delete notebook_chunks (via chunks)
 		if _, err := tx.Exec("DELETE FROM notebook_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE topic_id = ?)", topicID); err != nil {
 			return fmt.Errorf("failed to delete notebook_chunks: %w", err)
@@ -735,11 +685,6 @@ func DeleteTopic(topicID string) error {
 		// Delete fsrs_cards
 		if _, err := tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", topicID); err != nil {
 			return fmt.Errorf("failed to delete fsrs_cards: %w", err)
-		}
-
-		// Delete questions
-		if _, err := tx.Exec("DELETE FROM questions WHERE topic_id = ?", topicID); err != nil {
-			return fmt.Errorf("failed to delete questions: %w", err)
 		}
 
 		// Delete topic_progress

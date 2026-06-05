@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"ai-tutor/internal/models"
+
+	"github.com/google/uuid"
 )
 
 // AssessmentFSRSRecord represents the shared FSRS state for an assessment
@@ -243,4 +245,62 @@ func upsertAssessmentFSRSReviewRepoTx(tx *sql.Tx, activityType, referenceID, top
 	}
 
 	return nil
+}
+
+func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	_, err := tx.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		answer.QuestionID,
+		answer.UserAnswer,
+		answer.Score,
+		answer.Feedback,
+		answer.SourceHeading,
+	)
+	return err
+}
+
+func saveWrittenAnswerRepo(answer models.WrittenAnswer) error {
+	_, err := conn.Exec(`
+		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		answer.QuestionID,
+		answer.UserAnswer,
+		answer.Score,
+		answer.Feedback,
+		answer.SourceHeading,
+	)
+	return err
+}
+
+// SaveWrittenAnswer stores a scored written response.
+func SaveWrittenAnswer(answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveWrittenAnswerRepo(answer)
+}
+
+// SaveWrittenAnswerTx stores a scored written response within a transaction.
+func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	// Validate UserAnswer without mutating original free-text input
+	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
+	if trimmedAnswer == "" {
+		return fmt.Errorf("user answer is required")
+	}
+	return saveWrittenAnswerRepoTx(tx, answer)
 }

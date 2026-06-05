@@ -58,39 +58,6 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
 
-		// Quiz questions and user answers
-		`CREATE TABLE IF NOT EXISTS questions (
-			id TEXT PRIMARY KEY,
-			topic_id TEXT NOT NULL,
-			source_chunk_id TEXT,
-			prompt TEXT NOT NULL,
-			options_json TEXT NOT NULL,
-			correct_answer TEXT NOT NULL,
-			explanation TEXT,
-			hint TEXT,
-			source_heading TEXT,
-			source_snippet TEXT,
-			source_page_start INTEGER DEFAULT 0,
-			source_page_end INTEGER DEFAULT 0,
-			llm_model TEXT,
-			prompt_version TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
-			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
-		)`,
-
-		`CREATE TABLE IF NOT EXISTS user_answers (
-			id TEXT PRIMARY KEY,
-			question_id TEXT NOT NULL,
-			user_answer TEXT NOT NULL,
-			is_correct INTEGER NOT NULL,
-			score INTEGER NOT NULL,
-			feedback TEXT,
-			hint TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
-		)`,
-
 		`CREATE TABLE IF NOT EXISTS quiz_attempts (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
