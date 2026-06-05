@@ -24,20 +24,9 @@ func InitSchema(tx *sql.Tx) error {
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 
-		`CREATE TABLE IF NOT EXISTS parents (
-			id TEXT PRIMARY KEY,
-			topic_id TEXT NOT NULL,
-			heading TEXT,
-			order_index INTEGER,
-			content_text TEXT NOT NULL,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id)
-		)`,
-
 		`CREATE TABLE IF NOT EXISTS chunks (
 			id TEXT PRIMARY KEY,
 			topic_id TEXT NOT NULL,
-			parent_id TEXT NOT NULL,
 			chunk_text TEXT NOT NULL,
 			page_num INTEGER DEFAULT 0,
 			token_count INTEGER DEFAULT 0,
@@ -45,8 +34,7 @@ func InitSchema(tx *sql.Tx) error {
 			weakness_score REAL DEFAULT 0,
 			embedding_ref TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id),
-			FOREIGN KEY (parent_id) REFERENCES parents(id)
+			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS topic_progress (

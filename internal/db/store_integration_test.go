@@ -30,18 +30,13 @@ func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing
 	groups := []NotebookTopicIngestionGroup{
 		{
 			TopicID: "os-scheduling",
-			Parents: []NotebookParentInput{
-				{ID: "nbp_nb-rollback_1", Heading: "Valid", Content: "valid parent", OrderIndex: 1},
-			},
 			Chunks: []NotebookChunkInput{
-				{ID: "nbc_nb-rollback_1_1", ParentID: "nbp_nb-rollback_1", Text: "valid chunk", TokenCount: 2, PageNum: 1},
+				{ID: "nbc_nb-rollback_1_1", Text: "valid chunk", TokenCount: 2, PageNum: 1},
 			},
 		},
 		{
 			TopicID: "",
-			Parents: []NotebookParentInput{
-				{ID: "nbp_nb-rollback_2", Heading: "Invalid", Content: "invalid parent", OrderIndex: 2},
-			},
+			Chunks:  []NotebookChunkInput{},
 		},
 	}
 
@@ -50,7 +45,6 @@ func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing
 		t.Fatalf("expected ingestion to fail for empty topic id")
 	}
 
-	assertCountEquals(t, `SELECT COUNT(*) FROM parents WHERE id LIKE ?`, "nbp_nb-rollback_%", 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunks WHERE id LIKE ?`, "nbc_nb-rollback_%", 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM notebook_chunks WHERE notebook_id = ?`, notebookID, 0)
 
@@ -92,24 +86,16 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 		t.Fatalf("CreateNotebook keep target failed: %v", err)
 	}
 
-	parentDelID := "parent-del"
 	chunkDelID := "chunk-del"
-	if err := CreateParentSection(parentDelID, autoTopicID, "Delete Heading", 1, "delete parent body"); err != nil {
-		t.Fatalf("CreateParentSection delete failed: %v", err)
-	}
-	if err := CreateChunk(chunkDelID, autoTopicID, parentDelID, "delete chunk body", 3, 1); err != nil {
+	if err := CreateChunk(chunkDelID, autoTopicID, "delete chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk delete failed: %v", err)
 	}
 	if err := LinkChunksToNotebook(notebookID, []string{chunkDelID}); err != nil {
 		t.Fatalf("LinkChunksToNotebook delete failed: %v", err)
 	}
 
-	parentKeepID := "parent-keep"
 	chunkKeepID := "chunk-keep"
-	if err := CreateParentSection(parentKeepID, keepTopicID, "Keep Heading", 1, "keep parent body"); err != nil {
-		t.Fatalf("CreateParentSection keep failed: %v", err)
-	}
-	if err := CreateChunk(chunkKeepID, keepTopicID, parentKeepID, "keep chunk body", 3, 1); err != nil {
+	if err := CreateChunk(chunkKeepID, keepTopicID, "keep chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk keep failed: %v", err)
 	}
 	if err := LinkChunksToNotebook(keepNotebookID, []string{chunkKeepID}); err != nil {
@@ -130,14 +116,12 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 	assertCountEquals(t, `SELECT COUNT(*) FROM notebooks WHERE id = ?`, notebookID, 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM notebook_chunks WHERE notebook_id = ?`, notebookID, 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunks WHERE id = ?`, chunkDelID, 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM parents WHERE id = ?`, parentDelID, 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM topic_progress WHERE topic_id = ?`, autoTopicID, 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, autoTopicID, 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunk_vectors cv JOIN chunks c ON c.rowid = cv.rowid WHERE c.id = ?`, chunkDelID, 0)
 
 	assertCountEquals(t, `SELECT COUNT(*) FROM notebooks WHERE id = ?`, keepNotebookID, 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunks WHERE id = ?`, chunkKeepID, 1)
-	assertCountEquals(t, `SELECT COUNT(*) FROM parents WHERE id = ?`, parentKeepID, 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM topics WHERE id = ?`, keepTopicID, 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunk_vectors cv JOIN chunks c ON c.rowid = cv.rowid WHERE c.id = ?`, chunkKeepID, 1)
 }
@@ -157,21 +141,13 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 		t.Fatalf("EnsureTopic topicB failed: %v", err)
 	}
 
-	parentA := "parent-scope-a"
 	chunkA := "chunk-scope-a"
-	if err := CreateParentSection(parentA, topicA, "A", 1, "topic a parent"); err != nil {
-		t.Fatalf("CreateParentSection topicA failed: %v", err)
-	}
-	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3, 1); err != nil {
+	if err := CreateChunk(chunkA, topicA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk topicA failed: %v", err)
 	}
 
-	parentB := "parent-scope-b"
 	chunkB := "chunk-scope-b"
-	if err := CreateParentSection(parentB, topicB, "B", 1, "topic b parent"); err != nil {
-		t.Fatalf("CreateParentSection topicB failed: %v", err)
-	}
-	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 3, 2); err != nil {
+	if err := CreateChunk(chunkB, topicB, "topic b chunk", 3, 2); err != nil {
 		t.Fatalf("CreateChunk topicB failed: %v", err)
 	}
 
@@ -219,17 +195,12 @@ func TestGetNotebookTopicTreeDeduplicatesTopicRowsPerNotebook(t *testing.T) {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
-	parentID := "parent-tree-dedupe"
-	if err := CreateParentSection(parentID, topicID, "Shared Heading", 1, "shared parent"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-
 	chunkA := "chunk-tree-dedupe-a"
 	chunkB := "chunk-tree-dedupe-b"
-	if err := CreateChunk(chunkA, topicID, parentID, "chunk a", 2, 1); err != nil {
+	if err := CreateChunk(chunkA, topicID, "chunk a", 2, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicID, parentID, "chunk b", 2, 2); err != nil {
+	if err := CreateChunk(chunkB, topicID, "chunk b", 2, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
@@ -262,21 +233,13 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 		t.Fatalf("EnsureTopic topicB failed: %v", err)
 	}
 
-	parentA := "parent-window-a"
 	chunkA := "chunk-window-a"
-	if err := CreateParentSection(parentA, topicA, "A", 1, "topic a parent"); err != nil {
-		t.Fatalf("CreateParentSection topicA failed: %v", err)
-	}
-	if err := CreateChunk(chunkA, topicA, parentA, "topic a chunk", 3, 1); err != nil {
+	if err := CreateChunk(chunkA, topicA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
 
-	parentB := "parent-window-b"
 	chunkB := "chunk-window-b"
-	if err := CreateParentSection(parentB, topicB, "B", 1, "topic b parent"); err != nil {
-		t.Fatalf("CreateParentSection topicB failed: %v", err)
-	}
-	if err := CreateChunk(chunkB, topicB, parentB, "topic b chunk", 8, 2); err != nil {
+	if err := CreateChunk(chunkB, topicB, "topic b chunk", 8, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
@@ -380,10 +343,7 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	groups := []NotebookTopicIngestionGroup{
 		{
 			TopicID: "valid-topic",
-			Parents: []NotebookParentInput{
-				{ID: "p1", Heading: "H", Content: "c", OrderIndex: 1},
-			},
-			Chunks: []NotebookChunkInput{},
+			Chunks:  []NotebookChunkInput{},
 		},
 	}
 
@@ -399,7 +359,6 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	groups2 := []NotebookTopicIngestionGroup{
 		{
 			TopicID: "   ",
-			Parents: []NotebookParentInput{},
 			Chunks:  []NotebookChunkInput{},
 		},
 	}
@@ -416,11 +375,8 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	validGroups := []NotebookTopicIngestionGroup{
 		{
 			TopicID: "  valid-topic-ws  ",
-			Parents: []NotebookParentInput{
-				{ID: "p-ws-1", Heading: "H", Content: "c", OrderIndex: 1},
-			},
 			Chunks: []NotebookChunkInput{
-				{ID: "c-ws-1", ParentID: "p-ws-1", Text: "chunk text", TokenCount: 2, PageNum: 1},
+				{ID: "c-ws-1", Text: "chunk text", TokenCount: 2, PageNum: 1},
 			},
 		},
 	}
@@ -436,17 +392,7 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	}
 
 	// Verify that the topic without whitespace was used (not with whitespace)
-	assertCountEquals(t, `SELECT COUNT(*) FROM parents WHERE id = ?`, "p-ws-1", 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunks WHERE id = ?`, "c-ws-1", 1)
-
-	// Verify the persisted topic_id is the trimmed value, not the original with whitespace
-	var parentTopicID string
-	if err := conn.QueryRow(`SELECT topic_id FROM parents WHERE id = ?`, "p-ws-1").Scan(&parentTopicID); err != nil {
-		t.Fatalf("failed to query parent topic_id: %v", err)
-	}
-	if parentTopicID != "valid-topic-ws" {
-		t.Fatalf("expected parent topic_id to be trimmed 'valid-topic-ws', got %q", parentTopicID)
-	}
 
 	var chunkTopicID string
 	if err := conn.QueryRow(`SELECT topic_id FROM chunks WHERE id = ?`, "c-ws-1").Scan(&chunkTopicID); err != nil {
@@ -456,7 +402,6 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 		t.Fatalf("expected chunk topic_id to be trimmed 'valid-topic-ws', got %q", chunkTopicID)
 	}
 }
-
 
 func TestGetChunkTextsForTopicPageRangeIncludesBufferPage(t *testing.T) {
 	initDBForTest(t, false, 0)
@@ -470,17 +415,13 @@ func TestGetChunkTextsForTopicPageRangeIncludesBufferPage(t *testing.T) {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
-	parentID := "completion-context-parent"
 	groups := []NotebookTopicIngestionGroup{{
 		TopicID: topicID,
-		Parents: []NotebookParentInput{{
-			ID: parentID, Heading: "Context", Content: "context body", OrderIndex: 1,
-		}},
 		Chunks: []NotebookChunkInput{
-			{ID: "completion-context-c1", ParentID: parentID, Text: "page one", TokenCount: 2, PageNum: 1},
-			{ID: "completion-context-c2", ParentID: parentID, Text: "page two", TokenCount: 2, PageNum: 2},
-			{ID: "completion-context-c3", ParentID: parentID, Text: "page three buffer", TokenCount: 3, PageNum: 3},
-			{ID: "completion-context-c4", ParentID: parentID, Text: "page four", TokenCount: 2, PageNum: 4},
+			{ID: "completion-context-c1", Text: "page one", TokenCount: 2, PageNum: 1},
+			{ID: "completion-context-c2", Text: "page two", TokenCount: 2, PageNum: 2},
+			{ID: "completion-context-c3", Text: "page three buffer", TokenCount: 3, PageNum: 3},
+			{ID: "completion-context-c4", Text: "page four", TokenCount: 2, PageNum: 4},
 		},
 	}}
 	if err := IngestNotebookContentByTopic(notebookID, groups); err != nil {
@@ -538,17 +479,13 @@ func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
 	}
 
 	topicID := "perf-vector-topic"
-	parentID := "perf-vector-parent"
 	if err := EnsureTopic(topicID, "Perf Vector Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
-	}
-	if err := CreateParentSection(parentID, topicID, "Perf", 1, "perf parent"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
 	}
 	for i := 1; i <= 120; i++ {
 		chunkID := fmt.Sprintf("perf-vector-c%03d", i)
 		if err := insertChunkRow(conn, topicID, NotebookChunkInput{
-			ID: chunkID, ParentID: parentID, Text: fmt.Sprintf("chunk %d", i), TokenCount: 2, PageNum: (i % 12) + 1,
+			ID: chunkID, Text: fmt.Sprintf("chunk %d", i), TokenCount: 2, PageNum: (i % 12) + 1,
 		}); err != nil {
 			t.Fatalf("insertChunkRow failed: %v", err)
 		}
@@ -576,7 +513,6 @@ func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
 		t.Fatalf("context-locked vector retrieval p95: %s exceeds threshold: 50ms", p95Duration(durations))
 	}
 }
-
 
 func p95Duration(durations []time.Duration) time.Duration {
 	if len(durations) == 0 {
@@ -941,7 +877,6 @@ func TestInitEnablesForeignKeys(t *testing.T) {
 	}
 }
 
-
 func TestTopicDeletionCascadesToFSRSTables(t *testing.T) {
 	initDBForTest(t, false, 0)
 
@@ -1064,13 +999,10 @@ func TestGetTotalChunkTokensFallsBackWhenTokenCountMissing(t *testing.T) {
 	if err := EnsureTopic(topicID, "Token Fallback Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := CreateParentSection("token-parent", topicID, "Heading", 1, "content"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-	if err := CreateChunk("token-c1", topicID, "token-parent", "abcdabcd", 0, 1); err != nil {
+	if err := CreateChunk("token-c1", topicID, "abcdabcd", 0, 1); err != nil {
 		t.Fatalf("CreateChunk c1 failed: %v", err)
 	}
-	if err := CreateChunk("token-c2", topicID, "token-parent", "abcdefghijkl", 3, 2); err != nil {
+	if err := CreateChunk("token-c2", topicID, "abcdefghijkl", 3, 2); err != nil {
 		t.Fatalf("CreateChunk c2 failed: %v", err)
 	}
 

@@ -48,13 +48,11 @@ func (s *StudyService) GenerateShortAnswerPrompt(topicID string) map[string]inte
 
 	// Build context from top results.
 	var contextBuilder strings.Builder
-	parentIDs := make([]string, 0, len(results))
+	chunkIDs := make([]string, 0, len(results))
 	for _, r := range results {
 		contextBuilder.WriteString(r.Text)
 		contextBuilder.WriteByte('\n')
-		if r.ParentID != "" {
-			parentIDs = append(parentIDs, r.ParentID)
-		}
+		chunkIDs = append(chunkIDs, r.ChunkID)
 	}
 	contextText := strings.TrimSpace(contextBuilder.String())
 
@@ -82,8 +80,8 @@ Retrieved material:
 		return map[string]interface{}{"error": "short-answer prompt generation returned empty prompt"}
 	}
 
-	// Resolve lineage from cited chunk parents.
-	sourceHeading, sourcePageStart, sourcePageEnd := resolveSocraticLineage(topicID, parentIDs)
+	// Resolve lineage from cited chunks.
+	sourceHeading, sourcePageStart, sourcePageEnd := resolveSocraticLineage(topicID, chunkIDs)
 
 	question := models.WrittenQuestion{
 		ID:              uuid.NewString(),
@@ -108,9 +106,9 @@ Retrieved material:
 	}
 }
 
-// resolveSocraticLineage resolves the heading / page range from parent section IDs.
-func resolveSocraticLineage(topicID string, parentIDs []string) (string, int, int) {
-	if len(parentIDs) == 0 {
+// resolveSocraticLineage resolves the heading / page range from chunk IDs.
+func resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int) {
+	if len(chunkIDs) == 0 {
 		return "", 0, 0
 	}
 	headingPageRanges, err := db.GetTopicHeadingPageRanges(topicID)
@@ -121,15 +119,15 @@ func resolveSocraticLineage(topicID string, parentIDs []string) (string, int, in
 	sourceHeading, sourcePageStart, sourcePageEnd := "", 0, 0
 	maxSpan := 0
 	// Pick the heading with the widest page span to ensure sourceHeading covers the computed range
-	for _, pid := range parentIDs {
-		pageRange, ok := headingPageRanges[pid]
+	for _, cid := range chunkIDs {
+		pageRange, ok := headingPageRanges[cid]
 		if !ok {
 			continue
 		}
 		span := pageRange[1] - pageRange[0]
 		if span > maxSpan {
 			maxSpan = span
-			sourceHeading = pid
+			sourceHeading = fmt.Sprintf("Page %d", pageRange[0])
 		}
 		if sourcePageStart == 0 || pageRange[0] < sourcePageStart {
 			sourcePageStart = pageRange[0]

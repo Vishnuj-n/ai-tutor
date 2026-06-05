@@ -178,7 +178,6 @@ type ReadingTopicCursor struct {
 type Chunk struct {
 	ID              string
 	TopicID         string
-	ParentID        string
 	Text            string
 	ImportanceScore float64
 	WeaknessScore   float64
@@ -187,10 +186,9 @@ type Chunk struct {
 
 // ChunkWithContext is the structured prompt context passed to LLM generation.
 type ChunkWithContext struct {
-	ChunkID  string `json:"chunk_id"`
-	ParentID string `json:"parent_id,omitempty"`
-	PageNum  int    `json:"page_num"`
-	Text     string `json:"text"`
+	ChunkID string `json:"chunk_id"`
+	PageNum int    `json:"page_num"`
+	Text    string `json:"text"`
 }
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
