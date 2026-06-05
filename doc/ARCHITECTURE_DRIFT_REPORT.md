@@ -92,14 +92,6 @@ This audit analyzes the AI Tutor codebase against the intended architecture spec
 | `assessment_repo.go` | SUPPORTING | ~120 | Active |
 | `vector_repo.go` | SUPPORTING | ~100 | Active |
 
-### Orphaned/Dead Repositories
-
-| Repository | Classification | Issue | Recommendation |
-|------------|----------------|-------|----------------|
-| `marathon_repo.go` | **LEGACY** | Marathon Mode endpoints moved to study service | Remove after verification |
-| `notebook_topic_tree_repo.go` | **LEGACY** | Replaced by GetNotebookTopicTree in notebooks_repo.go | Remove after verification |
-| `notebook_orchestration_repo.go` | **PREMATURE** | No clear consumer | **Investigate for removal** |
-| `internal/db/notebook_orchestration_repo.go` | **PREMATURE** | No clear consumer in codebase | **Investigate for removal** |
 
 ---
 
@@ -130,14 +122,6 @@ This audit analyzes the AI Tutor codebase against the intended architecture spec
 | `internal/notebook/syllabus.go` | Chapter extraction |
 | `internal/rag/pipeline.go` | RAG retrieval |
 
-### Premature/Orphaned Services
-
-| Service | Classification | Issue |
-|---------|----------------|-------|
-| `internal/notebook/orchestration.go` | **PREMATURE** | No clear Wails binding consumer; appears to duplicate study_queue functionality |
-| `internal/db/notebook_orchestration_repo.go` | **PREMATURE** | Orphaned repository |
-
-**STATUS: HIGH RISK** - These represent ghost architecture that should be investigated for removal.
 
 ---
 
@@ -414,13 +398,13 @@ Follow-up inserts:
 - [x] Updated Dashboard.vue to use `getTodayPlan()` directly
 
 ### Phase 3: Removal (Medium Risk) - PENDING
-- [ ] Remove `internal/notebook/orchestration.go` (after removing remaining internal callers)
-- [ ] Remove `internal/db/notebook_orchestration_repo.go`
-- [ ] Keep marathon_repo.go - still has real consumers
-- [ ] Keep notebook_topic_tree_repo.go - still has real consumers
+- [x] Remove `internal/notebook/orchestration.go` (after removing remaining internal callers)
+- [x] Remove `internal/db/notebook_orchestration_repo.go`
+- [x] Keep marathon_repo.go - still has real consumers
+- [x] Keep notebook_topic_tree_repo.go - still has real consumers
 
 ### Phase 4: Documentation (Low Risk) - PENDING
-- [ ] Update SCHEMA.md with current tables
+- [x] Update SCHEMA.md with current tables
 - [ ] Add queue lifecycle documentation to ARCHITECTURE.md
 
 ---

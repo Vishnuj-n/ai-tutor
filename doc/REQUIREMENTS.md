@@ -49,8 +49,8 @@ A **Persistent Guided Study Queue** - local-first desktop assistant for studying
 	- Parse uploaded files to extract text and metadata (page counts for PDFs)
 	- **Sliding window chunking**: 2500-word chunks with 200-word overlap
 	- **NO semantic chunking** - deterministic boundaries only
-	- Persist blocks in `blocks` table with `block_type = CHUNK`
-	- Write embeddings to `block_vectors` via `sqlite-vec`
+	- Persist chunks in `chunks` table with `parent_id` linking to `parents` (section headings)
+	- Store embeddings in the RAG embedding store (sqlite-vec virtual table); reference embeddings from `chunks` via `embedding_ref`
 	- **Insert READING tasks** into `study_queue` during ingestion
 	- **Synchronous processing** - no background workers for MVP
 
@@ -131,10 +131,10 @@ A **Persistent Guided Study Queue** - local-first desktop assistant for studying
 - Follow-up tasks insert correctly based on completion rules
 
 ### Ingestion
-- PDF upload creates blocks via sliding window (2500 words, 200 overlap)
+	- PDF upload creates chunks via sliding window (2500 words, 200 overlap)
 - No semantic chunking or AI-generated boundaries
 - READING tasks auto-inserted into `study_queue` during ingestion
-- Embeddings generated with ONNX Runtime and stored in `block_vectors`
+	- Embeddings generated with ONNX Runtime and stored in the RAG embedding store (sqlite-vec); see `doc/SCHEMA.md` for mapping
 
 ### Quiz Flow (Synchronous)
 - User clicks Complete → loading spinner shown
