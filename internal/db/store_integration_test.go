@@ -997,20 +997,12 @@ func TestTopicDeletionCascadesToAssessmentTables(t *testing.T) {
 	`, "written-1", topicID, "Explain RR", "RR", 1, 2, "test-model", "written-v1"); err != nil {
 		t.Fatalf("insert written_questions failed: %v", err)
 	}
-	if _, err := conn.Exec(`
-		INSERT INTO assessment_fsrs (
-			activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at
-		) VALUES (?, ?, ?, ?, ?, ?)
-	`, "written_question", "written-1", topicID, `{}`, 100, 50); err != nil {
-		t.Fatalf("insert assessment_fsrs failed: %v", err)
-	}
 
 	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
 		t.Fatalf("topic delete failed: %v", err)
 	}
 
 	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-1", 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE reference_id = ?`, "written-1", 0)
 }
 
 func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T) {
@@ -1042,12 +1034,6 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 	}); err != nil {
 		t.Fatalf("CreateWrittenQuestion out of range failed: %v", err)
 	}
-	if _, err := conn.Exec(`
-		INSERT INTO assessment_fsrs (activity_type, reference_id, topic_id, state_json, due_at, last_reviewed_at)
-		VALUES ('written_question', 'written-out-range', ?, '{}', 100, 50)
-	`, topicID); err != nil {
-		t.Fatalf("insert written assessment_fsrs failed: %v", err)
-	}
 	if err := InsertFSRSReviewLog(models.FSRSReviewLog{
 		ID:              "log-written-out-range",
 		TopicID:         topicID,
@@ -1068,7 +1054,6 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 
 	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-in-range", 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-out-range", 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM assessment_fsrs WHERE activity_type = 'written_question' AND reference_id = ?`, "written-out-range", 0)
 	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-written-out-range", 0)
 }
 

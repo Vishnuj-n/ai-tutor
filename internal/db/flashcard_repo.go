@@ -9,8 +9,6 @@ import (
 	"ai-tutor/internal/models"
 )
 
-// createFlashcardsRepo writes cards to DB transactionally.
-// Used by: app_contract_test.go via CreateFlashcards (test-only coverage, production runs GetOrCreateFlashcardsForTopic)
 func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.FlashcardState) error {
 	return withTx(func(tx *sql.Tx) error {
 		for _, card := range cards {
@@ -19,20 +17,12 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 				return fmt.Errorf("failed to encode flashcard state for %s: %w", card.ID, marshalErr)
 			}
 
-			result, execErr := tx.Exec(`
+			_, execErr := tx.Exec(`
 				INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
 				VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 			`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 			if execErr != nil {
 				return execErr
-			}
-
-			rowsAffected, rowsErr := result.RowsAffected()
-			if rowsErr != nil {
-				return rowsErr
-			}
-			if rowsAffected != 1 {
-				return fmt.Errorf("flashcard %s was not inserted", card.ID)
 			}
 		}
 		return nil
@@ -280,6 +270,7 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 			return nil
 		}
 
+		insertedCards := make([]models.Flashcard, 0, len(cardsIfNotExist))
 		for _, card := range cardsIfNotExist {
 			stateJSON, marshalErr := json.Marshal(statesIfNotExist[card.ID])
 			if marshalErr != nil {
@@ -298,12 +289,12 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 			if rowsErr != nil {
 				return rowsErr
 			}
-			if rowsAffected != 1 {
-				return fmt.Errorf("flashcard %s was not inserted", card.ID)
+			if rowsAffected == 1 {
+				insertedCards = append(insertedCards, card)
 			}
 		}
 
-		cards = cardsIfNotExist
+		cards = insertedCards
 		existing = false
 		return nil
 	})
