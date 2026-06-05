@@ -25,3 +25,4 @@ graphify-out/*
 graphify-out/graph.json
 !graphify-out/graph.html
 *.dll
+doc/NOTE.md

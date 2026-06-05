@@ -12,6 +12,11 @@ import (
 	"ai-tutor/internal/utils"
 )
 
+// querier interface allows both *sql.DB and *sql.Tx to be used with database helper functions
+type querier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 var conn *sql.DB
 var embeddingDimension int32 = 0 // Will be set during DB initialization with vec0
 
@@ -699,45 +704,5 @@ func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) 
 	return getWrittenQuestionByIDRepo(questionID)
 }
 
-// GetAssessmentFSRSState returns shared assessment FSRS state for one quiz/written reference.
-func GetAssessmentFSRSState(activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	if activityType == "" || referenceID == "" {
-		return nil, fmt.Errorf("activity type and reference id are required")
-	}
-	return getAssessmentFSRSStateRepo(activityType, referenceID, sourceChunkID)
-}
 
-// GetAssessmentFSRSStateTx returns shared assessment FSRS state for one quiz/written reference within a transaction.
-func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	if activityType == "" || referenceID == "" {
-		return nil, fmt.Errorf("activity type and reference id are required")
-	}
-	return getAssessmentFSRSStateRepoTx(tx, activityType, referenceID, sourceChunkID)
-}
-
-// UpsertAssessmentFSRSReview saves shared assessment FSRS state and corresponding review log.
-func UpsertAssessmentFSRSReview(activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	topicID = strings.TrimSpace(topicID)
-	if activityType == "" || referenceID == "" || topicID == "" {
-		return fmt.Errorf("activity type, reference id, and topic id are required")
-	}
-	return upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceChunkID, state, dueAt, reviewedAt, reviewLog)
-}
-
-// UpsertAssessmentFSRSReviewTx saves shared assessment FSRS state and corresponding review log within a transaction.
-func UpsertAssessmentFSRSReviewTx(tx *sql.Tx, activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	topicID = strings.TrimSpace(topicID)
-	if activityType == "" || referenceID == "" || topicID == "" {
-		return fmt.Errorf("activity type, reference id, and topic id are required")
-	}
-	return upsertAssessmentFSRSReviewRepoTx(tx, activityType, referenceID, topicID, sourceChunkID, state, dueAt, reviewedAt, reviewLog)
-}
 

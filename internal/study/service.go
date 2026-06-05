@@ -132,11 +132,6 @@ Student answer: %s`, question.Prompt, userAnswer)
 	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
 		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
 	}
-	// Use source_chunk_id from written question for proper chunk lineage
-	fsrsResult, err := s.LogReviewTx(tx, question.TopicID, "written_question", question.ID, question.SourceChunkID, score)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
-	}
 	if err := tx.Commit(); err != nil {
 		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
 	}
@@ -147,10 +142,6 @@ Student answer: %s`, question.Prompt, userAnswer)
 		"prompt":            question.Prompt,
 		"score":             score,
 		"feedback":          strings.TrimSpace(parsed.Feedback),
-		"fsrsRating":        fsrsResult["fsrs_rating"],
-		"scheduled_days":    fsrsResult["scheduled_days"],
-		"next_review_at":    fsrsResult["next_review_at"],
-		"review_log_id":     fsrsResult["review_log_id"],
 		"source_page_start": question.SourcePageStart,
 		"source_page_end":   question.SourcePageEnd,
 		"source_heading":    question.SourceHeading,

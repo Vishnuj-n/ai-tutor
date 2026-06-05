@@ -755,7 +755,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 
 // TestGenerateShortAnswerPrompt_MalformedJSON removed - study service now has fallback behavior
 
-func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
+func TestScoreShortAnswerLoadsPersistedPromptAndSavesResponse(t *testing.T) {
 	app := newTestApp(t)
 	mockProvider := &mockLLMProvider{
 		answer: `{"score":8,"feedback":"Strong answer with a small omission."}`,
@@ -783,27 +783,15 @@ func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
 		t.Fatalf("CreateWrittenQuestion failed: %v", err)
 	}
 
-
 	result := app.ScoreShortAnswer("written-q-1", "It gives each process a time slice.")
 	if errMsg, ok := result["error"]; ok {
 		t.Fatalf("expected success, got error: %v", errMsg)
 	}
-	if got := result["fsrsRating"]; got != "Good" {
-		t.Fatalf("expected fsrsRating Good, got %#v", got)
+	if got := result["score"]; got != 8 {
+		t.Fatalf("expected score 8, got %#v", got)
 	}
-	if got := result["next_review_at"]; got == "" {
-		t.Fatalf("expected next_review_at, got %#v", got)
-	}
-
-	state, err := db.GetAssessmentFSRSState("written_question", "written-q-1", "")
-	if err != nil {
-		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
-	}
-	if state == nil {
-		t.Fatalf("expected persisted assessment fsrs state")
-	}
-	if state.GetState().ScheduledDays < 0 {
-		t.Fatalf("expected scheduled days >= 0, got %d", state.GetState().ScheduledDays)
+	if got := result["feedback"]; got != "Strong answer with a small omission." {
+		t.Fatalf("expected feedback, got %#v", got)
 	}
 }
 

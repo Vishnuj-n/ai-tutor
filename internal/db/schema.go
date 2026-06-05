@@ -179,22 +179,6 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
 		)`,
 
-		// Assessment FSRS (Sprint 14)
-		`CREATE TABLE IF NOT EXISTS assessment_fsrs (
-			activity_type TEXT NOT NULL,
-			reference_id TEXT NOT NULL,
-			topic_id TEXT NOT NULL,
-			source_chunk_id TEXT,
-			state_json TEXT NOT NULL,
-			due_at INTEGER,
-			last_reviewed_at INTEGER,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (activity_type, reference_id, source_chunk_id),
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
-			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
-		)`,
-
 		// Study queue (Sprint 1 foundation)
 		`CREATE TABLE IF NOT EXISTS study_queue (
 			id TEXT PRIMARY KEY,
@@ -265,7 +249,6 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_fsrs_review_log_topic_reviewed_at ON fsrs_review_log(topic_id, reviewed_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_written_questions_topic_created_at ON written_questions(topic_id, created_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_assessment_fsrs_topic_due_at ON assessment_fsrs(topic_id, due_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_chunks_topic_page_num ON chunks(topic_id, page_num)`,
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_updated_at ON topics(status, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_topics_status_created_at ON topics(status, created_at DESC)`,

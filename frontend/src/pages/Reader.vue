@@ -87,7 +87,7 @@
               v-if="isTaskFlow"
               class="primary"
               :disabled="
-                reader.loadingBundle.value || completingSession.value || !activeTaskID.value
+                reader.loadingBundle.value || completingSession.value
               "
               @click="completeSession"
             >
