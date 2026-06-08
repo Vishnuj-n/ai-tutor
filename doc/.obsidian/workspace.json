@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "NOTE.md",
+                "file": "SPRINT.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "NOTE"
+              "title": "SPRINT"
             }
           }
         ]
@@ -183,10 +183,11 @@
       "bases:Create new base": false
     }
   },
-  "active": "3a9cbebc74032973",
+  "active": "50e5613e93f70a39",
   "lastOpenFiles": [
-    "CLAUDE.md",
     "ARCHITECTURE.md",
+    "NOTE.md",
+    "CLAUDE.md",
     "APP_FLOW.md",
     "AGENTS.md",
     "AGENT_MAP.md",
