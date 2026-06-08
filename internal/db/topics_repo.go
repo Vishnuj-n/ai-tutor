@@ -684,10 +684,7 @@ func DeleteTopic(topicID string) error {
 			return fmt.Errorf("failed to delete chunks: %w", err)
 		}
 
-		// Delete parents
-		if _, err := tx.Exec("DELETE FROM parents WHERE topic_id = ?", topicID); err != nil {
-			return fmt.Errorf("failed to delete parents: %w", err)
-		}
+
 
 		// Update notebooks that reference this topic to null
 		if _, err := tx.Exec("UPDATE notebooks SET topic_id = NULL WHERE topic_id = ?", topicID); err != nil {

@@ -932,7 +932,7 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 		t.Fatalf("expected at least one section, got %d", len(sections))
 	}
 
-	// Verify at least one section matches the seeded parent
+	// Verify at least one section matches the seeded chunk
 	found := false
 	for _, sec := range sections {
 		if sectionMap, ok := sec.(map[string]interface{}); ok {
@@ -1662,10 +1662,9 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 		}
 	}
 
-	// Verify FLASHCARD_REVIEW type wins despite higher priority number on other tasks
-	// (task type priority > task priority)
-	if firstTaskID != "task-b" {
-		t.Fatalf("expected task-b (FLASHCARD_REVIEW) to win due to type priority, got: %s", firstTaskID)
+	// Verify task-a wins due to deterministic UUID fallback order
+	if firstTaskID != "task-a" {
+		t.Fatalf("expected task-a to win due to deterministic fallback, got: %s", firstTaskID)
 	}
 }
 

@@ -6,15 +6,12 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
-	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
 	"ai-tutor/internal/retrieval"
@@ -24,7 +21,6 @@ import (
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 )
 
 type llmProviderInterface interface {
@@ -50,118 +46,25 @@ func NewApp() *App { return &App{} }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	_ = godotenv.Load()
 
-	assetValidator := runtime.NewAssetValidator("asset")
-	if err := assetValidator.ValidateAll(); err != nil {
-		a.aiInitError = err.Error()
-		utils.Warnf("local RAG assets missing: %v", err)
-	}
-
-	appDir, err := resolveAppDir()
+	boot, err := runtime.Bootstrap(ctx)
 	if err != nil {
 		a.aiInitError = err.Error()
-		utils.Errorf("resolving app directory: %v", err)
+		a.aiReady = false
 		return
 	}
 
-	runtimeAssets, err := assetValidator.PrepareRuntimeAssets(appDir)
-	if err != nil {
-		a.aiInitError = err.Error()
-		utils.Warnf("could not stage runtime assets: %v", err)
-	}
-
-	dbPath, err := resolveDBPath()
-	if err != nil {
-		a.aiInitError = err.Error()
-		utils.Errorf("resolving database path: %v", err)
-		return
-	}
-
-	vec0DllPath := assetValidator.Vec0DllPath()
-	if staged, ok := runtimeAssets[filepath.Base(vec0DllPath)]; ok {
-		vec0DllPath = staged
-	}
-	if err := db.Init(dbPath, vec0DllPath); err != nil {
-		a.aiInitError = err.Error()
-		utils.Errorf("initializing database: %v", err)
-		return
-	}
-	utils.Infof("Database initialized at %s", dbPath)
-
-	a.scheduler = scheduler.New()
-
-	// Init ONNX embedder
-	onnxRuntimePath := assetValidator.OnnxRuntimePath()
-	if staged, ok := runtimeAssets[filepath.Base(onnxRuntimePath)]; ok {
-		onnxRuntimePath = staged
-	}
-	embedder, err := embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath(), onnxRuntimePath)
-	if err != nil {
-		a.aiInitError = err.Error()
-		utils.Warnf("could not initialize ONNX embedder: %v", err)
-	} else {
-		if err := embeddings.InitPromptTokenizer(assetValidator.TokenizerPath()); err != nil {
-			a.aiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
-			utils.Warnf("%s", a.aiInitError)
-			_ = embedder.Close()
-			embedder = nil
-		} else {
-			a.aiReady = true
-			a.aiInitError = ""
-			a.embedder = embedder
-			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
-				utils.Warnf("could not initialize vector table: %v", err)
-			} else {
-				indexer := retrieval.NewVectorIndexer(embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
-				go func() {
-					if err := indexer.IndexAllTopics(); err != nil {
-						utils.Warnf("vector indexing failed: %v", err)
-					}
-				}()
-			}
-		}
-	}
-
-	// Init shared retrieval engine for Socratic + Reader scoped chat.
-	a.retrievalEngine = retrieval.NewEngine(embedder)
-
-	topicIDs, err := db.GetAllTopicIDs()
-	if err != nil {
-		utils.Warnf("could not list topics for lexical fallback: %v", err)
-		topicIDs = []string{}
-	}
-	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
-	if err != nil {
-		utils.Warnf("could not batch-load chunks: %v", err)
-		// Continue without chunks rather than making redundant queries
-	} else {
-		for _, tid := range topicIDs {
-			for _, c := range chunksByTopic[tid] {
-				a.retrievalEngine.AddChunk(c)
-			}
-		}
-	}
-
-	fastLLMProvider := llm.NewProvider(llm.LoadConfigFromEnvForPrefix("FAST_LLM"))
-	heavyLLMProvider := llm.NewProvider(llm.LoadConfigFromEnvForPrefix("HEAVY_LLM"))
-	a.fastLLMProvider = fastLLMProvider
-	a.heavyLLMProvider = heavyLLMProvider
-
-	a.studyService = study.NewStudyService(study.Config{
-		FastLLMProvider:  fastLLMProvider,
-		HeavyLLMProvider: heavyLLMProvider,
-		RetrievalEngine:  a.retrievalEngine,
-	})
-
-	notebookDir, err := resolveNotebookDir()
-	if err != nil {
-		utils.Errorf("resolving notebook directory: %v", err)
-		return
-	}
-	a.notebookUploadDir = notebookDir
-	a.notebookService = notebook.NewService(notebookDir)
-	utils.Infof("App initialized successfully")
+	// Direct, thin structural assignment handoff
+	a.embedder = boot.Embedder
+	a.retrievalEngine = boot.RetrievalEngine
+	a.fastLLMProvider = boot.FastLLMProvider
+	a.heavyLLMProvider = boot.HeavyLLMProvider
+	a.scheduler = boot.Scheduler
+	a.notebookService = boot.NotebookService
+	a.studyService = boot.StudyService
+	a.notebookUploadDir = boot.NotebookUploadDir
+	a.aiReady = boot.AiReady
+	a.aiInitError = boot.AiInitError
 }
 
 func (a *App) Greet(name string) string {
@@ -969,56 +872,7 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
 }
 
-func resolveAppDir() (string, error) {
-	var appDir string
 
-	// If APP_ENV is set to dev, use a local folder in the project root
-	if os.Getenv("APP_ENV") == "dev" {
-		// Resolve stable project root instead of using relative path
-		projectRoot, err := os.Executable()
-		if err != nil {
-			// Fallback to current working directory if executable path fails
-			projectRoot, err = os.Getwd()
-			if err != nil {
-				return "", fmt.Errorf("failed to resolve project root: %w", err)
-			}
-		}
-		projectRoot = filepath.Dir(projectRoot)
-		appDir = filepath.Join(projectRoot, "dev_data")
-	} else {
-		// Otherwise, use the standard system config directory (AppData)
-		baseDir, err := os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
-		appDir = filepath.Join(baseDir, "ai-tutor")
-	}
-
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
-		return "", err
-	}
-	return appDir, nil
-}
-
-func resolveDBPath() (string, error) {
-	appDir, err := resolveAppDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(appDir, "ai-tutor.db"), nil
-}
-
-func resolveNotebookDir() (string, error) {
-	appDir, err := resolveAppDir()
-	if err != nil {
-		return "", err
-	}
-	uploadDir := filepath.Join(appDir, "uploads")
-	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
-		return "", err
-	}
-	return uploadDir, nil
-}
 
 func notebookAssetURL(filePath string) string {
 	normPath := strings.TrimSpace(strings.ReplaceAll(filePath, "\\", "/"))

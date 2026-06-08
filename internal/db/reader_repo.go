@@ -212,8 +212,8 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 	return result, nil
 }
 
-// GetParentSection retrieves a parent section by ID (adapted to chunk-level section)
-func GetParentSection(chunkID string) (map[string]string, error) {
+// GetChunkSection retrieves a chunk section by ID
+func GetChunkSection(chunkID string) (map[string]string, error) {
 	var id, text string
 	var pageNum int
 	err := conn.QueryRow(`
