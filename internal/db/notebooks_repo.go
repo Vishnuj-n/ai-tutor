@@ -210,6 +210,37 @@ func EnsureNotebookTopic(notebookID, topicID string) error {
 	return err
 }
 
+// LinkNotebookTopics associates a set of topics with a notebook by replacing any existing links.
+func LinkNotebookTopics(notebookID string, topicIDs []string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+
+	return withTx(func(tx *sql.Tx) error {
+		// Delete existing links for this notebook
+		if _, err := tx.Exec("DELETE FROM notebook_topics WHERE notebook_id = ?", notebookID); err != nil {
+			return err
+		}
+
+		// Insert new links
+		for _, topicID := range topicIDs {
+			topicID = strings.TrimSpace(topicID)
+			if topicID == "" {
+				return fmt.Errorf("topic id cannot be empty")
+			}
+			if _, err := tx.Exec(`
+				INSERT INTO notebook_topics (notebook_id, topic_id)
+				VALUES (?, ?)
+			`, notebookID, topicID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+
 
 
 // IngestNotebookContentByTopic ingests notebook content into multiple topic buckets in one transaction.
@@ -307,9 +338,9 @@ func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
 
 			id := "nb-chunk-" + validatedNotebookID + "-" + validatedChunkID // simple composite ID
 			_, err = tx.Exec(`
-				INSERT INTO notebook_chunks (id, notebook_id, chunk_id)
-				VALUES (?, ?, ?)
-			`, id, validatedNotebookID, validatedChunkID)
+				INSERT INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
+				SELECT ?, ?, ?, COALESCE(page_num, 0) FROM chunks WHERE id = ?
+			`, id, validatedNotebookID, validatedChunkID, validatedChunkID)
 			if err != nil {
 				return err
 			}

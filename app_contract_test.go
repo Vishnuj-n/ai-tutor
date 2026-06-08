@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1139,6 +1140,184 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 	if bundle.Sections[0].PageNum <= 0 {
 		t.Fatalf("expected page-aware section mapping, got page_num=%d", bundle.Sections[0].PageNum)
 	}
+}
+
+func TestConfirmNotebookSyllabus_MetadataOnlySkipsExtraction(t *testing.T) {
+	app, uploadResult, chapters := setupConfirmedChunkedNotebook(t, "confirm-metadata-only.md")
+
+	if err := os.Remove(uploadResult.FilePath); err != nil {
+		t.Fatalf("Remove source file failed: %v", err)
+	}
+	beforeChunks := mustNotebookChunkCount(t, uploadResult.ID)
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, chapters)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected metadata-only confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "metadata_only" {
+		t.Fatalf("expected metadata_only mode, got %#v", resp["mode"])
+	}
+	if afterChunks := mustNotebookChunkCount(t, uploadResult.ID); afterChunks != beforeChunks {
+		t.Fatalf("expected chunks unchanged, got %d want %d", afterChunks, beforeChunks)
+	}
+}
+
+func TestConfirmNotebookSyllabus_TitleOnlyUpdatesTopicsAndSkipsExtraction(t *testing.T) {
+	app, uploadResult, chapters := setupConfirmedChunkedNotebook(t, "confirm-title-only.md")
+
+	if err := os.Remove(uploadResult.FilePath); err != nil {
+		t.Fatalf("Remove source file failed: %v", err)
+	}
+	beforeChunks := mustNotebookChunkCount(t, uploadResult.ID)
+	renamed := []models.SyllabusChapterDraft{
+		{Title: "Renamed Intro", StartPage: chapters[0].StartPage, EndPage: chapters[0].EndPage},
+		{Title: "Renamed Details", StartPage: chapters[1].StartPage, EndPage: chapters[1].EndPage},
+	}
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, renamed)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected title-only confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "topic_metadata_only" {
+		t.Fatalf("expected topic_metadata_only mode, got %#v", resp["mode"])
+	}
+	if afterChunks := mustNotebookChunkCount(t, uploadResult.ID); afterChunks != beforeChunks {
+		t.Fatalf("expected chunks unchanged, got %d want %d", afterChunks, beforeChunks)
+	}
+
+	topics, err := db.GetNotebookTopicsWithBounds(uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetNotebookTopicsWithBounds failed: %v", err)
+	}
+	if len(topics) != len(renamed) {
+		t.Fatalf("expected %d topics, got %d", len(renamed), len(topics))
+	}
+	for i := range renamed {
+		if topics[i].Title != renamed[i].Title {
+			t.Fatalf("topic %d title mismatch: got %q want %q", i, topics[i].Title, renamed[i].Title)
+		}
+		if topics[i].StartPage != renamed[i].StartPage || topics[i].EndPage != renamed[i].EndPage {
+			t.Fatalf("topic %d bounds changed: got [%d,%d] want [%d,%d]", i, topics[i].StartPage, topics[i].EndPage, renamed[i].StartPage, renamed[i].EndPage)
+		}
+	}
+}
+
+func TestConfirmNotebookSyllabus_BoundaryChangeFallsBackToFullReingest(t *testing.T) {
+	app, uploadResult, _ := setupConfirmedChunkedNotebook(t, "confirm-boundary-change.md")
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, []models.SyllabusChapterDraft{{
+		Title:     "Intro",
+		StartPage: 1,
+		EndPage:   2,
+	}})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected boundary-change confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "full_reingest" {
+		t.Fatalf("expected full_reingest mode, got %#v", resp["mode"])
+	}
+
+	topicIDs, ok := resp["topic_ids"].([]string)
+	if !ok || len(topicIDs) != 1 {
+		t.Fatalf("expected one topic id after merged bounds, got %#v", resp["topic_ids"])
+	}
+	startPage, endPage, err := db.GetTopicPageBounds(topicIDs[0])
+	if err != nil {
+		t.Fatalf("GetTopicPageBounds failed: %v", err)
+	}
+	if startPage != 1 || endPage != 2 {
+		t.Fatalf("unexpected persisted bounds: got [%d,%d] want [1,2]", startPage, endPage)
+	}
+}
+
+func TestConfirmNotebookSyllabus_MixedTitleAndBoundaryChangeFullReingests(t *testing.T) {
+	app, uploadResult, _ := setupConfirmedChunkedNotebook(t, "confirm-mixed-change.md")
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, []models.SyllabusChapterDraft{{
+		Title:     "Renamed Combined Chapter",
+		StartPage: 1,
+		EndPage:   2,
+	}})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected mixed-change confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "full_reingest" {
+		t.Fatalf("expected full_reingest mode, got %#v", resp["mode"])
+	}
+
+	topicIDs, ok := resp["topic_ids"].([]string)
+	if !ok || len(topicIDs) != 1 {
+		t.Fatalf("expected one topic id after mixed change, got %#v", resp["topic_ids"])
+	}
+	topics, err := db.GetNotebookTopicsWithBounds(uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetNotebookTopicsWithBounds failed: %v", err)
+	}
+	found := false
+	for _, topic := range topics {
+		if topic.TopicID == topicIDs[0] {
+			found = true
+			if topic.Title != "Renamed Combined Chapter" {
+				t.Fatalf("expected renamed topic title, got %q", topic.Title)
+			}
+			if topic.StartPage != 1 || topic.EndPage != 2 {
+				t.Fatalf("unexpected renamed topic bounds: got [%d,%d] want [1,2]", topic.StartPage, topic.EndPage)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected new mixed-change topic %q in notebook topic bounds", topicIDs[0])
+	}
+}
+
+func setupConfirmedChunkedNotebook(t *testing.T, fileName string) (*App, notebook.UploadResult, []models.SyllabusChapterDraft) {
+	t.Helper()
+	initTestDB(t)
+	uploadDir := t.TempDir()
+	service := notebook.NewService(uploadDir)
+	app := &App{notebookService: service}
+
+	content := []byte("# Intro\n\nAlpha beta gamma\n\n## Details\n\nDelta epsilon zeta")
+	uploadResult, err := service.SaveUploadedFile(content, fileName)
+	if err != nil {
+		t.Fatalf("SaveUploadedFile failed: %v", err)
+	}
+	doc, err := service.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	if err != nil {
+		t.Fatalf("ExtractDocument failed: %v", err)
+	}
+	if doc.PageCount != 2 {
+		t.Fatalf("expected two-page markdown fixture, got %d", doc.PageCount)
+	}
+	if err := db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	chapters := []models.SyllabusChapterDraft{
+		{Title: "Intro", StartPage: 1, EndPage: 1},
+		{Title: "Details", StartPage: 2, EndPage: 2},
+	}
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, chapters)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("initial ConfirmNotebookSyllabus failed: %v", resp["error"])
+	}
+	if status, ok := resp["status"].(string); !ok || status != "chunked" {
+		t.Fatalf("expected initial chunked status, got %#v", resp["status"])
+	}
+	if count := mustNotebookChunkCount(t, uploadResult.ID); count == 0 {
+		t.Fatalf("expected initial chunks")
+	}
+
+	return app, *uploadResult, chapters
+}
+
+func mustNotebookChunkCount(t *testing.T, notebookID string) int {
+	t.Helper()
+	chunks, err := db.GetChunksForNotebook(notebookID)
+	if err != nil {
+		t.Fatalf("GetChunksForNotebook failed: %v", err)
+	}
+	return len(chunks)
 }
 
 // ============================================================================

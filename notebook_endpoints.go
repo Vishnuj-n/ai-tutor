@@ -428,6 +428,24 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "chunk ingestion failed: " + err.Error()}
 	}
 
+	// Link new topics to notebook in database
+	if err := db.LinkNotebookTopics(notebookID, topicIDs); err != nil {
+		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		return map[string]interface{}{"error": "failed to link notebook topics: " + err.Error()}
+	}
+
+	// Delete old orphaned topics that are no longer part of the new syllabus
+	if etErr == nil {
+		newTopicIDsMap := make(map[string]bool)
+		for _, tid := range topicIDs {
+			newTopicIDsMap[tid] = true
+		}
+		for _, et := range existingTopics {
+			if !newTopicIDsMap[et.TopicID] {
+				_ = db.DeleteTopic(et.TopicID)
+			}
+		}
+	}
 
 	status := "chunked"
 	emitIngestionProgress(a, ingestionProgressPayload{
@@ -445,6 +463,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		"success":     true,
 		"status":      status,
 		"notebook_id": notebookID,
+		"mode":        "full_reingest",
 		"topic_ids":   topicIDs,
 		"chunk_count": len(allChunks),
 	}
