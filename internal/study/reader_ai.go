@@ -94,7 +94,7 @@ func (s *StudyService) ExplainReaderSection(sectionID string, question string) m
 		return map[string]interface{}{"error": "section ID is required"}
 	}
 
-	section, err := db.GetParentSection(sectionID)
+	section, err := db.GetChunkSection(sectionID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to fetch reader section: " + err.Error()}
 	}

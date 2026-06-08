@@ -78,7 +78,7 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
 func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
-	utils.Warnf("[QUEUE] GetAllPendingTasks filter status=PENDING order=task_type, notebook_priority desc, task_priority asc, created_at asc")
+	utils.Warnf("[QUEUE] GetAllPendingTasks filter status=PENDING order=notebook_priority desc, notebook_title asc, id asc limit=3")
 	utils.LogQueueOrdering("", "", "", "get_all_pending")
 	query := `
 		SELECT
@@ -94,24 +94,17 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			COALESCE(sq.payload_json, ''),
 			COALESCE(sq.start_page, 0),
 			COALESCE(sq.end_page, 0),
-			COALESCE(t.title, ''),
+			COALESCE(t.title, COALESCE(n.title, 'Task')),
 			COALESCE(n.priority, 5)
 		FROM study_queue sq
-		LEFT JOIN notebooks n ON sq.notebook_id = n.id
+		JOIN notebooks n ON sq.notebook_id = n.id
 		LEFT JOIN topics t ON sq.topic_id = t.id
 		WHERE sq.status = 'PENDING'
 		ORDER BY
-			CASE sq.task_type
-				WHEN 'FLASHCARD_REVIEW' THEN 1
-				WHEN 'REREAD' THEN 2
-				WHEN 'QUIZ' THEN 3
-				WHEN 'READING' THEN 4
-				WHEN 'EXAMINER' THEN 5
-				ELSE 6
-			END,
 			COALESCE(n.priority, 5) DESC,
-			sq.priority ASC,
-			sq.created_at ASC
+			n.title ASC,
+			sq.id ASC
+		LIMIT 3
 	`
 
 	rows, err := conn.Query(query)
@@ -146,9 +139,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 		if err != nil {
 			return nil, err
 		}
-		if topicTitle != "" {
-			task.Title = topicTitle
-		}
+		task.Title = topicTitle
 		tasks = append(tasks, task)
 
 		// Debug log: show notebook priority for each task
@@ -231,7 +222,7 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 // GetNextTask returns the next pending task ordered by deterministic queue rules.
 func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	notebookID = strings.TrimSpace(notebookID)
-	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q order=task_type, notebook_priority desc, task_priority asc, created_at asc", notebookID)
+	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q order=notebook_priority desc, notebook_title asc, id asc limit=1", notebookID)
 	utils.LogQueueOrdering("", notebookID, "", "get_next_task")
 
 	query := `
@@ -248,33 +239,28 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 			COALESCE(sq.payload_json, ''),
 			COALESCE(sq.start_page, 0),
 			COALESCE(sq.end_page, 0),
+			COALESCE(t.title, COALESCE(n.title, 'Task')),
 			COALESCE(n.priority, 5)
 		FROM study_queue sq
-		LEFT JOIN notebooks n ON sq.notebook_id = n.id
+		JOIN notebooks n ON sq.notebook_id = n.id
+		LEFT JOIN topics t ON sq.topic_id = t.id
 		WHERE sq.status = 'PENDING'
 	`
-	args := make([]interface{}, 0, 1)
+	args := make([]interface{}, 0, 2)
 	if notebookID != "" {
 		query += ` AND sq.notebook_id = ?`
 		args = append(args, notebookID)
 	}
 	query += `
 		ORDER BY
-			CASE sq.task_type
-				WHEN 'FLASHCARD_REVIEW' THEN 1
-				WHEN 'REREAD' THEN 2
-				WHEN 'QUIZ' THEN 3
-				WHEN 'READING' THEN 4
-				WHEN 'EXAMINER' THEN 5
-				ELSE 6
-			END,
 			COALESCE(n.priority, 5) DESC,
-			sq.priority ASC,
-			sq.created_at ASC
+			n.title ASC,
+			sq.id ASC
 		LIMIT 1
 	`
 
 	task := &models.StudyQueueTask{}
+	var topicTitle string
 	var notebookPriority int
 	err := conn.QueryRow(query, args...).Scan(
 		&task.ID,
@@ -289,6 +275,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 		&task.PayloadJSON,
 		&task.StartPage,
 		&task.EndPage,
+		&topicTitle,
 		&notebookPriority,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -297,6 +284,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	if err != nil {
 		return nil, err
 	}
+	task.Title = topicTitle
 	// Debug log: show notebook priority for next task
 	utils.Warnf("[QUEUE] GetNextTask result taskID=%s status=%s type=%s notebookID=%s topicID=%s task_priority=%d notebook_priority=%d", task.ID, task.Status, task.TaskType, task.NotebookID, task.TopicID, task.Priority, notebookPriority)
 	return task, nil
