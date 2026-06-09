@@ -113,6 +113,7 @@ func InitSchema(tx *sql.Tx) error {
 			page_count INTEGER,
 			chunk_count INTEGER DEFAULT 0,
 			syllabus_draft_json TEXT,
+			exam_deadline TEXT,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)`,
@@ -151,6 +152,16 @@ func InitSchema(tx *sql.Tx) error {
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
 			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
+		)`,
+
+		// Manual flashcards (ephemeral sandbox)
+		`CREATE TABLE IF NOT EXISTS manual_flashcards (
+			id TEXT PRIMARY KEY,
+			notebook_id TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			answer TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS fsrs_review_log (
@@ -209,27 +220,6 @@ func InitSchema(tx *sql.Tx) error {
 		}
 	}
 
-	// Backward-compat: add notebooks.priority for DBs created before this column existed.
-	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN priority INTEGER DEFAULT 5`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("failed to add notebooks.priority column: %w", err)
-		}
-	}
-
-	// Backward-compat: add notebooks.indexing_status for DBs created before this column existed.
-	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN indexing_status TEXT DEFAULT 'PENDING'`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("failed to add notebooks.indexing_status column: %w", err)
-		}
-	}
-
-	// Backward-compat: add notebooks.syllabus_draft_json for DBs created before this column existed.
-	if _, err := tx.Exec(`ALTER TABLE notebooks ADD COLUMN syllabus_draft_json TEXT`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("failed to add notebooks.syllabus_draft_json column: %w", err)
-		}
-	}
-
 	// Create indexes
 	indexes := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt)`,
@@ -245,6 +235,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_review_task_cards_task_status ON review_task_cards(task_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_task_completed_at ON quiz_attempts(task_id, completed_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_reread_attempts_last_attempt_at ON reread_attempts(last_attempt_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_manual_flashcards_notebook ON manual_flashcards(notebook_id)`,
 	}
 
 	for _, stmt := range indexes {

@@ -70,18 +70,12 @@ export function useReaderBase(taskID) {
 
   const canGoPrev = computed(() => {
     if (!pdfVisible.value) return false
-    if (hasNavigationBounds.value) {
-      return currentPage.value > Math.max(1, navigationMinPage.value)
-    }
     return currentPage.value > 1
   })
 
   const canGoNext = computed(() => {
     if (!pdfVisible.value) return false
-    if (hasNavigationBounds.value) {
-      return currentPage.value < Math.min(pageCount.value, navigationMaxPage.value)
-    }
-    return currentPage.value < Math.max(1, pageCount.value)
+    return currentPage.value < pageCount.value
   })
 
   const pdfSource = computed(() => {
@@ -300,13 +294,7 @@ export function useReaderBase(taskID) {
     activeSection.value = section
     const page = Number(section?.page_num)
     if (Number.isFinite(page) && page > 0) {
-      if (hasNavigationBounds.value) {
-        const minPage = Math.max(1, Number(navigationMinPage.value) || 1)
-        const maxPage = Math.max(minPage, Number(navigationMaxPage.value) || minPage)
-        currentPage.value = Math.min(Math.max(minPage, page), maxPage)
-      } else {
-        currentPage.value = Math.min(Math.max(1, page), pageCount.value)
-      }
+      currentPage.value = Math.min(Math.max(1, page), pageCount.value)
     }
   }
 

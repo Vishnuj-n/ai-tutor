@@ -324,3 +324,28 @@ func getLastFlashcardReviewTimeRepoTx(tx *sql.Tx, cardID string) (int64, error) 
 	`, cardID).Scan(&lastReviewedAt)
 	return lastReviewedAt, err
 }
+
+// SaveManualFlashcardsBatch handles the storage of sandbox flashcards.
+// It explicitly clears previous manual runs for this notebook to preserve an
+// ephemeral environment and isolates them entirely from the scheduled FSRS pipeline.
+func SaveManualFlashcardsBatch(notebookID string, cards []models.Flashcard) error {
+	return withTx(func(tx *sql.Tx) error {
+		// Clean out the old manual sandbox cards for this specific notebook
+		_, err := tx.Exec(`DELETE FROM manual_flashcards WHERE notebook_id = ?`, notebookID)
+		if err != nil {
+			return err
+		}
+
+		// Insert the fresh sandbox generation batch
+		for _, card := range cards {
+			_, err = tx.Exec(`
+				INSERT INTO manual_flashcards (id, notebook_id, prompt, answer)
+				VALUES (?, ?, ?, ?)
+			`, card.ID, notebookID, card.Prompt, card.Answer)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
