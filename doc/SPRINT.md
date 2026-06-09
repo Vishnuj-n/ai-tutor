@@ -289,32 +289,39 @@ CREATE TABLE reread_attempts (
 
 ---
 
-## Sprint 5: Core Foundation & Database (Priority: High)
+## Sprint 5: Core Foundation, Bootstrap Isolation & Settings [DONE]
 
-**Goal:** Lock down native database queue sorting and bootstrap isolation.
+**Goal:** Lock down native database queue sorting, isolate bootstrap logic, and build system configuration inputs.
 
 **Tasks:**
-- **Task 5.1**: Implement Native SQL Desktop Queue Routing (`internal/db/study_queue_repo.go`). Write the deterministic SQL query for `GetAllPendingTasks()` as specified.
-- **Task 5.2**: Deconstruct `app.go` God-File Setup Block. Move initialization to `internal/runtime/boot.go` and keep `app.go` thin.
+- **Task 5.1**: Implement Native SQL Desktop Queue Routing (`internal/db/study_queue_repo.go`). Write the deterministic `GetAllPendingTasks()` query using Notebook Priority biasing to handle macro-interleaving.
+- **Task 5.2**: Deconstruct `app.go` God-File Setup Block. Move initialization, asset validation, and path resolvers to `internal/runtime/boot.go`.
+- **Task 5.3**: Expose System Configuration Endpoints. Create a settings persistence layer in SQLite to track `daily_study_minutes` and a user-configured `exam_target_date` timestamp.
+- **Task 5.4**: Collapse Middle-Tier Schema. Permanently delete the `parents` table and update `chunks` to reference `topic_id` directly for streamlined local RAG joins.
 
 **Deliverables:**
-- [ ] SQL routing implementation
-- [ ] Bootstrap package `boot.go`
-- [ ] Updated `app.go` bridge
+- [x] SQL sorting routing implementation
+- [x] Bootstrap package `boot.go`
+- [x] Updated lightweight `app.go` bridge
+- [x] Settings persistence table and Wails read/write bindings
+- [x] Flattened single-join database schema definitions
 
 ---
 
-## Sprint 6: Reading & Quiz Pipelines (Priority: Medium-High)
+## Sprint 6: Reading, Quiz Pipelines & Deadline Pacing (Priority: Medium-High)
 
-**Goal:** Build bounded reading logic and context‑locked assessment mechanics.
+**Goal:** Build bounded reading logic, content-density quiz scaling, and expose daily study velocity.
 
 **Tasks:**
-- **Task 6.1**: Enforce Backend Context Locking (`internal/study/service.go`). Remove frontend scroll‑locking and query SQLite for page‑range chunks.
-- **Task 6.2**: Implement Density‑Scaled Quiz Quantities (`internal/study/reader.go`). Globalize token limits, replace hard‑coded prompt with `scaledQuizQuestionCount`.
+- **Task 6.1**: Enforce Backend Context Locking (`internal/study/service.go`). Pull text chunks strictly by assigned page bounds during quiz generation, removing frontend view restriction dependencies.
+- **Task 6.2**: Implement Density-Scaled Quiz Quantities (`internal/study/reader.go`). Globalize token capacities and calculate target question volume dynamically using a words-per-question density script.
+- **Task 6.3**: Wire the Deadline Velocity UI. Create a backend utility to run the target formula (`Remaining Words / Days to Exam Target`) and render the resulting required daily pace metric on the main dashboard workspace.
 
 **Deliverables:**
-- [ ] Backend‑only page range safety
-- [ ] Scalable quiz generation
+- [ ] Backend-only page range validation safety
+- [ ] Scalable context-locked quiz generation
+- [ ] Interactive configuration screen for setting exam deadlines
+- [ ] Front-facing dashboard target telemetry widget
 
 ---
 

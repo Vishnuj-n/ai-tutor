@@ -505,6 +505,11 @@ func ResolveCorrectOption(correctAnswer string, options []string) (string, bool)
 
 // ---------- Env-configurable density thresholds ----------
 
+const (
+	DefaultMaxInputTokens  = 30000
+	DefaultMaxOutputTokens = 3000
+)
+
 var (
 	QuizTokenThresholdLow    = getEnvInt("QUIZ_TOKEN_THRESHOLD_LOW", 600)
 	QuizTokenThresholdMedium = getEnvInt("QUIZ_TOKEN_THRESHOLD_MEDIUM", 1500)
@@ -565,7 +570,7 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 	}
 	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext raw_chunks=%d", len(chunks))
 	if len(chunks) == 0 {
-		// Return empty response instead of error for marathon mode compatibility
+		// Return empty response instead of error for manual mode compatibility
 		return []models.ChunkWithContext{}, 0, nil
 	}
 
