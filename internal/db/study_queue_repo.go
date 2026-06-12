@@ -94,6 +94,75 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 		skipVal = 1
 	}
 
+	// Fallback to original simple query if no active profile is selected
+	if activeProfileStr == "" {
+		query := `
+			SELECT
+				sq.id,
+				sq.notebook_id,
+				COALESCE(sq.topic_id, ''),
+				sq.task_type,
+				sq.status,
+				sq.priority,
+				COALESCE(sq.created_at, ''),
+				COALESCE(sq.activated_at, ''),
+				COALESCE(sq.completed_at, ''),
+				COALESCE(sq.payload_json, ''),
+				COALESCE(sq.start_page, 0),
+				COALESCE(sq.end_page, 0),
+				COALESCE(t.title, COALESCE(n.title, 'Task')),
+				COALESCE(n.priority, 5)
+			FROM study_queue sq
+			JOIN notebooks n ON sq.notebook_id = n.id
+			LEFT JOIN topics t ON sq.topic_id = t.id
+			WHERE sq.status = 'PENDING'
+			ORDER BY
+				COALESCE(n.priority, 5) DESC,
+				n.title ASC,
+				sq.id ASC
+			LIMIT 3
+		`
+		rows, err := conn.Query(query)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			_ = rows.Close()
+		}()
+
+		tasks := make([]models.StudyQueueTask, 0)
+		for rows.Next() {
+			var task models.StudyQueueTask
+			var topicTitle string
+			var notebookPriority int
+			err := rows.Scan(
+				&task.ID,
+				&task.NotebookID,
+				&task.TopicID,
+				&task.TaskType,
+				&task.Status,
+				&task.Priority,
+				&task.CreatedAt,
+				&task.ActivatedAt,
+				&task.CompletedAt,
+				&task.PayloadJSON,
+				&task.StartPage,
+				&task.EndPage,
+				&topicTitle,
+				&notebookPriority,
+			)
+			if err != nil {
+				return nil, err
+			}
+			task.Title = topicTitle
+			tasks = append(tasks, task)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return tasks, nil
+	}
+
 	query := `
 		WITH ranked_tasks AS (
 			SELECT
@@ -307,6 +376,70 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	skipVal := 0
 	if skipToReadingActive {
 		skipVal = 1
+	}
+
+	// Fallback to original simple query if no active profile is selected
+	if activeProfileStr == "" {
+		query := `
+			SELECT
+				sq.id,
+				sq.notebook_id,
+				COALESCE(sq.topic_id, ''),
+				sq.task_type,
+				sq.status,
+				sq.priority,
+				COALESCE(sq.created_at, ''),
+				COALESCE(sq.activated_at, ''),
+				COALESCE(sq.completed_at, ''),
+				COALESCE(sq.payload_json, ''),
+				COALESCE(sq.start_page, 0),
+				COALESCE(sq.end_page, 0),
+				COALESCE(t.title, COALESCE(n.title, 'Task')),
+				COALESCE(n.priority, 5)
+			FROM study_queue sq
+			JOIN notebooks n ON sq.notebook_id = n.id
+			LEFT JOIN topics t ON sq.topic_id = t.id
+			WHERE sq.status = 'PENDING'
+		`
+		args := make([]interface{}, 0, 2)
+		if notebookID != "" {
+			query += ` AND sq.notebook_id = ?`
+			args = append(args, notebookID)
+		}
+		query += `
+			ORDER BY
+				COALESCE(n.priority, 5) DESC,
+				n.title ASC,
+				sq.id ASC
+			LIMIT 1
+		`
+		task := &models.StudyQueueTask{}
+		var topicTitle string
+		var notebookPriority int
+		err := conn.QueryRow(query, args...).Scan(
+			&task.ID,
+			&task.NotebookID,
+			&task.TopicID,
+			&task.TaskType,
+			&task.Status,
+			&task.Priority,
+			&task.CreatedAt,
+			&task.ActivatedAt,
+			&task.CompletedAt,
+			&task.PayloadJSON,
+			&task.StartPage,
+			&task.EndPage,
+			&topicTitle,
+			&notebookPriority,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNoPendingTasks
+		}
+		if err != nil {
+			return nil, err
+		}
+		task.Title = topicTitle
+		return task, nil
 	}
 
 	query := `
@@ -835,13 +968,6 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	return quizTaskID, nil
 }
 
-func saveQuizAttemptRepo(attempt models.QuizAttemptRecord) error {
-	_, err := conn.Exec(`
-		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
-	return err
-}
 
 func saveQuizAttemptRepoTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	if tx == nil {
@@ -861,24 +987,6 @@ func boolToInt(v bool) int {
 	return 0
 }
 
-func SaveQuizAttempt(attempt models.QuizAttemptRecord) error {
-	attempt.ID = strings.TrimSpace(attempt.ID)
-	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
-	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
-	if attempt.ID == "" {
-		return fmt.Errorf("attempt id is required")
-	}
-	if attempt.TaskID == "" {
-		return fmt.Errorf("task id is required")
-	}
-	if attempt.AnswersJSON == "" {
-		return fmt.Errorf("answers json is required")
-	}
-	if attempt.CompletedAt <= 0 {
-		return fmt.Errorf("completed at is required")
-	}
-	return saveQuizAttemptRepo(attempt)
-}
 
 func SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	attempt.ID = strings.TrimSpace(attempt.ID)

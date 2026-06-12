@@ -40,80 +40,91 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 
 	_ = godotenv.Load()
 
-	assetValidator := NewAssetValidator("asset")
-	if err := assetValidator.ValidateAll(); err != nil {
-		res.AiInitError = err.Error()
-		utils.Warnf("local RAG assets missing: %v", err)
-	}
-
-	appDir, err := resolveAppDir()
-	if err != nil {
-		res.AiInitError = err.Error()
-		utils.Errorf("resolving app directory: %v", err)
-		return nil, err
-	}
-
-	runtimeAssets, err := assetValidator.PrepareRuntimeAssets(appDir)
-	if err != nil {
-		res.AiInitError = err.Error()
-		utils.Warnf("could not stage runtime assets: %v", err)
-	}
-
-	dbPath, err := resolveDBPath()
+	dbPath, err := ResolveDBPath()
 	if err != nil {
 		res.AiInitError = err.Error()
 		utils.Errorf("resolving database path: %v", err)
 		return nil, err
 	}
 
-	vec0DllPath := assetValidator.Vec0DllPath()
-	if staged, ok := runtimeAssets[filepath.Base(vec0DllPath)]; ok {
-		vec0DllPath = staged
-	}
-	if err := db.Init(dbPath, vec0DllPath); err != nil {
+	// 1. Initialize DB without loading vec0 extension first (so we can query settings safely)
+	if err := db.Init(dbPath, ""); err != nil {
 		res.AiInitError = err.Error()
 		utils.Errorf("initializing database: %v", err)
 		return nil, err
 	}
-	utils.Infof("Database initialized at %s", dbPath)
+	utils.Infof("Database initialized at %s (extension pre-load phase)", dbPath)
+
+	// Check if RAG is enabled in database
+	ragEnabled, err := db.GetRAGEnabled()
+	if err != nil {
+		utils.Warnf("failed to get RAGEnabled status: %v. Defaulting to false.", err)
+		ragEnabled = false
+	}
+
+	var embedder *embeddings.OnnxEmbedder
+	if ragEnabled {
+		// 2. Initialize AssetManager to verify RAG assets are ready
+		am, err := NewAssetManager(ctx)
+		if err != nil {
+			res.AiInitError = fmt.Sprintf("Asset manager init failed: %v", err)
+			utils.Warnf("%s", res.AiInitError)
+		} else {
+			if err := am.EnsureAssetsReady(); err != nil {
+				res.AiInitError = fmt.Sprintf("RAG assets not ready: %v", err)
+				utils.Warnf("%s", res.AiInitError)
+			} else {
+				// Stage DLLs and re-init DB with vector support
+				if _, err := am.StageDLLs(); err != nil {
+					res.AiInitError = fmt.Sprintf("failed to stage DLLs: %v", err)
+					utils.Warnf("%s", res.AiInitError)
+				} else {
+					// Re-initialize DB, this time with the staged vec0.dll
+					if err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
+						res.AiInitError = fmt.Sprintf("failed to reload DB with vector extension: %v", err)
+						utils.Errorf("%s", res.AiInitError)
+						return nil, err
+					}
+
+					// Init ONNX embedder using paths from AssetManager
+					emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+					if err != nil {
+						res.AiInitError = fmt.Sprintf("failed to load ONNX embedder: %v", err)
+						utils.Warnf("%s", res.AiInitError)
+					} else {
+						if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
+							res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
+							utils.Warnf("%s", res.AiInitError)
+							_ = emb.Close()
+						} else {
+							res.AiReady = true
+							res.AiInitError = ""
+							res.Embedder = emb
+							embedder = emb
+							if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
+								utils.Warnf("could not initialize vector table: %v", err)
+							} else {
+								indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
+								go func() {
+									if err := indexer.IndexAllTopics(); err != nil {
+										utils.Warnf("vector indexing failed: %v", err)
+									}
+								}()
+							}
+						}
+					}
+				}
+			}
+		}
+	} else {
+		utils.Infof("RAG is disabled in user settings. Skipping asset validation and local AI initialization.")
+	}
 
 	study.StartCloudSyncLoop()
 
 	res.Scheduler = scheduler.New()
 
-	// Init ONNX embedder
-	onnxRuntimePath := assetValidator.OnnxRuntimePath()
-	if staged, ok := runtimeAssets[filepath.Base(onnxRuntimePath)]; ok {
-		onnxRuntimePath = staged
-	}
-	embedder, err := embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath(), onnxRuntimePath)
-	if err != nil {
-		res.AiInitError = err.Error()
-		utils.Warnf("could not initialize ONNX embedder: %v", err)
-	} else {
-		if err := embeddings.InitPromptTokenizer(assetValidator.TokenizerPath()); err != nil {
-			res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
-			utils.Warnf("%s", res.AiInitError)
-			_ = embedder.Close()
-			embedder = nil
-		} else {
-			res.AiReady = true
-			res.AiInitError = ""
-			res.Embedder = embedder
-			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
-				utils.Warnf("could not initialize vector table: %v", err)
-			} else {
-				indexer := retrieval.NewVectorIndexer(embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
-				go func() {
-					if err := indexer.IndexAllTopics(); err != nil {
-						utils.Warnf("vector indexing failed: %v", err)
-					}
-				}()
-			}
-		}
-	}
-
-	// Init shared retrieval engine for Socratic + Reader scoped chat.
+	// Init shared retrieval engine (embedder may be nil, which triggers lexical fallback)
 	res.RetrievalEngine = retrieval.NewEngine(embedder)
 
 	topicIDs, err := db.GetAllTopicIDs()
@@ -124,7 +135,6 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
 	if err != nil {
 		utils.Warnf("could not batch-load chunks: %v", err)
-		// Continue without chunks rather than making redundant queries
 	} else {
 		for _, tid := range topicIDs {
 			for _, c := range chunksByTopic[tid] {
@@ -144,7 +154,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		RetrievalEngine:  res.RetrievalEngine,
 	})
 
-	notebookDir, err := resolveNotebookDir()
+	notebookDir, err := ResolveNotebookDir()
 	if err != nil {
 		utils.Errorf("resolving notebook directory: %v", err)
 		return nil, err
@@ -156,7 +166,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	return res, nil
 }
 
-func resolveAppDir() (string, error) {
+func ResolveAppDir() (string, error) {
 	var appDir string
 
 	// If APP_ENV is set to dev, use a local folder in the project root
@@ -171,16 +181,16 @@ func resolveAppDir() (string, error) {
 	return appDir, nil
 }
 
-func resolveDBPath() (string, error) {
-	appDir, err := resolveAppDir()
+func ResolveDBPath() (string, error) {
+	appDir, err := ResolveAppDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(appDir, "ai-tutor.db"), nil
 }
 
-func resolveNotebookDir() (string, error) {
-	appDir, err := resolveAppDir()
+func ResolveNotebookDir() (string, error) {
+	appDir, err := ResolveAppDir()
 	if err != nil {
 		return "", err
 	}

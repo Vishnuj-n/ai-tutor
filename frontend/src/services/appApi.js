@@ -154,20 +154,16 @@ export function deleteNotebook(notebookID) {
   return appBridge().DeleteNotebook(notebookID)
 }
 
-export function setNotebookExamDeadline(notebookID, deadline) {
-  return appBridge().SetNotebookExamDeadline(notebookID, deadline)
-}
-
-export function getNotebookDailyPace(notebookID) {
-  return appBridge().GetNotebookDailyPace(notebookID)
-}
-
 export function getUserSettings() {
   return appBridge().GetUserSettings()
 }
 
-export function updateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken) {
-  return appBridge().UpdateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken)
+export function updateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled) {
+  return appBridge().UpdateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled)
+}
+
+export function initializeRAG() {
+  return appBridge().InitializeRAG()
 }
 
 export function getProfiles() {

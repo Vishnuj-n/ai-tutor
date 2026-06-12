@@ -96,11 +96,10 @@
       <!-- Telemetry Widget for active profile -->
       <section v-if="activeProfilePace" class="telemetry-widget">
         <div class="telemetry-card card">
-          <h2 class="telemetry-header">🚀 Profile Study Pacing ({{ activeProfileName }})</h2>
+          <h2 class="telemetry-header">Profile Study Pacing ({{ activeProfileName }})</h2>
           <div class="telemetry-grid">
             <div class="telemetry-item">
               <div class="telemetry-title-row">
-                <span class="telemetry-doc-icon">📅</span>
                 <span class="telemetry-doc-title">Target Exam Deadline: {{ activeProfilePace.deadline }}</span>
                 <span class="telemetry-days-left" :class="{ warning: activeProfilePace.days_remaining <= 3 }">
                   ({{ formatDaysRemaining(activeProfilePace.days_remaining) }})
@@ -169,7 +168,7 @@
 
       <!-- The Smart Shelf: Active vs Dormant Warehouse -->
       <section class="shelf-section">
-        <h2>📚 The Smart Shelf</h2>
+        <h2> The Smart Shelf</h2>
         <p class="section-description">Hard-gated to a maximum of 4 active textbooks to prevent study fatigue.</p>
         
         <div class="shelf-grid">

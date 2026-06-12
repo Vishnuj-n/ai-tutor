@@ -38,24 +38,6 @@ const (
 // Option customizes Service dependencies for testing and advanced setups.
 type Option func(*Service)
 
-// WithReadFileFunc overrides the file reader dependency.
-func WithReadFileFunc(fn func(string) ([]byte, error)) Option {
-	return func(s *Service) {
-		if fn != nil {
-			s.readFile = fn
-		}
-	}
-}
-
-// WithOpenPDFFunc overrides the PDF opener dependency.
-func WithOpenPDFFunc(fn func(string) (*os.File, *pdfreader.Reader, error)) Option {
-	return func(s *Service) {
-		if fn != nil {
-			s.openPDF = fn
-		}
-	}
-}
-
 // WithExtractPDFFunc overrides PDF extraction logic.
 func WithExtractPDFFunc(fn func(string, *ExtractedDocument) error) Option {
 	return func(s *Service) {
