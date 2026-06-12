@@ -134,12 +134,21 @@ func TriggerCloudSync() error {
 	return nil
 }
 
-func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 	// 1. Create a local path for the downloaded PDF
-	dataDir := filepath.Join(os.Getenv("APPDATA"), "ai-tutor", "notebooks")
-	_ = os.MkdirAll(dataDir, 0755)
+	baseDir := os.Getenv("APPDATA")
+	if baseDir == "" {
+		if dir, err := os.UserConfigDir(); err == nil {
+			baseDir = dir
+		}
+	}
+	if baseDir == "" {
+		baseDir = os.TempDir()
+	}
+	dataDir := filepath.Join(baseDir, "ai-tutor", "notebooks")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return err
+	}
 	localPath := filepath.Join(dataDir, nb.ID+".pdf")
-
 	// 2. Download from remote URL
 	resp, err := http.Get(nb.DownloadURL)
 	if err != nil {
