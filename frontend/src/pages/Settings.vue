@@ -319,7 +319,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import {
   getUserSettings,
   updateUserSettings,
@@ -404,6 +404,8 @@ function startRagSetup() {
   ragMessage.value = 'Checking system specifications...'
   ragDetail.value = ''
 
+  // Always unsubscribe first so retries don't stack duplicate listeners.
+  EventsOff('rag-setup-progress')
   EventsOn('rag-setup-progress', (data) => {
     console.log('[Settings] RAG setup progress:', data)
     if (data.status) ragStatus.value = data.status
@@ -413,11 +415,13 @@ function startRagSetup() {
     if (data.errorReason) {
       ragError.value = data.errorReason
       isSettingUpRag.value = false
+      EventsOff('rag-setup-progress')
     }
     
     if (data.status === 'ready') {
       ragSetupCompleted.value = true
       isSettingUpRag.value = false
+      EventsOff('rag-setup-progress')
     }
   })
 
@@ -425,10 +429,12 @@ function startRagSetup() {
     if (res.error) {
       ragError.value = res.error
       isSettingUpRag.value = false
+      EventsOff('rag-setup-progress')
     }
   }).catch(err => {
     ragError.value = err.message || 'RAG setup failed.'
     isSettingUpRag.value = false
+    EventsOff('rag-setup-progress')
   })
 }
 
@@ -440,6 +446,10 @@ function closeRagModal() {
 
 onMounted(async () => {
   await loadAllData()
+})
+
+onUnmounted(() => {
+  EventsOff('rag-setup-progress')
 })
 
 async function loadAllData() {

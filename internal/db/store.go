@@ -48,7 +48,7 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	var err error
-	conn, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
+	conn, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return err
 	}
@@ -303,18 +303,24 @@ func UpdateProfile(p models.StudyProfile) error {
 	return err
 }
 
-// DeleteProfile deletes a profile.
+// DeleteProfile deletes a profile atomically.
 func DeleteProfile(id string) error {
-	_, err := conn.Exec(`UPDATE notebooks SET profile_id = NULL WHERE profile_id = ?`, id)
+	tx, err := conn.Begin()
 	if err != nil {
-		return err
+		return fmt.Errorf("DeleteProfile: failed to begin transaction: %w", err)
 	}
-	_, err = conn.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE active_profile_id = ?`, id)
-	if err != nil {
-		return err
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`UPDATE notebooks SET profile_id = NULL WHERE profile_id = ?`, id); err != nil {
+		return fmt.Errorf("DeleteProfile: failed to unlink notebooks: %w", err)
 	}
-	_, err = conn.Exec(`DELETE FROM study_profiles WHERE id = ?`, id)
-	return err
+	if _, err := tx.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE active_profile_id = ?`, id); err != nil {
+		return fmt.Errorf("DeleteProfile: failed to unlink user_settings: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM study_profiles WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("DeleteProfile: failed to delete profile: %w", err)
+	}
+	return tx.Commit()
 }
 
 // CreateFlashcards stores a new set of flashcards for one topic.

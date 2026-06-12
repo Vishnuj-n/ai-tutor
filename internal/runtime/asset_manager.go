@@ -185,8 +185,12 @@ func (am *AssetManager) StageDLLs() (map[string]string, error) {
 }
 
 // AcquireAssets simulates the downloading process by copy-streaming from am.sourceAssetDir to am.targetDir.
-// It reports progress via the callback.
+// It reports progress via the callback. progressCallback may be nil to disable progress reporting.
 func (am *AssetManager) AcquireAssets(progressCallback func(status string, percent int, msg, detail string)) error {
+	if progressCallback == nil {
+		progressCallback = func(status string, percent int, msg, detail string) {}
+	}
+
 	// Create target directories
 	if err := os.MkdirAll(am.targetDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create target asset directory: %w", err)

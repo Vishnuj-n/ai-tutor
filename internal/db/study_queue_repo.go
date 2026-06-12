@@ -80,9 +80,11 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	var activeProfileID sql.NullString
 	var skipToReadingActive bool
-	_ = conn.QueryRow(`
+	if err := conn.QueryRow(`
 		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
-	`).Scan(&activeProfileID, &skipToReadingActive)
+	`).Scan(&activeProfileID, &skipToReadingActive); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetAllPendingTasks: reading user_settings: %w", err)
+	}
 
 	activeProfileStr := ""
 	if activeProfileID.Valid {
@@ -117,8 +119,17 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			LEFT JOIN topics t ON sq.topic_id = t.id
 			WHERE sq.status = 'PENDING'
 			ORDER BY
+				CASE sq.task_type
+					WHEN 'FLASHCARD_REVIEW' THEN 5
+					WHEN 'REREAD' THEN 4
+					WHEN 'QUIZ' THEN 3
+					WHEN 'READING' THEN 2
+					WHEN 'EXAMINER' THEN 1
+					ELSE 0
+				END DESC,
 				COALESCE(n.priority, 5) DESC,
-				n.title ASC,
+				sq.priority DESC,
+				COALESCE(sq.created_at, '') ASC,
 				sq.id ASC
 			LIMIT 3
 		`
@@ -281,9 +292,11 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 // GetAllActiveTasks returns all active tasks ordered by activation time.
 func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 	var activeProfileID sql.NullString
-	_ = conn.QueryRow(`
+	if err := conn.QueryRow(`
 		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
-	`).Scan(&activeProfileID)
+	`).Scan(&activeProfileID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetAllActiveTasks: reading user_settings: %w", err)
+	}
 
 	activeProfileStr := ""
 	if activeProfileID.Valid {
@@ -364,9 +377,11 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 
 	var activeProfileID sql.NullString
 	var skipToReadingActive bool
-	_ = conn.QueryRow(`
+	if err := conn.QueryRow(`
 		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
-	`).Scan(&activeProfileID, &skipToReadingActive)
+	`).Scan(&activeProfileID, &skipToReadingActive); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetNextTask: reading user_settings: %w", err)
+	}
 
 	activeProfileStr := ""
 	if activeProfileID.Valid {
@@ -408,8 +423,17 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 		}
 		query += `
 			ORDER BY
+				CASE sq.task_type
+					WHEN 'FLASHCARD_REVIEW' THEN 5
+					WHEN 'REREAD' THEN 4
+					WHEN 'QUIZ' THEN 3
+					WHEN 'READING' THEN 2
+					WHEN 'EXAMINER' THEN 1
+					ELSE 0
+				END DESC,
 				COALESCE(n.priority, 5) DESC,
-				n.title ASC,
+				sq.priority DESC,
+				COALESCE(sq.created_at, '') ASC,
 				sq.id ASC
 			LIMIT 1
 		`

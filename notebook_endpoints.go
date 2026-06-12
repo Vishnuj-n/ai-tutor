@@ -92,6 +92,13 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		}
 	}
 
+	// Auto-assign the notebook to the active profile, mirroring Chrome-style profile isolation:
+	// notebooks uploaded while a profile is active belong to that profile automatically.
+	// Falls back to the first profile if active_profile_id is not set yet.
+	if profileID := resolveActiveProfileID(); profileID != "" {
+		_ = db.AssignNotebookToProfile(uploadResult.ID, profileID)
+	}
+
 	status := "uploaded"
 	_ = db.UpdateNotebookStatus(uploadResult.ID, status)
 
@@ -107,6 +114,23 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		"failed_count":  0,
 		"status":        status,
 	}
+}
+
+// resolveActiveProfileID returns the active profile ID from user settings.
+// If no active profile is set, it falls back to the first profile ever created.
+// Returns empty string if no profiles exist.
+func resolveActiveProfileID() string {
+	s, err := db.GetUserSettings()
+	if err == nil && s != nil && s.ActiveProfileID != "" {
+		return s.ActiveProfileID
+	}
+	// Fallback: first profile (oldest by created_at)
+	profiles, err := db.GetProfiles()
+	if err == nil && len(profiles) > 0 {
+		// GetProfiles returns ORDER BY created_at DESC; last element is oldest
+		return profiles[len(profiles)-1].ID
+	}
+	return ""
 }
 
 // DraftNotebookSyllabus creates editable chapter ranges for HITL verification.
@@ -507,6 +531,8 @@ func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
 			"priority":        nb.Priority,
 			"exam_deadline":   nb.ExamDeadline,
 			"uploaded_at":     nb.UploadedAt,
+			"profile_id":      nb.ProfileID,
+			"study_status":    nb.StudyStatus,
 		})
 	}
 
@@ -628,6 +654,17 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 	remainingWords, err := db.GetProfileRemainingWords(profileID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
+	}
+
+	if p.DeadlineAt <= 0 {
+		return map[string]interface{}{
+			"has_deadline":     false,
+			"deadline":         "",
+			"daily_pace":       0,
+			"remaining_words":  remainingWords,
+			"days_remaining":   0,
+			"sessions_per_day": 0,
+		}
 	}
 
 	deadlineTime := time.Unix(p.DeadlineAt, 0)

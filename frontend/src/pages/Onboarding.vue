@@ -276,6 +276,8 @@ function startRagSetup() {
   ragMessage.value = 'Checking system specifications...'
   ragDetail.value = ''
 
+  // Always unsubscribe first so retries don't stack duplicate listeners.
+  EventsOff('rag-setup-progress')
   EventsOn('rag-setup-progress', (data) => {
     console.log('[Onboarding] RAG setup progress:', data)
     if (data.status) ragStatus.value = data.status
@@ -290,6 +292,7 @@ function startRagSetup() {
     if (data.status === 'ready') {
       ragSetupCompleted.value = true
       isSettingUpRag.value = false
+      EventsOff('rag-setup-progress')
       setTimeout(() => {
         step.value = 4
       }, 1000)
@@ -300,10 +303,12 @@ function startRagSetup() {
     if (res.error) {
       ragError.value = res.error
       isSettingUpRag.value = false
+      EventsOff('rag-setup-progress')
     }
   }).catch(err => {
     ragError.value = err.message || 'RAG setup failed.'
     isSettingUpRag.value = false
+    EventsOff('rag-setup-progress')
   })
 }
 

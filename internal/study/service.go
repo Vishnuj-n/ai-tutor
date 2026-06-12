@@ -9,6 +9,7 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
+	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
@@ -16,7 +17,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// wordThresholdForHeavyLLM is the Marathon Mode routing threshold.
+// wordThresholdForHeavyLLM is the Manual  Mode routing threshold.
 // Content at or above this word count is routed to HEAVY_LLM to prevent
 // "Lost in the Middle" hallucinations.
 const wordThresholdForHeavyLLM = 4000
@@ -25,6 +26,7 @@ const wordThresholdForHeavyLLM = 4000
 type LLMProvider interface {
 	GenerateAnswer(prompt string) (string, error)
 	ModelName() string
+	GetLimits() llmpkg.ModelLimits
 }
 
 // Config wires all dependencies into StudyService via constructor injection.
@@ -504,11 +506,6 @@ func ResolveCorrectOption(correctAnswer string, options []string) (string, bool)
 }
 
 // ---------- Env-configurable density thresholds ----------
-
-const (
-	DefaultMaxInputTokens  = 30000
-	DefaultMaxOutputTokens = 3000
-)
 
 var (
 	QuizTokenThresholdLow    = getEnvInt("QUIZ_TOKEN_THRESHOLD_LOW", 600)

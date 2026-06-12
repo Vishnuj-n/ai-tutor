@@ -70,12 +70,14 @@ export function useReaderBase(taskID) {
 
   const canGoPrev = computed(() => {
     if (!pdfVisible.value) return false
-    return currentPage.value > 1
+    const effectiveMin = hasNavigationBounds.value ? navigationMinPage.value : 1
+    return currentPage.value > effectiveMin
   })
 
   const canGoNext = computed(() => {
     if (!pdfVisible.value) return false
-    return currentPage.value < pageCount.value
+    const effectiveMax = hasNavigationBounds.value ? navigationMaxPage.value : pageCount.value
+    return currentPage.value < effectiveMax
   })
 
   const pdfSource = computed(() => {
