@@ -304,6 +304,7 @@ import {
   updateNotebookPriority as apiUpdateNotebookPriority,
   deleteNotebook as apiDeleteNotebook,
   updateNotebookStudyStatus,
+  getUserSettings,
 } from '../services/appApi'
 import {
   CanResolveFilePaths,
@@ -347,30 +348,43 @@ const fallbackToastTimer = ref(null)
 const actionToastTimer = ref(null)
 const isDraftingSyllabus = ref(false)
 const draftingNotebookTitle = ref('')
+const activeProfileID = ref('')
 
 const activeNotebooks = computed(() =>
-  notebooks.value.filter((nb) => nb.study_status === 'active')
+  notebooks.value.filter(
+    (nb) => nb.study_status === 'active' && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
+  )
 )
 
 const dormantNotebooks = computed(() =>
-  notebooks.value.filter((nb) => nb.study_status === 'dormant' || !nb.study_status)
+  notebooks.value.filter(
+    (nb) => (nb.study_status === 'dormant' || !nb.study_status) && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
+  )
 )
 
 async function setStudyStatus(notebookID, status) {
   try {
     const res = await updateNotebookStudyStatus(notebookID, status)
     if (res?.error) {
-      console.error('Failed to update study status:', res.error)
+      showToast(`Failed to update study status: ${res.error}`)
       return
     }
     await loadNotebooks()
   } catch (err) {
-    console.error('Failed to update study status:', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    showToast(`Failed to update study status: ${msg}`)
+    uploadError.value = `Failed to update study status: ${msg}`
   }
 }
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
+
+  // Load active profile for Smart Shelf profile scoping
+  const settings = await getUserSettings()
+  if (settings && !settings.error) {
+    activeProfileID.value = settings.active_profile_id || ''
+  }
 
   // Load available topics and notebooks
   await loadTopics()

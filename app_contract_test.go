@@ -1687,9 +1687,9 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 		}
 	}
 
-	// Verify task-a wins due to deterministic UUID fallback order
-	if firstTaskID != "task-a" {
-		t.Fatalf("expected task-a to win due to deterministic fallback, got: %s", firstTaskID)
+	// Verify task type precedence wins before deterministic fallback order
+	if firstTaskID != "task-b" {
+		t.Fatalf("expected task-b to win due to task type precedence, got: %s", firstTaskID)
 	}
 }
 
