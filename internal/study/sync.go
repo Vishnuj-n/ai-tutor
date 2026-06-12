@@ -72,13 +72,17 @@ func TriggerCloudSync() error {
 		LIMIT 100
 	`)
 	if err == nil {
-		defer rows.Close()
 		for rows.Next() {
 			var log models.FSRSReviewLog
 			if err := rows.Scan(&log.ID, &log.TopicID, &log.ActivityType, &log.ReferenceID, &log.ReviewedAt, &log.Rating, &log.ScheduledDays, &log.StateBeforeJSON, &log.StateAfterJSON); err == nil {
 				logs = append(logs, log)
 			}
 		}
+		// Explicitly close before the HTTP POST so the single SQLite connection
+		// is returned to the pool immediately. A deferred close would hold the
+		// connection open for the full HTTP timeout, blocking any concurrent DB
+		// call (e.g. GetUserSettings from the frontend on startup).
+		rows.Close()
 	}
 
 	payload := SyncPayload{
@@ -134,6 +138,8 @@ func TriggerCloudSync() error {
 	return nil
 }
 
+
+func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 	// 1. Create a local path for the downloaded PDF
 	baseDir := os.Getenv("APPDATA")
 	if baseDir == "" {
@@ -171,9 +177,16 @@ func TriggerCloudSync() error {
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
+	const maxDownloadBytes = 100 << 20 // 100 MiB
+	if resp.ContentLength > maxDownloadBytes {
+		return fmt.Errorf("download rejected: Content-Length %d exceeds 100 MiB limit", resp.ContentLength)
+	}
+	limitedBody := &io.LimitedReader{R: resp.Body, N: maxDownloadBytes + 1}
+	if _, err = io.Copy(out, limitedBody); err != nil {
 		return err
+	}
+	if limitedBody.N <= 0 {
+		return fmt.Errorf("download aborted: response exceeded 100 MiB limit")
 	}
 
 	// 3. Register in SQLite
@@ -186,3 +199,4 @@ func TriggerCloudSync() error {
 	utils.Warnf("[SYNC] Automatically registered newly assigned notebook: %s", nb.Title)
 	return nil
 }
+

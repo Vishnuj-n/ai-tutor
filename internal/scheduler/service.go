@@ -61,10 +61,14 @@ func WithQueryDueReviewCards(fn queryDueReviewCardsFn) Option {
 		}
 	}
 }
+// WithQueryNextDueReviewNotebook overrides the due-review notebook query dependency.
+// A nil fn is ignored so the default set in New() is preserved.
 func WithQueryNextDueReviewNotebook(fn queryNextDueReviewNotebookFn) Option {
-    return func(s *service) {
-        s.queryNextDueReviewNotebook = fn
-    }
+	return func(s *service) {
+		if fn != nil {
+			s.queryNextDueReviewNotebook = fn
+		}
+	}
 }
 
 // WithQueryDailyStudyMinutes overrides the user settings query dependency.

@@ -10,7 +10,6 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
-	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
@@ -190,12 +189,10 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 		llm = s.fastLLMProvider
 	}
 
-	// Enforce token budget when possible. If the underlying provider exposes
-	// model limits, compute available input tokens and truncate the retrieved
-	// blocks to fit while preserving Socratic instructions and the student
-	// question. Use tokenizer fallback when accurate counts are unavailable.
-	if limiter, ok := llm.(interface{ GetLimits() llmpkg.ModelLimits }); ok {
-		limits := limiter.GetLimits()
+	// Enforce token budget — compute available input tokens and truncate
+	// the retrieved blocks to fit while preserving Socratic instructions
+	// and the student question.
+	limits := llm.GetLimits()
 
 		// Compute tokens for prompt overhead (instructions + student question + fixed labels)
 		overheadText := strings.Join([]string{
@@ -258,7 +255,6 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 
 		contextText = strings.TrimSpace(strings.Join(newBlocks, "\n\n"))
 		citations = newCitations
-	}
 
 	// Rebuild the final prompt now that contextText may have been truncated
 	socraticPrompt = strings.Join([]string{

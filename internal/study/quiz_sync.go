@@ -9,7 +9,6 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
-	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
 
@@ -145,18 +144,13 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		}
 	}
 
-	// Hoist model-specific limits or globals
+	// Get model-specific token limits
 	llm := s.fastLLMProvider
 	modelName := providerModelName(llm)
-	maxInputTokens := DefaultMaxInputTokens
-	maxOutputTokens := DefaultMaxOutputTokens
-
-	if provider, ok := llm.(*llmpkg.Provider); ok {
-		limits := provider.GetLimits()
-		maxInputTokens = limits.MaxInputTokens
-		maxOutputTokens = limits.MaxOutputTokens
-		utils.Warnf("[QUIZ_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
-	}
+	limits := llm.GetLimits()
+	maxInputTokens := limits.MaxInputTokens
+	maxOutputTokens := limits.MaxOutputTokens
+	utils.Warnf("[QUIZ_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
 
 	// Estimate token limits and budget
 	const baseOverheadTokens = 300

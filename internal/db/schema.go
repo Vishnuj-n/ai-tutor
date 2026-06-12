@@ -322,6 +322,8 @@ func InitSchema(tx *sql.Tx) error {
 	}{
 		{"notebooks", "profile_id", "ALTER TABLE notebooks ADD COLUMN profile_id TEXT REFERENCES study_profiles(id) ON DELETE SET NULL"},
 		{"notebooks", "study_status", "ALTER TABLE notebooks ADD COLUMN study_status TEXT DEFAULT 'dormant'"},
+		{"notebooks", "exam_deadline", "ALTER TABLE notebooks ADD COLUMN exam_deadline TEXT"},
+		{"topic_progress", "status", "ALTER TABLE topic_progress ADD COLUMN status TEXT DEFAULT 'active'"},
 		{"user_settings", "active_profile_id", "ALTER TABLE user_settings ADD COLUMN active_profile_id TEXT REFERENCES study_profiles(id) ON DELETE SET NULL"},
 		{"user_settings", "skip_to_reading_active", "ALTER TABLE user_settings ADD COLUMN skip_to_reading_active BOOLEAN DEFAULT 0"},
 		{"user_settings", "cloud_sync_url", "ALTER TABLE user_settings ADD COLUMN cloud_sync_url TEXT DEFAULT ''"},
@@ -335,10 +337,9 @@ func InitSchema(tx *sql.Tx) error {
 		err := tx.QueryRow(fmt.Sprintf("SELECT count(*) FROM pragma_table_info('%s') WHERE name='%s'", stmt.table, stmt.column)).Scan(&count)
 		if err == nil && count == 0 {
 			if _, err := tx.Exec(stmt.sql); err != nil {
-				utils.Warnf("[SCHEMA] failed to add column %s to %s: %v", stmt.column, stmt.table, err)
-			} else {
-				utils.Warnf("[SCHEMA] added column %s to %s", stmt.column, stmt.table)
+				return fmt.Errorf("[SCHEMA] failed to add column %s to %s (%s): %w", stmt.column, stmt.table, stmt.sql, err)
 			}
+			utils.Warnf("[SCHEMA] added column %s to %s", stmt.column, stmt.table)
 		}
 	}
 

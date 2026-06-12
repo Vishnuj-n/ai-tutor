@@ -35,7 +35,7 @@ func LoadConfigFromEnv() *Config {
 }
 
 // LoadConfigFromEnvForPrefix loads provider config for a named tier.
-// Prefix examples: FAST_LLM or HEAVY_LLM.
+// Prefix examples: FAST_LLM
 func LoadConfigFromEnvForPrefix(prefix string) *Config {
 	prefix = strings.TrimSpace(prefix)
 	if prefix != "" {

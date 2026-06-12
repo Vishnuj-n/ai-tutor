@@ -802,57 +802,6 @@ func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPa
 	return chunks, nil
 }
 
-// GetRemainingWords computes the total words in pages that are remaining to be read.
-func GetRemainingWords(notebookID string) (int, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return 0, fmt.Errorf("notebook id is required")
-	}
-
-	rows, err := conn.Query(`
-		SELECT nc.page_num, c.chunk_text, COALESCE(t.current_page_cursor, 0), COALESCE(t.start_page, 0)
-		FROM notebook_chunks nc
-		JOIN chunks c ON c.id = nc.chunk_id
-		LEFT JOIN topics t ON t.id = c.topic_id
-		WHERE nc.notebook_id = ?
-	`, notebookID)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	totalWords := 0
-	for rows.Next() {
-		var pageNum int
-		var chunkText string
-		var cursor int
-		var startPage int
-		if err := rows.Scan(&pageNum, &chunkText, &cursor, &startPage); err != nil {
-			return 0, err
-		}
-
-		isRemaining := false
-		if cursor > 0 {
-			if pageNum > cursor {
-				isRemaining = true
-			}
-		} else {
-			if pageNum >= startPage {
-				isRemaining = true
-			}
-		}
-
-		if isRemaining {
-			totalWords += len(strings.Fields(chunkText))
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	return totalWords, nil
-}
-
 // AssignNotebookToProfile sets the profile ID for a notebook.
 func AssignNotebookToProfile(notebookID string, profileID string) error {
 	notebookID = strings.TrimSpace(notebookID)
@@ -912,24 +861,36 @@ func UpdateNotebookStudyStatus(notebookID string, studyStatus string) error {
 }
 
 // GetProfileRemainingWords calculates the remaining unread words across all notebooks in a profile.
+// Notebooks with a NULL profile_id are treated as unowned and are included, matching the queue
+// scheduler's filter: (? = '' OR n.profile_id = ?).
 func GetProfileRemainingWords(profileID string) (int, error) {
-	rows, err := conn.Query(`SELECT id FROM notebooks WHERE profile_id = ?`, profileID)
+	// Single query instead of an N+1 loop — the previous implementation opened
+	// The previous implementation opened an outer rows cursor and then issued
+	// another query while that cursor was still alive. With SetMaxOpenConns(1)
+	// this is a guaranteed deadlock because the outer cursor holds the only
+	// connection.
+	var total int
+	err := conn.QueryRow(`
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN COALESCE(t.current_page_cursor, 0) > 0 THEN
+					CASE WHEN nc.page_num > t.current_page_cursor
+						THEN LENGTH(c.chunk_text) - LENGTH(REPLACE(c.chunk_text, ' ', '')) + 1
+						ELSE 0 END
+				ELSE
+					CASE WHEN nc.page_num >= COALESCE(t.start_page, 0)
+						THEN LENGTH(c.chunk_text) - LENGTH(REPLACE(c.chunk_text, ' ', '')) + 1
+						ELSE 0 END
+			END
+		), 0)
+		FROM notebooks n
+		JOIN notebook_chunks nc ON nc.notebook_id = n.id
+		JOIN chunks c ON c.id = nc.chunk_id
+		LEFT JOIN topics t ON t.id = c.topic_id
+		WHERE (n.profile_id = ? OR n.profile_id IS NULL)
+	`, profileID).Scan(&total)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
-
-	totalWords := 0
-	for rows.Next() {
-		var nbID string
-		if err := rows.Scan(&nbID); err != nil {
-			return 0, err
-		}
-		words, err := GetRemainingWords(nbID)
-		if err != nil {
-			return 0, err
-		}
-		totalWords += words
-	}
-	return totalWords, nil
+	return total, nil
 }
