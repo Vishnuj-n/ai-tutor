@@ -128,7 +128,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 					ELSE 0
 				END DESC,
 				COALESCE(n.priority, 5) DESC,
-				sq.priority DESC,
+				sq.priority ASC,
 				COALESCE(sq.created_at, '') ASC,
 				sq.id ASC
 			LIMIT 3
@@ -217,7 +217,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 								ELSE 0
 							END
 						END DESC,
-						sq.priority DESC,
+						sq.priority ASC,
 						sq.created_at ASC
 				) as rn
 			FROM study_queue sq
@@ -432,7 +432,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 					ELSE 0
 				END DESC,
 				COALESCE(n.priority, 5) DESC,
-				sq.priority DESC,
+				sq.priority ASC,
 				COALESCE(sq.created_at, '') ASC,
 				sq.id ASC
 			LIMIT 1
@@ -520,7 +520,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 					ELSE 0
 				END
 			END DESC,
-			sq.priority DESC,
+			sq.priority ASC,
 			COALESCE(n.priority, 5) DESC,
 			n.title ASC,
 			sq.id ASC

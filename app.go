@@ -112,20 +112,20 @@ func (a *App) GetAvailableTopics() []map[string]string {
 
 func (a *App) AskSocratic(topicID string, question string) map[string]interface{} {
 	a.aiMutex.Lock()
-	aiReady := a.aiReady
-	aiInitError := a.aiInitError
-	svc := a.studyService
-	a.aiMutex.Unlock()
-	if !aiReady {
-		reason := aiInitError
+	if !a.aiReady {
+		reason := a.aiInitError
+		a.aiMutex.Unlock()
 		if reason == "" {
 			reason = "local AI runtime is not ready"
 		}
 		return map[string]interface{}{"error": "Socratic Tutor unavailable: " + reason}
 	}
-	if svc == nil {
+	if a.studyService == nil {
+		a.aiMutex.Unlock()
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
+	svc := a.studyService
+	a.aiMutex.Unlock()
 	res, err := svc.AskSocratic(topicID, question)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -135,20 +135,20 @@ func (a *App) AskSocratic(topicID string, question string) map[string]interface{
 
 func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPage, chapterStartPage, chapterEndPage int) map[string]interface{} {
 	a.aiMutex.Lock()
-	aiReady := a.aiReady
-	aiInitError := a.aiInitError
-	svc := a.studyService
-	a.aiMutex.Unlock()
-	if !aiReady {
-		reason := aiInitError
+	if !a.aiReady {
+		reason := a.aiInitError
+		a.aiMutex.Unlock()
 		if reason == "" {
 			reason = "local AI runtime is not ready"
 		}
 		return map[string]interface{}{"error": "Reader AI unavailable: " + reason}
 	}
-	if svc == nil {
+	if a.studyService == nil {
+		a.aiMutex.Unlock()
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
+	svc := a.studyService
+	a.aiMutex.Unlock()
 	return svc.AnswerReaderQuestion(study.ReaderAIRequest{
 		TopicID:          topicID,
 		NotebookID:       notebookID,
@@ -162,17 +162,16 @@ func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPa
 
 func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
 	a.aiMutex.Lock()
-	aiReady := a.aiReady
-	aiInitError := a.aiInitError
-	emb := a.embedder
-	a.aiMutex.Unlock()
-	if !aiReady || emb == nil {
-		reason := aiInitError
+	if !a.aiReady || a.embedder == nil {
+		reason := a.aiInitError
+		a.aiMutex.Unlock()
 		if reason == "" {
 			reason = "local AI runtime is not ready"
 		}
 		return map[string]interface{}{"error": "Embedding diagnostics unavailable: " + reason}
 	}
+	emb := a.embedder
+	a.aiMutex.Unlock()
 	input := strings.TrimSpace(text)
 	if input == "" {
 		input = "quick embedding diagnostic sentence"
@@ -313,6 +312,10 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		utils.Warnf("[TODAY_PLAN] synthetic plan fallback taskCount=%d", len(plan.Tasks))
 	}
 
+	// Count active notebooks for the dashboard empty-state distinction.
+	var activeNotebookCount int
+	_ = db.GetConnection().QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&activeNotebookCount)
+
 	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
 	for idx, task := range plan.Tasks {
 		utils.Warnf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
@@ -326,6 +329,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
 		"insights_available": false, "plan_source": planSource,
+		"active_notebook_count": activeNotebookCount,
 	}
 }
 
@@ -788,8 +792,12 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 		Theme:               theme,
 		RAGEnabled:          ragEnabled,
 	}
+	// Persist settings first so SQLite is never stale if runtime mutation fails.
+	if err := db.UpdateUserSettings(s); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
 
-	// Check if RAG is being dynamically disabled
+	// Only mutate runtime after successful persistence.
 	a.aiMutex.Lock()
 	if !ragEnabled && a.embedder != nil {
 		utils.Infof("RAG disabled dynamically in settings. Closing ONNX embedder.")
@@ -798,15 +806,13 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 		a.aiReady = false
 	}
 	a.aiMutex.Unlock()
+
 	if !ragEnabled {
 		if err := a.reloadRetrievalEngine(); err != nil {
 			utils.Errorf("reloadRetrievalEngine after RAG disable: %v", err)
 		}
 	}
 
-	if err := db.UpdateUserSettings(s); err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
 	return map[string]interface{}{"ok": true}
 }
 
@@ -841,7 +847,9 @@ func (a *App) CreateProfile(name string, deadlineStr string) map[string]interfac
 	s, err := db.GetUserSettings()
 	if err == nil && s != nil && s.ActiveProfileID == "" {
 		s.ActiveProfileID = p.ID
-		_ = db.UpdateUserSettings(*s)
+		if err := db.UpdateUserSettings(*s); err != nil {
+			return map[string]interface{}{"error": "profile created but failed to set as active: " + err.Error()}
+		}
 	}
 
 	return map[string]interface{}{"ok": true, "profile": p}
@@ -1149,16 +1157,20 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			utils.Warnf("could not initialize vector table: %v", err)
 		}
 
-		// Update app fields (under lock to avoid races with readers)
+		// Update app fields with embedder (under lock); readiness waits for full bootstrap.
 		a.aiMutex.Lock()
 		a.embedder = emb
-		a.aiReady = true
+		a.aiReady = false
 		a.aiInitError = ""
 		a.aiMutex.Unlock()
 
 		// Rebuild engine and study service
 		if err := a.reloadRetrievalEngine(); err != nil {
-			emitRagSetupFailed(a, fmt.Sprintf("failed to reload retrieval engine: %v", err))
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to reload retrieval engine: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
 			return
 		}
 
@@ -1181,9 +1193,19 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
 		if err := indexer.IndexAllTopics(); err != nil {
 			utils.Errorf("vector indexing failed after RAG enable: %v", err)
-			emitRagSetupFailed(a, fmt.Sprintf("vector indexing failed: %v", err))
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("vector indexing failed: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
 			return
 		}
+
+		// Mark ready only after all bootstrap steps succeed.
+		a.aiMutex.Lock()
+		a.aiReady = true
+		a.aiInitError = ""
+		a.aiMutex.Unlock()
 
 		// Emit final ready event only after indexing succeeds
 		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
