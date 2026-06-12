@@ -205,6 +205,8 @@ type Notebook struct {
 	ChunkCount     int     `json:"chunk_count"`
 	Priority       int     `json:"priority"`
 	ExamDeadline   *string `json:"exam_deadline,omitempty"`
+	ProfileID      string  `json:"profile_id,omitempty"`
+	StudyStatus    string  `json:"study_status,omitempty"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)
@@ -538,4 +540,21 @@ func (r *ReadingSessionResponse) Validate() error {
 		return fmt.Errorf("missing required field: page_bounds (start_page must be > 0)")
 	}
 	return nil
+}
+
+// StudyProfile represents a user's study profile (e.g. UPSC prep).
+type StudyProfile struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	DeadlineAt int64  `json:"deadline_at"` // Unix timestamp
+	CreatedAt  string `json:"created_at,omitempty"`
+}
+
+// UserSettings represents the application settings.
+type UserSettings struct {
+	DailyStudyMinutes    int    `json:"daily_study_minutes"`
+	ActiveProfileID      string `json:"active_profile_id"`
+	SkipToReadingActive  bool   `json:"skip_to_reading_active"`
+	CloudSyncURL         string `json:"cloud_sync_url"`
+	CloudAPIToken        string `json:"cloud_api_token"`
 }

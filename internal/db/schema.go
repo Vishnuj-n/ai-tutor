@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"ai-tutor/internal/utils"
 )
 
 // InitSchema creates all tables and indexes with a single clean schema.
@@ -12,6 +14,14 @@ import (
 // Sprint 14 requirements: FSRS tables, written questions, and current_page_cursor.
 func InitSchema(tx *sql.Tx) error {
 	schema := []string{
+		// Profiles table
+		`CREATE TABLE IF NOT EXISTS study_profiles (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			deadline_at INTEGER NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+
 		// Core tables
 		`CREATE TABLE IF NOT EXISTS topics (
 			id TEXT PRIMARY KEY,
@@ -43,7 +53,7 @@ func InitSchema(tx *sql.Tx) error {
 			last_read_at TIMESTAMP,
 			mastery_score REAL DEFAULT 0,
 			review_enabled INTEGER DEFAULT 0,
-			FOREIGN KEY (topic_id) REFERENCES topics(id)
+			status TEXT DEFAULT 'active'
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS quiz_attempts (
@@ -97,7 +107,12 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS user_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			daily_study_minutes INTEGER NOT NULL DEFAULT 90,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			active_profile_id TEXT,
+			skip_to_reading_active BOOLEAN DEFAULT 0,
+			cloud_sync_url TEXT DEFAULT '',
+			cloud_api_token TEXT DEFAULT '',
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (active_profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
 
 		// Notebooks
@@ -115,7 +130,10 @@ func InitSchema(tx *sql.Tx) error {
 			syllabus_draft_json TEXT,
 			exam_deadline TEXT,
 			uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id)
+			profile_id TEXT,
+			study_status TEXT DEFAULT 'dormant',
+			FOREIGN KEY (topic_id) REFERENCES topics(id),
+			FOREIGN KEY (profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS notebook_topics (
@@ -290,6 +308,32 @@ func InitSchema(tx *sql.Tx) error {
 			// Ignore duplicate index errors where they indicate index already exists.
 			if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
 				return fmt.Errorf("failed to create unique index on notebook_chunks: %w", err)
+			}
+		}
+	}
+
+	// Safely add columns if they do not exist (active migration support)
+	alterStatements := []struct {
+		table  string
+		column string
+		sql    string
+	}{
+		{"notebooks", "profile_id", "ALTER TABLE notebooks ADD COLUMN profile_id TEXT REFERENCES study_profiles(id) ON DELETE SET NULL"},
+		{"notebooks", "study_status", "ALTER TABLE notebooks ADD COLUMN study_status TEXT DEFAULT 'dormant'"},
+		{"user_settings", "active_profile_id", "ALTER TABLE user_settings ADD COLUMN active_profile_id TEXT REFERENCES study_profiles(id) ON DELETE SET NULL"},
+		{"user_settings", "skip_to_reading_active", "ALTER TABLE user_settings ADD COLUMN skip_to_reading_active BOOLEAN DEFAULT 0"},
+		{"user_settings", "cloud_sync_url", "ALTER TABLE user_settings ADD COLUMN cloud_sync_url TEXT DEFAULT ''"},
+		{"user_settings", "cloud_api_token", "ALTER TABLE user_settings ADD COLUMN cloud_api_token TEXT DEFAULT ''"},
+	}
+
+	for _, stmt := range alterStatements {
+		var count int
+		err := tx.QueryRow(fmt.Sprintf("SELECT count(*) FROM pragma_table_info('%s') WHERE name='%s'", stmt.table, stmt.column)).Scan(&count)
+		if err == nil && count == 0 {
+			if _, err := tx.Exec(stmt.sql); err != nil {
+				utils.Warnf("[SCHEMA] failed to add column %s to %s: %v", stmt.column, stmt.table, err)
+			} else {
+				utils.Warnf("[SCHEMA] added column %s to %s", stmt.column, stmt.table)
 			}
 		}
 	}

@@ -1,10 +1,13 @@
 <script setup>
 import Sidebar from './components/Sidebar.vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
 </script>
 
 <template>
   <div class="app-shell">
-    <Sidebar />
+    <Sidebar v-if="route.path !== '/onboarding'" />
 
     <main class="content-shell">
       <RouterView />
