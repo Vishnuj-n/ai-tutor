@@ -167,18 +167,29 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 }
 
 func ResolveAppDir() (string, error) {
-	var appDir string
-
-	// If APP_ENV is set to dev, use a local folder in the project root
+	// Dev: keep data in the repo for convenience.
 	if os.Getenv("APP_ENV") == "dev" {
-		// Use current working directory for dev mode
 		projectRoot, err := os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve project root: %w", err)
 		}
-		appDir = filepath.Join(projectRoot, "dev_data")
+		return filepath.Join(projectRoot, "dev_data"), nil
 	}
-	return appDir, nil
+
+	// Prod/default: use a stable per-user directory.
+	cfgDir, err := os.UserConfigDir()
+	if err == nil && cfgDir != "" {
+		return filepath.Join(cfgDir, "ai-tutor"), nil
+	}
+	cacheDir, err := os.UserCacheDir()
+	if err == nil && cacheDir != "" {
+		return filepath.Join(cacheDir, "ai-tutor"), nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err == nil && homeDir != "" {
+		return filepath.Join(homeDir, ".ai-tutor"), nil
+	}
+	return "", fmt.Errorf("failed to resolve application data directory")
 }
 
 func ResolveDBPath() (string, error) {
