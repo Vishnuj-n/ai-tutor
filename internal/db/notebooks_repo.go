@@ -265,7 +265,7 @@ func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicInges
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
 func GetNotebooks(topicID string) ([]models.Notebook, error) {
-	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), uploaded_at FROM notebooks"
+	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at FROM notebooks"
 	args := []interface{}{}
 
 	if topicID != "" {
@@ -293,7 +293,7 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 	var notebooks []models.Notebook
 	for rows.Next() {
 		var nb models.Notebook
-		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.UploadedAt); err != nil {
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt); err != nil {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
@@ -308,10 +308,10 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
 	err := conn.QueryRow(`
-		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), uploaded_at
+		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at
 		FROM notebooks
 		WHERE id = ?
-	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.UploadedAt)
+	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -858,4 +858,82 @@ func GetNotebookPageCount(notebookID string) (int, error) {
 		WHERE notebook_id = ?
 	`, notebookID).Scan(&maxPage)
 	return maxPage, err
+}
+
+// UpdateNotebookExamDeadline updates the notebook exam deadline
+func UpdateNotebookExamDeadline(notebookID string, deadline *string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+
+	result, err := conn.Exec(`
+		UPDATE notebooks
+		SET exam_deadline = ?
+		WHERE id = ?
+	`, deadline, notebookID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// GetRemainingWords computes the total words in pages that are remaining to be read.
+func GetRemainingWords(notebookID string) (int, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return 0, fmt.Errorf("notebook id is required")
+	}
+
+	rows, err := conn.Query(`
+		SELECT nc.page_num, c.chunk_text, COALESCE(t.current_page_cursor, 0), COALESCE(t.start_page, 0)
+		FROM notebook_chunks nc
+		JOIN chunks c ON c.id = nc.chunk_id
+		LEFT JOIN topics t ON t.id = c.topic_id
+		WHERE nc.notebook_id = ?
+	`, notebookID)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	totalWords := 0
+	for rows.Next() {
+		var pageNum int
+		var chunkText string
+		var cursor int
+		var startPage int
+		if err := rows.Scan(&pageNum, &chunkText, &cursor, &startPage); err != nil {
+			return 0, err
+		}
+
+		isRemaining := false
+		if cursor > 0 {
+			if pageNum > cursor {
+				isRemaining = true
+			}
+		} else {
+			if pageNum >= startPage {
+				isRemaining = true
+			}
+		}
+
+		if isRemaining {
+			totalWords += len(strings.Fields(chunkText))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	return totalWords, nil
 }

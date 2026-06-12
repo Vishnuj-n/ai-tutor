@@ -739,13 +739,13 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 	return map[string]interface{}{"ok": true, "daily_study_minutes": minutes}
 }
 
-// ---------- Marathon Mode endpoints (Phase 1 new) ----------
+// ---------- Manual Mode endpoints (Phase 1 new) ---------
 
-func (a *App) GenerateMarathonFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
+func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	return a.studyService.GenerateMarathonFlashcards(notebookID, startPage, endPage)
+	return a.studyService.GenerateManualFlashcards(notebookID, startPage, endPage)
 }
 
 func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage int) map[string]interface{} {
@@ -776,7 +776,37 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "failed to get topic page bounds: " + err.Error()}
 	}
 
-	return a.studyService.GenerateMarathonFlashcardsWithTopic(topicID, notebookID, startPage, endPage)
+	cards, states, existing, tier, err := a.studyService.GenerateFSRSCardsForTopic(topicID, notebookID, startPage, endPage)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	now := time.Now().Unix()
+	response := map[string]interface{}{
+		"notebook_id":       notebookID,
+		"existing":          existing,
+		"start_page":        startPage,
+		"end_page":          endPage,
+		"topic_id":          topicID,
+		"cards":             cards,
+		"states":            states,
+		"card_count":        len(cards),
+		"llm_tier":          tier,
+		"generated_at_unix": now,
+	}
+
+	// Find the minimum due time for existing/generated cards to populate initial_due_at
+	var initialDueAt int64 = 0
+	for _, card := range cards {
+		if card.DueAt > 0 && (initialDueAt == 0 || card.DueAt < initialDueAt) {
+			initialDueAt = card.DueAt
+		}
+	}
+	if initialDueAt > 0 {
+		response["initial_due_at"] = initialDueAt
+	}
+
+	return response
 }
 
 func (a *App) GetReviewSession(taskID string, notebookID string) map[string]interface{} {
@@ -871,8 +901,6 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 	}
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
 }
-
-
 
 func notebookAssetURL(filePath string) string {
 	normPath := strings.TrimSpace(strings.ReplaceAll(filePath, "\\", "/"))

@@ -125,7 +125,7 @@ func resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int
 			continue
 		}
 		span := pageRange[1] - pageRange[0]
-		if span > maxSpan {
+		if sourceHeading == "" || span > maxSpan {
 			maxSpan = span
 			sourceHeading = fmt.Sprintf("Page %d", pageRange[0])
 		}

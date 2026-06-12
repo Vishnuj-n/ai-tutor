@@ -308,7 +308,7 @@ CREATE TABLE reread_attempts (
 
 ---
 
-## Sprint 6: Reading, Quiz Pipelines & Deadline Pacing (Priority: Medium-High)
+## Sprint 6: Reading, Quiz Pipelines & Deadline Pacing (Priority: Medium-High) [DONE]
 
 **Goal:** Build bounded reading logic, content-density quiz scaling, and expose daily study velocity.
 
@@ -318,10 +318,10 @@ CREATE TABLE reread_attempts (
 - **Task 6.3**: Wire the Deadline Velocity UI. Create a backend utility to run the target formula (`Remaining Words / Days to Exam Target`) and render the resulting required daily pace metric on the main dashboard workspace.
 
 **Deliverables:**
-- [ ] Backend-only page range validation safety
-- [ ] Scalable context-locked quiz generation
-- [ ] Interactive configuration screen for setting exam deadlines
-- [ ] Front-facing dashboard target telemetry widget
+- [x] Backend-only page range validation safety
+- [x] Scalable context-locked quiz generation
+- [x] Interactive configuration screen for setting exam deadlines
+- [x] Front-facing dashboard target telemetry widget
 
 ---
 
@@ -338,8 +338,23 @@ CREATE TABLE reread_attempts (
 - [ ] Consistent `GetTodayPlan` logic
 
 ---
+## Sprint 8: Constraint-Based Study Groups (Priority: Medium)
 
-## Sprint 8: Socratic Tutor Routing & Milestone Examiner Gate (Priority: Low / Good‑to‑Have)
+**Goal:** Implement multi-notebook deadline grouping and feasibility verification without autonomous AI scheduling.
+
+**Tasks:**
+- **Task 8.1**: Implement `study_groups` Table (`internal/db/schema.go`). Create schema for grouping multiple notebooks under a single master deadline. Update `notebooks` table with `group_id` foreign key.
+- **Task 8.2**: Build Feasibility Verifier (`internal/study/service.go`). Create logic to sum total unread words across a group and verify if the required daily pace is mathematically possible.
+- **Task 8.3**: Grouped Priority Multiplier (`internal/db/study_queue_repo.go`). Update Native SQL Queue Routing to temporarily boost the priority index of notebooks belonging to near-deadline groups.
+- **Task 8.4**: UI Capacity Monitor. Add a dashboard widget displaying current group load and feasibility warnings (the "Buzzing" feature) when pacing limits are exceeded.
+
+**Deliverables:**
+- [ ] `study_groups` schema and database migrations
+- [ ] Feasibility verification backend logic
+- [ ] Updated Active Lane SQL priority multiplier
+- [ ] Frontend capacity monitor and warning UI
+---
+## Sprint 9: Socratic Tutor Routing & Milestone Examiner Gate (Priority: Low / Good‑to‑Have)
 
 **Goal:** Secure prompt handling and add the 10‑session milestone gate.
 

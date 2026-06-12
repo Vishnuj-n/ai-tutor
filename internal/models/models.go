@@ -193,17 +193,18 @@ type ChunkWithContext struct {
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
 type Notebook struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	FilePath       string `json:"file_path"`
-	FileType       string `json:"file_type"` // "pdf", "txt", "md"
-	TopicID        string `json:"topic_id,omitempty"`
-	Status         string `json:"status"`
-	IndexingStatus string `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
-	UploadedAt     string `json:"uploaded_at"`
-	PageCount      int    `json:"page_count,omitempty"`
-	ChunkCount     int    `json:"chunk_count"`
-	Priority       int    `json:"priority"`
+	ID             string  `json:"id"`
+	Title          string  `json:"title"`
+	FilePath       string  `json:"file_path"`
+	FileType       string  `json:"file_type"` // "pdf", "txt", "md"
+	TopicID        string  `json:"topic_id,omitempty"`
+	Status         string  `json:"status"`
+	IndexingStatus string  `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
+	UploadedAt     string  `json:"uploaded_at"`
+	PageCount      int     `json:"page_count,omitempty"`
+	ChunkCount     int     `json:"chunk_count"`
+	Priority       int     `json:"priority"`
+	ExamDeadline   *string `json:"exam_deadline,omitempty"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)
