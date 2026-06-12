@@ -61,6 +61,11 @@ func WithQueryDueReviewCards(fn queryDueReviewCardsFn) Option {
 		}
 	}
 }
+func WithQueryNextDueReviewNotebook(fn queryNextDueReviewNotebookFn) Option {
+    return func(s *service) {
+        s.queryNextDueReviewNotebook = fn
+    }
+}
 
 // WithQueryDailyStudyMinutes overrides the user settings query dependency.
 func WithQueryDailyStudyMinutes(fn queryDailyStudyMinutesFn) Option {
@@ -89,14 +94,6 @@ func WithQueryTokensPerPageMap(fn queryTokensPerPageMapFn) Option {
 	}
 }
 
-// WithQueryNextDueReviewNotebook overrides the deterministic notebook review selection dependency.
-func WithQueryNextDueReviewNotebook(fn queryNextDueReviewNotebookFn) Option {
-	return func(s *service) {
-		if fn != nil {
-			s.queryNextDueReviewNotebook = fn
-		}
-	}
-}
 
 // Service is the public interface for daily plan scheduling.
 type Service interface {

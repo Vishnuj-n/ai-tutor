@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/retrieval"
 )

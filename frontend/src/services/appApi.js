@@ -94,8 +94,8 @@ export function updateDailyStudyMinutes(minutes) {
 }
 
 // Comprehensive Mode endpoints (Phase 1)
-export function generateMarathonFlashcards(notebookID, startPage, endPage) {
-  return appBridge().GenerateMarathonFlashcards(notebookID, startPage, endPage)
+export function generateManualFlashcards(notebookID, startPage, endPage) {
+  return appBridge().GenerateManualFlashcards(notebookID, startPage, endPage)
 }
 
 export function generateComprehensiveExam(notebookID, startPage, endPage) {
@@ -152,4 +152,12 @@ export function updateNotebookPriority(notebookID, priority) {
 
 export function deleteNotebook(notebookID) {
   return appBridge().DeleteNotebook(notebookID)
+}
+
+export function setNotebookExamDeadline(notebookID, deadline) {
+  return appBridge().SetNotebookExamDeadline(notebookID, deadline)
+}
+
+export function getNotebookDailyPace(notebookID) {
+  return appBridge().GetNotebookDailyPace(notebookID)
 }

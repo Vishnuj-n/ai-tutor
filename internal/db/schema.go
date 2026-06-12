@@ -154,16 +154,6 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (source_chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
 		)`,
 
-		// Manual flashcards (ephemeral sandbox)
-		`CREATE TABLE IF NOT EXISTS manual_flashcards (
-			id TEXT PRIMARY KEY,
-			notebook_id TEXT NOT NULL,
-			prompt TEXT NOT NULL,
-			answer TEXT NOT NULL,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
-		)`,
-
 		`CREATE TABLE IF NOT EXISTS fsrs_review_log (
 			id TEXT PRIMARY KEY,
 			topic_id TEXT NOT NULL,
@@ -211,6 +201,16 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (task_id) REFERENCES study_queue(id) ON DELETE CASCADE,
 			FOREIGN KEY (card_id) REFERENCES fsrs_cards(id) ON DELETE CASCADE
 		)`,
+
+		// Add this block inside the schema array in InitSchema
+		`CREATE TABLE IF NOT EXISTS manual_flashcards (
+		id TEXT PRIMARY KEY,
+		notebook_id TEXT NOT NULL,
+		prompt TEXT NOT NULL,
+		answer TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+)`,
 	}
 
 	// Execute all table creation statements
@@ -235,7 +235,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_review_task_cards_task_status ON review_task_cards(task_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_task_completed_at ON quiz_attempts(task_id, completed_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_reread_attempts_last_attempt_at ON reread_attempts(last_attempt_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_manual_flashcards_notebook ON manual_flashcards(notebook_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_manual_flashcards_notebook_id ON manual_flashcards(notebook_id)`,
 	}
 
 	for _, stmt := range indexes {

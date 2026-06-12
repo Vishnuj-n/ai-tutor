@@ -72,6 +72,36 @@
     </template>
 
     <template v-else>
+      <!-- Telemetry Widget -->
+      <section v-if="deadlineNotebooks.length > 0" class="telemetry-widget">
+        <div class="telemetry-card card">
+          <h2 class="telemetry-header">🚀 Exam Pacing Telemetry</h2>
+          <div class="telemetry-grid">
+            <div v-for="nb in deadlineNotebooks" :key="nb.id" class="telemetry-item">
+              <div class="telemetry-title-row">
+                <span class="telemetry-doc-icon">📕</span>
+                <span class="telemetry-doc-title">{{ nb.title }}</span>
+                <span class="telemetry-days-left" :class="{ warning: getDaysRemaining(nb.exam_deadline) <= 3 }">
+                  ({{ formatDaysRemaining(nb.exam_deadline) }})
+                </span>
+              </div>
+              <div class="telemetry-metric-row">
+                <div class="telemetry-metric">
+                  <span class="metric-value">{{ notebookPaces[nb.id]?.daily_pace || 0 }}</span>
+                  <span class="metric-label">words / day</span>
+                </div>
+                <div class="telemetry-progress-info">
+                  <div class="progress-details">
+                    <span>Remaining: <strong>{{ notebookPaces[nb.id]?.remaining_words || 0 }}</strong> words</span>
+                    <span>Exam: {{ formatDate(nb.exam_deadline) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div class="task-list">
         <article v-for="task in tasks" :key="task.id" class="card task-card">
           <div class="task-header">
@@ -108,7 +138,7 @@
 <script setup>
 import { onMounted, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { getTodayPlan, getNotebooks } from '../services/appApi'
+import { getTodayPlan, getNotebooks, getNotebookDailyPace } from '../services/appApi'
 
 const router = useRouter()
 const route = useRoute()
@@ -119,6 +149,8 @@ const actionError = ref('')
 const tasks = ref([])
 const hasActiveStudyContent = ref(false)
 const dueReviewCards = ref(0)
+const deadlineNotebooks = ref([])
+const notebookPaces = ref({})
 
 // Show confirmation when flashcards were just created from quiz completion
 const flashcardsJustCreated = computed(() => {
@@ -184,12 +216,49 @@ async function loadAgenda() {
       const status = String(nb?.status || '').toLowerCase()
       return status === 'active' || status === 'chunked' || status === 'indexed'
     })
+
+    // Filter notebooks with deadlines
+    deadlineNotebooks.value = notebookList.filter((nb) => nb.exam_deadline)
+
+    // Load paces for those notebooks
+    for (const nb of deadlineNotebooks.value) {
+      try {
+        const pace = await getNotebookDailyPace(nb.id)
+        if (!pace.error) {
+          notebookPaces.value[nb.id] = pace
+        }
+      } catch (err) {
+        console.error('Failed to get pace for notebook', nb.id, err)
+      }
+    }
   } catch (err) {
     console.error('[DASHBOARD] loadAgenda catch', err)
     error.value = err.message || 'Failed to load tasks'
   } finally {
     loading.value = false
   }
+}
+
+function getDaysRemaining(deadlineStr) {
+  if (!deadlineStr) return 0
+  const deadline = new Date(deadlineStr)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  deadline.setHours(0, 0, 0, 0)
+  const diffTime = deadline - today
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+  return diffDays
+}
+
+function formatDaysRemaining(deadlineStr) {
+  const days = getDaysRemaining(deadlineStr)
+  if (days === 0) return 'today!'
+  if (days < 0) return 'passed'
+  return `${days} days left`
+}
+
+function formatDate(dateString) {
+  return new Date(dateString).toLocaleDateString()
 }
 
 function startTask(task) {
@@ -534,5 +603,107 @@ function startTask(task) {
   .primary-btn {
     transition: none;
   }
+}
+
+.telemetry-widget {
+  margin-bottom: 8px;
+}
+
+.telemetry-card {
+  background: linear-gradient(135deg, var(--surface-container-lowest), var(--surface-container-low));
+  border: 1px solid var(--outline-variant);
+}
+
+.telemetry-header {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--on-surface);
+  font-family: 'Manrope', sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.telemetry-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.telemetry-item {
+  padding: 12px;
+  background: var(--surface-container-low);
+  border-radius: 12px;
+  border: 1px solid var(--outline-variant);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.telemetry-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px dashed var(--outline-variant);
+  padding-bottom: 6px;
+}
+
+.telemetry-doc-title {
+  flex-grow: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--on-surface);
+}
+
+.telemetry-days-left {
+  color: var(--muted-text);
+  font-size: 11px;
+}
+
+.telemetry-days-left.warning {
+  color: #c0392b;
+  font-weight: 700;
+}
+
+.telemetry-metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.telemetry-metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--primary);
+  line-height: 1;
+  font-family: 'Manrope', sans-serif;
+}
+
+.metric-label {
+  font-size: 10px;
+  color: var(--muted-text);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.telemetry-progress-info {
+  text-align: right;
+}
+
+.progress-details {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted-text);
+  gap: 2px;
 }
 </style>

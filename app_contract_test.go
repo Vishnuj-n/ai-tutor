@@ -112,6 +112,14 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	app := newTestApp(t)
 	mustInsertActiveQuizTask(t, "nb-quiz-max", "topic-quiz-max", "task-quiz-max", 100)
 
+	// Insert dummy FSRS card for the topic to verify it is deleted during safety transaction
+	if _, err := db.GetConnection().Exec(`
+		INSERT INTO fsrs_cards (id, topic_id, prompt, answer)
+		VALUES ('dummy-card-1', 'topic-quiz-max', 'Prompt 1', 'Answer 1')
+	`); err != nil {
+		t.Fatalf("failed to insert dummy FSRS card: %v", err)
+	}
+
 	tx, err := db.GetConnection().Begin()
 	if err != nil {
 		t.Fatalf("begin tx failed: %v", err)
@@ -161,6 +169,39 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	}
 	if pendingRereads != 0 {
 		t.Fatalf("expected no automatic reread inserted after max, got %d", pendingRereads)
+	}
+
+	// Verify dummy FSRS card was deleted
+	var cardCount int
+	if err := db.GetConnection().QueryRow(`
+		SELECT COUNT(*) FROM fsrs_cards WHERE id = 'dummy-card-1'
+	`).Scan(&cardCount); err != nil {
+		t.Fatalf("query FSRS cards count failed: %v", err)
+	}
+	if cardCount != 0 {
+		t.Fatalf("expected FSRS cards to be deleted on max reread failure, but found %d", cardCount)
+	}
+
+	// Verify quiz task status is FAILED
+	var taskStatus string
+	if err := db.GetConnection().QueryRow(`
+		SELECT status FROM study_queue WHERE id = 'task-quiz-max'
+	`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status failed: %v", err)
+	}
+	if taskStatus != string(models.StudyTaskStatusFailed) {
+		t.Fatalf("expected quiz task status to be FAILED, got %q", taskStatus)
+	}
+
+	// Verify EXAMINER task with status PENDING is created
+	var examinerCount int
+	if err := db.GetConnection().QueryRow(`
+		SELECT COUNT(*) FROM study_queue WHERE topic_id = 'topic-quiz-max' AND task_type = 'EXAMINER' AND status = 'PENDING'
+	`).Scan(&examinerCount); err != nil {
+		t.Fatalf("query EXAMINER task count failed: %v", err)
+	}
+	if examinerCount != 1 {
+		t.Fatalf("expected 1 PENDING EXAMINER task, got %d", examinerCount)
 	}
 }
 
