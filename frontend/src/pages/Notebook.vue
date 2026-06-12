@@ -100,20 +100,7 @@
             </select>
           </div>
 
-          <div v-if="notebook.exam_deadline" class="notebook-deadline-info">
-            <div class="deadline-row">
-              <span class="deadline-icon">📅</span>
-              <span class="deadline-text">Exam: {{ formatDate(notebook.exam_deadline) }}</span>
-              <span class="deadline-days" :class="{ warning: getDaysRemaining(notebook.exam_deadline) <= 3 }">
-                ({{ formatDaysRemaining(notebook.exam_deadline) }})
-              </span>
-            </div>
-            <div v-if="notebookPaces[notebook.id]" class="pace-row">
-              <span class="pace-icon">⚡</span>
-              <span class="pace-text">Pace: <strong>{{ notebookPaces[notebook.id].daily_pace }} words/day</strong></span>
-              <span class="pace-remaining">({{ notebookPaces[notebook.id].remaining_words }} words left)</span>
-            </div>
-          </div>
+
 
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
 
@@ -160,18 +147,6 @@
             </option>
           </select>
           <p class="priority-hint">Higher-priority notebooks appear earlier in your study queue.</p>
-        </div>
-
-        <div class="modal-deadline-edit">
-          <label for="notebook-deadline">Exam Deadline</label>
-          <input
-            id="notebook-deadline"
-            v-model="draftNotebookDeadline"
-            type="date"
-            class="deadline-input-modal"
-            :min="todayDateStr"
-          />
-          <p class="priority-hint">Setting a deadline calculates study pace to finish on time. Clear it to remove.</p>
         </div>
 
         <div v-if="draftError" class="error-message modal-error">{{ draftError }}</div>
@@ -280,8 +255,6 @@ import {
   updateNotebookTitle as apiUpdateNotebookTitle,
   updateNotebookPriority as apiUpdateNotebookPriority,
   deleteNotebook as apiDeleteNotebook,
-  setNotebookExamDeadline,
-  getNotebookDailyPace,
 } from '../services/appApi'
 import {
   CanResolveFilePaths,
@@ -308,12 +281,10 @@ const showSyllabusModal = ref(false)
 const draftNotebookID = ref('')
 const draftNotebookTitle = ref('')
 const draftNotebookPriority = ref(5)
-const draftNotebookDeadline = ref('')
 const originalDraftTitle = ref('')
 const originalDraftPriority = ref(5)
-const originalDraftDeadline = ref('')
-const todayDateStr = ref('')
-const notebookPaces = ref({})
+
+
 const draftPageCount = ref(1)
 const draftChapters = ref([])
 const originalDraftChapters = ref([])
@@ -331,51 +302,10 @@ const draftingNotebookTitle = ref('')
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
 
-  const today = new Date()
-  const yyyy = today.getFullYear()
-  const mm = String(today.getMonth() + 1).padStart(2, '0')
-  const dd = String(today.getDate()).padStart(2, '0')
-  todayDateStr.value = `${yyyy}-${mm}-${dd}`
-
   // Load available topics and notebooks
   await loadTopics()
   await loadNotebooks()
 })
-
-function getDaysRemaining(deadlineStr) {
-  if (!deadlineStr) return 0
-  const deadline = new Date(deadlineStr)
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  deadline.setHours(0, 0, 0, 0)
-  const diffTime = deadline - today
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-  return diffDays
-}
-
-function formatDaysRemaining(deadlineStr) {
-  const days = getDaysRemaining(deadlineStr)
-  if (days === 0) return 'today!'
-  if (days < 0) return 'passed'
-  return `${days} days left`
-}
-
-async function loadNotebookPaces() {
-  for (const nb of notebooks.value) {
-    if (nb.exam_deadline) {
-      try {
-        const pace = await getNotebookDailyPace(nb.id)
-        if (!pace.error) {
-          notebookPaces.value[nb.id] = pace
-        }
-      } catch (err) {
-        console.error('Failed to get pace for notebook', nb.id, err)
-      }
-    } else {
-      notebookPaces.value[nb.id] = null
-    }
-  }
-}
 
 onUnmounted(() => {
   EventsOff('ingestion-progress')
@@ -460,7 +390,6 @@ async function loadNotebooks() {
       throw new Error(result[0].error)
     }
     notebooks.value = Array.isArray(result) ? result : []
-    await loadNotebookPaces()
   } catch (error) {
     console.error('Failed to load notebooks:', error)
     notebooks.value = []
@@ -606,15 +535,12 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
           }))
         : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
 
-    // Load notebook to get current priority and deadline
+    // Load notebook to get current priority
     const notebook = notebooks.value.find((nb) => nb.id === notebookID)
     if (notebook) {
       if (notebook.priority) {
         draftNotebookPriority.value = notebook.priority
       }
-      draftNotebookDeadline.value = notebook.exam_deadline || ''
-    } else {
-      draftNotebookDeadline.value = ''
     }
 
     showSyllabusModal.value = true
@@ -631,7 +557,6 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
 
     originalDraftTitle.value = draftNotebookTitle.value
     originalDraftPriority.value = draftNotebookPriority.value
-    originalDraftDeadline.value = draftNotebookDeadline.value
     originalDraftChapters.value = draftChapters.value.map((ch) => ({
       title: String(ch.title || '').trim(),
       start_page: Number(ch.start_page) || 1,
@@ -732,7 +657,6 @@ async function confirmSyllabusDraft() {
   const trimmedTitle = String(draftNotebookTitle.value || '').trim()
   const titleChanged = trimmedTitle !== String(originalDraftTitle.value || '').trim()
   const priorityChanged = draftNotebookPriority.value !== originalDraftPriority.value
-  const deadlineChanged = draftNotebookDeadline.value !== originalDraftDeadline.value
   const chaptersChanged = !chaptersEqual(sanitized, originalDraftChapters.value)
 
   draftError.value = ''
@@ -761,20 +685,6 @@ async function confirmSyllabusDraft() {
       const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
       if (notebook) {
         notebook.priority = draftNotebookPriority.value
-      }
-    }
-
-    if (deadlineChanged) {
-      const deadlineResult = await setNotebookExamDeadline(
-        draftNotebookID.value,
-        draftNotebookDeadline.value
-      )
-      if (deadlineResult?.error) {
-        throw new Error(deadlineResult.error)
-      }
-      const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
-      if (notebook) {
-        notebook.exam_deadline = draftNotebookDeadline.value || null
       }
     }
 
@@ -1391,75 +1301,6 @@ function formatDate(dateString) {
 
 .modal-error {
   margin-bottom: 10px;
-}
-
-.modal-deadline-edit {
-  margin: 0 0 16px;
-}
-
-.modal-deadline-edit label {
-  display: block;
-  font-size: 12px;
-  color: var(--muted-text);
-  margin-bottom: 6px;
-}
-
-.deadline-input-modal {
-  width: 100%;
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-  cursor: pointer;
-  box-sizing: border-box;
-}
-
-.deadline-input-modal:hover,
-.deadline-input-modal:focus {
-  border-color: var(--primary);
-  outline: none;
-}
-
-.notebook-deadline-info {
-  margin-top: 12px;
-  padding: 10px 12px;
-  background: var(--surface-container-low);
-  border: 1px dashed var(--outline-variant);
-  border-radius: 8px;
-  font-size: 12px;
-}
-
-.deadline-row,
-.pace-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--on-surface);
-}
-
-.deadline-row {
-  margin-bottom: 4px;
-}
-
-.deadline-text,
-.pace-text {
-  flex-grow: 1;
-}
-
-.deadline-days {
-  font-weight: 500;
-  color: var(--muted-text);
-}
-
-.deadline-days.warning {
-  color: #c0392b;
-  font-weight: 700;
-}
-
-.pace-remaining {
-  font-size: 11px;
-  color: var(--muted-text);
 }
 
 .chapter-table-wrap {

@@ -8,19 +8,6 @@ import (
 	"ai-tutor/internal/models"
 )
 
-// GetTopicContent retrieves topic metadata
-func GetTopicContent(topicID string) (map[string]interface{}, error) {
-	var title string
-	err := conn.QueryRow("SELECT title FROM topics WHERE id = ?", topicID).Scan(&title)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{
-		"title":    title,
-		"sections": []map[string]interface{}{},
-	}, nil
-}
-
 // GetChunksForTopicPageRange retrieves chunks for a topic within a page range.
 func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]models.Chunk, error) {
 	query := `

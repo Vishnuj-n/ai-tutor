@@ -54,6 +54,41 @@
           </label>
         </div>
 
+        <div class="form-group check-group">
+          <label class="checkbox-container">
+            <input
+              type="checkbox"
+              v-model="settings.rag_enabled"
+              :disabled="loading || saving"
+              @change="onRagToggle"
+            />
+            <span class="checkmark"></span>
+            <div class="check-label">
+              <strong>Enable Local AI Retrieval (RAG)</strong>
+              <p class="hint">Preloads local ONNX embeddings for context-rich Q&A. Unticking unloads RAG from memory instantly.</p>
+            </div>
+          </label>
+        </div>
+
+        <hr class="divider" />
+
+        <h2>Workspace Aesthetics</h2>
+        <div class="form-group">
+          <label for="theme-select">Aesthetic Theme</label>
+          <select
+            id="theme-select"
+            v-model="settings.theme"
+            :disabled="loading || saving"
+          >
+            <option value="light-classic">Light Classic</option>
+            <option value="light-warm">Warm Sepia (Reader)</option>
+            <option value="dark-indigo">Deep Indigo Night (Dark Mode)</option>
+            <option value="dark-nord">Nord Frost (Cool Dark Mode)</option>
+            <option value="dark-emerald">Forest Emerald</option>
+          </select>
+          <p class="hint">Select a visual theme. Changing themes alters the colors of your study desk instantly.</p>
+        </div>
+
         <hr class="divider" />
 
         <h2>Teacher Cloud Synchronization</h2>
@@ -228,11 +263,63 @@
         </div>
       </div>
     </div>
+
+    <!-- RAG Setup Modal -->
+    <div v-if="showRagModal" class="modal-overlay" @click.self="isSettingUpRag ? null : showRagModal = false">
+      <div class="modal-card">
+        <h2>Local AI Setup (RAG)</h2>
+        <p class="description">
+          We will run system specs check, stage DLLs, and initialize the ONNX embedding engine.
+          This will take a few seconds and run completely on your system.
+        </p>
+
+        <div class="rag-setup-box">
+          <div class="setup-header">
+            <span v-if="ragStatus" class="status-badge" :class="ragStatus">{{ ragStatus.toUpperCase() }}</span>
+            <span class="setup-msg">{{ ragMessage }}</span>
+          </div>
+          
+          <div class="progress-bar-mini">
+            <div class="progress-fill-mini" :style="{ width: ragPercent + '%' }"></div>
+          </div>
+          
+          <p class="setup-detail">{{ ragDetail }}</p>
+          <div v-if="ragError" class="error-banner">{{ ragError }}</div>
+        </div>
+
+        <div class="modal-actions">
+          <button 
+            class="cancel-btn" 
+            :disabled="isSettingUpRag" 
+            @click="showRagModal = false"
+          >
+            Cancel
+          </button>
+          
+          <button 
+            v-if="!ragSetupCompleted" 
+            class="save-btn" 
+            :disabled="isSettingUpRag" 
+            @click="startRagSetup"
+          >
+            {{ isSettingUpRag ? 'Setting Up...' : 'Start Setup' }}
+          </button>
+          
+          <button 
+            v-else 
+            class="save-btn" 
+            @click="closeRagModal"
+          >
+            Finish
+          </button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import {
   getUserSettings,
   updateUserSettings,
@@ -242,8 +329,10 @@ import {
   deleteProfile,
   getNotebooks,
   assignNotebookToProfile,
-  triggerCloudSync
+  triggerCloudSync,
+  initializeRAG
 } from '../services/appApi'
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
 const activeTab = ref('settings')
 const loading = ref(true)
@@ -257,7 +346,16 @@ const settings = ref({
   active_profile_id: '',
   skip_to_reading_active: false,
   cloud_sync_url: '',
-  cloud_api_token: ''
+  cloud_api_token: '',
+  theme: 'light-classic',
+  rag_enabled: false
+})
+
+// Watch settings theme to apply it in real-time
+watch(() => settings.value.theme, (newTheme) => {
+  if (newTheme) {
+    document.documentElement.setAttribute('data-theme', newTheme)
+  }
 })
 
 const profiles = ref([])
@@ -272,6 +370,73 @@ const showEditModal = ref(false)
 const editProfileId = ref('')
 const editProfileName = ref('')
 const editProfileDeadline = ref('')
+
+// RAG setup state
+const showRagModal = ref(false)
+const isSettingUpRag = ref(false)
+const ragStatus = ref('')
+const ragPercent = ref(0)
+const ragMessage = ref('')
+const ragDetail = ref('')
+const ragError = ref('')
+const ragSetupCompleted = ref(false)
+
+function onRagToggle() {
+  if (settings.value.rag_enabled) {
+    settings.value.rag_enabled = false
+    showRagModal.value = true
+    ragSetupCompleted.value = false
+    ragError.value = ''
+    ragPercent.value = 0
+    ragMessage.value = 'Ready to initialize local AI'
+    ragDetail.value = ''
+    ragStatus.value = ''
+  } else {
+    saveUserSettings()
+  }
+}
+
+function startRagSetup() {
+  ragError.value = ''
+  isSettingUpRag.value = true
+  ragStatus.value = 'checking'
+  ragPercent.value = 5
+  ragMessage.value = 'Checking system specifications...'
+  ragDetail.value = ''
+
+  EventsOn('rag-setup-progress', (data) => {
+    console.log('[Settings] RAG setup progress:', data)
+    if (data.status) ragStatus.value = data.status
+    if (data.percent !== undefined) ragPercent.value = data.percent
+    if (data.message) ragMessage.value = data.message
+    if (data.detail) ragDetail.value = data.detail
+    if (data.errorReason) {
+      ragError.value = data.errorReason
+      isSettingUpRag.value = false
+    }
+    
+    if (data.status === 'ready') {
+      ragSetupCompleted.value = true
+      isSettingUpRag.value = false
+    }
+  })
+
+  initializeRAG().then(res => {
+    if (res.error) {
+      ragError.value = res.error
+      isSettingUpRag.value = false
+    }
+  }).catch(err => {
+    ragError.value = err.message || 'RAG setup failed.'
+    isSettingUpRag.value = false
+  })
+}
+
+function closeRagModal() {
+  showRagModal.value = false
+  settings.value.rag_enabled = true
+  saveUserSettings()
+}
 
 onMounted(async () => {
   await loadAllData()
@@ -322,7 +487,9 @@ async function saveUserSettings() {
       settings.value.active_profile_id,
       settings.value.skip_to_reading_active,
       settings.value.cloud_sync_url,
-      settings.value.cloud_api_token
+      settings.value.cloud_api_token,
+      settings.value.theme,
+      settings.value.rag_enabled
     )
     if (res.error) {
       error.value = res.error
@@ -891,5 +1058,65 @@ input:focus, select:focus {
 
 .cancel-btn:hover {
   background: var(--surface-container-low);
+}
+
+/* RAG Modal Custom CSS */
+.rag-setup-box {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 20px 0;
+  color: #ffffff;
+}
+
+.setup-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #a0a0a0;
+  color: #121212;
+}
+
+.status-badge.checking { background: #f59e0b; color: #121212; }
+.status-badge.acquiring { background: #3b82f6; color: #ffffff; }
+.status-badge.verifying { background: #8b5cf6; color: #ffffff; }
+.status-badge.extracting { background: #14b8a6; color: #ffffff; }
+.status-badge.initializing { background: #06b6d4; color: #ffffff; }
+.status-badge.ready { background: #10b981; color: #ffffff; }
+.status-badge.failed { background: #ef4444; color: #ffffff; }
+
+.setup-msg {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.progress-bar-mini {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-fill-mini {
+  height: 100%;
+  background: #6366f1;
+  transition: width 0.3s ease;
+}
+
+.setup-detail {
+  font-size: 11px;
+  color: #888888;
+  margin: 0;
 }
 </style>

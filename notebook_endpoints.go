@@ -10,6 +10,7 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
+	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -461,6 +462,18 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	})
 
 	_ = db.UpdateNotebookStatus(notebookID, status)
+
+	// Trigger background indexing if RAG is enabled and embedder is active
+	ragEnabled, err := db.GetRAGEnabled()
+	if err == nil && ragEnabled && a.embedder != nil {
+		go func() {
+			indexer := retrieval.NewVectorIndexer(a.embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
+			if err := indexer.IndexAllTopics(); err != nil {
+				utils.Warnf("background vector indexing failed: %v", err)
+			}
+		}()
+	}
+
 	return map[string]interface{}{
 		"success":     true,
 		"status":      status,
@@ -594,103 +607,6 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 
 	return map[string]interface{}{
 		"success": true,
-	}
-}
-
-// SetNotebookExamDeadline sets or clears the exam deadline for a notebook.
-// deadline is expected to be in "YYYY-MM-DD" format, or empty to clear.
-func (a *App) SetNotebookExamDeadline(notebookID string, deadline string) map[string]interface{} {
-	notebookID = strings.TrimSpace(notebookID)
-	deadline = strings.TrimSpace(deadline)
-
-	if notebookID == "" {
-		return map[string]interface{}{"error": "notebook id is required"}
-	}
-
-	var deadlineVal *string
-	if deadline != "" {
-		// Validate date format (YYYY-MM-DD)
-		_, err := time.Parse("2006-01-02", deadline)
-		if err != nil {
-			return map[string]interface{}{"error": "invalid deadline date format, expected YYYY-MM-DD: " + err.Error()}
-		}
-		deadlineVal = &deadline
-	}
-
-	if err := db.UpdateNotebookExamDeadline(notebookID, deadlineVal); err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-
-	return map[string]interface{}{"success": true}
-}
-
-// GetNotebookDailyPace calculates and returns the daily study pace to meet the exam deadline.
-func (a *App) GetNotebookDailyPace(notebookID string) map[string]interface{} {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return map[string]interface{}{"error": "notebook id is required"}
-	}
-
-	nb, err := db.GetNotebookByID(notebookID)
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	if nb == nil {
-		return map[string]interface{}{"error": "notebook not found"}
-	}
-
-	if nb.ProfileID != "" {
-		return a.GetProfileDailyPace(nb.ProfileID)
-	}
-
-	if nb.ExamDeadline == nil || *nb.ExamDeadline == "" {
-		return map[string]interface{}{
-			"has_deadline":    false,
-			"daily_pace":      0,
-			"remaining_words": 0,
-			"days_remaining":  0,
-		}
-	}
-
-	remainingWords, err := db.GetRemainingWords(notebookID)
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-
-	deadlineTime, err := time.Parse("2006-01-02", *nb.ExamDeadline)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to parse exam deadline: " + err.Error()}
-	}
-
-	now := time.Now()
-	// Compare dates at midnight local time
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	deadlineDate := time.Date(deadlineTime.Year(), deadlineTime.Month(), deadlineTime.Day(), 0, 0, 0, 0, now.Location())
-
-	duration := deadlineDate.Sub(today)
-	daysRemaining := int(math.Round(duration.Hours() / 24))
-
-	var dailyPace int
-	if daysRemaining > 0 {
-		dailyPace = int(math.Ceil(float64(remainingWords) / float64(daysRemaining)))
-	} else {
-		// Exam is today or already passed. If there are remaining words, pace is all of them.
-		dailyPace = remainingWords
-	}
-
-	// Calculate estimated sessions/day based on TargetSessionWords = 2500
-	sessionsPerDay := 0.0
-	if dailyPace > 0 {
-		sessionsPerDay = float64(dailyPace) / 2500.0
-	}
-
-	return map[string]interface{}{
-		"has_deadline":    true,
-		"deadline":        *nb.ExamDeadline,
-		"daily_pace":      dailyPace,
-		"remaining_words": remainingWords,
-		"days_remaining":  daysRemaining,
-		"sessions_per_day": sessionsPerDay,
 	}
 }
 

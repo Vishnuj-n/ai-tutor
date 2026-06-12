@@ -1,7 +1,6 @@
 package models
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/open-spaced-repetition/go-fsrs/v4"
@@ -521,27 +520,6 @@ type ReadingSessionResponse struct {
 	Navigation NavigationState    `json:"navigation"`
 }
 
-// Validate ensures all required fields for a successful reading session are present.
-// It returns an error if OK is true but critical data is missing.
-func (r *ReadingSessionResponse) Validate() error {
-	if !r.OK {
-		return nil // Error already reported via OK=false
-	}
-	if r.Task == nil {
-		return fmt.Errorf("missing required field: task")
-	}
-	if r.Bundle == nil {
-		return fmt.Errorf("missing required field: bundle")
-	}
-	if len(r.Bundle.Sections) == 0 {
-		return fmt.Errorf("missing required field: bundle.sections")
-	}
-	if r.PageBounds.StartPage <= 0 {
-		return fmt.Errorf("missing required field: page_bounds (start_page must be > 0)")
-	}
-	return nil
-}
-
 // StudyProfile represents a user's study profile (e.g. UPSC prep).
 type StudyProfile struct {
 	ID         string `json:"id"`
@@ -557,4 +535,6 @@ type UserSettings struct {
 	SkipToReadingActive  bool   `json:"skip_to_reading_active"`
 	CloudSyncURL         string `json:"cloud_sync_url"`
 	CloudAPIToken        string `json:"cloud_api_token"`
+	Theme                string `json:"theme"`
+	RAGEnabled           bool   `json:"rag_enabled"`
 }

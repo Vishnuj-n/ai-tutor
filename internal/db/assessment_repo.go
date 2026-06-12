@@ -65,35 +65,6 @@ func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 	return err
 }
 
-func saveWrittenAnswerRepo(answer models.WrittenAnswer) error {
-	_, err := conn.Exec(`
-		INSERT INTO written_user_answers (id, written_question_id, user_answer, score, feedback, source_heading)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`,
-		uuid.NewString(),
-		answer.QuestionID,
-		answer.UserAnswer,
-		answer.Score,
-		answer.Feedback,
-		answer.SourceHeading,
-	)
-	return err
-}
-
-// SaveWrittenAnswer stores a scored written response.
-func SaveWrittenAnswer(answer models.WrittenAnswer) error {
-	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
-	if answer.QuestionID == "" {
-		return fmt.Errorf("question id is required")
-	}
-	// Validate UserAnswer without mutating original free-text input
-	trimmedAnswer := strings.TrimSpace(answer.UserAnswer)
-	if trimmedAnswer == "" {
-		return fmt.Errorf("user answer is required")
-	}
-	return saveWrittenAnswerRepo(answer)
-}
-
 // SaveWrittenAnswerTx stores a scored written response within a transaction.
 func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 	answer.QuestionID = strings.TrimSpace(answer.QuestionID)

@@ -93,6 +93,14 @@ func TestProfileAndSettingsLifecycle(t *testing.T) {
 		t.Fatalf("failed to assign notebook to profile: %v", err)
 	}
 
+	nbAfterAssign, err := GetNotebookByID("nb-1")
+	if err != nil {
+		t.Fatalf("GetNotebookByID failed: %v", err)
+	}
+	if nbAfterAssign.ProfileID != "prof-1" {
+		t.Errorf("expected ProfileID to be 'prof-1', got %q", nbAfterAssign.ProfileID)
+	}
+
 	// Activate notebook 1
 	err = UpdateNotebookStudyStatus("nb-1", "active")
 	if err != nil {

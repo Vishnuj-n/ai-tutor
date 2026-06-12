@@ -181,18 +181,34 @@ func UpsertDailyStudyMinutes(minutes int) error {
 	return err
 }
 
+// GetRAGEnabled returns the status of RAG flag.
+func GetRAGEnabled() (bool, error) {
+	var enabled bool
+	err := conn.QueryRow(`
+		SELECT COALESCE(rag_enabled, 0)
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&enabled)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return enabled, err
+}
+
 // GetUserSettings returns the full settings config.
 func GetUserSettings() (*models.UserSettings, error) {
 	var s models.UserSettings
 	var activeProfileID sql.NullString
 	err := conn.QueryRow(`
-		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, '')
+		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0)
 		FROM user_settings
 		WHERE id = 1
-	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken)
+	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled)
 	if err == sql.ErrNoRows {
 		return &models.UserSettings{
 			DailyStudyMinutes: 90,
+			Theme:             "light-classic",
+			RAGEnabled:        false,
 		}, nil
 	}
 	if err != nil {
@@ -208,17 +224,23 @@ func UpdateUserSettings(s models.UserSettings) error {
 	if s.ActiveProfileID != "" {
 		activeProfileID = s.ActiveProfileID
 	}
+	theme := s.Theme
+	if theme == "" {
+		theme = "light-classic"
+	}
 	_, err := conn.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token)
-		VALUES (1, ?, ?, ?, ?, ?)
+		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			daily_study_minutes = excluded.daily_study_minutes,
 			active_profile_id = excluded.active_profile_id,
 			skip_to_reading_active = excluded.skip_to_reading_active,
 			cloud_sync_url = excluded.cloud_sync_url,
 			cloud_api_token = excluded.cloud_api_token,
+			theme = excluded.theme,
+			rag_enabled = excluded.rag_enabled,
 			updated_at = CURRENT_TIMESTAMP
-	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken)
+	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled)
 	return err
 }
 
@@ -406,20 +428,6 @@ func UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDue
 	return updateFlashcardReviewRepoTx(tx, cardID, dueAt, expectedDueAt, expectedStateJSON, state, reviewLog)
 }
 
-func GetExistingReviewTaskForNotebook(notebookID string) (*models.StudyQueueTask, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
-	}
-	task, err := fetchExistingReviewTask(conn, notebookID)
-	if err != nil {
-		return nil, err
-	}
-	if task != nil {
-		utils.LogReviewSessionResume(task.ID, string(task.Status))
-	}
-	return task, nil
-}
 
 func GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
 	notebookID = strings.TrimSpace(notebookID)
@@ -442,12 +450,6 @@ func GetNextDueReviewNotebook(now int64) (string, int, error) {
 	return getNextDueReviewNotebookRepo(now)
 }
 
-func GetDueReviewCardCountsByNotebook(now int64) (map[string]int, error) {
-	if now <= 0 {
-		return nil, fmt.Errorf("current time is required")
-	}
-	return getDueReviewCardCountsByNotebookRepo(now)
-}
 
 func CreateReviewSession(notebookID string) (*models.StudyQueueTask, bool, error) {
 	notebookID = strings.TrimSpace(notebookID)
@@ -746,17 +748,6 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 	})
 }
 
-// GetChunkEmbeddingRef returns the stored embedding_ref hash for a topic-scoped chunk.
-func GetChunkEmbeddingRef(topicID, chunkID string) (string, error) {
-	var hash string
-	if err := conn.QueryRow(`
-		SELECT COALESCE(embedding_ref, '') FROM chunks WHERE id = ? AND topic_id = ?
-	`, chunkID, topicID).Scan(&hash); err != nil {
-		return "", err
-	}
-
-	return hash, nil
-}
 
 // GetChunkEmbeddingRefsForTopic returns embedding_ref values for all chunks in a topic.
 func GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {

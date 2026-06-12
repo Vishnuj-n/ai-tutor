@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"ai-tutor/internal/models"
-	"ai-tutor/internal/utils"
 )
 
 // CreateNotebook saves a notebook record to the database
@@ -241,9 +240,6 @@ func LinkNotebookTopics(notebookID string, topicIDs []string) error {
 	})
 }
 
-
-
-
 // IngestNotebookContentByTopic ingests notebook content into multiple topic buckets in one transaction.
 func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicIngestionGroup) error {
 	notebookID = strings.TrimSpace(notebookID)
@@ -266,7 +262,7 @@ func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicInges
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic
 func GetNotebooks(topicID string) ([]models.Notebook, error) {
-	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at FROM notebooks"
+	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant') FROM notebooks"
 	args := []interface{}{}
 
 	if topicID != "" {
@@ -294,7 +290,7 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 	var notebooks []models.Notebook
 	for rows.Next() {
 		var nb models.Notebook
-		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt); err != nil {
+		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt, &nb.ProfileID, &nb.StudyStatus); err != nil {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
@@ -309,10 +305,10 @@ func GetNotebooks(topicID string) ([]models.Notebook, error) {
 func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
 	err := conn.QueryRow(`
-		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at
+		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant')
 		FROM notebooks
 		WHERE id = ?
-	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt)
+	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt, &nb.ProfileID, &nb.StudyStatus)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -769,46 +765,6 @@ func doesTableExistTxRepo(tx *sql.Tx, tableName string) (bool, error) {
 	return count > 0, nil
 }
 
-// GetChunkTextByNotebookPageRange returns the concatenated chunk_text for all chunks
-// belonging to the given notebook_id with page_num BETWEEN startPage AND endPage.
-// The join goes through notebook_chunks (notebook_id, chunk_id, page_num) → chunks (chunk_text).
-func GetChunkTextByNotebookPageRange(notebookID string, startPage, endPage int) (string, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return "", fmt.Errorf("notebook id is required")
-	}
-	if startPage <= 0 || endPage <= 0 || endPage < startPage {
-		return "", fmt.Errorf("invalid page range: start=%d end=%d", startPage, endPage)
-	}
-
-	rows, err := conn.Query(`
-		SELECT c.chunk_text
-		FROM notebook_chunks nc
-		JOIN chunks c ON c.id = nc.chunk_id
-		WHERE nc.notebook_id = ?
-		  AND nc.page_num BETWEEN ? AND ?
-		ORDER BY nc.page_num ASC, nc.chunk_id ASC
-	`, notebookID, startPage, endPage)
-	if err != nil {
-		return "", fmt.Errorf("page-range query failed: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var b strings.Builder
-	for rows.Next() {
-		var text string
-		if err := rows.Scan(&text); err != nil {
-			return "", fmt.Errorf("scan chunk_text: %w", err)
-		}
-		b.WriteString(text)
-		b.WriteByte('\n')
-	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("row iteration error: %w", err)
-	}
-	return strings.TrimSpace(b.String()), nil
-}
-
 // GetChunksWithContextByNotebookPageRange returns structured chunks for a notebook page range.
 func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, error) {
 	notebookID = strings.TrimSpace(notebookID)
@@ -844,48 +800,6 @@ func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPa
 		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 	return chunks, nil
-}
-
-// GetNotebookPageCount returns the maximum page_num stored in notebook_chunks for a notebook.
-func GetNotebookPageCount(notebookID string) (int, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return 0, fmt.Errorf("notebook id is required")
-	}
-	var maxPage int
-	err := conn.QueryRow(`
-		SELECT COALESCE(MAX(page_num), 0)
-		FROM notebook_chunks
-		WHERE notebook_id = ?
-	`, notebookID).Scan(&maxPage)
-	return maxPage, err
-}
-
-// UpdateNotebookExamDeadline updates the notebook exam deadline
-func UpdateNotebookExamDeadline(notebookID string, deadline *string) error {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return fmt.Errorf("notebook id is required")
-	}
-
-	result, err := conn.Exec(`
-		UPDATE notebooks
-		SET exam_deadline = ?
-		WHERE id = ?
-	`, deadline, notebookID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
 }
 
 // GetRemainingWords computes the total words in pages that are remaining to be read.
@@ -1018,69 +932,4 @@ func GetProfileRemainingWords(profileID string) (int, error) {
 		totalWords += words
 	}
 	return totalWords, nil
-}
-
-// AutoSwapCompletedNotebook checks if a notebook has no more reading tasks remaining.
-// If it is done, it swaps it to 'completed' and automatically activates the next highest-priority dormant notebook in the profile.
-func AutoSwapCompletedNotebook(notebookID string) error {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil
-	}
-
-	// 1. Check if there are any remaining words/reading tasks
-	words, err := GetRemainingWords(notebookID)
-	if err != nil {
-		return err
-	}
-	if words > 0 {
-		return nil // Still has content left
-	}
-
-	// 2. Fetch the notebook profile ID and current study status
-	var profileID sql.NullString
-	var currentStatus string
-	err = conn.QueryRow(`SELECT profile_id, study_status FROM notebooks WHERE id = ?`, notebookID).Scan(&profileID, &currentStatus)
-	if err != nil {
-		return err
-	}
-
-	if currentStatus != "active" {
-		return nil // Only swap out if it was currently active
-	}
-
-	// 3. Mark the completed notebook as completed
-	_, err = conn.Exec(`UPDATE notebooks SET study_status = 'completed' WHERE id = ?`, notebookID)
-	if err != nil {
-		return err
-	}
-	utils.Warnf("[SMART_SHELF] Notebook %s marked as completed.", notebookID)
-
-	if !profileID.Valid || profileID.String == "" {
-		return nil
-	}
-
-	// 4. Find the next highest-priority dormant notebook in this profile to activate
-	var nextID string
-	err = conn.QueryRow(`
-		SELECT id FROM notebooks
-		WHERE profile_id = ? AND study_status = 'dormant'
-		ORDER BY priority DESC, title ASC, id ASC
-		LIMIT 1
-	`, profileID.String).Scan(&nextID)
-	if err == sql.ErrNoRows {
-		utils.Warnf("[SMART_SHELF] No dormant notebooks left to swap in for profile %s.", profileID.String)
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	// 5. Activate the next notebook
-	_, err = conn.Exec(`UPDATE notebooks SET study_status = 'active' WHERE id = ?`, nextID)
-	if err != nil {
-		return err
-	}
-	utils.Warnf("[SMART_SHELF] Automatically activated notebook %s from profile %s.", nextID, profileID.String)
-	return nil
 }

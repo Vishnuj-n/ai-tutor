@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -21,10 +22,12 @@ import (
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type llmProviderInterface interface {
 	GenerateAnswer(prompt string) (string, error)
+	ModelName() string
 }
 
 // App is the thin Wails bridge — no business logic lives here.
@@ -738,7 +741,6 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 	}
 	return map[string]interface{}{"ok": true, "daily_study_minutes": minutes}
 }
-
 func (a *App) GetUserSettings() map[string]interface{} {
 	s, err := db.GetUserSettings()
 	if err != nil {
@@ -750,10 +752,12 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"skip_to_reading_active":  s.SkipToReadingActive,
 		"cloud_sync_url":         s.CloudSyncURL,
 		"cloud_api_token":        s.CloudAPIToken,
+		"theme":                  s.Theme,
+		"rag_enabled":            s.RAGEnabled,
 	}
 }
 
-func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string) map[string]interface{} {
+func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool) map[string]interface{} {
 	if minutes < 15 || minutes > 480 {
 		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
 	}
@@ -763,7 +767,19 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 		SkipToReadingActive: skipToReading,
 		CloudSyncURL:        syncURL,
 		CloudAPIToken:       apiToken,
+		Theme:               theme,
+		RAGEnabled:          ragEnabled,
 	}
+
+	// Check if RAG is being dynamically disabled
+	if !ragEnabled && a.embedder != nil {
+		utils.Infof("RAG disabled dynamically in settings. Closing ONNX embedder.")
+		_ = a.embedder.Close()
+		a.embedder = nil
+		a.aiReady = false
+		a.reloadRetrievalEngine()
+	}
+
 	if err := db.UpdateUserSettings(s); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -1033,4 +1049,146 @@ func notebookAssetURL(filePath string) string {
 		return ""
 	}
 	return "/notebooks/" + url.PathEscape(name)
+}
+
+// Global state variables for RAG initialization lock
+var ragSetupMutex sync.Mutex
+var isRagSettingUp bool
+
+func (a *App) InitializeRAG() map[string]interface{} {
+	ragSetupMutex.Lock()
+	if isRagSettingUp {
+		ragSetupMutex.Unlock()
+		return map[string]interface{}{"error": "RAG initialization is already in progress"}
+	}
+	isRagSettingUp = true
+	ragSetupMutex.Unlock()
+
+	go func() {
+		defer func() {
+			ragSetupMutex.Lock()
+			isRagSettingUp = false
+			ragSetupMutex.Unlock()
+		}()
+
+		am, err := runtime.NewAssetManager(a.ctx)
+		if err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to create asset manager: %v", err))
+			return
+		}
+
+		// Run simulated download
+		err = am.AcquireAssets(func(status string, percent int, msg, detail string) {
+			wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+				"status":  status,
+				"percent": percent,
+				"message": msg,
+				"detail":  detail,
+			})
+		})
+
+		if err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("acquisition failed: %v", err))
+			return
+		}
+
+		// Stage DLLs and re-init DB with vector support
+		if _, err := am.StageDLLs(); err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to stage DLLs: %v", err))
+			return
+		}
+
+		dbPath, err := runtime.ResolveDBPath()
+		if err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to resolve database path: %v", err))
+			return
+		}
+
+		// Re-initialize DB, this time with the staged vec0.dll
+		if err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
+			return
+		}
+
+		// Init ONNX embedder using paths from AssetManager
+		emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+		if err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to load ONNX embedder: %v", err))
+			return
+		}
+
+		if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
+			_ = emb.Close()
+			emitRagSetupFailed(a, fmt.Sprintf("could not initialize prompt tokenizer: %v", err))
+			return
+		}
+
+		// Set dimensions
+		if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
+			utils.Warnf("could not initialize vector table: %v", err)
+		}
+
+		// Update app fields
+		a.embedder = emb
+		a.aiReady = true
+		a.aiInitError = ""
+
+		// Rebuild engine and study service
+		a.reloadRetrievalEngine()
+
+		// Save settings in DB to reflect RAG is enabled
+		settings, err := db.GetUserSettings()
+		if err == nil {
+			settings.RAGEnabled = true
+			_ = db.UpdateUserSettings(*settings)
+		}
+
+		// Emit final ready event
+		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+			"status":  "ready",
+			"percent": 100,
+			"message": "Local AI retrieval is fully ready!",
+			"detail":  "RAG engine active",
+		})
+
+		// Trigger background vector indexing for all existing topics
+		indexer := retrieval.NewVectorIndexer(a.embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
+		if err := indexer.IndexAllTopics(); err != nil {
+			utils.Warnf("background indexing failed after dynamic RAG enable: %v", err)
+		}
+	}()
+
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) reloadRetrievalEngine() {
+	a.retrievalEngine = retrieval.NewEngine(a.embedder)
+	topicIDs, err := db.GetAllTopicIDs()
+	if err == nil {
+		chunksByTopic, err := db.GetChunksForTopics(topicIDs)
+		if err == nil {
+			for _, tid := range topicIDs {
+				for _, c := range chunksByTopic[tid] {
+					a.retrievalEngine.AddChunk(c)
+				}
+			}
+		}
+	}
+	// Recreate study service to bind the new retrievalEngine
+	a.studyService = study.NewStudyService(study.Config{
+		FastLLMProvider:  a.fastLLMProvider,
+		HeavyLLMProvider: a.heavyLLMProvider,
+		RetrievalEngine:  a.retrievalEngine,
+	})
+}
+
+func emitRagSetupFailed(a *App, reason string) {
+	utils.Errorf("RAG setup failed: %s", reason)
+	wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+		"status":      "failed",
+		"percent":     100,
+		"message":     "RAG initialization failed",
+		"detail":      reason,
+		"errorReason": reason,
+	})
 }
