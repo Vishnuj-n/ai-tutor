@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 // CreateNotebook saves a notebook record to the database
@@ -936,4 +937,150 @@ func GetRemainingWords(notebookID string) (int, error) {
 	}
 
 	return totalWords, nil
+}
+
+// AssignNotebookToProfile sets the profile ID for a notebook.
+func AssignNotebookToProfile(notebookID string, profileID string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+	var pID interface{} = nil
+	if profileID != "" {
+		pID = profileID
+	}
+	_, err := conn.Exec(`
+		UPDATE notebooks
+		SET profile_id = ?
+		WHERE id = ?
+	`, pID, notebookID)
+	return err
+}
+
+// UpdateNotebookStudyStatus updates the study status of a notebook ('active', 'dormant', 'completed').
+func UpdateNotebookStudyStatus(notebookID string, studyStatus string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+	if studyStatus != "active" && studyStatus != "dormant" && studyStatus != "completed" {
+		return fmt.Errorf("invalid study status: %s", studyStatus)
+	}
+
+	// If activating, we enforce the hard limit of 3-4 active notebooks per profile.
+	if studyStatus == "active" {
+		var profileID sql.NullString
+		err := conn.QueryRow(`SELECT profile_id FROM notebooks WHERE id = ?`, notebookID).Scan(&profileID)
+		if err != nil {
+			return err
+		}
+		if profileID.Valid && profileID.String != "" {
+			var activeCount int
+			err = conn.QueryRow(`
+				SELECT COUNT(*) FROM notebooks
+				WHERE profile_id = ? AND study_status = 'active'
+			`, profileID.String).Scan(&activeCount)
+			if err != nil {
+				return err
+			}
+			if activeCount >= 4 {
+				return fmt.Errorf("profile already has the maximum limit of 4 active notebooks")
+			}
+		}
+	}
+
+	_, err := conn.Exec(`
+		UPDATE notebooks
+		SET study_status = ?
+		WHERE id = ?
+	`, studyStatus, notebookID)
+	return err
+}
+
+// GetProfileRemainingWords calculates the remaining unread words across all notebooks in a profile.
+func GetProfileRemainingWords(profileID string) (int, error) {
+	rows, err := conn.Query(`SELECT id FROM notebooks WHERE profile_id = ?`, profileID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	totalWords := 0
+	for rows.Next() {
+		var nbID string
+		if err := rows.Scan(&nbID); err != nil {
+			return 0, err
+		}
+		words, err := GetRemainingWords(nbID)
+		if err != nil {
+			return 0, err
+		}
+		totalWords += words
+	}
+	return totalWords, nil
+}
+
+// AutoSwapCompletedNotebook checks if a notebook has no more reading tasks remaining.
+// If it is done, it swaps it to 'completed' and automatically activates the next highest-priority dormant notebook in the profile.
+func AutoSwapCompletedNotebook(notebookID string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil
+	}
+
+	// 1. Check if there are any remaining words/reading tasks
+	words, err := GetRemainingWords(notebookID)
+	if err != nil {
+		return err
+	}
+	if words > 0 {
+		return nil // Still has content left
+	}
+
+	// 2. Fetch the notebook profile ID and current study status
+	var profileID sql.NullString
+	var currentStatus string
+	err = conn.QueryRow(`SELECT profile_id, study_status FROM notebooks WHERE id = ?`, notebookID).Scan(&profileID, &currentStatus)
+	if err != nil {
+		return err
+	}
+
+	if currentStatus != "active" {
+		return nil // Only swap out if it was currently active
+	}
+
+	// 3. Mark the completed notebook as completed
+	_, err = conn.Exec(`UPDATE notebooks SET study_status = 'completed' WHERE id = ?`, notebookID)
+	if err != nil {
+		return err
+	}
+	utils.Warnf("[SMART_SHELF] Notebook %s marked as completed.", notebookID)
+
+	if !profileID.Valid || profileID.String == "" {
+		return nil
+	}
+
+	// 4. Find the next highest-priority dormant notebook in this profile to activate
+	var nextID string
+	err = conn.QueryRow(`
+		SELECT id FROM notebooks
+		WHERE profile_id = ? AND study_status = 'dormant'
+		ORDER BY priority DESC, title ASC, id ASC
+		LIMIT 1
+	`, profileID.String).Scan(&nextID)
+	if err == sql.ErrNoRows {
+		utils.Warnf("[SMART_SHELF] No dormant notebooks left to swap in for profile %s.", profileID.String)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	// 5. Activate the next notebook
+	_, err = conn.Exec(`UPDATE notebooks SET study_status = 'active' WHERE id = ?`, nextID)
+	if err != nil {
+		return err
+	}
+	utils.Warnf("[SMART_SHELF] Automatically activated notebook %s from profile %s.", nextID, profileID.String)
+	return nil
 }

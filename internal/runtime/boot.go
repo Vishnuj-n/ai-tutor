@@ -77,6 +77,8 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	}
 	utils.Infof("Database initialized at %s", dbPath)
 
+	study.StartCloudSyncLoop()
+
 	res.Scheduler = scheduler.New()
 
 	// Init ONNX embedder

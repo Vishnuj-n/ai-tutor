@@ -161,3 +161,47 @@ export function setNotebookExamDeadline(notebookID, deadline) {
 export function getNotebookDailyPace(notebookID) {
   return appBridge().GetNotebookDailyPace(notebookID)
 }
+
+export function getUserSettings() {
+  return appBridge().GetUserSettings()
+}
+
+export function updateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken) {
+  return appBridge().UpdateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken)
+}
+
+export function getProfiles() {
+  return appBridge().GetProfiles()
+}
+
+export function createProfile(name, deadlineStr) {
+  return appBridge().CreateProfile(name, deadlineStr)
+}
+
+export function updateProfile(id, name, deadlineStr) {
+  return appBridge().UpdateProfile(id, name, deadlineStr)
+}
+
+export function deleteProfile(id) {
+  return appBridge().DeleteProfile(id)
+}
+
+export function assignNotebookToProfile(notebookID, profileID) {
+  return appBridge().AssignNotebookToProfile(notebookID, profileID)
+}
+
+export function updateNotebookStudyStatus(notebookID, studyStatus) {
+  return appBridge().UpdateNotebookStudyStatus(notebookID, studyStatus)
+}
+
+export function isOnboarded() {
+  return appBridge().IsOnboarded()
+}
+
+export function triggerCloudSync() {
+  return appBridge().TriggerCloudSync()
+}
+
+export function getProfileDailyPace(profileID) {
+  return appBridge().GetProfileDailyPace(profileID)
+}

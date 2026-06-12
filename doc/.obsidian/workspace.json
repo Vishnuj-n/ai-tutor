@@ -53,7 +53,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "note",
+                "query": "parent",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -74,7 +74,8 @@
               "title": "Bookmarks"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "horizontal",
@@ -185,7 +186,11 @@
   },
   "active": "50e5613e93f70a39",
   "lastOpenFiles": [
+    "RAG.md",
     "ARCHITECTURE.md",
+    "PROJECT_STRUCTURE.md",
+    "REQUIREMENTS.md",
+    "SPRINT.md",
     "NOTE.md",
     "CLAUDE.md",
     "APP_FLOW.md",
@@ -193,11 +198,9 @@
     "AGENT_MAP.md",
     "DESIGN.md",
     "PLATFORM_SUPPORT.md",
-    "PROJECT_STRUCTURE.md",
     "SCHEMA.md",
     "PLAN_SCOPE.md",
     "ARCHITECTURE_DRIFT_REPORT.md",
-    "SPRINT.md",
     "SPRINT_HISTORY.md",
     "TODO.md"
   ]

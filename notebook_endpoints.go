@@ -639,6 +639,10 @@ func (a *App) GetNotebookDailyPace(notebookID string) map[string]interface{} {
 		return map[string]interface{}{"error": "notebook not found"}
 	}
 
+	if nb.ProfileID != "" {
+		return a.GetProfileDailyPace(nb.ProfileID)
+	}
+
 	if nb.ExamDeadline == nil || *nb.ExamDeadline == "" {
 		return map[string]interface{}{
 			"has_deadline":    false,
@@ -674,11 +678,68 @@ func (a *App) GetNotebookDailyPace(notebookID string) map[string]interface{} {
 		dailyPace = remainingWords
 	}
 
+	// Calculate estimated sessions/day based on TargetSessionWords = 2500
+	sessionsPerDay := 0.0
+	if dailyPace > 0 {
+		sessionsPerDay = float64(dailyPace) / 2500.0
+	}
+
 	return map[string]interface{}{
 		"has_deadline":    true,
 		"deadline":        *nb.ExamDeadline,
 		"daily_pace":      dailyPace,
 		"remaining_words": remainingWords,
 		"days_remaining":  daysRemaining,
+		"sessions_per_day": sessionsPerDay,
+	}
+}
+
+// GetProfileDailyPace calculates and returns the daily study pace to meet the profile deadline.
+func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		return map[string]interface{}{"error": "profile id is required"}
+	}
+
+	p, err := db.GetProfileByID(profileID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if p == nil {
+		return map[string]interface{}{"error": "profile not found"}
+	}
+
+	remainingWords, err := db.GetProfileRemainingWords(profileID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	deadlineTime := time.Unix(p.DeadlineAt, 0)
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	deadlineDate := time.Date(deadlineTime.Year(), deadlineTime.Month(), deadlineTime.Day(), 0, 0, 0, 0, now.Location())
+
+	duration := deadlineDate.Sub(today)
+	daysRemaining := int(math.Round(duration.Hours() / 24))
+
+	var dailyPace int
+	if daysRemaining > 0 {
+		dailyPace = int(math.Ceil(float64(remainingWords) / float64(daysRemaining)))
+	} else {
+		dailyPace = remainingWords
+	}
+
+	sessionsPerDay := 0.0
+	if dailyPace > 0 {
+		sessionsPerDay = float64(dailyPace) / 2500.0
+	}
+
+	return map[string]interface{}{
+		"has_deadline":    true,
+		"deadline":        deadlineTime.Format("2006-01-02"),
+		"daily_pace":      dailyPace,
+		"remaining_words": remainingWords,
+		"days_remaining":  daysRemaining,
+		"sessions_per_day": sessionsPerDay,
 	}
 }

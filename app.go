@@ -739,6 +739,127 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 	return map[string]interface{}{"ok": true, "daily_study_minutes": minutes}
 }
 
+func (a *App) GetUserSettings() map[string]interface{} {
+	s, err := db.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{
+		"daily_study_minutes":    s.DailyStudyMinutes,
+		"active_profile_id":      s.ActiveProfileID,
+		"skip_to_reading_active":  s.SkipToReadingActive,
+		"cloud_sync_url":         s.CloudSyncURL,
+		"cloud_api_token":        s.CloudAPIToken,
+	}
+}
+
+func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string) map[string]interface{} {
+	if minutes < 15 || minutes > 480 {
+		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
+	}
+	s := models.UserSettings{
+		DailyStudyMinutes:   minutes,
+		ActiveProfileID:     activeProfileID,
+		SkipToReadingActive: skipToReading,
+		CloudSyncURL:        syncURL,
+		CloudAPIToken:       apiToken,
+	}
+	if err := db.UpdateUserSettings(s); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) GetProfiles() map[string]interface{} {
+	profiles, err := db.GetProfiles()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"profiles": profiles}
+}
+
+func (a *App) CreateProfile(name string, deadlineStr string) map[string]interface{} {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return map[string]interface{}{"error": "profile name is required"}
+	}
+	deadlineTime, err := time.Parse("2006-01-02", deadlineStr)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to parse deadline: " + err.Error()}
+	}
+	p := models.StudyProfile{
+		ID:         uuid.NewString(),
+		Name:       name,
+		DeadlineAt: deadlineTime.Unix(),
+	}
+	if err := db.CreateProfile(p); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true, "profile": p}
+}
+
+func (a *App) UpdateProfile(id string, name string, deadlineStr string) map[string]interface{} {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	if id == "" || name == "" {
+		return map[string]interface{}{"error": "id and name are required"}
+	}
+	deadlineTime, err := time.Parse("2006-01-02", deadlineStr)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to parse deadline: " + err.Error()}
+	}
+	p := models.StudyProfile{
+		ID:         id,
+		Name:       name,
+		DeadlineAt: deadlineTime.Unix(),
+	}
+	if err := db.UpdateProfile(p); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) DeleteProfile(id string) map[string]interface{} {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return map[string]interface{}{"error": "profile id is required"}
+	}
+	if err := db.DeleteProfile(id); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) AssignNotebookToProfile(notebookID, profileID string) map[string]interface{} {
+	if err := db.AssignNotebookToProfile(notebookID, profileID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) UpdateNotebookStudyStatus(notebookID, studyStatus string) map[string]interface{} {
+	if err := db.UpdateNotebookStudyStatus(notebookID, studyStatus); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) IsOnboarded() map[string]interface{} {
+	profiles, err := db.GetProfiles()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error(), "onboarded": false}
+	}
+	onboarded := len(profiles) > 0
+	return map[string]interface{}{"onboarded": onboarded}
+}
+
+func (a *App) TriggerCloudSync() map[string]interface{} {
+	if err := study.TriggerCloudSync(); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
 // ---------- Manual Mode endpoints (Phase 1 new) ---------
 
 func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {

@@ -181,6 +181,120 @@ func UpsertDailyStudyMinutes(minutes int) error {
 	return err
 }
 
+// GetUserSettings returns the full settings config.
+func GetUserSettings() (*models.UserSettings, error) {
+	var s models.UserSettings
+	var activeProfileID sql.NullString
+	err := conn.QueryRow(`
+		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, '')
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken)
+	if err == sql.ErrNoRows {
+		return &models.UserSettings{
+			DailyStudyMinutes: 90,
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.ActiveProfileID = activeProfileID.String
+	return &s, nil
+}
+
+// UpdateUserSettings updates the user settings.
+func UpdateUserSettings(s models.UserSettings) error {
+	var activeProfileID interface{} = nil
+	if s.ActiveProfileID != "" {
+		activeProfileID = s.ActiveProfileID
+	}
+	_, err := conn.Exec(`
+		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token)
+		VALUES (1, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			daily_study_minutes = excluded.daily_study_minutes,
+			active_profile_id = excluded.active_profile_id,
+			skip_to_reading_active = excluded.skip_to_reading_active,
+			cloud_sync_url = excluded.cloud_sync_url,
+			cloud_api_token = excluded.cloud_api_token,
+			updated_at = CURRENT_TIMESTAMP
+	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken)
+	return err
+}
+
+// GetProfiles retrieves all study profiles.
+func GetProfiles() ([]models.StudyProfile, error) {
+	rows, err := conn.Query(`
+		SELECT id, name, deadline_at, created_at
+		FROM study_profiles
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	profiles := make([]models.StudyProfile, 0)
+	for rows.Next() {
+		var p models.StudyProfile
+		if err := rows.Scan(&p.ID, &p.Name, &p.DeadlineAt, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, nil
+}
+
+// GetProfileByID retrieves a specific profile by ID.
+func GetProfileByID(id string) (*models.StudyProfile, error) {
+	var p models.StudyProfile
+	err := conn.QueryRow(`
+		SELECT id, name, deadline_at, created_at
+		FROM study_profiles
+		WHERE id = ?
+	`, id).Scan(&p.ID, &p.Name, &p.DeadlineAt, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreateProfile creates a new study profile.
+func CreateProfile(p models.StudyProfile) error {
+	_, err := conn.Exec(`
+		INSERT INTO study_profiles (id, name, deadline_at)
+		VALUES (?, ?, ?)
+	`, p.ID, p.Name, p.DeadlineAt)
+	return err
+}
+
+// UpdateProfile updates an existing profile.
+func UpdateProfile(p models.StudyProfile) error {
+	_, err := conn.Exec(`
+		UPDATE study_profiles
+		SET name = ?, deadline_at = ?
+		WHERE id = ?
+	`, p.Name, p.DeadlineAt, p.ID)
+	return err
+}
+
+// DeleteProfile deletes a profile.
+func DeleteProfile(id string) error {
+	_, err := conn.Exec(`UPDATE notebooks SET profile_id = NULL WHERE profile_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE active_profile_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(`DELETE FROM study_profiles WHERE id = ?`, id)
+	return err
+}
+
 // CreateFlashcards stores a new set of flashcards for one topic.
 // Used by: app_contract_test.go (test-only coverage, production code path utilizes GetOrCreateFlashcardsForTopic)
 func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
