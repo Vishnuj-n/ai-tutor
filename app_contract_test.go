@@ -575,26 +575,6 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 }
 
 // ============================================================================
-// NOTEBOOK UTILITY TESTS
-// ============================================================================
-
-func TestNotebookAssetURLUsesBasename(t *testing.T) {
-	assetURL := notebookAssetURL("C:/Users/vishn/AppData/Roaming/ai-tutor/uploads/sample.pdf")
-	if assetURL != "/notebooks/sample.pdf" {
-		t.Fatalf("expected notebook URL to use basename, got %q", assetURL)
-	}
-}
-
-func TestNotebookAssetURLRejectsTraversalNames(t *testing.T) {
-	if got := notebookAssetURL(".."); got != "" {
-		t.Fatalf("expected empty URL for traversal segment, got %q", got)
-	}
-	if got := notebookAssetURL("."); got != "" {
-		t.Fatalf("expected empty URL for current directory segment, got %q", got)
-	}
-}
-
-// ============================================================================
 // QUIZ/SCORING TESTS
 // ============================================================================
 
@@ -841,6 +821,10 @@ func (m *mockLLMProvider) GenerateAnswer(prompt string) (string, error) {
 
 func (m *mockLLMProvider) ModelName() string {
 	return "mock-model"
+}
+
+func (m *mockLLMProvider) GetLimits() llm.ModelLimits {
+	return llm.ModelLimits{MaxInputTokens: 30000, MaxOutputTokens: 3000}
 }
 
 func extractRequestedCount(prompt string, prefix string) int {

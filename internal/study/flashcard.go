@@ -7,7 +7,6 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
-	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
 
@@ -122,15 +121,10 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 
 	// Get model-specific token limits
 	modelName := providerModelName(llm)
-	maxInputTokens := DefaultMaxInputTokens   // default fallback
-	maxOutputTokens := DefaultMaxOutputTokens // default fallback
-
-	if provider, ok := llm.(*llmpkg.Provider); ok {
-		limits := provider.GetLimits()
-		maxInputTokens = limits.MaxInputTokens
-		maxOutputTokens = limits.MaxOutputTokens
-		utils.Warnf("[FLASHCARD_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
-	}
+	limits := llm.GetLimits()
+	maxInputTokens := limits.MaxInputTokens
+	maxOutputTokens := limits.MaxOutputTokens
+	utils.Warnf("[FLASHCARD_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
 
 	// Enforce strict token budget: cap at configured maximum to prevent oversized outputs
 	originalCount := ScaledFlashcardCount(tokenCount)

@@ -2,16 +2,12 @@
   <section class="page">
     <header class="topbar">
       <div class="search-shell">Search knowledge base...</div>
-      
+
       <!-- Active Profile Dropdown Selector -->
       <div class="profile-selector-container">
         <label for="active-profile-select">Current Profile:</label>
-        <select
-          id="active-profile-select"
-          v-model="userSettings.active_profile_id"
-          @change="changeActiveProfile"
-          class="topbar-select"
-        >
+        <select id="active-profile-select" v-model="userSettings.active_profile_id" @change="changeActiveProfile"
+          class="topbar-select">
           <option value="">-- No Profile Selected --</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id">
             {{ p.name }}
@@ -26,7 +22,8 @@
         <span class="info-icon">⚡</span>
         <div class="info-text">
           <p class="info-title">"Skip to Reading" Escape Hatch Active</p>
-          <p class="info-subtitle">Review tasks have been pushed to the background so you can focus on reading new chapters.</p>
+          <p class="info-subtitle">Review tasks have been pushed to the background so you can focus on reading new
+            chapters.</p>
         </div>
       </div>
     </article>
@@ -63,11 +60,8 @@
 
       <div class="header-actions">
         <!-- Escape Hatch Quick Toggle Button -->
-        <button
-          class="escape-hatch-toggle"
-          :class="{ active: userSettings.skip_to_reading_active }"
-          @click="toggleEscapeHatch"
-        >
+        <button class="escape-hatch-toggle" :class="{ active: userSettings.skip_to_reading_active }"
+          @click="toggleEscapeHatch">
           {{ userSettings.skip_to_reading_active ? 'Disable Escape Hatch' : 'Skip to Reading' }}
         </button>
 
@@ -138,19 +132,15 @@
               task.meta
                 ? task.meta
                 : task.start_page !== undefined &&
-                    task.start_page !== null &&
-                    task.end_page !== undefined &&
-                    task.end_page !== null
+                  task.start_page !== null &&
+                  task.end_page !== undefined &&
+                  task.end_page !== null
                   ? 'Pages ' + task.start_page + '-' + task.end_page
                   : 'Pages N/A'
             }}
           </p>
-          <button
-            type="button"
-            class="primary-btn"
-            :aria-label="'Start task ' + (task.title || task.id)"
-            @click="startTask(task)"
-          >
+          <button type="button" class="primary-btn" :aria-label="'Start task ' + (task.title || task.id)"
+            @click="startTask(task)">
             Start
           </button>
         </article>
@@ -163,68 +153,8 @@
 
       <div v-else class="card state-card">
         <h2>No textbooks active</h2>
-        <p class="muted">Activate textbooks in the shelf below or upload new textbooks to begin.</p>
+        <p class="muted">Go to Notebooks to upload and activate textbooks.</p>
       </div>
-
-      <!-- The Smart Shelf: Active vs Dormant Warehouse -->
-      <section class="shelf-section">
-        <h2> The Smart Shelf</h2>
-        <p class="section-description">Hard-gated to a maximum of 4 active textbooks to prevent study fatigue.</p>
-        
-        <div class="shelf-grid">
-          <!-- Active Textbooks Column -->
-          <article class="shelf-column active-column">
-            <h3>Active Lane ({{ activeNotebooks.length }} / 4)</h3>
-            <div v-if="activeNotebooks.length === 0" class="shelf-empty">
-              No textbooks active. Activate books below to populate your study queue.
-            </div>
-            <div v-else class="shelf-list">
-              <div v-for="nb in activeNotebooks" :key="nb.id" class="shelf-card active-card">
-                <div class="card-details">
-                  <h4>{{ nb.title }}</h4>
-                  <p class="card-meta">
-                    Priority: <strong>{{ nb.priority }}</strong> · {{ nb.page_count }} pages
-                  </p>
-                  <span v-if="getProfileName(nb.profile_id)" class="profile-tag">
-                    {{ getProfileName(nb.profile_id) }}
-                  </span>
-                </div>
-                <button class="shelf-action-btn sleep-btn" @click="setStudyStatus(nb.id, 'dormant')">
-                  Sleep
-                </button>
-              </div>
-            </div>
-          </article>
-
-          <!-- Dormant Textbook Warehouse Column -->
-          <article class="shelf-column dormant-column">
-            <h3>Dormant Warehouse</h3>
-            <div v-if="dormantNotebooks.length === 0" class="shelf-empty">
-              Dormant warehouse is empty. Upload books to store them here.
-            </div>
-            <div v-else class="shelf-list">
-              <div v-for="nb in dormantNotebooks" :key="nb.id" class="shelf-card dormant-card">
-                <div class="card-details">
-                  <h4>{{ nb.title }}</h4>
-                  <p class="card-meta">
-                    Priority: <strong>{{ nb.priority }}</strong> · {{ nb.page_count }} pages
-                  </p>
-                  <span v-if="getProfileName(nb.profile_id)" class="profile-tag">
-                    {{ getProfileName(nb.profile_id) }}
-                  </span>
-                </div>
-                <button
-                  class="shelf-action-btn activate-btn"
-                  :disabled="activeNotebooks.length >= 4"
-                  @click="setStudyStatus(nb.id, 'active')"
-                >
-                  Activate
-                </button>
-              </div>
-            </div>
-          </article>
-        </div>
-      </section>
     </template>
   </section>
 </template>
@@ -234,11 +164,9 @@ import { onMounted, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   getTodayPlan,
-  getNotebooks,
   getProfiles,
   getUserSettings,
   updateUserSettings,
-  updateNotebookStudyStatus,
   getProfileDailyPace
 } from '../services/appApi'
 
@@ -253,13 +181,14 @@ const hasActiveStudyContent = ref(false)
 const dueReviewCards = ref(0)
 
 const profiles = ref([])
-const notebooks = ref([])
 const userSettings = ref({
   daily_study_minutes: 90,
   active_profile_id: '',
   skip_to_reading_active: false,
   cloud_sync_url: '',
-  cloud_api_token: ''
+  cloud_api_token: '',
+  theme: '',
+  rag_enabled: false
 })
 const activeProfilePace = ref(null)
 
@@ -273,20 +202,7 @@ const activeProfileName = computed(() => {
   return p ? p.name : 'Unknown'
 })
 
-const activeNotebooks = computed(() => {
-  return notebooks.value.filter(nb => nb.study_status === 'active')
-})
 
-const dormantNotebooks = computed(() => {
-  // If active profile is selected, show dormant notebooks for that profile
-  return notebooks.value.filter(nb => {
-    const isDormant = nb.study_status === 'dormant' || !nb.study_status
-    if (userSettings.value.active_profile_id) {
-      return isDormant && nb.profile_id === userSettings.value.active_profile_id
-    }
-    return isDormant
-  })
-})
 
 onMounted(async () => {
   if (flashcardsJustCreated.value > 0) {
@@ -303,16 +219,21 @@ async function loadAgenda() {
     error.value = ''
     actionError.value = ''
 
-    // 1. Fetch settings and profiles
+    // 1. Fetch settings and profiles — abort on failure so dependent steps
+    //    don't run against stale/default data.
     const settingsRes = await getUserSettings()
-    if (!settingsRes.error) {
-      userSettings.value = settingsRes
+    if (settingsRes.error) {
+      error.value = settingsRes.error
+      return
     }
+    userSettings.value = settingsRes
 
     const profilesRes = await getProfiles()
-    if (!profilesRes.error) {
-      profiles.value = profilesRes.profiles || []
+    if (profilesRes.error) {
+      error.value = profilesRes.error
+      return
     }
+    profiles.value = profilesRes.profiles || []
 
     // 2. Fetch today's plan
     const response = await getTodayPlan()
@@ -324,20 +245,30 @@ async function loadAgenda() {
     tasks.value = response.tasks || []
     dueReviewCards.value = response.due_review_cards || 0
 
-    // 3. Fetch textbooks
-    const notebooksList = await getNotebooks('')
-    notebooks.value = Array.isArray(notebooksList) ? notebooksList.filter((nb) => !nb?.error) : []
-    hasActiveStudyContent.value = notebooks.value.some((nb) => nb.study_status === 'active')
+    // 3. Determine if there is any active study content (drives the empty state)
+    hasActiveStudyContent.value = (response.tasks || []).length > 0
 
     // 4. Load pace for active profile
-    if (userSettings.value.active_profile_id) {
+    // Guard: only request pacing if the active_profile_id resolves to a known profile.
+    // An orphaned ID (deleted profile still persisted in settings) would hit the backend
+    // and return { error: "profile not found" }; we skip the call entirely instead.
+    const knownProfile = profiles.value.find(
+      (pr) => pr.id === userSettings.value.active_profile_id
+    )
+    if (userSettings.value.active_profile_id && knownProfile) {
       try {
         const pace = await getProfileDailyPace(userSettings.value.active_profile_id)
         if (!pace.error) {
           activeProfilePace.value = pace
+        } else {
+          // API returned a business-logic error; clear stale data so the widget
+          // shows nothing rather than outdated metrics from a previous request.
+          activeProfilePace.value = null
         }
       } catch (err) {
+        // Network / runtime failure: clear stale data to avoid misleading display.
         console.error('Failed to get profile daily pace', err)
+        activeProfilePace.value = null
       }
     } else {
       activeProfilePace.value = null
@@ -351,62 +282,61 @@ async function loadAgenda() {
 }
 
 async function changeActiveProfile() {
+  const previousActiveProfile = userSettings.value.active_profile_id
   try {
     loading.value = true
-    await updateUserSettings(
+    const res = await updateUserSettings(
       userSettings.value.daily_study_minutes,
       userSettings.value.active_profile_id,
       userSettings.value.skip_to_reading_active,
       userSettings.value.cloud_sync_url,
-      userSettings.value.cloud_api_token
+      userSettings.value.cloud_api_token,
+      userSettings.value.theme || '',
+      userSettings.value.rag_enabled || false
     )
+    if (res && res.error) {
+      userSettings.value.active_profile_id = previousActiveProfile
+      actionError.value = res.error
+      return
+    }
     await loadAgenda()
   } catch (err) {
-    alert('Failed to switch active profile')
+    userSettings.value.active_profile_id = previousActiveProfile
+    actionError.value = 'Failed to switch active profile'
   } finally {
     loading.value = false
   }
 }
 
 async function toggleEscapeHatch() {
+  const previousSkipToReading = userSettings.value.skip_to_reading_active
   try {
     loading.value = true
     userSettings.value.skip_to_reading_active = !userSettings.value.skip_to_reading_active
-    await updateUserSettings(
+    const res = await updateUserSettings(
       userSettings.value.daily_study_minutes,
       userSettings.value.active_profile_id,
       userSettings.value.skip_to_reading_active,
       userSettings.value.cloud_sync_url,
-      userSettings.value.cloud_api_token
+      userSettings.value.cloud_api_token,
+      userSettings.value.theme || '',
+      userSettings.value.rag_enabled || false
     )
-    await loadAgenda()
-  } catch (err) {
-    alert('Failed to toggle escape hatch')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function setStudyStatus(notebookID, status) {
-  try {
-    loading.value = true
-    const res = await updateNotebookStudyStatus(notebookID, status)
-    if (res.error) {
-      alert(res.error)
+    if (res && res.error) {
+      userSettings.value.skip_to_reading_active = previousSkipToReading
+      actionError.value = res.error
       return
     }
     await loadAgenda()
   } catch (err) {
-    alert('Failed to update textbook status')
+    userSettings.value.skip_to_reading_active = previousSkipToReading
+    actionError.value = 'Failed to toggle escape hatch'
   } finally {
     loading.value = false
   }
 }
 
-function getProfileName(profileID) {
-  const p = profiles.value.find(pr => pr.id === profileID)
-  return p ? p.name : ''
-}
+
 
 function formatDaysRemaining(days) {
   if (days === 0) return 'today!'
@@ -778,130 +708,7 @@ function startTask(task) {
   opacity: 0.9;
 }
 
-/* Shelf layouts */
-.shelf-section {
-  margin-top: 32px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 
-.shelf-section h2 {
-  margin: 0;
-  font-size: 22px;
-}
-
-.section-description {
-  margin: 0 0 16px;
-  font-size: 14px;
-  color: var(--muted-text);
-}
-
-.shelf-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-.shelf-column {
-  background: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
-  border-radius: 16px;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.shelf-column h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--on-surface);
-}
-
-.shelf-empty {
-  text-align: center;
-  padding: 30px;
-  color: var(--muted-text);
-  font-size: 13px;
-  border: 1px dashed var(--outline-variant);
-  border-radius: 12px;
-}
-
-.shelf-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.shelf-card {
-  background: var(--surface-container-lowest);
-  border: 1px solid var(--outline-variant);
-  border-radius: 12px;
-  padding: 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.card-details h4 {
-  margin: 0 0 4px;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.card-meta {
-  margin: 0 0 6px;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.profile-tag {
-  background: var(--surface-container-high);
-  color: var(--on-surface);
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.shelf-action-btn {
-  border: none;
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-weight: 700;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  flex-shrink: 0;
-}
-
-.sleep-btn {
-  background: rgba(235, 94, 85, 0.1);
-  color: #eb5e55;
-}
-
-.sleep-btn:hover {
-  background: #eb5e55;
-  color: white;
-}
-
-.activate-btn {
-  background: rgba(108, 92, 231, 0.1);
-  color: var(--primary);
-}
-
-.activate-btn:hover:not(:disabled) {
-  background: var(--primary);
-  color: var(--on-primary);
-}
-
-.activate-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 
 .flashcard-success-banner {
   background: rgba(46, 204, 113, 0.1);

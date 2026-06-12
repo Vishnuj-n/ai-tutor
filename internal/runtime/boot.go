@@ -173,23 +173,28 @@ func ResolveAppDir() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve project root: %w", err)
 		}
-		return filepath.Join(projectRoot, "dev_data"), nil
+		dir := filepath.Join(projectRoot, "dev_data")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("failed to create dev_data directory: %w", err)
+		}
+		return dir, nil
 	}
 
-	// Prod/default: use a stable per-user directory.
-	cfgDir, err := os.UserConfigDir()
-	if err == nil && cfgDir != "" {
-		return filepath.Join(cfgDir, "ai-tutor"), nil
+	// Prod/default: use a stable per-user directory and guarantee it exists.
+	var dir string
+	if cfgDir, err := os.UserConfigDir(); err == nil && cfgDir != "" {
+		dir = filepath.Join(cfgDir, "ai-tutor")
+	} else if cacheDir, err := os.UserCacheDir(); err == nil && cacheDir != "" {
+		dir = filepath.Join(cacheDir, "ai-tutor")
+	} else if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		dir = filepath.Join(homeDir, ".ai-tutor")
+	} else {
+		return "", fmt.Errorf("failed to resolve application data directory")
 	}
-	cacheDir, err := os.UserCacheDir()
-	if err == nil && cacheDir != "" {
-		return filepath.Join(cacheDir, "ai-tutor"), nil
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create app data directory %s: %w", dir, err)
 	}
-	homeDir, err := os.UserHomeDir()
-	if err == nil && homeDir != "" {
-		return filepath.Join(homeDir, ".ai-tutor"), nil
-	}
-	return "", fmt.Errorf("failed to resolve application data directory")
+	return dir, nil
 }
 
 func ResolveDBPath() (string, error) {
