@@ -87,7 +87,7 @@
               v-if="isTaskFlow"
               class="primary"
               :disabled="
-                reader.loadingBundle.value || completingSession.value
+                !activeTaskID.value || reader.loadingBundle.value || completingSession.value
               "
               @click="completeSession"
             >
@@ -128,7 +128,16 @@
           </button>
         </div>
 
-        <template v-if="!chat.chatCollapsed.value && ragEnabled">
+        <div v-if="!chat.chatCollapsed.value && !ragSettingsLoaded.value" class="rag-disabled-overlay">
+          <h3>Loading settings...</h3>
+        </div>
+        <div v-else-if="!chat.chatCollapsed.value && ragSettingsError.value" class="rag-disabled-overlay">
+          <div class="lock-icon">⚠️</div>
+          <h3>Settings Error</h3>
+          <p>{{ ragSettingsError.value }}</p>
+          <button class="primary" @click="retryGetUserSettings">Retry</button>
+        </div>
+        <template v-else-if="!chat.chatCollapsed.value && ragEnabled">
           <p class="chat-context">
             Using topic <strong>{{ reader.selectedTopicTitle.value || 'None' }}</strong>
             <span v-if="reader.selectedNotebookTitle.value"
@@ -185,7 +194,7 @@
           </button>
         </template>
         
-        <div v-if="!chat.chatCollapsed.value && !ragEnabled" class="rag-disabled-overlay">
+        <div v-if="!chat.chatCollapsed.value && ragSettingsLoaded.value && !ragEnabled" class="rag-disabled-overlay">
           <div class="lock-icon">🔒</div>
           <h3>Local AI Retrieval Offline</h3>
           <p>Local semantic search and Q&A is currently disabled to save memory and CPU.</p>
@@ -223,6 +232,8 @@ const completionError = ref('')
 const iframeKey = ref(0)
 const activeTaskID = ref('')
 const ragEnabled = ref(false)
+const ragSettingsLoaded = ref(false)
+const ragSettingsError = ref(null)
 
 const isTaskFlow = computed(() => !!routeTaskID.value)
 
@@ -231,13 +242,18 @@ const isTaskFlow = computed(() => !!routeTaskID.value)
 
 // Initialize on mount
 onMounted(async () => {
+  ragSettingsLoaded.value = false
+  ragSettingsError.value = null
   try {
     const settings = await getUserSettings()
     if (settings && settings.rag_enabled !== undefined) {
       ragEnabled.value = settings.rag_enabled
     }
+    ragSettingsLoaded.value = true
   } catch (err) {
     console.error('Failed to load settings in Reader:', err)
+    ragSettingsError.value = err?.message || 'Failed to load settings'
+    ragSettingsLoaded.value = true
   }
 
   console.log('[Reader] Mounted. route.query:', JSON.stringify(route.query))
@@ -303,6 +319,21 @@ function goPrev() {
 function goNext() {
   if (reader.goNext()) {
     iframeKey.value++
+  }
+}
+
+async function retryGetUserSettings() {
+  ragSettingsLoaded.value = false
+  ragSettingsError.value = null
+  try {
+    const settings = await getUserSettings()
+    if (settings && settings.rag_enabled !== undefined) {
+      ragEnabled.value = settings.rag_enabled
+    }
+    ragSettingsLoaded.value = true
+  } catch (err) {
+    ragSettingsError.value = err?.message || 'Failed to load settings'
+    ragSettingsLoaded.value = true
   }
 }
 

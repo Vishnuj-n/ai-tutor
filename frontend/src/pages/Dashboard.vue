@@ -6,7 +6,7 @@
       <!-- Active Profile Dropdown Selector -->
       <div class="profile-selector-container">
         <label for="active-profile-select">Current Profile:</label>
-        <select id="active-profile-select" v-model="userSettings.active_profile_id" @change="changeActiveProfile"
+        <select id="active-profile-select" v-model="userSettings.active_profile_id" @change="changeActiveProfile($event)"
           class="topbar-select">
           <option value="">-- No Profile Selected --</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id">
@@ -87,8 +87,8 @@
     </template>
 
     <template v-else>
-      <!-- Telemetry Widget for active profile -->
-      <section v-if="activeProfilePace" class="telemetry-widget">
+      <!-- Telemetry Widget for active profile — only show when a deadline is set -->
+      <section v-if="activeProfilePace && activeProfilePace.has_deadline" class="telemetry-widget">
         <div class="telemetry-card card">
           <h2 class="telemetry-header">Profile Study Pacing ({{ activeProfileName }})</h2>
           <div class="telemetry-grid">
@@ -191,6 +191,7 @@ const userSettings = ref({
   rag_enabled: false
 })
 const activeProfilePace = ref(null)
+const lastPersistedProfile = ref('')
 
 const flashcardsJustCreated = computed(() => {
   const created = parseInt(route.query.flashcardsCreated, 10)
@@ -227,6 +228,7 @@ async function loadAgenda() {
       return
     }
     userSettings.value = settingsRes
+    lastPersistedProfile.value = settingsRes.active_profile_id || ''
 
     const profilesRes = await getProfiles()
     if (profilesRes.error) {
@@ -246,7 +248,10 @@ async function loadAgenda() {
     dueReviewCards.value = response.due_review_cards || 0
 
     // 3. Determine if there is any active study content (drives the empty state)
-    hasActiveStudyContent.value = (response.tasks || []).length > 0
+    // Uses active_notebook_count from backend so "Tasks Complete!" branch
+    // is reachable when users have active textbooks but zero remaining tasks.
+    const activeNotebookCount = response.active_notebook_count || 0
+    hasActiveStudyContent.value = response.tasks.length > 0 || activeNotebookCount > 0
 
     // 4. Load pace for active profile
     // Guard: only request pacing if the active_profile_id resolves to a known profile.
@@ -281,13 +286,14 @@ async function loadAgenda() {
   }
 }
 
-async function changeActiveProfile() {
-  const previousActiveProfile = userSettings.value.active_profile_id
+async function changeActiveProfile(event) {
+  const newProfileID = event?.target?.value ?? ''
+  const oldProfileID = lastPersistedProfile.value
   try {
     loading.value = true
     const res = await updateUserSettings(
       userSettings.value.daily_study_minutes,
-      userSettings.value.active_profile_id,
+      newProfileID,
       userSettings.value.skip_to_reading_active,
       userSettings.value.cloud_sync_url,
       userSettings.value.cloud_api_token,
@@ -295,13 +301,14 @@ async function changeActiveProfile() {
       userSettings.value.rag_enabled || false
     )
     if (res && res.error) {
-      userSettings.value.active_profile_id = previousActiveProfile
+      userSettings.value.active_profile_id = oldProfileID
       actionError.value = res.error
       return
     }
+    lastPersistedProfile.value = newProfileID
     await loadAgenda()
   } catch (err) {
-    userSettings.value.active_profile_id = previousActiveProfile
+    userSettings.value.active_profile_id = oldProfileID
     actionError.value = 'Failed to switch active profile'
   } finally {
     loading.value = false

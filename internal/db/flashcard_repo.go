@@ -270,31 +270,52 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 			return nil
 		}
 
-		insertedCards := make([]models.Flashcard, 0, len(cardsIfNotExist))
 		for _, card := range cardsIfNotExist {
 			stateJSON, marshalErr := json.Marshal(statesIfNotExist[card.ID])
 			if marshalErr != nil {
 				return fmt.Errorf("failed to encode flashcard state for %s: %w", card.ID, marshalErr)
 			}
 
-			result, execErr := tx.Exec(`
+			_, execErr := tx.Exec(`
 				INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
 				VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 			`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 			if execErr != nil {
 				return execErr
 			}
-
-			rowsAffected, rowsErr := result.RowsAffected()
-			if rowsErr != nil {
-				return rowsErr
-			}
-			if rowsAffected == 1 {
-				insertedCards = append(insertedCards, card)
-			}
 		}
 
-		cards = insertedCards
+		rows, err := tx.Query(`
+			SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, answer, COALESCE(due_at, 0), suspended
+			FROM fsrs_cards
+			WHERE topic_id = ? AND suspended = 0
+			ORDER BY
+				CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,
+				due_at ASC,
+				created_at ASC,
+				id ASC
+		`, topicID)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = rows.Close()
+		}()
+
+		cards = make([]models.Flashcard, 0)
+		for rows.Next() {
+			var card models.Flashcard
+			var suspended bool
+			if err := rows.Scan(&card.ID, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
+				return err
+			}
+			card.Suspended = suspended
+			cards = append(cards, card)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
 		existing = false
 		return nil
 	})

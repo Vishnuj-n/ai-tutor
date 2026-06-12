@@ -148,8 +148,8 @@ func TestStudyQueueLifecycleAndState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNextTask failed: %v", err)
 	}
-	if next.ID != "task-read" {
-		t.Fatalf("expected READING first, got %s", next.ID)
+	if next.ID != "task-review" {
+		t.Fatalf("expected FLASHCARD_REVIEW first, got %s", next.ID)
 	}
 
 	if err := ActivateTask(next.ID); err != nil {
@@ -176,7 +176,7 @@ func TestStudyQueueLifecycleAndState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetQueueState failed: %v", err)
 	}
-	if state.Pending["FLASHCARD_REVIEW"] != 1 || state.Pending["QUIZ"] != 1 || state.Total != 2 {
+	if state.Pending["READING"] != 1 || state.Pending["QUIZ"] != 1 || state.Total != 2 {
 		t.Fatalf("unexpected queue state: %#v", state)
 	}
 }

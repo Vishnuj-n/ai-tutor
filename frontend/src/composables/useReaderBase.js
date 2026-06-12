@@ -296,7 +296,9 @@ export function useReaderBase(taskID) {
     activeSection.value = section
     const page = Number(section?.page_num)
     if (Number.isFinite(page) && page > 0) {
-      currentPage.value = Math.min(Math.max(1, page), pageCount.value)
+      const effectiveMin = hasNavigationBounds.value ? navigationMinPage.value : 1
+      const effectiveMax = hasNavigationBounds.value ? navigationMaxPage.value : pageCount.value
+      currentPage.value = Math.min(Math.max(effectiveMin, page), effectiveMax)
     }
   }
 

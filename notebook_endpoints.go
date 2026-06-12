@@ -94,9 +94,14 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 
 	// Auto-assign the notebook to the active profile, mirroring Chrome-style profile isolation:
 	// notebooks uploaded while a profile is active belong to that profile automatically.
-	// Falls back to the first profile if active_profile_id is not set yet.
-	if profileID := resolveActiveProfileID(); profileID != "" {
-		_ = db.AssignNotebookToProfile(uploadResult.ID, profileID)
+	// Only auto-assigns when an explicit ActiveProfileID is set (no fallback to oldest profile).
+	if profileID := resolveExplicitActiveProfileID(); profileID != "" {
+		if err := db.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
+			_ = a.notebookService.DeleteFile(uploadResult.FilePath)
+			return map[string]interface{}{
+				"error": fmt.Sprintf("failed to assign notebook to profile: %v", err),
+			}
+		}
 	}
 
 	status := "uploaded"
@@ -116,19 +121,12 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	}
 }
 
-// resolveActiveProfileID returns the active profile ID from user settings.
-// If no active profile is set, it falls back to the first profile ever created.
-// Returns empty string if no profiles exist.
-func resolveActiveProfileID() string {
+// resolveExplicitActiveProfileID returns the active profile ID from user settings
+// only when an explicit active profile has been set — no fallback to oldest profile.
+func resolveExplicitActiveProfileID() string {
 	s, err := db.GetUserSettings()
 	if err == nil && s != nil && s.ActiveProfileID != "" {
 		return s.ActiveProfileID
-	}
-	// Fallback: first profile (oldest by created_at)
-	profiles, err := db.GetProfiles()
-	if err == nil && len(profiles) > 0 {
-		// GetProfiles returns ORDER BY created_at DESC; last element is oldest
-		return profiles[len(profiles)-1].ID
 	}
 	return ""
 }
@@ -458,6 +456,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	// Link new topics to notebook in database
 	if err := db.LinkNotebookTopics(notebookID, topicIDs); err != nil {
 		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		// Cleanup: delete newly created topic rows (cascades to chunks, cards, etc.) to avoid orphaned records
+		for topicID := range newlyCreatedTopicIDs {
+			_ = db.DeleteTopic(topicID)
+		}
 		return map[string]interface{}{"error": "failed to link notebook topics: " + err.Error()}
 	}
 

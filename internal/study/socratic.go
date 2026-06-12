@@ -115,18 +115,11 @@ func resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int
 		utils.Warnf("could not resolve socratic lineage for topic %s: %v", topicID, err)
 		return "", 0, 0
 	}
-	sourceHeading, sourcePageStart, sourcePageEnd := "", 0, 0
-	maxSpan := 0
-	// Pick the heading with the widest page span to ensure sourceHeading covers the computed range
+	sourcePageStart, sourcePageEnd := 0, 0
 	for _, cid := range chunkIDs {
 		pageRange, ok := headingPageRanges[cid]
 		if !ok {
 			continue
-		}
-		span := pageRange[1] - pageRange[0]
-		if sourceHeading == "" || span > maxSpan {
-			maxSpan = span
-			sourceHeading = fmt.Sprintf("Page %d", pageRange[0])
 		}
 		if sourcePageStart == 0 || pageRange[0] < sourcePageStart {
 			sourcePageStart = pageRange[0]
@@ -134,6 +127,10 @@ func resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int
 		if pageRange[1] > sourcePageEnd {
 			sourcePageEnd = pageRange[1]
 		}
+	}
+	sourceHeading := ""
+	if sourcePageStart > 0 {
+		sourceHeading = fmt.Sprintf("Page %d", sourcePageStart)
 	}
 	return sourceHeading, sourcePageStart, sourcePageEnd
 }
