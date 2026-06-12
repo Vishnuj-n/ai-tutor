@@ -150,7 +150,12 @@ func TriggerCloudSync() error {
 	}
 	localPath := filepath.Join(dataDir, nb.ID+".pdf")
 	// 2. Download from remote URL
-	resp, err := http.Get(nb.DownloadURL)
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("GET", nb.DownloadURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
