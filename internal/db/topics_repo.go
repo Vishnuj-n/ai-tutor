@@ -336,8 +336,14 @@ func GetNotebookTopicsWithBounds(notebookID string) ([]NotebookTopicInfo, error)
 // Joins with notebooks table to ensure topics have a valid notebook source.
 // Orders by notebook priority (higher first) to respect notebook priority biasing.
 func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
+	settings, err := GetUserSettings()
+	if err != nil {
+		return models.ReadingTopicCursor{}, false, fmt.Errorf("QueryNextReadingTopic: getting user settings: %w", err)
+	}
+	activeProfileStr := settings.ActiveProfileID
+
 	var topic models.ReadingTopicCursor
-	err := conn.QueryRow(`
+	query := `
 		SELECT
 			t.id,
 			t.title,
@@ -346,15 +352,24 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 			COALESCE(t.current_page_cursor, 0),
 			n.id
 		FROM topics t
-		INNER JOIN notebooks n ON n.topic_id = t.id
+		LEFT JOIN notebook_topics nt ON nt.topic_id = t.id
+		LEFT JOIN notebooks n ON (n.id = nt.notebook_id OR n.topic_id = t.id)
 		WHERE t.status IN ('unseen', 'reading')
 		  AND COALESCE(t.end_page, 0) > 0
 		  AND COALESCE(t.current_page_cursor, 0) < COALESCE(t.end_page, 0)
+		  AND (nt.notebook_id IS NOT NULL OR n.topic_id = t.id)
 		  AND n.id IS NOT NULL
 		  AND n.id != ''
-		ORDER BY COALESCE(n.priority, 5) DESC, t.updated_at ASC, t.created_at ASC
-		LIMIT 1
-	`).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
+		  AND n.study_status = 'active'
+	`
+	var args []interface{}
+	if activeProfileStr != "" {
+		query += ` AND (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
+		args = append(args, activeProfileStr)
+	}
+	query += ` ORDER BY COALESCE(n.priority, 5) DESC, t.updated_at ASC, t.created_at ASC LIMIT 1 `
+
+	err = conn.QueryRow(query, args...).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
 	if err == sql.ErrNoRows {
 		return models.ReadingTopicCursor{}, false, nil
 	}

@@ -118,8 +118,8 @@ export function completeReviewSession(taskID) {
   return appBridge().CompleteReviewSession(taskID)
 }
 
-export function getNotebooks(topicID = '') {
-  return appBridge().GetNotebooks(topicID)
+export function getNotebooks(topicID = '', profileID = '') {
+  return appBridge().GetNotebooks(topicID, profileID)
 }
 
 export function getNotebookTopicTree() {
@@ -160,6 +160,26 @@ export function getUserSettings() {
 
 export function updateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled) {
   return appBridge().UpdateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled)
+}
+
+export function getLLMSettings() {
+  return appBridge().GetLLMSettings()
+}
+
+export function getLLMProviderPreset(provider) {
+  return appBridge().GetLLMProviderPreset(provider)
+}
+
+export function updateLLMSettings(settings) {
+  return appBridge().UpdateLLMSettings(settings)
+}
+
+export function saveLLMAPIKey(tier, key) {
+  return appBridge().SaveLLMAPIKey(tier, key)
+}
+
+export function deleteLLMAPIKey(tier) {
+  return appBridge().DeleteLLMAPIKey(tier)
 }
 
 export function initializeRAG() {

@@ -117,6 +117,17 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (active_profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS llm_settings (
+			tier TEXT PRIMARY KEY CHECK (tier IN ('fast', 'heavy')),
+			provider TEXT NOT NULL DEFAULT 'groq',
+			base_url TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			timeout_ms INTEGER NOT NULL DEFAULT 30000,
+			api_key_source TEXT NOT NULL DEFAULT 'keyring',
+			has_api_key BOOLEAN DEFAULT 0,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+
 		// Notebooks
 		`CREATE TABLE IF NOT EXISTS notebooks (
 			id TEXT PRIMARY KEY,
@@ -353,6 +364,16 @@ func InitSchema(tx *sql.Tx) error {
 		ON CONFLICT(id) DO NOTHING
 	`); err != nil {
 		return fmt.Errorf("failed to initialize user settings: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO llm_settings (tier, provider, base_url, model, timeout_ms, api_key_source, has_api_key)
+		VALUES
+			('fast', 'groq', 'https://api.groq.com/openai', 'openai/gpt-oss-120b', 60000, 'keyring', 0),
+			('heavy', 'groq', 'https://api.groq.com/openai', 'openai/gpt-oss-120b', 90000, 'keyring', 0)
+		ON CONFLICT(tier) DO NOTHING
+	`); err != nil {
+		return fmt.Errorf("failed to initialize llm settings: %w", err)
 	}
 
 	return nil

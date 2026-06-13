@@ -1,6 +1,6 @@
 <template>
-  <div class="onboarding-overlay">
-    <div class="onboarding-card">
+  <div class="onboarding-overlay" :style="{ color: getTextColor() }">
+    <div class="onboarding-card" :style="{ background: getCardStyle().bg, borderColor: getCardStyle().border, backdropFilter: getCardStyle().blur }">
       <div class="header-section">
         <div class="logo-orb">AG</div>
         <h1>Welcome to AntiGravity</h1>
@@ -8,7 +8,7 @@
       </div>
 
       <div class="progress-bar">
-        <div class="progress-fill" :style="{ width: step === 1 ? '25%' : step === 2 ? '50%' : step === 3 ? '75%' : '100%' }"></div>
+        <div class="progress-fill" :style="{ width: `${step * 20}%` }"></div>
       </div>
 
       <!-- Step 1: Profile and Goal -->
@@ -54,9 +54,81 @@
         </button>
       </div>
 
-      <!-- Step 2: Cloud Sync Settings -->
+      <!-- Step 2: LLM Provider -->
       <div v-else-if="step === 2" class="step-container">
-        <h2>2. Teacher Cloud Sync (Optional)</h2>
+        <h2>2. AI Provider</h2>
+        <p class="description">Choose an OpenAI-compatible provider. API keys are stored in your OS credential manager, not SQLite.</p>
+
+        <div class="form-group">
+          <label for="llm-provider">Provider</label>
+          <select id="llm-provider" v-model="llmFast.provider" @change="applyProviderPreset('fast')">
+            <option value="groq">Groq</option>
+            <option value="openai">ChatGPT / OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="custom">Custom OpenAI-compatible</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="llm-base-url">Base URL</label>
+          <input id="llm-base-url" v-model="llmFast.base_url" type="url" placeholder="https://api.groq.com/openai" />
+        </div>
+
+        <div class="form-group">
+          <label for="llm-model">Model</label>
+          <input id="llm-model" v-model="llmFast.model" type="text" placeholder="openai/gpt-oss-120b" />
+        </div>
+
+        <div class="form-group">
+          <label for="llm-api-key">API Key</label>
+          <input id="llm-api-key" v-model="llmFastKey" type="password" placeholder="Paste key to save in OS credential manager" />
+        </div>
+
+        <label class="inline-check">
+          <input v-model="useSameLLMForHeavy" type="checkbox" />
+          <span>Use same provider and model for heavy AI tasks</span>
+        </label>
+
+        <div v-if="!useSameLLMForHeavy" class="advanced-box">
+          <div class="form-group">
+            <label for="heavy-provider">Heavy Provider</label>
+            <select id="heavy-provider" v-model="llmHeavy.provider" @change="applyProviderPreset('heavy')">
+              <option value="groq">Groq</option>
+              <option value="openai">ChatGPT / OpenAI</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="custom">Custom OpenAI-compatible</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="heavy-base-url">Heavy Base URL</label>
+            <input id="heavy-base-url" v-model="llmHeavy.base_url" type="url" />
+          </div>
+          <div class="form-group">
+            <label for="heavy-model">Heavy Model</label>
+            <input id="heavy-model" v-model="llmHeavy.model" type="text" />
+          </div>
+          <div class="form-group">
+            <label for="heavy-api-key">Heavy API Key</label>
+            <input id="heavy-api-key" v-model="llmHeavyKey" type="password" placeholder="Leave blank to use the fast key" />
+          </div>
+        </div>
+
+        <div v-if="error" class="error-banner" style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+          <span>{{ error }}</span>
+          <button type="button" style="background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;" @click="error = ''">&times;</button>
+        </div>
+
+        <div class="button-row">
+          <button class="secondary-button" @click="step = 1">Back</button>
+<button class="action-button" :disabled="llmSaving || presetLoading || !isLLMStepValid" @click="saveLLMAndContinue">
+            {{ llmSaving ? 'Saving AI Settings...' : 'Next Step' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 3: Cloud Sync Settings -->
+      <div v-else-if="step === 3" class="step-container">
+        <h2>3. Teacher Cloud Sync (Optional)</h2>
         <p class="description">If your teacher sends assigned books and tracks progress, enter the sync details below.</p>
 
         <div class="form-group">
@@ -80,19 +152,19 @@
         </div>
 
         <div class="button-row">
-          <button class="secondary-button" @click="step = 1">Back</button>
-          <button class="action-button" @click="step = 3">Next Step</button>
+          <button class="secondary-button" @click="step = 2">Back</button>
+          <button class="action-button" @click="step = 4">Next Step</button>
         </div>
       </div>
 
-      <!-- Step 3: Local AI Retrieval (RAG) -->
-      <div v-else-if="step === 3" class="step-container">
-        <h2>3. Local AI Retrieval (RAG)</h2>
+      <!-- Step 4: RAG Settings -->
+      <div v-else-if="step === 4" class="step-container">
+        <h2>4. Local AI Retrieval (RAG)</h2>
         <p class="description">Enable context-rich Q&A. This sets up a local ONNX embedding engine and vec0 search to query books completely offline.</p>
 
         <div class="rag-options">
           <label class="rag-option-card" :class="{ active: wantRag }">
-            <input type="radio" :value="true" v-model="wantRag" :disabled="isSettingUpRag" />
+            <input v-model="wantRag" type="radio" :value="true" :disabled="isSettingUpRag" />
             <div class="option-info">
               <strong>Yes, Enable Local RAG (Recommended)</strong>
               <p>Download and compile local assets (~152 MB). Requires Windows x64.</p>
@@ -100,7 +172,7 @@
           </label>
 
           <label class="rag-option-card" :class="{ active: !wantRag }">
-            <input type="radio" :value="false" v-model="wantRag" :disabled="isSettingUpRag" />
+            <input v-model="wantRag" type="radio" :value="false" :disabled="isSettingUpRag" />
             <div class="option-info">
               <strong>No, Skip Local RAG</strong>
               <p>AI Q&A will be disabled in the reader. Simple lexical fallbacks are used.</p>
@@ -125,7 +197,7 @@
         </div>
 
         <div class="button-row">
-          <button class="secondary-button" :disabled="isSettingUpRag" @click="step = 2">Back</button>
+          <button class="secondary-button" :disabled="isSettingUpRag" @click="step = 3">Back</button>
           
           <button 
             v-if="wantRag && !ragSetupCompleted" 
@@ -139,16 +211,16 @@
           <button 
             v-else 
             class="action-button" 
-            @click="step = 4"
+            @click="step = 5"
           >
             Next Step
           </button>
         </div>
       </div>
 
-      <!-- Step 4: Aesthetic Preferences -->
-      <div v-else-if="step === 4" class="step-container">
-        <h2>4. Choose Workspace Aesthetic</h2>
+      <!-- Step 5: Aesthetics -->
+      <div v-else-if="step === 5" class="step-container">
+        <h2>5. Choose Workspace Aesthetic</h2>
         <p class="description">Select a visual theme. Changing themes alters the colors of your study desk in real-time.</p>
 
         <div class="theme-grid">
@@ -162,7 +234,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label">Light Classic</span>
+            <span class="theme-label" :style="{ color: getLabelColor('light-classic') }">Light Classic</span>
           </button>
 
           <button
@@ -175,7 +247,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label">Warm Sepia</span>
+            <span class="theme-label" :style="{ color: getLabelColor('light-warm') }">Warm Sepia</span>
           </button>
 
           <button
@@ -188,7 +260,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label">Deep Indigo</span>
+            <span class="theme-label" :style="{ color: getLabelColor('dark-indigo') }">Deep Indigo</span>
           </button>
 
           <button
@@ -201,7 +273,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label">Nord Frost</span>
+            <span class="theme-label" :style="{ color: getLabelColor('dark-nord') }">Nord Frost</span>
           </button>
 
           <button
@@ -214,14 +286,14 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label">Forest Emerald</span>
+            <span class="theme-label" :style="{ color: getLabelColor('dark-emerald') }">Forest Emerald</span>
           </button>
         </div>
 
         <div v-if="error" class="error-banner">{{ error }}</div>
 
         <div class="button-row">
-          <button class="secondary-button" @click="step = 3">Back</button>
+          <button class="secondary-button" @click="step = 4">Back</button>
           <button class="action-button" :disabled="loading" @click="completeOnboarding">
             {{ loading ? 'Configuring...' : 'Initialize Workspace' }}
           </button>
@@ -234,7 +306,14 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { createProfile, updateUserSettings, initializeRAG } from '../services/appApi'
+import {
+  createProfile,
+  updateUserSettings,
+  initializeRAG,
+  updateLLMSettings,
+  saveLLMAPIKey,
+  getLLMProviderPreset
+} from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
 const router = useRouter()
@@ -248,6 +327,37 @@ const dailyMinutes = ref(90)
 const cloudSyncURL = ref('')
 const apiToken = ref('')
 const selectedTheme = ref('light-classic')
+const overlayBackground = ref('#f9f9fb')
+const themeCardStyles = {
+  'light-classic': { bg: 'rgba(255,255,255,0.85)', border: 'rgba(0,0,0,0.08)', blur: 'blur(20px)' },
+  'light-warm': { bg: 'rgba(255,255,255,0.85)', border: 'rgba(0,0,0,0.08)', blur: 'blur(20px)' },
+  'dark-indigo': { bg: 'rgba(255,255,255,0.03)', border: 'rgba(255,255,255,0.08)', blur: 'blur(20px)' },
+  'dark-nord': { bg: 'rgba(255,255,255,0.03)', border: 'rgba(255,255,255,0.08)', blur: 'blur(20px)' },
+  'dark-emerald': { bg: 'rgba(255,255,255,0.03)', border: 'rgba(255,255,255,0.08)', blur: 'blur(20px)' },
+}
+const llmSaving = ref(false)
+const presetLoading = ref(false)
+const useSameLLMForHeavy = ref(true)
+const llmFastKey = ref('')
+const llmHeavyKey = ref('')
+const llmFast = ref({
+  tier: 'fast',
+  provider: 'groq',
+  base_url: 'https://api.groq.com/openai',
+  model: 'openai/gpt-oss-120b',
+  timeout_ms: 60000,
+  api_key_source: 'keyring',
+  has_api_key: false
+})
+const llmHeavy = ref({
+  tier: 'heavy',
+  provider: 'groq',
+  base_url: 'https://api.groq.com/openai',
+  model: 'openai/gpt-oss-120b',
+  timeout_ms: 90000,
+  api_key_source: 'keyring',
+  has_api_key: false
+})
 
 // RAG onboarding states
 const wantRag = ref(true)
@@ -263,9 +373,118 @@ const isStep1Valid = computed(() => {
   return profileName.value.trim() !== '' && profileDeadline.value !== '' && dailyMinutes.value >= 15
 })
 
+const isLLMStepValid = computed(() => {
+  const fastValid = llmFast.value.base_url.trim() !== '' && llmFast.value.model.trim() !== ''
+  const heavyValid = useSameLLMForHeavy.value || (
+    llmHeavy.value.base_url.trim() !== '' && llmHeavy.value.model.trim() !== ''
+  )
+  return fastValid && heavyValid
+})
+
+async function applyProviderPreset(tier) {
+  presetLoading.value = true
+  error.value = ''
+  const target = tier === 'heavy' ? llmHeavy.value : llmFast.value
+  try {
+    const preset = await getLLMProviderPreset(target.provider)
+    target.base_url = preset.base_url
+    target.model = preset.model
+  } catch (err) {
+    error.value = err.message || `Failed to load preset for ${target.provider}.`
+  } finally {
+    presetLoading.value = false
+  }
+}
+
+async function saveLLMAndContinue() {
+  if (presetLoading.value || error.value) return
+  error.value = ''
+  llmSaving.value = true
+  try {
+    const fast = { ...llmFast.value, has_api_key: llmFastKey.value.trim() !== '' }
+    const heavy = useSameLLMForHeavy.value
+      ? { ...llmFast.value, tier: 'heavy', timeout_ms: 90000, has_api_key: llmFastKey.value.trim() !== '' }
+      : { ...llmHeavy.value, has_api_key: llmHeavyKey.value.trim() !== '' }
+
+    const settingsRes = await updateLLMSettings({
+      use_same_for_heavy: useSameLLMForHeavy.value,
+      fast,
+      heavy
+    })
+    if (settingsRes.error) {
+      error.value = settingsRes.error
+      return
+    }
+
+    if (llmFastKey.value.trim()) {
+      const keyRes = await saveLLMAPIKey('fast', llmFastKey.value.trim())
+      if (keyRes.error) {
+        error.value = keyRes.error
+        return
+      }
+      if (useSameLLMForHeavy.value) {
+        const heavyKeyRes = await saveLLMAPIKey('heavy', llmFastKey.value.trim())
+        if (heavyKeyRes.error) {
+          error.value = heavyKeyRes.error
+          return
+        }
+      }
+    }
+    if (!useSameLLMForHeavy.value && llmHeavyKey.value.trim()) {
+      const keyRes = await saveLLMAPIKey('heavy', llmHeavyKey.value.trim())
+      if (keyRes.error) {
+        error.value = keyRes.error
+        return
+      }
+    }
+    step.value = 3
+  } catch (err) {
+    error.value = err.message || 'Failed to save AI provider settings.'
+  } finally {
+    llmSaving.value = false
+  }
+}
+
+const themeBackgrounds = {
+  'light-classic': '#f9f9fb',
+  'light-warm': '#fdfaf6',
+  'dark-indigo': '#0b0d16',
+  'dark-nord': '#2e3440',
+  'dark-emerald': '#0a120d',
+}
+
+const themeLabelColors = {
+  'light-classic': '#2d3338',
+  'light-warm': '#433422',
+  'dark-indigo': '#e2e8f0',
+  'dark-nord': '#eceff4',
+  'dark-emerald': '#e6f4ea',
+}
+
+const themeTextColors = {
+  'light-classic': '#2d3338',
+  'light-warm': '#433422',
+  'dark-indigo': '#ffffff',
+  'dark-nord': '#ffffff',
+  'dark-emerald': '#ffffff',
+}
+
 function selectTheme(theme) {
   selectedTheme.value = theme
   document.documentElement.setAttribute('data-theme', theme)
+  overlayBackground.value = themeBackgrounds[theme] || '#0c0d14'
+}
+
+function getCardStyle() {
+  return themeCardStyles[selectedTheme.value] || themeCardStyles['dark-indigo']
+}
+
+function getTextColor() {
+  return themeTextColors[selectedTheme.value] || '#ffffff'
+}
+
+function getLabelColor(theme) {
+  return themeLabelColors[theme] || '#e0e0e0'
 }
 
 function startRagSetup() {
@@ -294,7 +513,7 @@ function startRagSetup() {
       isSettingUpRag.value = false
       EventsOff('rag-setup-progress')
       setTimeout(() => {
-        step.value = 4
+        step.value = 5
       }, 1000)
     }
   })
@@ -359,7 +578,7 @@ async function completeOnboarding() {
 .onboarding-overlay {
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at top left, #1a1b2f, #0c0d14);
+  background: v-bind(overlayBackground);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -372,13 +591,11 @@ async function completeOnboarding() {
 .onboarding-card {
   width: 100%;
   max-width: 500px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 24px;
   padding: 40px;
-  backdrop-filter: blur(20px);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
   box-sizing: border-box;
+  transition: background 0.3s ease, border-color 0.3s ease;
 }
 
 .header-section {
@@ -477,10 +694,49 @@ input {
   width: 100%;
 }
 
+select {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 12px 16px;
+  color: #ffffff;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+select option {
+  color: #121212;
+}
+
 input:focus {
   outline: none;
   border-color: #6c5ce7;
   background: rgba(255, 255, 255, 0.05);
+}
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #e0e0e0;
+}
+
+.inline-check input {
+  width: auto;
+}
+
+.advanced-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .action-button {
@@ -551,8 +807,8 @@ input:focus {
 }
 
 .theme-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 14px;
   padding: 12px;
   display: flex;
@@ -565,15 +821,14 @@ input:focus {
 }
 
 .theme-card:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.15);
   transform: translateY(-2px);
 }
 
 .theme-card.active {
-  background: rgba(108, 92, 231, 0.1);
-  border-color: #6c5ce7;
-  box-shadow: 0 0 15px rgba(108, 92, 231, 0.3);
+  border-color: var(--primary);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
 }
 
 .theme-preview {
@@ -596,11 +851,6 @@ input:focus {
 .theme-label {
   font-size: 12px;
   font-weight: 600;
-  color: #e0e0e0;
-}
-
-.theme-card.active .theme-label {
-  color: #ffffff;
 }
 
 /* Theme Previews */

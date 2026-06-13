@@ -260,22 +260,34 @@ func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicInges
 	return ingestNotebookContentByTopicRepo(notebookID, normalizedGroups)
 }
 
-// GetNotebooks retrieves all notebooks, optionally filtered by topic
-func GetNotebooks(topicID string) ([]models.Notebook, error) {
+// GetNotebooks retrieves all notebooks, optionally filtered by topic and profile.
+// When profileID is empty, returns all notebooks (backward compatible).
+// When profileID is set, returns only notebooks belonging to that profile or unassigned notebooks.
+func GetNotebooks(topicID, profileID string) ([]models.Notebook, error) {
 	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant') FROM notebooks"
 	args := []interface{}{}
+	whereClause := ""
 
 	if topicID != "" {
-		query += `
-			WHERE topic_id = ?
-			   OR EXISTS (
-				SELECT 1
-				FROM notebook_topics nt
-				WHERE nt.notebook_id = notebooks.id
-				  AND nt.topic_id = ?
-			)
-		`
+		if whereClause != "" {
+			whereClause += " AND "
+		}
+		whereClause += `(topic_id = ? OR EXISTS (SELECT 1 FROM notebook_topics nt WHERE nt.notebook_id = notebooks.id AND nt.topic_id = ?))`
 		args = append(args, topicID, topicID)
+	}
+
+	// Profile isolation: filter by profile if set
+	if profileID != "" {
+		if whereClause != "" {
+			whereClause += " AND "
+		}
+		// Include notebooks belonging to this profile OR unassigned notebooks (NULL profile_id)
+		whereClause += `(profile_id = ? OR profile_id IS NULL OR profile_id = '')`
+		args = append(args, profileID)
+	}
+
+	if whereClause != "" {
+		query += " WHERE " + whereClause
 	}
 	query += " ORDER BY uploaded_at DESC"
 
@@ -454,9 +466,9 @@ func DeleteNotebook(notebookID string) error {
 	return deleteNotebookRepo(notebookID)
 }
 
-// GetNotebookTopicTree returns notebooks with their discovered topics derived from linked chunks.
-func GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
-	rows, err := conn.Query(`
+// GetNotebookTopicTree returns notebooks with their discovered topics derived from linked chunks, optionally filtered by profile.
+func GetNotebookTopicTree(profileID string) ([]models.NotebookTopicTreeNode, error) {
+	query := `
 		SELECT
 			n.id,
 			n.title,
@@ -466,8 +478,15 @@ func GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
 		LEFT JOIN notebook_chunks nc ON nc.notebook_id = n.id
 		LEFT JOIN chunks c ON c.id = nc.chunk_id
 		LEFT JOIN topics t ON t.id = c.topic_id
-		ORDER BY n.uploaded_at DESC, t.title ASC, t.id ASC
-	`)
+	`
+	var args []interface{}
+	if profileID != "" {
+		query += ` WHERE (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
+		args = append(args, profileID)
+	}
+	query += ` ORDER BY n.uploaded_at DESC, t.title ASC, t.id ASC `
+
+	rows, err := conn.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

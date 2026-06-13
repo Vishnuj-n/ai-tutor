@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
+	"database/sql"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
@@ -32,7 +34,7 @@ type llmProviderInterface interface {
 
 // App is the thin Wails bridge — no business logic lives here.
 type App struct {
-	ctx               context.Context
+	ctx context.Context
 	// aiMutex guards aiReady, aiInitError, embedder, retrievalEngine, and studyService
 	// which are written by the InitializeRAG goroutine and read by handler methods.
 	aiMutex           sync.Mutex
@@ -314,7 +316,16 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 
 	// Count active notebooks for the dashboard empty-state distinction.
 	var activeNotebookCount int
-	_ = db.GetConnection().QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&activeNotebookCount)
+	var activeProfileID sql.NullString
+	if err := db.GetConnection().QueryRow(`SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1`).Scan(&activeProfileID); err == nil && activeProfileID.Valid && activeProfileID.String != "" {
+		_ = db.GetConnection().QueryRow(`
+			SELECT COUNT(*) FROM notebooks 
+			WHERE study_status = 'active' 
+			  AND (profile_id = ? OR profile_id IS NULL OR profile_id = '')
+		`, activeProfileID.String).Scan(&activeNotebookCount)
+	} else {
+		_ = db.GetConnection().QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&activeNotebookCount)
+	}
 
 	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
 	for idx, task := range plan.Tasks {
@@ -462,9 +473,6 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 	utils.Warnf("[READER_INIT] InitializeReadingSession entry taskID=%s notebookID=%s topicID=%s startPage=%d endPage=%d", taskID, notebookID, topicID, startPage, endPage)
 
 	seedTaskID := taskID
-	rematerialized := false
-	rematerializedFrom := ""
-	rematerializedTo := ""
 	existingTask, existingErr := db.GetTaskByID(seedTaskID)
 
 	// If task doesn't exist yet (e.g. scheduler-generated synthetic ID),
@@ -509,10 +517,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			return map[string]interface{}{"error": "terminal task cannot be reused and notebookID/topicID were not available", "code": 409}
 		}
 		taskID = uuid.NewString()
-		rematerialized = true
-		rematerializedFrom = seedTaskID
-		rematerializedTo = taskID
-		utils.Warnf("[READER_INIT] InitializeReadingSession task terminal, creating new queue row oldTaskID=%s newTaskID=%s oldStatus=%s notebookID=%s topicID=%s", seedTaskID, taskID, existingTask.Status, notebookID, topicID)
+		utils.Warnf("[READER_INIT] InitializeReadingSession task terminal, creating new queue row taskID=%s oldStatus=%s notebookID=%s topicID=%s", taskID, existingTask.Status, notebookID, topicID)
 		insertErr := db.InsertStudyTask(models.StudyQueueTask{
 			ID:         taskID,
 			NotebookID: notebookID,
@@ -584,7 +589,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 	if currentPage > task.EndPage {
 		currentPage = task.EndPage
 	}
-	utils.Warnf("[READER_INIT] InitializeReadingSession response payload canonicalTaskID=%s rematerialized=%t oldTaskID=%s newTaskID=%s", task.TaskID, rematerialized, rematerializedFrom, rematerializedTo)
+	utils.Warnf("[READER_INIT] InitializeReadingSession response payload canonicalTaskID=%s", task.TaskID)
 
 	return map[string]interface{}{
 		"ok":     true,
@@ -771,7 +776,7 @@ func (a *App) GetUserSettings() map[string]interface{} {
 	return map[string]interface{}{
 		"daily_study_minutes":    s.DailyStudyMinutes,
 		"active_profile_id":      s.ActiveProfileID,
-		"skip_to_reading_active":  s.SkipToReadingActive,
+		"skip_to_reading_active": s.SkipToReadingActive,
 		"cloud_sync_url":         s.CloudSyncURL,
 		"cloud_api_token":        s.CloudAPIToken,
 		"theme":                  s.Theme,
@@ -814,6 +819,173 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 	}
 
 	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) GetLLMSettings() map[string]interface{} {
+	settings, err := db.GetLLMSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	settings.Fast.HasAPIKey = settings.Fast.HasAPIKey || llm.HasAPIKey("fast") || envHasLLMAPIKey("FAST_LLM")
+	settings.Heavy.HasAPIKey = settings.Heavy.HasAPIKey || llm.HasAPIKey("heavy") || envHasLLMAPIKey("HEAVY_LLM")
+	settings.UseSameForHeavy = sameLLMSettingsForUI(settings.Fast, settings.Heavy)
+	return map[string]interface{}{"settings": settings}
+}
+
+func (a *App) GetLLMProviderPreset(provider string) map[string]interface{} {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	switch provider {
+	case "groq":
+		return map[string]interface{}{
+			"provider": "groq",
+			"base_url": "https://api.groq.com/openai",
+			"model":    "openai/gpt-oss-120b",
+		}
+	case "openai":
+		return map[string]interface{}{
+			"provider": "openai",
+			"base_url": "https://api.openai.com",
+			"model":    "gpt-4.1-mini",
+		}
+	case "openrouter":
+		return map[string]interface{}{
+			"provider": "openrouter",
+			"base_url": "https://openrouter.ai/api",
+			"model":    "openai/gpt-4.1-mini",
+		}
+	default:
+		return map[string]interface{}{
+			"provider": "custom",
+			"base_url": "",
+			"model":    "",
+		}
+	}
+}
+
+func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interface{} {
+	current, err := db.GetLLMSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	settings.Fast.Tier = "fast"
+	if settings.Fast.TimeoutMs <= 0 {
+		settings.Fast.TimeoutMs = 30000
+	}
+	if settings.UseSameForHeavy {
+		settings.Heavy = settings.Fast
+		settings.Heavy.Tier = "heavy"
+		settings.Heavy.TimeoutMs = 90000
+	} else {
+		settings.Heavy.Tier = "heavy"
+		if settings.Heavy.TimeoutMs <= 0 {
+			settings.Heavy.TimeoutMs = 90000
+		}
+	}
+	settings.Fast.HasAPIKey = current.Fast.HasAPIKey || llm.HasAPIKey("fast") || envHasLLMAPIKey("FAST_LLM")
+	settings.Heavy.HasAPIKey = current.Heavy.HasAPIKey || llm.HasAPIKey("heavy") || envHasLLMAPIKey("HEAVY_LLM")
+	if settings.UseSameForHeavy {
+		settings.Heavy.HasAPIKey = settings.Fast.HasAPIKey
+	}
+	if err := db.UpdateLLMSettings(settings); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := a.reloadLLMProviders(); err != nil {
+		return map[string]interface{}{"error": "settings saved but LLM reload failed: " + err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) SaveLLMAPIKey(tier string, key string) map[string]interface{} {
+	tier = normalizeLLMTierForApp(tier)
+	if tier == "" {
+		return map[string]interface{}{"error": "tier must be fast or heavy"}
+	}
+	if err := llm.SaveAPIKey(tier, key); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := db.MarkLLMKeyStored(tier, true); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := a.reloadLLMProviders(); err != nil {
+		return map[string]interface{}{"error": "key saved but LLM reload failed: " + err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) DeleteLLMAPIKey(tier string) map[string]interface{} {
+	tier = normalizeLLMTierForApp(tier)
+	if tier == "" {
+		return map[string]interface{}{"error": "tier must be fast or heavy"}
+	}
+	if err := llm.DeleteAPIKey(tier); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := db.MarkLLMKeyStored(tier, false); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := a.reloadLLMProviders(); err != nil {
+		return map[string]interface{}{"error": "key deleted but LLM reload failed: " + err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) reloadLLMProviders() error {
+	settings, err := db.GetLLMSettings()
+	if err != nil {
+		return err
+	}
+
+	fastKey, _ := llm.GetAPIKey("fast")
+	heavyKey, _ := llm.GetAPIKey("heavy")
+	if settings.UseSameForHeavy && heavyKey == "" {
+		heavyKey = fastKey
+	}
+	fastProvider := llm.NewProvider(llm.LoadConfigFromSettingsForPrefix("FAST_LLM", settings.Fast, fastKey))
+	heavyProvider := llm.NewProvider(llm.LoadConfigFromSettingsForPrefix("HEAVY_LLM", settings.Heavy, heavyKey))
+
+	a.aiMutex.Lock()
+	a.fastLLMProvider = fastProvider
+	a.heavyLLMProvider = heavyProvider
+	engine := a.retrievalEngine
+	a.studyService = study.NewStudyService(study.Config{
+		FastLLMProvider:  fastProvider,
+		HeavyLLMProvider: heavyProvider,
+		RetrievalEngine:  engine,
+	})
+	a.aiMutex.Unlock()
+	return nil
+}
+
+func normalizeLLMTierForApp(tier string) string {
+	tier = strings.TrimSpace(strings.ToLower(tier))
+	switch tier {
+	case "fast", "heavy":
+		return tier
+	default:
+		return ""
+	}
+}
+
+func envHasLLMAPIKey(prefix string) bool {
+	prefix = strings.TrimSuffix(strings.TrimSpace(prefix), "_")
+	keys := []string{"LLM_API_KEY", "OPENAI_API_KEY", "API_KEY"}
+	for _, key := range keys {
+		if prefix != "" && strings.TrimSpace(os.Getenv(prefix+"_"+key)) != "" {
+			return true
+		}
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func sameLLMSettingsForUI(a, b models.LLMTierSettings) bool {
+	return strings.EqualFold(a.Provider, b.Provider) &&
+		strings.TrimSpace(a.BaseURL) == strings.TrimSpace(b.BaseURL) &&
+		strings.TrimSpace(a.Model) == strings.TrimSpace(b.Model) &&
+		a.TimeoutMs == b.TimeoutMs &&
+		a.HasAPIKey == b.HasAPIKey
 }
 
 func (a *App) GetProfiles() map[string]interface{} {
@@ -938,8 +1110,8 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 
-	// Get notebook for this topic
-	notebooks, err := db.GetNotebooks(topicID)
+	// Get notebook for this topic (no profile filter - topic-scoped)
+	notebooks, err := db.GetNotebooks(topicID, "")
 	if err != nil {
 		return map[string]interface{}{"error": "failed to get notebook: " + err.Error()}
 	}

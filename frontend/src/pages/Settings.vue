@@ -42,8 +42,8 @@
         <div class="form-group check-group">
           <label class="checkbox-container">
             <input
-              type="checkbox"
               v-model="settings.skip_to_reading_active"
+              type="checkbox"
               :disabled="loading || saving"
             />
             <span class="checkmark"></span>
@@ -57,8 +57,8 @@
         <div class="form-group check-group">
           <label class="checkbox-container">
             <input
-              type="checkbox"
               v-model="settings.rag_enabled"
+              type="checkbox"
               :disabled="loading || saving"
               @change="onRagToggle"
             />
@@ -68,6 +68,93 @@
               <p class="hint">Preloads local ONNX embeddings for context-rich Q&A. Unticking unloads RAG from memory instantly.</p>
             </div>
           </label>
+        </div>
+
+        <hr class="divider" />
+
+        <h2>AI Provider</h2>
+        <p class="hint">Provider settings are saved in SQLite. API keys are saved in the OS credential manager through the backend.</p>
+
+        <div class="form-group">
+          <label for="settings-llm-provider">Provider</label>
+          <select
+            id="settings-llm-provider"
+            v-model="llmSettings.fast.provider"
+            :disabled="loading || savingLLM"
+            @change="applyProviderPreset('fast')"
+          >
+            <option value="groq">Groq</option>
+            <option value="openai">ChatGPT / OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="custom">Custom OpenAI-compatible</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="settings-llm-base-url">Base URL</label>
+          <input id="settings-llm-base-url" v-model="llmSettings.fast.base_url" type="url" :disabled="loading || savingLLM" />
+        </div>
+
+        <div class="form-group">
+          <label for="settings-llm-model">Fast Model</label>
+          <input id="settings-llm-model" v-model="llmSettings.fast.model" type="text" :disabled="loading || savingLLM" />
+          <p class="hint">Used for quizzes, flashcards, short scoring, and small reader help.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="settings-llm-key">Fast API Key</label>
+          <input id="settings-llm-key" v-model="llmFastKey" type="password" placeholder="Leave blank to keep existing key" :disabled="loading || savingLLM" />
+          <p class="hint">{{ llmSettings.fast.has_api_key ? 'A fast-tier key is stored.' : 'No fast-tier key stored yet.' }}</p>
+        </div>
+
+        <div class="form-group check-group">
+          <label class="checkbox-container">
+            <input v-model="llmSettings.use_same_for_heavy" type="checkbox" :disabled="loading || savingLLM" />
+            <span class="checkmark"></span>
+            <div class="check-label">
+              <strong>Use same provider and model for heavy AI tasks</strong>
+              <p class="hint">Heavy tasks include syllabus drafting, Socratic responses, and large-context generation.</p>
+            </div>
+          </label>
+        </div>
+
+        <div v-if="!llmSettings.use_same_for_heavy" class="llm-advanced">
+          <div class="form-group">
+            <label for="settings-heavy-provider">Heavy Provider</label>
+            <select
+              id="settings-heavy-provider"
+              v-model="llmSettings.heavy.provider"
+              :disabled="loading || savingLLM"
+              @change="applyProviderPreset('heavy')"
+            >
+              <option value="groq">Groq</option>
+              <option value="openai">ChatGPT / OpenAI</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="custom">Custom OpenAI-compatible</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="settings-heavy-base-url">Heavy Base URL</label>
+            <input id="settings-heavy-base-url" v-model="llmSettings.heavy.base_url" type="url" :disabled="loading || savingLLM" />
+          </div>
+          <div class="form-group">
+            <label for="settings-heavy-model">Heavy Model</label>
+            <input id="settings-heavy-model" v-model="llmSettings.heavy.model" type="text" :disabled="loading || savingLLM" />
+          </div>
+          <div class="form-group">
+            <label for="settings-heavy-key">Heavy API Key</label>
+            <input id="settings-heavy-key" v-model="llmHeavyKey" type="password" placeholder="Leave blank to keep existing key" :disabled="loading || savingLLM" />
+            <p class="hint">{{ llmSettings.heavy.has_api_key ? 'A heavy-tier key is stored.' : 'No heavy-tier key stored yet.' }}</p>
+          </div>
+        </div>
+
+        <div class="button-row">
+<button type="button" class="save-btn" :disabled="loading || savingLLM || presetLoading" @click="saveLLMProviderSettings">
+            {{ savingLLM ? 'Saving AI Provider...' : 'Save AI Provider' }}
+          </button>
+          <button type="button" class="sync-btn" :disabled="loading || savingLLM" @click="removeLLMKeys">
+            Remove Stored Keys
+          </button>
         </div>
 
         <hr class="divider" />
@@ -201,8 +288,8 @@
                 <td>
                   <select
                     :value="nb.profile_id || ''"
-                    @change="handleAssignProfile(nb.id, $event.target.value)"
                     class="profile-select"
+                    @change="handleAssignProfile(nb.id, $event.target.value)"
                   >
                     <option value="">-- Unassigned --</option>
                     <option v-for="p in profiles" :key="p.id" :value="p.id">
@@ -330,13 +417,20 @@ import {
   getNotebooks,
   assignNotebookToProfile,
   triggerCloudSync,
-  initializeRAG
+  initializeRAG,
+  getLLMSettings,
+  updateLLMSettings,
+  saveLLMAPIKey,
+  deleteLLMAPIKey,
+  getLLMProviderPreset
 } from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
 const activeTab = ref('settings')
 const loading = ref(true)
 const saving = ref(false)
+const savingLLM = ref(false)
+const presetLoading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const success = ref('')
@@ -350,6 +444,32 @@ const settings = ref({
   theme: 'light-classic',
   rag_enabled: false
 })
+
+const llmFastKey = ref('')
+const llmHeavyKey = ref('')
+const llmSettings = ref({
+  use_same_for_heavy: true,
+  fast: {
+    tier: 'fast',
+    provider: 'groq',
+    base_url: 'https://api.groq.com/openai',
+    model: 'openai/gpt-oss-120b',
+    timeout_ms: 60000,
+    api_key_source: 'keyring',
+    has_api_key: false
+  },
+  heavy: {
+    tier: 'heavy',
+    provider: 'groq',
+    base_url: 'https://api.groq.com/openai',
+    model: 'openai/gpt-oss-120b',
+    timeout_ms: 90000,
+    api_key_source: 'keyring',
+    has_api_key: false
+  }
+})
+
+
 
 // Watch settings theme to apply it in real-time
 watch(() => settings.value.theme, (newTheme) => {
@@ -444,6 +564,21 @@ function closeRagModal() {
   saveUserSettings()
 }
 
+async function applyProviderPreset(tier) {
+  presetLoading.value = true
+  error.value = ''
+  const target = tier === 'heavy' ? llmSettings.value.heavy : llmSettings.value.fast
+  try {
+    const preset = await getLLMProviderPreset(target.provider)
+    target.base_url = preset.base_url
+    target.model = preset.model
+  } catch (err) {
+    error.value = err.message || `Failed to load preset for ${target.provider}.`
+  } finally {
+    presetLoading.value = false
+  }
+}
+
 onMounted(async () => {
   await loadAllData()
 })
@@ -465,6 +600,15 @@ async function loadAllData() {
     }
     settings.value = settingsRes
 
+    const llmRes = await getLLMSettings()
+    if (llmRes.error) {
+      error.value = llmRes.error
+      return
+    }
+    if (llmRes.settings) {
+      llmSettings.value = llmRes.settings
+    }
+
     // Load profiles
     const profilesRes = await getProfiles()
     if (profilesRes.error) {
@@ -484,6 +628,87 @@ async function loadAllData() {
     error.value = err.message || 'Failed to fetch settings data'
   } finally {
     loading.value = false
+  }
+}
+
+async function saveLLMProviderSettings() {
+  if (presetLoading.value || error.value) return
+  error.value = ''
+  success.value = ''
+  try {
+    savingLLM.value = true
+    const fast = { ...llmSettings.value.fast }
+    const heavy = { ...llmSettings.value.heavy }
+
+    const res = await updateLLMSettings({
+      use_same_for_heavy: llmSettings.value.use_same_for_heavy,
+      fast,
+      heavy
+    })
+    if (res.error) {
+      error.value = res.error
+      return
+    }
+
+    if (llmFastKey.value.trim()) {
+      const keyRes = await saveLLMAPIKey('fast', llmFastKey.value.trim())
+      if (keyRes.error) {
+        error.value = keyRes.error
+        return
+      }
+      if (llmSettings.value.use_same_for_heavy) {
+        const heavyKeyRes = await saveLLMAPIKey('heavy', llmFastKey.value.trim())
+        if (heavyKeyRes.error) {
+          error.value = heavyKeyRes.error
+          return
+        }
+      }
+    }
+    if (!llmSettings.value.use_same_for_heavy && llmHeavyKey.value.trim()) {
+      const keyRes = await saveLLMAPIKey('heavy', llmHeavyKey.value.trim())
+      if (keyRes.error) {
+        error.value = keyRes.error
+        return
+      }
+    }
+
+    llmFastKey.value = ''
+    llmHeavyKey.value = ''
+    await loadAllData()
+    success.value = 'AI provider settings updated successfully.'
+    setTimeout(() => (success.value = ''), 4000)
+  } catch (err) {
+    error.value = err.message || 'Failed to save AI provider settings'
+  } finally {
+    savingLLM.value = false
+  }
+}
+
+async function removeLLMKeys() {
+  if (!confirm('Remove stored LLM API keys from the OS credential manager?')) {
+    return
+  }
+  error.value = ''
+  success.value = ''
+  try {
+    savingLLM.value = true
+    const fastRes = await deleteLLMAPIKey('fast')
+    if (fastRes.error) {
+      error.value = fastRes.error
+      return
+    }
+    const heavyRes = await deleteLLMAPIKey('heavy')
+    if (heavyRes.error) {
+      error.value = heavyRes.error
+      return
+    }
+    await loadAllData()
+    success.value = 'Stored AI provider keys removed.'
+    setTimeout(() => (success.value = ''), 4000)
+  } catch (err) {
+    error.value = err.message || 'Failed to remove stored keys'
+  } finally {
+    savingLLM.value = false
   }
 }
 
@@ -793,6 +1018,15 @@ input:focus, select:focus {
   border: none;
   border-top: 1px solid var(--outline-variant);
   margin: 8px 0;
+}
+
+.llm-advanced {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background: var(--surface-container-low);
 }
 
 .button-row {
