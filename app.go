@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net/url"
-	"os"
-	"path"
-	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -24,16 +21,21 @@ import (
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type llmProviderInterface interface {
 	GenerateAnswer(prompt string) (string, error)
+	ModelName() string
+	GetLimits() llm.ModelLimits
 }
 
 // App is the thin Wails bridge — no business logic lives here.
 type App struct {
 	ctx               context.Context
+	// aiMutex guards aiReady, aiInitError, embedder, retrievalEngine, and studyService
+	// which are written by the InitializeRAG goroutine and read by handler methods.
+	aiMutex           sync.Mutex
 	embedder          *embeddings.OnnxEmbedder
 	retrievalEngine   *retrieval.Engine
 	fastLLMProvider   llmProviderInterface
@@ -50,118 +52,25 @@ func NewApp() *App { return &App{} }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	_ = godotenv.Load()
 
-	assetValidator := runtime.NewAssetValidator("asset")
-	if err := assetValidator.ValidateAll(); err != nil {
-		a.aiInitError = err.Error()
-		utils.Warnf("local RAG assets missing: %v", err)
-	}
-
-	appDir, err := resolveAppDir()
+	boot, err := runtime.Bootstrap(ctx)
 	if err != nil {
 		a.aiInitError = err.Error()
-		utils.Errorf("resolving app directory: %v", err)
+		a.aiReady = false
 		return
 	}
 
-	runtimeAssets, err := assetValidator.PrepareRuntimeAssets(appDir)
-	if err != nil {
-		a.aiInitError = err.Error()
-		utils.Warnf("could not stage runtime assets: %v", err)
-	}
-
-	dbPath, err := resolveDBPath()
-	if err != nil {
-		a.aiInitError = err.Error()
-		utils.Errorf("resolving database path: %v", err)
-		return
-	}
-
-	vec0DllPath := assetValidator.Vec0DllPath()
-	if staged, ok := runtimeAssets[filepath.Base(vec0DllPath)]; ok {
-		vec0DllPath = staged
-	}
-	if err := db.Init(dbPath, vec0DllPath); err != nil {
-		a.aiInitError = err.Error()
-		utils.Errorf("initializing database: %v", err)
-		return
-	}
-	utils.Infof("Database initialized at %s", dbPath)
-
-	a.scheduler = scheduler.New()
-
-	// Init ONNX embedder
-	onnxRuntimePath := assetValidator.OnnxRuntimePath()
-	if staged, ok := runtimeAssets[filepath.Base(onnxRuntimePath)]; ok {
-		onnxRuntimePath = staged
-	}
-	embedder, err := embeddings.NewOnnxEmbedder(assetValidator.ModelPath(), assetValidator.TokenizerPath(), onnxRuntimePath)
-	if err != nil {
-		a.aiInitError = err.Error()
-		utils.Warnf("could not initialize ONNX embedder: %v", err)
-	} else {
-		if err := embeddings.InitPromptTokenizer(assetValidator.TokenizerPath()); err != nil {
-			a.aiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
-			utils.Warnf("%s", a.aiInitError)
-			_ = embedder.Close()
-			embedder = nil
-		} else {
-			a.aiReady = true
-			a.aiInitError = ""
-			a.embedder = embedder
-			if err := db.InitWithVectorDimension(embedder.GetDimension()); err != nil {
-				utils.Warnf("could not initialize vector table: %v", err)
-			} else {
-				indexer := retrieval.NewVectorIndexer(embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
-				go func() {
-					if err := indexer.IndexAllTopics(); err != nil {
-						utils.Warnf("vector indexing failed: %v", err)
-					}
-				}()
-			}
-		}
-	}
-
-	// Init shared retrieval engine for Socratic + Reader scoped chat.
-	a.retrievalEngine = retrieval.NewEngine(embedder)
-
-	topicIDs, err := db.GetAllTopicIDs()
-	if err != nil {
-		utils.Warnf("could not list topics for lexical fallback: %v", err)
-		topicIDs = []string{}
-	}
-	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
-	if err != nil {
-		utils.Warnf("could not batch-load chunks: %v", err)
-		// Continue without chunks rather than making redundant queries
-	} else {
-		for _, tid := range topicIDs {
-			for _, c := range chunksByTopic[tid] {
-				a.retrievalEngine.AddChunk(c)
-			}
-		}
-	}
-
-	fastLLMProvider := llm.NewProvider(llm.LoadConfigFromEnvForPrefix("FAST_LLM"))
-	heavyLLMProvider := llm.NewProvider(llm.LoadConfigFromEnvForPrefix("HEAVY_LLM"))
-	a.fastLLMProvider = fastLLMProvider
-	a.heavyLLMProvider = heavyLLMProvider
-
-	a.studyService = study.NewStudyService(study.Config{
-		FastLLMProvider:  fastLLMProvider,
-		HeavyLLMProvider: heavyLLMProvider,
-		RetrievalEngine:  a.retrievalEngine,
-	})
-
-	notebookDir, err := resolveNotebookDir()
-	if err != nil {
-		utils.Errorf("resolving notebook directory: %v", err)
-		return
-	}
-	a.notebookUploadDir = notebookDir
-	a.notebookService = notebook.NewService(notebookDir)
-	utils.Infof("App initialized successfully")
+	// Direct, thin structural assignment handoff
+	a.embedder = boot.Embedder
+	a.retrievalEngine = boot.RetrievalEngine
+	a.fastLLMProvider = boot.FastLLMProvider
+	a.heavyLLMProvider = boot.HeavyLLMProvider
+	a.scheduler = boot.Scheduler
+	a.notebookService = boot.NotebookService
+	a.studyService = boot.StudyService
+	a.notebookUploadDir = boot.NotebookUploadDir
+	a.aiReady = boot.AiReady
+	a.aiInitError = boot.AiInitError
 }
 
 func (a *App) Greet(name string) string {
@@ -202,17 +111,22 @@ func (a *App) GetAvailableTopics() []map[string]string {
 }
 
 func (a *App) AskSocratic(topicID string, question string) map[string]interface{} {
+	a.aiMutex.Lock()
 	if !a.aiReady {
 		reason := a.aiInitError
+		a.aiMutex.Unlock()
 		if reason == "" {
 			reason = "local AI runtime is not ready"
 		}
 		return map[string]interface{}{"error": "Socratic Tutor unavailable: " + reason}
 	}
 	if a.studyService == nil {
+		a.aiMutex.Unlock()
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	res, err := a.studyService.AskSocratic(topicID, question)
+	svc := a.studyService
+	a.aiMutex.Unlock()
+	res, err := svc.AskSocratic(topicID, question)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -220,17 +134,22 @@ func (a *App) AskSocratic(topicID string, question string) map[string]interface{
 }
 
 func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPage, chapterStartPage, chapterEndPage int) map[string]interface{} {
+	a.aiMutex.Lock()
 	if !a.aiReady {
 		reason := a.aiInitError
+		a.aiMutex.Unlock()
 		if reason == "" {
 			reason = "local AI runtime is not ready"
 		}
 		return map[string]interface{}{"error": "Reader AI unavailable: " + reason}
 	}
 	if a.studyService == nil {
+		a.aiMutex.Unlock()
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	return a.studyService.AnswerReaderQuestion(study.ReaderAIRequest{
+	svc := a.studyService
+	a.aiMutex.Unlock()
+	return svc.AnswerReaderQuestion(study.ReaderAIRequest{
 		TopicID:          topicID,
 		NotebookID:       notebookID,
 		Question:         question,
@@ -242,22 +161,26 @@ func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPa
 }
 
 func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
+	a.aiMutex.Lock()
 	if !a.aiReady || a.embedder == nil {
 		reason := a.aiInitError
+		a.aiMutex.Unlock()
 		if reason == "" {
 			reason = "local AI runtime is not ready"
 		}
 		return map[string]interface{}{"error": "Embedding diagnostics unavailable: " + reason}
 	}
+	emb := a.embedder
+	a.aiMutex.Unlock()
 	input := strings.TrimSpace(text)
 	if input == "" {
 		input = "quick embedding diagnostic sentence"
 	}
-	vector, err := a.embedder.Embed(input)
+	vector, err := emb.Embed(input)
 	if err != nil {
 		return map[string]interface{}{"error": "embedding run failed: " + err.Error()}
 	}
-	declaredDim := int(a.embedder.GetDimension())
+	declaredDim := int(emb.GetDimension())
 	count := len(vector)
 	if count > 8 {
 		count = 8
@@ -389,6 +312,10 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		utils.Warnf("[TODAY_PLAN] synthetic plan fallback taskCount=%d", len(plan.Tasks))
 	}
 
+	// Count active notebooks for the dashboard empty-state distinction.
+	var activeNotebookCount int
+	_ = db.GetConnection().QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&activeNotebookCount)
+
 	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
 	for idx, task := range plan.Tasks {
 		utils.Warnf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
@@ -402,6 +329,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
 		"data_fresh": true, "is_estimate": plan.IsEstimate,
 		"insights_available": false, "plan_source": planSource,
+		"active_notebook_count": activeNotebookCount,
 	}
 }
 
@@ -835,14 +763,167 @@ func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
 	}
 	return map[string]interface{}{"ok": true, "daily_study_minutes": minutes}
 }
+func (a *App) GetUserSettings() map[string]interface{} {
+	s, err := db.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{
+		"daily_study_minutes":    s.DailyStudyMinutes,
+		"active_profile_id":      s.ActiveProfileID,
+		"skip_to_reading_active":  s.SkipToReadingActive,
+		"cloud_sync_url":         s.CloudSyncURL,
+		"cloud_api_token":        s.CloudAPIToken,
+		"theme":                  s.Theme,
+		"rag_enabled":            s.RAGEnabled,
+	}
+}
 
-// ---------- Marathon Mode endpoints (Phase 1 new) ----------
+func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool) map[string]interface{} {
+	if minutes < 15 || minutes > 480 {
+		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
+	}
+	s := models.UserSettings{
+		DailyStudyMinutes:   minutes,
+		ActiveProfileID:     activeProfileID,
+		SkipToReadingActive: skipToReading,
+		CloudSyncURL:        syncURL,
+		CloudAPIToken:       apiToken,
+		Theme:               theme,
+		RAGEnabled:          ragEnabled,
+	}
+	// Persist settings first so SQLite is never stale if runtime mutation fails.
+	if err := db.UpdateUserSettings(s); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
 
-func (a *App) GenerateMarathonFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
+	// Only mutate runtime after successful persistence.
+	a.aiMutex.Lock()
+	if !ragEnabled && a.embedder != nil {
+		utils.Infof("RAG disabled dynamically in settings. Closing ONNX embedder.")
+		_ = a.embedder.Close()
+		a.embedder = nil
+		a.aiReady = false
+	}
+	a.aiMutex.Unlock()
+
+	if !ragEnabled {
+		if err := a.reloadRetrievalEngine(); err != nil {
+			utils.Errorf("reloadRetrievalEngine after RAG disable: %v", err)
+		}
+	}
+
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) GetProfiles() map[string]interface{} {
+	profiles, err := db.GetProfiles()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"profiles": profiles}
+}
+
+func (a *App) CreateProfile(name string, deadlineStr string) map[string]interface{} {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return map[string]interface{}{"error": "profile name is required"}
+	}
+	deadlineTime, err := time.Parse("2006-01-02", deadlineStr)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to parse deadline: " + err.Error()}
+	}
+	p := models.StudyProfile{
+		ID:         uuid.NewString(),
+		Name:       name,
+		DeadlineAt: deadlineTime.Unix(),
+	}
+	if err := db.CreateProfile(p); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	// If no active profile is set yet, make this the default automatically.
+	// First profile created = default active profile.
+	s, err := db.GetUserSettings()
+	if err == nil && s != nil && s.ActiveProfileID == "" {
+		s.ActiveProfileID = p.ID
+		if err := db.UpdateUserSettings(*s); err != nil {
+			return map[string]interface{}{"error": "profile created but failed to set as active: " + err.Error()}
+		}
+	}
+
+	return map[string]interface{}{"ok": true, "profile": p}
+}
+
+func (a *App) UpdateProfile(id string, name string, deadlineStr string) map[string]interface{} {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	if id == "" || name == "" {
+		return map[string]interface{}{"error": "id and name are required"}
+	}
+	deadlineTime, err := time.Parse("2006-01-02", deadlineStr)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to parse deadline: " + err.Error()}
+	}
+	p := models.StudyProfile{
+		ID:         id,
+		Name:       name,
+		DeadlineAt: deadlineTime.Unix(),
+	}
+	if err := db.UpdateProfile(p); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) DeleteProfile(id string) map[string]interface{} {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return map[string]interface{}{"error": "profile id is required"}
+	}
+	if err := db.DeleteProfile(id); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) AssignNotebookToProfile(notebookID, profileID string) map[string]interface{} {
+	if err := db.AssignNotebookToProfile(notebookID, profileID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) UpdateNotebookStudyStatus(notebookID, studyStatus string) map[string]interface{} {
+	if err := db.UpdateNotebookStudyStatus(notebookID, studyStatus); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) IsOnboarded() map[string]interface{} {
+	profiles, err := db.GetProfiles()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error(), "onboarded": false}
+	}
+	onboarded := len(profiles) > 0
+	return map[string]interface{}{"onboarded": onboarded}
+}
+
+func (a *App) TriggerCloudSync() map[string]interface{} {
+	if err := study.TriggerCloudSync(); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+// ---------- Manual Mode endpoints (Phase 1 new) ---------
+
+func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	return a.studyService.GenerateMarathonFlashcards(notebookID, startPage, endPage)
+	return a.studyService.GenerateManualFlashcards(notebookID, startPage, endPage)
 }
 
 func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage int) map[string]interface{} {
@@ -873,7 +954,37 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return map[string]interface{}{"error": "failed to get topic page bounds: " + err.Error()}
 	}
 
-	return a.studyService.GenerateMarathonFlashcardsWithTopic(topicID, notebookID, startPage, endPage)
+	cards, states, existing, tier, err := a.studyService.GenerateFSRSCardsForTopic(topicID, notebookID, startPage, endPage)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	now := time.Now().Unix()
+	response := map[string]interface{}{
+		"notebook_id":       notebookID,
+		"existing":          existing,
+		"start_page":        startPage,
+		"end_page":          endPage,
+		"topic_id":          topicID,
+		"cards":             cards,
+		"states":            states,
+		"card_count":        len(cards),
+		"llm_tier":          tier,
+		"generated_at_unix": now,
+	}
+
+	// Find the minimum due time for existing/generated cards to populate initial_due_at
+	var initialDueAt int64 = 0
+	for _, card := range cards {
+		if card.DueAt > 0 && (initialDueAt == 0 || card.DueAt < initialDueAt) {
+			initialDueAt = card.DueAt
+		}
+	}
+	if initialDueAt > 0 {
+		response["initial_due_at"] = initialDueAt
+	}
+
+	return response
 }
 
 func (a *App) GetReviewSession(taskID string, notebookID string) map[string]interface{} {
@@ -969,65 +1080,185 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
 }
 
-func resolveAppDir() (string, error) {
-	var appDir string
+// Global state variables for RAG initialization lock
+var ragSetupMutex sync.Mutex
+var isRagSettingUp bool
 
-	// If APP_ENV is set to dev, use a local folder in the project root
-	if os.Getenv("APP_ENV") == "dev" {
-		// Resolve stable project root instead of using relative path
-		projectRoot, err := os.Executable()
+func (a *App) InitializeRAG() map[string]interface{} {
+	ragSetupMutex.Lock()
+	if isRagSettingUp {
+		ragSetupMutex.Unlock()
+		return map[string]interface{}{"error": "RAG initialization is already in progress"}
+	}
+	isRagSettingUp = true
+	ragSetupMutex.Unlock()
+
+	go func() {
+		defer func() {
+			ragSetupMutex.Lock()
+			isRagSettingUp = false
+			ragSetupMutex.Unlock()
+		}()
+
+		am, err := runtime.NewAssetManager(a.ctx)
 		if err != nil {
-			// Fallback to current working directory if executable path fails
-			projectRoot, err = os.Getwd()
-			if err != nil {
-				return "", fmt.Errorf("failed to resolve project root: %w", err)
-			}
+			emitRagSetupFailed(a, fmt.Sprintf("failed to create asset manager: %v", err))
+			return
 		}
-		projectRoot = filepath.Dir(projectRoot)
-		appDir = filepath.Join(projectRoot, "dev_data")
-	} else {
-		// Otherwise, use the standard system config directory (AppData)
-		baseDir, err := os.UserConfigDir()
+
+		// Run simulated download
+		err = am.AcquireAssets(func(status string, percent int, msg, detail string) {
+			wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+				"status":  status,
+				"percent": percent,
+				"message": msg,
+				"detail":  detail,
+			})
+		})
+
 		if err != nil {
-			return "", err
+			emitRagSetupFailed(a, fmt.Sprintf("acquisition failed: %v", err))
+			return
 		}
-		appDir = filepath.Join(baseDir, "ai-tutor")
-	}
 
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
-		return "", err
-	}
-	return appDir, nil
+		// Stage DLLs and re-init DB with vector support
+		if _, err := am.StageDLLs(); err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to stage DLLs: %v", err))
+			return
+		}
+
+		dbPath, err := runtime.ResolveDBPath()
+		if err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to resolve database path: %v", err))
+			return
+		}
+
+		// Re-initialize DB, this time with the staged vec0.dll
+		if err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
+			return
+		}
+
+		// Init ONNX embedder using paths from AssetManager
+		emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+		if err != nil {
+			emitRagSetupFailed(a, fmt.Sprintf("failed to load ONNX embedder: %v", err))
+			return
+		}
+
+		if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
+			_ = emb.Close()
+			emitRagSetupFailed(a, fmt.Sprintf("could not initialize prompt tokenizer: %v", err))
+			return
+		}
+
+		// Set dimensions
+		if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
+			utils.Warnf("could not initialize vector table: %v", err)
+		}
+
+		// Update app fields with embedder (under lock); readiness waits for full bootstrap.
+		a.aiMutex.Lock()
+		a.embedder = emb
+		a.aiReady = false
+		a.aiInitError = ""
+		a.aiMutex.Unlock()
+
+		// Rebuild engine and study service
+		if err := a.reloadRetrievalEngine(); err != nil {
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to reload retrieval engine: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
+			return
+		}
+
+		// Save settings in DB to reflect RAG is enabled
+		settings, err := db.GetUserSettings()
+		if err == nil {
+			settings.RAGEnabled = true
+			_ = db.UpdateUserSettings(*settings)
+		}
+
+		// Emit indexing-in-progress event before starting vector indexing
+		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+			"status":  "indexing",
+			"percent": 98,
+			"message": "Indexing topics for AI retrieval...",
+			"detail":  "Building vector index",
+		})
+
+		// Index all existing topics; emit ready only after success
+		indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
+		if err := indexer.IndexAllTopics(); err != nil {
+			utils.Errorf("vector indexing failed after RAG enable: %v", err)
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("vector indexing failed: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
+			return
+		}
+
+		// Mark ready only after all bootstrap steps succeed.
+		a.aiMutex.Lock()
+		a.aiReady = true
+		a.aiInitError = ""
+		a.aiMutex.Unlock()
+
+		// Emit final ready event only after indexing succeeds
+		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+			"status":  "ready",
+			"percent": 100,
+			"message": "Local AI retrieval is fully ready!",
+			"detail":  "RAG engine active",
+		})
+	}()
+
+	return map[string]interface{}{"ok": true}
 }
 
-func resolveDBPath() (string, error) {
-	appDir, err := resolveAppDir()
+func (a *App) reloadRetrievalEngine() error {
+	a.aiMutex.Lock()
+	emb := a.embedder
+	a.aiMutex.Unlock()
+
+	engine := retrieval.NewEngine(emb)
+	topicIDs, err := db.GetAllTopicIDs()
 	if err != nil {
-		return "", err
+		return fmt.Errorf("reloadRetrievalEngine: GetAllTopicIDs: %w", err)
 	}
-	return filepath.Join(appDir, "ai-tutor.db"), nil
-}
-
-func resolveNotebookDir() (string, error) {
-	appDir, err := resolveAppDir()
+	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
 	if err != nil {
-		return "", err
+		return fmt.Errorf("reloadRetrievalEngine: GetChunksForTopics: %w", err)
 	}
-	uploadDir := filepath.Join(appDir, "uploads")
-	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
-		return "", err
+	for _, tid := range topicIDs {
+		for _, c := range chunksByTopic[tid] {
+			engine.AddChunk(c)
+		}
 	}
-	return uploadDir, nil
+
+	// Recreate study service to bind the new engine; update both under lock.
+	newSvc := study.NewStudyService(study.Config{
+		FastLLMProvider:  a.fastLLMProvider,
+		HeavyLLMProvider: a.heavyLLMProvider,
+		RetrievalEngine:  engine,
+	})
+	a.aiMutex.Lock()
+	a.retrievalEngine = engine
+	a.studyService = newSvc
+	a.aiMutex.Unlock()
+	return nil
 }
 
-func notebookAssetURL(filePath string) string {
-	normPath := strings.TrimSpace(strings.ReplaceAll(filePath, "\\", "/"))
-	if normPath == "" || normPath == "." || normPath == ".." {
-		return ""
-	}
-	name := strings.TrimSpace(path.Base(normPath))
-	if name == "" || name == "." || name == ".." {
-		return ""
-	}
-	return "/notebooks/" + url.PathEscape(name)
+func emitRagSetupFailed(a *App, reason string) {
+	utils.Errorf("RAG setup failed: %s", reason)
+	wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+		"status":      "failed",
+		"percent":     100,
+		"message":     "RAG initialization failed",
+		"detail":      reason,
+		"errorReason": reason,
+	})
 }

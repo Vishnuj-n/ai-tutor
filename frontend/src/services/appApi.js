@@ -94,8 +94,8 @@ export function updateDailyStudyMinutes(minutes) {
 }
 
 // Comprehensive Mode endpoints (Phase 1)
-export function generateMarathonFlashcards(notebookID, startPage, endPage) {
-  return appBridge().GenerateMarathonFlashcards(notebookID, startPage, endPage)
+export function generateManualFlashcards(notebookID, startPage, endPage) {
+  return appBridge().GenerateManualFlashcards(notebookID, startPage, endPage)
 }
 
 export function generateComprehensiveExam(notebookID, startPage, endPage) {
@@ -152,4 +152,52 @@ export function updateNotebookPriority(notebookID, priority) {
 
 export function deleteNotebook(notebookID) {
   return appBridge().DeleteNotebook(notebookID)
+}
+
+export function getUserSettings() {
+  return appBridge().GetUserSettings()
+}
+
+export function updateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled) {
+  return appBridge().UpdateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled)
+}
+
+export function initializeRAG() {
+  return appBridge().InitializeRAG()
+}
+
+export function getProfiles() {
+  return appBridge().GetProfiles()
+}
+
+export function createProfile(name, deadlineStr) {
+  return appBridge().CreateProfile(name, deadlineStr)
+}
+
+export function updateProfile(id, name, deadlineStr) {
+  return appBridge().UpdateProfile(id, name, deadlineStr)
+}
+
+export function deleteProfile(id) {
+  return appBridge().DeleteProfile(id)
+}
+
+export function assignNotebookToProfile(notebookID, profileID) {
+  return appBridge().AssignNotebookToProfile(notebookID, profileID)
+}
+
+export function updateNotebookStudyStatus(notebookID, studyStatus) {
+  return appBridge().UpdateNotebookStudyStatus(notebookID, studyStatus)
+}
+
+export function isOnboarded() {
+  return appBridge().IsOnboarded()
+}
+
+export function triggerCloudSync() {
+  return appBridge().TriggerCloudSync()
+}
+
+export function getProfileDailyPace(profileID) {
+  return appBridge().GetProfileDailyPace(profileID)
 }

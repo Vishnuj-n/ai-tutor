@@ -7,71 +7,124 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
-	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 )
 
-// GenerateMarathonFlashcards generates FSRS flashcards from the raw text
-// of a notebook's page range, injecting context directly into the prompt.
-func (s *StudyService) GenerateMarathonFlashcardsWithTopic(topicID, notebookID string, startPage, endPage int) map[string]interface{} {
-	return s.generateMarathonFlashcards(topicID, notebookID, startPage, endPage, topicID)
-}
-
-// GenerateMarathonFlashcards generates flashcards for a synthetic topic based on a page range
-func (s *StudyService) GenerateMarathonFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return map[string]interface{}{"error": "notebook ID is required"}
-	}
-	if startPage <= 0 || endPage <= 0 || endPage < startPage {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
+// GenerateManualFlashcards generates flashcards for a synthetic topic based on a page range (manual sandbox)
+func (s *StudyService) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
+	cards, tier, err := s.generateFlashcardsCore(notebookID, startPage, endPage)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
 	}
 
 	syntheticTopicID := fmt.Sprintf("marathon-%s-p%d-%d", notebookID, startPage, endPage)
-	topicTitle := fmt.Sprintf("Marathon %s p%d-%d", notebookID, startPage, endPage)
-	return s.generateMarathonFlashcards(syntheticTopicID, notebookID, startPage, endPage, topicTitle)
+	for i := range cards {
+		cards[i].TopicID = syntheticTopicID
+	}
+
+	err = db.SaveManualFlashcardsBatch(notebookID, cards)
+	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] manual_flashcard_persistence result=error notebookID=%s err=%v", notebookID, err)
+		return map[string]interface{}{"error": "failed to persist manual flashcards: " + err.Error()}
+	}
+	utils.Warnf("[FLASHCARD_PIPELINE] manual_flashcard_persistence result=ok notebookID=%s cardCount=%d", notebookID, len(cards))
+
+	now := time.Now().Unix()
+	return map[string]interface{}{
+		"notebook_id":       notebookID,
+		"existing":          false,
+		"start_page":        startPage,
+		"end_page":          endPage,
+		"topic_id":          syntheticTopicID,
+		"cards":             cards,
+		"states":            map[string]models.FlashcardState{},
+		"card_count":        len(cards),
+		"llm_tier":          tier,
+		"generated_at_unix": now,
+	}
 }
 
-func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, startPage, endPage int, topicTitle string) map[string]interface{} {
-	generationSource := "manual_or_topic_api"
-	if strings.HasPrefix(topicID, "topic-") {
-		generationSource = "quiz_completion_auto"
+// GenerateFSRSCardsForTopic generates and persists FSRS flashcards in the core fsrs_cards table for a topic.
+func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, startPage, endPage int) ([]models.Flashcard, map[string]models.FlashcardState, bool, string, error) {
+	topicID = strings.TrimSpace(topicID)
+	notebookID = strings.TrimSpace(notebookID)
+	if topicID == "" || notebookID == "" {
+		return nil, nil, false, "", fmt.Errorf("topic ID and notebook ID are required")
 	}
-	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_trigger source=%s topicID=%s notebookID=%s startPage=%d endPage=%d", generationSource, strings.TrimSpace(topicID), strings.TrimSpace(notebookID), startPage, endPage)
+
+	cards, tier, err := s.generateFlashcardsCore(notebookID, startPage, endPage)
+	if err != nil {
+		return nil, nil, false, "", err
+	}
+
+	for i := range cards {
+		cards[i].TopicID = topicID
+	}
+
+	topicTitle := topicID // Fallback title
+	err = db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: topicID, Title: topicTitle}})
+	if err != nil {
+		return nil, nil, false, "", fmt.Errorf("failed to ensure topic: %w", err)
+	}
+
+	err = db.EnsureNotebookTopic(notebookID, topicID)
+	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] failed to link topic to notebook topicID=%s notebookID=%s err=%v", topicID, notebookID, err)
+	}
+
+	states := make(map[string]models.FlashcardState, len(cards))
+	for _, card := range cards {
+		states[card.ID] = models.FlashcardState{}
+	}
+
+	cards, existing, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
+	if err != nil {
+		return nil, nil, false, "", fmt.Errorf("failed to persist FSRS flashcards: %w", err)
+	}
+
+	cardIDs := make([]string, len(cards))
+	for i, card := range cards {
+		cardIDs[i] = card.ID
+	}
+	persistedStates, err := db.GetFlashcardStatesByIDs(cardIDs)
+	if err != nil {
+		return nil, nil, false, "", fmt.Errorf("failed to fetch flashcard states: %w", err)
+	}
+
+	return cards, persistedStates, existing, tier, nil
+}
+
+func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endPage int) ([]models.Flashcard, string, error) {
+	generationSource := "flashcard_pipeline_core"
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
-		return map[string]interface{}{"error": "notebook ID is required"}
+		return nil, "", fmt.Errorf("notebook ID is required")
 	}
 	if startPage <= 0 || endPage <= 0 || endPage < startPage {
-		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
+		return nil, "", fmt.Errorf("invalid page range: start=%d end=%d", startPage, endPage)
 	}
 
 	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
+		return nil, "", err
 	}
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_auto_generation_batch generation_source=%s chunk_count=%d token_estimate=%d page_range=%d-%d", generationSource, len(contextChunks), tokenCount, startPage, endPage)
 	contextText := buildContextTextFromChunks(contextChunks)
 
 	llm, tier := s.selectLLM(contextText)
 	if llm == nil {
-		return map[string]interface{}{"error": "no LLM provider available (tier: " + tier + ")"}
+		return nil, "", fmt.Errorf("no LLM provider available (tier: %s)", tier)
 	}
 
 	// Get model-specific token limits
 	modelName := providerModelName(llm)
-	maxInputTokens := 30000 // default fallback
-	maxOutputTokens := 3000 // default fallback
-
-	if provider, ok := llm.(*llmpkg.Provider); ok {
-		limits := provider.GetLimits()
-		maxInputTokens = limits.MaxInputTokens
-		maxOutputTokens = limits.MaxOutputTokens
-		utils.Warnf("[FLASHCARD_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
-	}
+	limits := llm.GetLimits()
+	maxInputTokens := limits.MaxInputTokens
+	maxOutputTokens := limits.MaxOutputTokens
+	utils.Warnf("[FLASHCARD_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
 
 	// Enforce strict token budget: cap at configured maximum to prevent oversized outputs
 	originalCount := ScaledFlashcardCount(tokenCount)
@@ -88,12 +141,12 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 	utils.Warnf("[FLASHCARD_PIPELINE] token_budget_estimate prompt_tokens=%d max_input=%d budget_used_pct=%.2f", promptTokenCount, maxInputTokens, float64(promptTokenCount)/float64(maxInputTokens)*100)
 
 	if promptTokenCount > maxInputTokens {
-		return map[string]interface{}{"error": fmt.Sprintf("prompt exceeds model context limit: %d > %d", promptTokenCount, maxInputTokens)}
+		return nil, "", fmt.Errorf("prompt exceeds model context limit: %d > %d", promptTokenCount, maxInputTokens)
 	}
 
 	raw, err := llm.GenerateAnswer(prompt)
 	if err != nil {
-		return map[string]interface{}{"error": "flashcard generation failed: " + err.Error()}
+		return nil, "", fmt.Errorf("flashcard generation failed: %w", err)
 	}
 
 	// Validate output size before parsing
@@ -102,14 +155,13 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 
 	parsed, err := parseFlashcardLLMResponse(raw)
 	if err != nil {
-		return map[string]interface{}{"error": "flashcard parsing failed: " + err.Error()}
+		return nil, "", fmt.Errorf("flashcard parsing failed: %w", err)
 	}
 
 	now := time.Now().Unix()
 	dueAt := now + 24*60*60 // Schedule new cards for delayed reinforcement, not same-day review.
 
 	cards := make([]models.Flashcard, 0, len(parsed.Cards))
-	states := make(map[string]models.FlashcardState, len(parsed.Cards))
 	allowedChunkIDs := make(map[string]struct{}, len(includedChunkIDs))
 	for _, chunkID := range includedChunkIDs {
 		allowedChunkIDs[chunkID] = struct{}{}
@@ -137,72 +189,18 @@ func (s *StudyService) generateMarathonFlashcards(topicID, notebookID string, st
 		id := uuid.NewString()
 		cards = append(cards, models.Flashcard{
 			ID:            id,
-			TopicID:       topicID,
 			SourceChunkID: sourceChunkID,
 			Prompt:        cardPrompt,
 			Answer:        answer,
 			DueAt:         dueAt,
 			Suspended:     false,
 		})
-		states[id] = models.FlashcardState{}
 	}
 	if len(cards) == 0 {
-		return map[string]interface{}{"error": "no valid flashcards generated from page range"}
+		return nil, "", fmt.Errorf("no valid flashcards generated from page range")
 	}
 
-	err = db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: topicID, Title: topicTitle}})
-	if err != nil {
-		return map[string]interface{}{"error": fmt.Sprintf("failed to ensure topic %s (notebookID: %s, pages %d-%d): %s", topicID, notebookID, startPage, endPage, err.Error())}
-	}
-	err = db.EnsureNotebookTopic(notebookID, topicID)
-	if err != nil {
-		utils.Warnf("[FLASHCARD_PIPELINE] failed to link topic to notebook topicID=%s notebookID=%s err=%v", topicID, notebookID, err)
-	}
-
-	cards, existing, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
-	if err != nil {
-		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_persistence result=error topicID=%s notebookID=%s err=%v", topicID, notebookID, err)
-		return map[string]interface{}{"error": "failed to persist marathon flashcards: " + err.Error()}
-	}
-	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_persistence result=ok topicID=%s notebookID=%s cardCount=%d existing=%v", topicID, notebookID, len(cards), existing)
-
-	initialDueAt := dueAt
-	if existing {
-		initialDueAt = 0
-		for _, card := range cards {
-			if card.DueAt > 0 && (initialDueAt == 0 || card.DueAt < initialDueAt) {
-				initialDueAt = card.DueAt
-			}
-		}
-	}
-	utils.Warnf("[FLASHCARD_PIPELINE] deferred_new_cards_excluded notebookID=%s topicID=%s cardCount=%d initialDueAt=%d", notebookID, topicID, len(cards), initialDueAt)
-
-	cardIDs := make([]string, len(cards))
-	for i, card := range cards {
-		cardIDs[i] = card.ID
-	}
-	persistedStates, err := db.GetFlashcardStatesByIDs(cardIDs)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to fetch flashcard states: " + err.Error()}
-	}
-
-	response := map[string]interface{}{
-		"notebook_id":       notebookID,
-		"existing":          existing,
-		"start_page":        startPage,
-		"end_page":          endPage,
-		"topic_id":          topicID,
-		"cards":             cards,
-		"states":            persistedStates,
-		"card_count":        len(cards),
-		"llm_tier":          tier,
-		"generated_at_unix": now,
-	}
-	if initialDueAt > 0 {
-		response["initial_due_at"] = initialDueAt
-	}
-
-	return response
+	return cards, tier, nil
 }
 
 func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {

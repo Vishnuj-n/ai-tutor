@@ -10,7 +10,6 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
-	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
@@ -48,13 +47,11 @@ func (s *StudyService) GenerateShortAnswerPrompt(topicID string) map[string]inte
 
 	// Build context from top results.
 	var contextBuilder strings.Builder
-	parentIDs := make([]string, 0, len(results))
+	chunkIDs := make([]string, 0, len(results))
 	for _, r := range results {
 		contextBuilder.WriteString(r.Text)
 		contextBuilder.WriteByte('\n')
-		if r.ParentID != "" {
-			parentIDs = append(parentIDs, r.ParentID)
-		}
+		chunkIDs = append(chunkIDs, r.ChunkID)
 	}
 	contextText := strings.TrimSpace(contextBuilder.String())
 
@@ -82,8 +79,8 @@ Retrieved material:
 		return map[string]interface{}{"error": "short-answer prompt generation returned empty prompt"}
 	}
 
-	// Resolve lineage from cited chunk parents.
-	sourceHeading, sourcePageStart, sourcePageEnd := resolveSocraticLineage(topicID, parentIDs)
+	// Resolve lineage from cited chunks.
+	sourceHeading, sourcePageStart, sourcePageEnd := resolveSocraticLineage(topicID, chunkIDs)
 
 	question := models.WrittenQuestion{
 		ID:              uuid.NewString(),
@@ -108,9 +105,9 @@ Retrieved material:
 	}
 }
 
-// resolveSocraticLineage resolves the heading / page range from parent section IDs.
-func resolveSocraticLineage(topicID string, parentIDs []string) (string, int, int) {
-	if len(parentIDs) == 0 {
+// resolveSocraticLineage resolves the heading / page range from chunk IDs.
+func resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int) {
+	if len(chunkIDs) == 0 {
 		return "", 0, 0
 	}
 	headingPageRanges, err := db.GetTopicHeadingPageRanges(topicID)
@@ -118,18 +115,11 @@ func resolveSocraticLineage(topicID string, parentIDs []string) (string, int, in
 		utils.Warnf("could not resolve socratic lineage for topic %s: %v", topicID, err)
 		return "", 0, 0
 	}
-	sourceHeading, sourcePageStart, sourcePageEnd := "", 0, 0
-	maxSpan := 0
-	// Pick the heading with the widest page span to ensure sourceHeading covers the computed range
-	for _, pid := range parentIDs {
-		pageRange, ok := headingPageRanges[pid]
+	sourcePageStart, sourcePageEnd := 0, 0
+	for _, cid := range chunkIDs {
+		pageRange, ok := headingPageRanges[cid]
 		if !ok {
 			continue
-		}
-		span := pageRange[1] - pageRange[0]
-		if span > maxSpan {
-			maxSpan = span
-			sourceHeading = pid
 		}
 		if sourcePageStart == 0 || pageRange[0] < sourcePageStart {
 			sourcePageStart = pageRange[0]
@@ -137,6 +127,10 @@ func resolveSocraticLineage(topicID string, parentIDs []string) (string, int, in
 		if pageRange[1] > sourcePageEnd {
 			sourcePageEnd = pageRange[1]
 		}
+	}
+	sourceHeading := ""
+	if sourcePageStart > 0 {
+		sourceHeading = fmt.Sprintf("Page %d", sourcePageStart)
 	}
 	return sourceHeading, sourcePageStart, sourcePageEnd
 }
@@ -192,12 +186,10 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 		llm = s.fastLLMProvider
 	}
 
-	// Enforce token budget when possible. If the underlying provider exposes
-	// model limits, compute available input tokens and truncate the retrieved
-	// blocks to fit while preserving Socratic instructions and the student
-	// question. Use tokenizer fallback when accurate counts are unavailable.
-	if limiter, ok := llm.(interface{ GetLimits() llmpkg.ModelLimits }); ok {
-		limits := limiter.GetLimits()
+	// Enforce token budget — compute available input tokens and truncate
+	// the retrieved blocks to fit while preserving Socratic instructions
+	// and the student question.
+	limits := llm.GetLimits()
 
 		// Compute tokens for prompt overhead (instructions + student question + fixed labels)
 		overheadText := strings.Join([]string{
@@ -260,7 +252,6 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 
 		contextText = strings.TrimSpace(strings.Join(newBlocks, "\n\n"))
 		citations = newCitations
-	}
 
 	// Rebuild the final prompt now that contextText may have been truncated
 	socraticPrompt = strings.Join([]string{
