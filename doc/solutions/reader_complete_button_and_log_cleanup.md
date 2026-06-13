@@ -14,13 +14,9 @@ All changes have been successfully implemented across the codebase in a single c
 - Simplified the log messages in `InitializeReadingSession` to remove the confusing `oldTaskID`, `newTaskID`, and `rematerialized` parameters.
 - Preserved the vital terminal task check that generates a new task UUID to protect database history records from being overwritten when a completed task is restarted.
 
-### 3. Scoped Reading Plan Generation (`internal/db/topics_repo.go`)
-- Fixed `QueryNextReadingTopic` to query topic assignments through the `notebook_topics` join table. Because notebooks can contain many topics (and only the first is set on `notebooks.topic_id` as a reference), this join table is the correct and comprehensive source of truth.
-- Resolved reading plan generation failures so that active notebook topics under the active profile are correctly scanned for reading progress, eliminating synthetic plan fallback errors.
-
-### 4. Ingestion Toaster Scoping (`frontend/src/pages/Notebook.vue`)
-- Added a reactive `ragEnabled` reference populated using `getUserSettings()` on mount.
-- Updated `confirmSyllabus()` to conditionally toast either `"Notebook ready! Semantic indexing running in background..."` (when RAG is enabled) or `"Notebook ready!"` (when RAG is disabled).
+### 3. Cross-layer Changes
+- **QueryNextReadingTopic** in `internal/db/topics_repo.go` (Layer 6): Fixed `QueryNextReadingTopic` to query topic assignments through the `notebook_topics` join table. Because notebooks can contain many topics (and only the first is set on `notebooks.topic_id` as a reference), this join table is the correct and comprehensive source of truth. Resolved reading plan generation failures so that active notebook topics under the active profile are correctly scanned for reading progress, eliminating synthetic plan fallback errors.
+- **confirmSyllabus** in `frontend/src/pages/Notebook.vue` (Layer 8): Added a reactive `ragEnabled` reference populated using `getUserSettings()` on mount. Updated `confirmSyllabus()` to conditionally toast either `"Notebook ready! Semantic indexing running in background..."` (when RAG is enabled) or `"Notebook ready!"` (when RAG is disabled).
 
 ---
 

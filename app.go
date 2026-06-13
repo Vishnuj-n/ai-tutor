@@ -832,10 +832,54 @@ func (a *App) GetLLMSettings() map[string]interface{} {
 	return map[string]interface{}{"settings": settings}
 }
 
+func (a *App) GetLLMProviderPreset(provider string) map[string]interface{} {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	switch provider {
+	case "groq":
+		return map[string]interface{}{
+			"provider": "groq",
+			"base_url": "https://api.groq.com/openai",
+			"model":    "openai/gpt-oss-120b",
+		}
+	case "openai":
+		return map[string]interface{}{
+			"provider": "openai",
+			"base_url": "https://api.openai.com",
+			"model":    "gpt-4.1-mini",
+		}
+	case "openrouter":
+		return map[string]interface{}{
+			"provider": "openrouter",
+			"base_url": "https://openrouter.ai/api",
+			"model":    "openai/gpt-4.1-mini",
+		}
+	default:
+		return map[string]interface{}{
+			"provider": "custom",
+			"base_url": "",
+			"model":    "",
+		}
+	}
+}
+
 func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interface{} {
 	current, err := db.GetLLMSettings()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
+	}
+	settings.Fast.Tier = "fast"
+	if settings.Fast.TimeoutMs <= 0 {
+		settings.Fast.TimeoutMs = 30000
+	}
+	if settings.UseSameForHeavy {
+		settings.Heavy = settings.Fast
+		settings.Heavy.Tier = "heavy"
+		settings.Heavy.TimeoutMs = 90000
+	} else {
+		settings.Heavy.Tier = "heavy"
+		if settings.Heavy.TimeoutMs <= 0 {
+			settings.Heavy.TimeoutMs = 90000
+		}
 	}
 	settings.Fast.HasAPIKey = current.Fast.HasAPIKey || llm.HasAPIKey("fast") || envHasLLMAPIKey("FAST_LLM")
 	settings.Heavy.HasAPIKey = current.Heavy.HasAPIKey || llm.HasAPIKey("heavy") || envHasLLMAPIKey("HEAVY_LLM")
@@ -890,8 +934,12 @@ func (a *App) reloadLLMProviders() error {
 	if err != nil {
 		return err
 	}
+
 	fastKey, _ := llm.GetAPIKey("fast")
 	heavyKey, _ := llm.GetAPIKey("heavy")
+	if settings.UseSameForHeavy && heavyKey == "" {
+		heavyKey = fastKey
+	}
 	fastProvider := llm.NewProvider(llm.LoadConfigFromSettingsForPrefix("FAST_LLM", settings.Fast, fastKey))
 	heavyProvider := llm.NewProvider(llm.LoadConfigFromSettingsForPrefix("HEAVY_LLM", settings.Heavy, heavyKey))
 

@@ -336,17 +336,11 @@ func GetNotebookTopicsWithBounds(notebookID string) ([]NotebookTopicInfo, error)
 // Joins with notebooks table to ensure topics have a valid notebook source.
 // Orders by notebook priority (higher first) to respect notebook priority biasing.
 func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
-	var activeProfileID sql.NullString
-	if err := conn.QueryRow(`
-		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
-	`).Scan(&activeProfileID); err != nil && err != sql.ErrNoRows {
-		return models.ReadingTopicCursor{}, false, fmt.Errorf("QueryNextReadingTopic: reading active_profile_id: %w", err)
+	settings, err := GetUserSettings()
+	if err != nil {
+		return models.ReadingTopicCursor{}, false, fmt.Errorf("QueryNextReadingTopic: getting user settings: %w", err)
 	}
-
-	activeProfileStr := ""
-	if activeProfileID.Valid {
-		activeProfileStr = activeProfileID.String
-	}
+	activeProfileStr := settings.ActiveProfileID
 
 	var topic models.ReadingTopicCursor
 	query := `
@@ -358,11 +352,12 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 			COALESCE(t.current_page_cursor, 0),
 			n.id
 		FROM topics t
-		INNER JOIN notebook_topics nt ON nt.topic_id = t.id
-		INNER JOIN notebooks n ON n.id = nt.notebook_id
+		LEFT JOIN notebook_topics nt ON nt.topic_id = t.id
+		LEFT JOIN notebooks n ON (n.id = nt.notebook_id OR n.topic_id = t.id)
 		WHERE t.status IN ('unseen', 'reading')
 		  AND COALESCE(t.end_page, 0) > 0
 		  AND COALESCE(t.current_page_cursor, 0) < COALESCE(t.end_page, 0)
+		  AND (nt.notebook_id IS NOT NULL OR n.topic_id = t.id)
 		  AND n.id IS NOT NULL
 		  AND n.id != ''
 		  AND n.study_status = 'active'
@@ -374,7 +369,7 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	}
 	query += ` ORDER BY COALESCE(n.priority, 5) DESC, t.updated_at ASC, t.created_at ASC LIMIT 1 `
 
-	err := conn.QueryRow(query, args...).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
+	err = conn.QueryRow(query, args...).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
 	if err == sql.ErrNoRows {
 		return models.ReadingTopicCursor{}, false, nil
 	}

@@ -113,6 +113,11 @@
           </div>
         </div>
 
+        <div v-if="error" class="error-banner" style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+          <span>{{ error }}</span>
+          <button type="button" @click="error = ''" style="background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
+        </div>
+
         <div class="button-row">
           <button class="secondary-button" @click="step = 1">Back</button>
           <button class="action-button" :disabled="llmSaving || !isLLMStepValid" @click="saveLLMAndContinue">
@@ -123,7 +128,7 @@
 
       <!-- Step 3: Cloud Sync Settings -->
       <div v-else-if="step === 3" class="step-container">
-        <h2>2. Teacher Cloud Sync (Optional)</h2>
+        <h2>3. Teacher Cloud Sync (Optional)</h2>
         <p class="description">If your teacher sends assigned books and tracks progress, enter the sync details below.</p>
 
         <div class="form-group">
@@ -152,9 +157,9 @@
         </div>
       </div>
 
-      <!-- Step 4: Local AI Retrieval (RAG) -->
+      <!-- Step 4: RAG Settings -->
       <div v-else-if="step === 4" class="step-container">
-        <h2>3. Local AI Retrieval (RAG)</h2>
+        <h2>4. Local AI Retrieval (RAG)</h2>
         <p class="description">Enable context-rich Q&A. This sets up a local ONNX embedding engine and vec0 search to query books completely offline.</p>
 
         <div class="rag-options">
@@ -213,9 +218,9 @@
         </div>
       </div>
 
-      <!-- Step 5: Aesthetic Preferences -->
+      <!-- Step 5: Aesthetics -->
       <div v-else-if="step === 5" class="step-container">
-        <h2>4. Choose Workspace Aesthetic</h2>
+        <h2>5. Choose Workspace Aesthetic</h2>
         <p class="description">Select a visual theme. Changing themes alters the colors of your study desk in real-time.</p>
 
         <div class="theme-grid">
@@ -306,7 +311,8 @@ import {
   updateUserSettings,
   initializeRAG,
   updateLLMSettings,
-  saveLLMAPIKey
+  saveLLMAPIKey,
+  getLLMProviderPreset
 } from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
@@ -374,16 +380,9 @@ const isLLMStepValid = computed(() => {
   return fastValid && heavyValid
 })
 
-const providerPresets = {
-  groq: { base_url: 'https://api.groq.com/openai', model: 'openai/gpt-oss-120b' },
-  openai: { base_url: 'https://api.openai.com', model: 'gpt-4.1-mini' },
-  openrouter: { base_url: 'https://openrouter.ai/api', model: 'openai/gpt-4.1-mini' },
-  custom: { base_url: '', model: '' }
-}
-
-function applyProviderPreset(tier) {
+async function applyProviderPreset(tier) {
   const target = tier === 'heavy' ? llmHeavy.value : llmFast.value
-  const preset = providerPresets[target.provider] || providerPresets.custom
+  const preset = await getLLMProviderPreset(target.provider)
   target.base_url = preset.base_url
   target.model = preset.model
 }

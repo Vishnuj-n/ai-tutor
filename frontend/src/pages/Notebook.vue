@@ -5,6 +5,16 @@
       <p class="subtitle">Upload and manage your learning materials</p>
     </div>
 
+    <!-- Errors Section -->
+    <div v-if="settingsError || notebooksError" class="error-container" style="margin-bottom: 20px;">
+      <div v-if="settingsError" class="error-message" style="margin-bottom: 10px;">
+        Failed to load settings: {{ settingsError }}
+      </div>
+      <div v-if="notebooksError" class="error-message">
+        Failed to load notebooks: {{ notebooksError }}
+      </div>
+    </div>
+
     <!-- Upload Section -->
     <div class="upload-section">
       <div class="upload-card">
@@ -332,6 +342,8 @@ const successMessage = ref('')
 const notebooks = ref([])
 const availableTopics = ref([])
 const loading = ref(false)
+const settingsError = ref('')
+const notebooksError = ref('')
 const ingestionStatusMessage = ref('')
 const ingestionNotebookID = ref('')
 const indexingProgress = ref(0)
@@ -361,17 +373,19 @@ const draftingNotebookTitle = ref('')
 const activeProfileID = ref('')
 const ragEnabled = ref(false)
 
-const activeNotebooks = computed(() =>
-  notebooks.value.filter(
+const activeNotebooks = computed(() => {
+  if (!Array.isArray(notebooks.value)) return []
+  return notebooks.value.filter(
     (nb) => nb.study_status === 'active' && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
   )
-)
+})
 
-const dormantNotebooks = computed(() =>
-  notebooks.value.filter(
+const dormantNotebooks = computed(() => {
+  if (!Array.isArray(notebooks.value)) return []
+  return notebooks.value.filter(
     (nb) => (nb.study_status === 'dormant' || !nb.study_status) && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
   )
-)
+})
 
 async function setStudyStatus(notebookID, status) {
   try {
@@ -392,10 +406,16 @@ onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
 
   // Load active profile for Smart Shelf profile scoping
-  const settings = await getUserSettings()
-  if (settings && !settings.error) {
-    activeProfileID.value = settings.active_profile_id || ''
-    ragEnabled.value = settings.rag_enabled || false
+  try {
+    const settings = await getUserSettings()
+    if (settings && !settings.error) {
+      activeProfileID.value = settings.active_profile_id || ''
+      ragEnabled.value = settings.rag_enabled || false
+    } else if (settings && settings.error) {
+      settingsError.value = settings.error
+    }
+  } catch (err) {
+    settingsError.value = err instanceof Error ? err.message : String(err)
   }
 
   // Load available topics and notebooks
@@ -480,6 +500,7 @@ async function loadTopics() {
 
 async function loadNotebooks() {
   loading.value = true
+  notebooksError.value = ''
   try {
     // Pass activeProfileID to filter notebooks by profile (for profile isolation)
     const result = await fetchNotebooks('', activeProfileID.value)
@@ -489,6 +510,7 @@ async function loadNotebooks() {
     notebooks.value = Array.isArray(result) ? result : []
   } catch (error) {
     console.error('Failed to load notebooks:', error)
+    notebooksError.value = error instanceof Error ? error.message : String(error)
     notebooks.value = []
   } finally {
     loading.value = false

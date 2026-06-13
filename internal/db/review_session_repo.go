@@ -112,17 +112,11 @@ func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) (
 }
 
 func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
-	var activeProfileID sql.NullString
-	if err := conn.QueryRow(`
-		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
-	`).Scan(&activeProfileID); err != nil && err != sql.ErrNoRows {
-		return "", 0, fmt.Errorf("getNextDueReviewNotebookRepo: reading active_profile_id: %w", err)
+	settings, err := GetUserSettings()
+	if err != nil {
+		return "", 0, fmt.Errorf("getNextDueReviewNotebookRepo: getting user settings: %w", err)
 	}
-
-	activeProfileStr := ""
-	if activeProfileID.Valid {
-		activeProfileStr = activeProfileID.String
-	}
+	activeProfileStr := settings.ActiveProfileID
 
 	var notebookID string
 	var dueCount int
@@ -167,7 +161,7 @@ func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
 		LIMIT 1
 	`
 
-	err := conn.QueryRow(query, args...).Scan(&notebookID, &dueCount)
+	err = conn.QueryRow(query, args...).Scan(&notebookID, &dueCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, nil
 	}

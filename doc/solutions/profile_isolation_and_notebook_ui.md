@@ -49,6 +49,7 @@ All changes have been successfully implemented across the codebase in a single c
 ## Verification Plan
 
 ### Automated Tests
+- Run Go unit tests: `go test ./...`
 - Go backend compiles successfully (`go build ./...`)
 - Frontend builds successfully (`npm run build` in `frontend/`)
 
