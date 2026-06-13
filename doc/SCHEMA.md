@@ -8,13 +8,13 @@ This document matches the tables created in `internal/db/schema.go`.
 
 ## Table Map
 
-| Layer         | Tables                                                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------------------------ |
-| Queue         | `study_queue`, `reading_progress`, `review_task_cards`                                                       |
-| Content       | `notebooks`, `topics`, `chunks`, `notebook_topics`, `notebook_chunks`, `topic_progress`                      |
-| Assessment    | `quiz_attempts`, `reread_attempts`, `written_questions`, `written_user_answers`                              |
-| Retention     | `fsrs_cards`, `fsrs_review_log`, `manual_flashcards`                                                         |
-| Configuration | `user_settings`                                                                                              |
+| Layer         | Tables                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------- |
+| Queue         | `study_queue`, `reading_progress`, `review_task_cards`                                  |
+| Content       | `notebooks`, `topics`, `chunks`, `notebook_topics`, `notebook_chunks`, `topic_progress` |
+| Assessment    | `quiz_attempts`, `reread_attempts`, `written_questions`, `written_user_answers`         |
+| Retention     | `fsrs_cards`, `fsrs_review_log`, `manual_flashcards`                                    |
+| Configuration | `user_settings`                                                                         |
 
 ## Queue Tables
 
@@ -22,20 +22,20 @@ This document matches the tables created in `internal/db/schema.go`.
 
 Central task table for the application.
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | TEXT PRIMARY KEY | Unique task identifier |
-| `notebook_id` | TEXT NOT NULL | Parent notebook |
-| `topic_id` | TEXT | Optional task context |
-| `task_type` | TEXT NOT NULL | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
-| `status` | TEXT NOT NULL | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED` |
-| `priority` | INTEGER DEFAULT 0 | Lower values sort first |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
-| `activated_at` | TIMESTAMP | When task became active |
-| `completed_at` | TIMESTAMP | When task finished |
-| `payload_json` | TEXT | Optional task payload |
-| `start_page` | INTEGER | Reading start page |
-| `end_page` | INTEGER | Reading end page |
+| Field          | Type                                | Description                                                 |
+| -------------- | ----------------------------------- | ----------------------------------------------------------- |
+| `id`           | TEXT PRIMARY KEY                    | Unique task identifier                                      |
+| `notebook_id`  | TEXT NOT NULL                       | Parent notebook                                             |
+| `topic_id`     | TEXT                                | Optional task context                                       |
+| `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
+| `status`       | TEXT NOT NULL                       | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED`       |
+| `priority`     | INTEGER DEFAULT 0                   | Lower values sort first                                     |
+| `created_at`   | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time                                               |
+| `activated_at` | TIMESTAMP                           | When task became active                                     |
+| `completed_at` | TIMESTAMP                           | When task finished                                          |
+| `payload_json` | TEXT                                | Optional task payload                                       |
+| `start_page`   | INTEGER                             | Reading start page                                          |
+| `end_page`     | INTEGER                             | Reading end page                                            |
 
 **Indexes**
 

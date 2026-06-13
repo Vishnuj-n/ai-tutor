@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "SPRINT.md",
+                "file": "SCHEMA.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "SPRINT"
+              "title": "SCHEMA"
             }
           }
         ]
@@ -186,14 +186,14 @@
   },
   "active": "50e5613e93f70a39",
   "lastOpenFiles": [
+    "RAG.md",
+    "SPRINT.md",
     "solutions/profiles_addition.md",
     "solutions/them_adder.md",
     "solutions",
-    "RAG.md",
     "ARCHITECTURE.md",
     "PROJECT_STRUCTURE.md",
     "REQUIREMENTS.md",
-    "SPRINT.md",
     "NOTE.md",
     "CLAUDE.md",
     "APP_FLOW.md",

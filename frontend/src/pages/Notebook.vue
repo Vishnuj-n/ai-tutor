@@ -5,6 +5,16 @@
       <p class="subtitle">Upload and manage your learning materials</p>
     </div>
 
+    <!-- Errors Section -->
+    <div v-if="settingsError || notebooksError" class="error-container" style="margin-bottom: 20px;">
+      <div v-if="settingsError" class="error-message" style="margin-bottom: 10px;">
+        Failed to load settings: {{ settingsError }}
+      </div>
+      <div v-if="notebooksError" class="error-message">
+        Failed to load notebooks: {{ notebooksError }}
+      </div>
+    </div>
+
     <!-- Upload Section -->
     <div class="upload-section">
       <div class="upload-card">
@@ -51,18 +61,71 @@
       </div>
     </div>
 
-    <!-- Notebooks List -->
+    <!-- Active Lane (prioritized section) -->
+    <div v-if="!loading && activeNotebooks.length > 0" class="active-lane-section">
+      <h2>Active Lane ({{ activeNotebooks.length }} / 4)</h2>
+      <p class="section-hint">Your currently studying textbooks. Maximum 4 active at a time.</p>
+      <div class="notebook-grid">
+        <div v-for="notebook in activeNotebooks" :key="notebook.id" class="notebook-card active-notebook-card">
+          <button
+            class="btn-edit-pen"
+            title="Edit notebook and chapters"
+            @click="openSyllabusDraft(notebook.id, notebook.title)"
+          >
+            ✎
+          </button>
+          <div class="notebook-header-card">
+            <div class="file-icon active-icon">{{ getFileIcon(notebook.file_type) }}</div>
+            <div class="notebook-info">
+              <h3>{{ notebook.title }}</h3>
+              <p class="meta">{{ notebook.file_type.toUpperCase() }}</p>
+              <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
+              <p class="meta">{{ notebook.chunk_count }} chunks</p>
+            </div>
+          </div>
+
+          <div v-if="notebook.topic_id" class="notebook-topic">
+            <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
+          </div>
+
+          <div class="notebook-priority">
+            <label class="priority-label">Priority:</label>
+            <select
+              :value="notebook.priority || 5"
+              class="priority-select"
+              @change="(e) => updatePriority(notebook.id, parseInt(e.target.value))"
+            >
+              <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </div>
+
+          <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
+
+          <div class="notebook-actions">
+            <button class="btn-sleep" @click="setStudyStatus(notebook.id, 'dormant')">Sleep</button>
+            <button class="btn-download" @click="downloadNotebook(notebook.id)">Download</button>
+            <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- All Notebooks (dormant by default) -->
     <div class="notebooks-list">
-      <h2>Your Notebooks</h2>
+      <h2>{{ activeNotebooks.length > 0 ? 'Dormant Books' : 'Your Notebooks' }}</h2>
 
       <div v-if="loading" class="loading">Loading notebooks...</div>
 
-      <div v-if="!loading && notebooks.length === 0" class="empty-state">
+      <div v-if="!loading && dormantNotebooks.length === 0 && activeNotebooks.length === 0" class="empty-state">
         <p>No notebooks yet. Upload your first document above!</p>
       </div>
 
-      <div v-if="!loading && notebooks.length > 0" class="notebook-grid">
-        <div v-for="notebook in notebooks" :key="notebook.id" class="notebook-card">
+      <div v-if="!loading && dormantNotebooks.length === 0 && activeNotebooks.length > 0" class="empty-state">
+        <p>All textbooks are active. Add more books above!</p>
+      </div>
+
+      <div v-if="!loading && dormantNotebooks.length > 0" class="notebook-grid">
+        <div v-for="notebook in dormantNotebooks" :key="notebook.id" class="notebook-card dormant-notebook-card">
           <button
             class="btn-edit-pen"
             title="Edit notebook and chapters"
@@ -100,63 +163,20 @@
             </select>
           </div>
 
-
-
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
 
           <div class="notebook-actions">
+            <button 
+              class="btn-activate" 
+              :disabled="activeNotebooks.length >= 4"
+              @click="setStudyStatus(notebook.id, 'active')"
+            >
+              Activate
+            </button>
             <button class="btn-download" @click="downloadNotebook(notebook.id)">Download</button>
             <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- Smart Shelf: Active Lane + Dormant Warehouse -->
-    <div v-if="!loading && notebooks.length > 0" class="shelf-section">
-      <h2>Smart Shelf</h2>
-      <p class="shelf-description">Hard-gated to a maximum of 4 active textbooks to prevent study fatigue.</p>
-
-      <div class="shelf-grid">
-        <!-- Active Lane -->
-        <article class="shelf-column active-column">
-          <h3>Active Lane ({{ activeNotebooks.length }} / 4)</h3>
-          <div v-if="activeNotebooks.length === 0" class="shelf-empty">
-            No textbooks active. Activate books from the Dormant Warehouse below.
-          </div>
-          <div v-else class="shelf-list">
-            <div v-for="nb in activeNotebooks" :key="nb.id" class="shelf-card active-card">
-              <div class="shelf-card-details">
-                <h4>{{ nb.title }}</h4>
-                <p class="shelf-card-meta">Priority: <strong>{{ nb.priority }}</strong> · {{ nb.page_count }} pages</p>
-              </div>
-              <button class="shelf-action-btn sleep-btn" @click="setStudyStatus(nb.id, 'dormant')">Sleep</button>
-            </div>
-          </div>
-        </article>
-
-        <!-- Dormant Warehouse -->
-        <article class="shelf-column dormant-column">
-          <h3>Dormant Warehouse</h3>
-          <div v-if="dormantNotebooks.length === 0" class="shelf-empty">
-            All notebooks are active or none uploaded yet.
-          </div>
-          <div v-else class="shelf-list">
-            <div v-for="nb in dormantNotebooks" :key="nb.id" class="shelf-card dormant-card">
-              <div class="shelf-card-details">
-                <h4>{{ nb.title }}</h4>
-                <p class="shelf-card-meta">Priority: <strong>{{ nb.priority }}</strong> · {{ nb.page_count }} pages</p>
-              </div>
-              <button
-                class="shelf-action-btn activate-btn"
-                :disabled="activeNotebooks.length >= 4"
-                @click="setStudyStatus(nb.id, 'active')"
-              >
-                Activate
-              </button>
-            </div>
-          </div>
-        </article>
       </div>
     </div>
 
@@ -322,6 +342,8 @@ const successMessage = ref('')
 const notebooks = ref([])
 const availableTopics = ref([])
 const loading = ref(false)
+const settingsError = ref('')
+const notebooksError = ref('')
 const ingestionStatusMessage = ref('')
 const ingestionNotebookID = ref('')
 const indexingProgress = ref(0)
@@ -349,18 +371,21 @@ const actionToastTimer = ref(null)
 const isDraftingSyllabus = ref(false)
 const draftingNotebookTitle = ref('')
 const activeProfileID = ref('')
+const ragEnabled = ref(false)
 
-const activeNotebooks = computed(() =>
-  notebooks.value.filter(
+const activeNotebooks = computed(() => {
+  if (!Array.isArray(notebooks.value)) return []
+  return notebooks.value.filter(
     (nb) => nb.study_status === 'active' && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
   )
-)
+})
 
-const dormantNotebooks = computed(() =>
-  notebooks.value.filter(
+const dormantNotebooks = computed(() => {
+  if (!Array.isArray(notebooks.value)) return []
+  return notebooks.value.filter(
     (nb) => (nb.study_status === 'dormant' || !nb.study_status) && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
   )
-)
+})
 
 async function setStudyStatus(notebookID, status) {
   try {
@@ -381,9 +406,16 @@ onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
 
   // Load active profile for Smart Shelf profile scoping
-  const settings = await getUserSettings()
-  if (settings && !settings.error) {
-    activeProfileID.value = settings.active_profile_id || ''
+  try {
+    const settings = await getUserSettings()
+    if (settings && !settings.error) {
+      activeProfileID.value = settings.active_profile_id || ''
+      ragEnabled.value = settings.rag_enabled || false
+    } else if (settings && settings.error) {
+      settingsError.value = settings.error
+    }
+  } catch (err) {
+    settingsError.value = err instanceof Error ? err.message : String(err)
   }
 
   // Load available topics and notebooks
@@ -468,14 +500,17 @@ async function loadTopics() {
 
 async function loadNotebooks() {
   loading.value = true
+  notebooksError.value = ''
   try {
-    const result = await fetchNotebooks('')
+    // Pass activeProfileID to filter notebooks by profile (for profile isolation)
+    const result = await fetchNotebooks('', activeProfileID.value)
     if (Array.isArray(result) && result.length > 0 && result[0].error) {
       throw new Error(result[0].error)
     }
     notebooks.value = Array.isArray(result) ? result : []
   } catch (error) {
     console.error('Failed to load notebooks:', error)
+    notebooksError.value = error instanceof Error ? error.message : String(error)
     notebooks.value = []
   } finally {
     loading.value = false
@@ -782,7 +817,11 @@ async function confirmSyllabusDraft() {
       await loadTopics()
       await loadNotebooks()
       closeSyllabusModal()
-      showToast('Notebook ready! Semantic indexing running in background...')
+      if (ragEnabled.value) {
+        showToast('Notebook ready! Semantic indexing running in background...')
+      } else {
+        showToast('Notebook ready!')
+      }
     } else {
       // Chapters didn't change, just update notebook title/priority if needed
       await loadNotebooks()
@@ -1595,7 +1634,72 @@ function formatDate(dateString) {
   }
 }
 
-/* ── Smart Shelf ─────────────────────────────────────── */
+/* ── Active Lane Section ─────────────────────────────── */
+.active-lane-section {
+  margin-top: 32px;
+}
+
+.active-lane-section h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.section-hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--muted-text, #888);
+}
+
+.active-notebook-card {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary), 0 4px 12px rgba(108, 92, 231, 0.15);
+}
+
+.active-icon {
+  color: var(--primary);
+}
+
+/* ── New Action Buttons ───────────────────────────────── */
+.btn-activate {
+  background: linear-gradient(135deg, var(--primary), #7c3aed);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-activate:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(108, 92, 231, 0.3);
+}
+
+.btn-activate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-sleep {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-sleep:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+/* ── Smart Shelf (Legacy - to be removed) ─────────────── */
 .shelf-section {
   margin-top: 32px;
 }

@@ -165,8 +165,8 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 		return fmt.Errorf("failed to get topic IDs: %w", err)
 	}
 
-	// Get all notebooks with PENDING indexing status
-	notebooks, err := db.GetNotebooks("")
+	// Get all notebooks with PENDING indexing status (no profile filter for indexing)
+	notebooks, err := db.GetNotebooks("", "")
 	if err != nil {
 		utils.Warnf("failed to fetch notebooks for indexing: %v", err)
 		// Continue anyway, we'll index by topic
