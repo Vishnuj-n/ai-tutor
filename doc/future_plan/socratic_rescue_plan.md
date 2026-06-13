@@ -76,4 +76,8 @@ To keep frontend design loops frictionless:
 1. **Developer Flag:** Use Vite's environment flags (`import.meta.env.DEV`) to detect local development.
 2. **Sandbox Admin Panel:** Pin a floating developer panel at the bottom of the screen.
 3. **Bypass Action:** A button *"💥 Force 3-Strike Rescue UI State"* which triggers a backend test-endpoint to force the DB into a post-3-strike failure state.
-4. **Instant Verification:** The frontend UI catches the state and mounts the split-screen view without requiring the developer to manually fail three quizzes.
+4. **Instant Verification:** The frontend UI catches the state and mounts the split-screen view without requiring the developer to manually fail 
+three quizzes.
+
+Keep the forced 3-strike endpoint dev/test-only.
+The verification flow describes a backend endpoint that mutates study state directly. If this ships unguarded, it becomes a privileged state-change path for production clients. Gate it behind dev/test builds or authenticated admin access before wiring the UI button to it.

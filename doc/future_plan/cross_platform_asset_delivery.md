@@ -118,6 +118,9 @@ if os.Getenv("APP_ENV") == "" {
 }
 ```
 
+Don't default an empty APP_ENV to production.
+With _ = godotenv.Load(), fresh dev/test environments will often leave APP_ENV unset, so this fallback routes them into the production storage/download path and hides missing config. Make production explicit instead of inferring it from an empty variable.
+
 This ensures predictable routing: empty → production. No crash path. The storage manager already routes to `%LOCALAPPDATA%/ai-tutor/` in production mode.
 
 ---
