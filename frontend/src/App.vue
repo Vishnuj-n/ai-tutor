@@ -1,10 +1,26 @@
 <script setup>
 import Sidebar from './components/Sidebar.vue'
+import { useRoute } from 'vue-router'
+import { onMounted } from 'vue'
+import { getUserSettings } from './services/appApi'
+
+const route = useRoute()
+
+onMounted(async () => {
+  try {
+    const res = await getUserSettings()
+    if (res && res.theme) {
+      document.documentElement.setAttribute('data-theme', res.theme)
+    }
+  } catch (err) {
+    console.error('Failed to load global theme:', err)
+  }
+})
 </script>
 
 <template>
   <div class="app-shell">
-    <Sidebar />
+    <Sidebar v-if="route.path !== '/onboarding'" />
 
     <main class="content-shell">
       <RouterView />

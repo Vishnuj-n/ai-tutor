@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
-:root {
+:root, [data-theme="light-classic"] {
   --background: #f9f9fb;
   --surface-container: #ebeef2;
   --surface-container-low: #f2f4f7;
@@ -13,6 +13,66 @@
   --on-primary: #ffffff;
   --on-surface: #2d3338;
   --muted-text: #64707d;
+}
+
+[data-theme="light-warm"] {
+  --background: #fdfaf6;
+  --surface-container: #f3eae1;
+  --surface-container-low: #faf3eb;
+  --surface-container-highest: #faf6f0;
+  --outline-variant: rgba(120, 90, 60, 0.1);
+  --surface-container-lowest: #ffffff;
+  --surface-bright: rgba(255, 255, 255, 0.8);
+  --primary: #c27d38;
+  --primary-dim: #a46328;
+  --on-primary: #ffffff;
+  --on-surface: #433422;
+  --muted-text: #82715e;
+}
+
+[data-theme="dark-indigo"] {
+  --background: #0b0d16;
+  --surface-container: #171a2b;
+  --surface-container-low: #111320;
+  --surface-container-highest: #21253d;
+  --outline-variant: rgba(255, 255, 255, 0.08);
+  --surface-container-lowest: #08090f;
+  --surface-bright: rgba(33, 37, 61, 0.72);
+  --primary: #6366f1;
+  --primary-dim: #4f46e5;
+  --on-primary: #ffffff;
+  --on-surface: #e2e8f0;
+  --muted-text: #94a3b8;
+}
+
+[data-theme="dark-nord"] {
+  --background: #2e3440;
+  --surface-container: #3b4252;
+  --surface-container-low: #343b48;
+  --surface-container-highest: #434c5e;
+  --outline-variant: rgba(255, 255, 255, 0.06);
+  --surface-container-lowest: #242933;
+  --surface-bright: rgba(67, 76, 94, 0.72);
+  --primary: #88c0d0;
+  --primary-dim: #81a1c1;
+  --on-primary: #2e3440;
+  --on-surface: #eceff4;
+  --muted-text: #d8dee9;
+}
+
+[data-theme="dark-emerald"] {
+  --background: #0a120d;
+  --surface-container: #152219;
+  --surface-container-low: #0f1a13;
+  --surface-container-highest: #1c2e22;
+  --outline-variant: rgba(255, 255, 255, 0.08);
+  --surface-container-lowest: #060b08;
+  --surface-bright: rgba(28, 46, 34, 0.72);
+  --primary: #10b981;
+  --primary-dim: #059669;
+  --on-primary: #ffffff;
+  --on-surface: #e6f4ea;
+  --muted-text: #a3bfa8;
 }
 
 * {

@@ -2,63 +2,16 @@ package db
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 )
 
-// GetTopicContent retrieves all parent sections for a topic
-func GetTopicContent(topicID string) (map[string]interface{}, error) {
-	var title string
-	err := conn.QueryRow("SELECT title FROM topics WHERE id = ?", topicID).Scan(&title)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := conn.Query(`
-		SELECT id, heading, content_text, order_index
-		FROM parents
-		WHERE topic_id = ?
-		ORDER BY order_index
-	`, topicID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var sections []map[string]interface{}
-	for rows.Next() {
-		var id, heading, content string
-		var order int
-		if err := rows.Scan(&id, &heading, &content, &order); err != nil {
-			return nil, err
-		}
-		sections = append(sections, map[string]interface{}{
-			"id":      id,
-			"heading": heading,
-			"content": content,
-			"order":   order,
-		})
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"title":    title,
-		"sections": sections,
-	}, nil
-}
-
 // GetChunksForTopicPageRange retrieves chunks for a topic within a page range.
 func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]models.Chunk, error) {
 	query := `
-		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score, page_num
+		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
 		WHERE topic_id = ?`
 
@@ -95,7 +48,6 @@ func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]model
 		if err := rows.Scan(
 			&chunk.ID,
 			&chunk.TopicID,
-			&chunk.ParentID,
 			&chunk.Text,
 			&chunk.ImportanceScore,
 			&chunk.WeaknessScore,
@@ -116,7 +68,7 @@ func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]model
 // GetChunksForTopic retrieves all chunks for a topic.
 func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 	rows, err := conn.Query(`
-		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score, page_num
+		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
 		WHERE topic_id = ?
 		ORDER BY id
@@ -134,7 +86,6 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 		if err := rows.Scan(
 			&chunk.ID,
 			&chunk.TopicID,
-			&chunk.ParentID,
 			&chunk.Text,
 			&chunk.ImportanceScore,
 			&chunk.WeaknessScore,
@@ -160,7 +111,7 @@ func GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
 	}
 
 	rows, err := conn.Query(`
-		SELECT c.id, c.topic_id, c.parent_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
+		SELECT c.id, c.topic_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
 		FROM notebook_chunks nc
 		JOIN chunks c ON c.id = nc.chunk_id
 		WHERE nc.notebook_id = ?
@@ -179,7 +130,6 @@ func GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
 		if err := rows.Scan(
 			&chunk.ID,
 			&chunk.TopicID,
-			&chunk.ParentID,
 			&chunk.Text,
 			&chunk.ImportanceScore,
 			&chunk.WeaknessScore,
@@ -212,7 +162,7 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, topic_id, parent_id, chunk_text, importance_score, weakness_score, page_num
+		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
 		WHERE topic_id IN (%s)
 	`, strings.Join(placeholders, ","))
@@ -232,7 +182,6 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 		if err := rows.Scan(
 			&chunk.ID,
 			&chunk.TopicID,
-			&chunk.ParentID,
 			&chunk.Text,
 			&chunk.ImportanceScore,
 			&chunk.WeaknessScore,
@@ -250,37 +199,38 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 	return result, nil
 }
 
-// GetParentSection retrieves a parent section by ID
-func GetParentSection(parentID string) (map[string]string, error) {
-	var id, heading, content string
+// GetChunkSection retrieves a chunk section by ID
+func GetChunkSection(chunkID string) (map[string]string, error) {
+	var id, text string
+	var pageNum int
 	err := conn.QueryRow(`
-		SELECT id, heading, content_text
-		FROM parents
+		SELECT id, chunk_text, page_num
+		FROM chunks
 		WHERE id = ?
-	`, parentID).Scan(&id, &heading, &content)
+	`, chunkID).Scan(&id, &text, &pageNum)
 	if err != nil {
 		return nil, err
 	}
 
 	return map[string]string{
 		"id":      id,
-		"heading": heading,
-		"content": content,
+		"heading": fmt.Sprintf("Page %d", pageNum),
+		"content": text,
 	}, nil
 }
 
-// GetTopicIDBySectionID returns topic_id for a given parent/section id.
-func GetTopicIDBySectionID(sectionID string) (string, error) {
-	sectionID = strings.TrimSpace(sectionID)
-	if sectionID == "" {
-		return "", fmt.Errorf("invalid empty sectionID")
+// GetTopicIDBySectionID returns topic_id for a given chunk id.
+func GetTopicIDBySectionID(chunkID string) (string, error) {
+	chunkID = strings.TrimSpace(chunkID)
+	if chunkID == "" {
+		return "", fmt.Errorf("invalid empty chunkID")
 	}
 	var topicID string
 	err := conn.QueryRow(`
 		SELECT topic_id
-		FROM parents
+		FROM chunks
 		WHERE id = ?
-	`, sectionID).Scan(&topicID)
+	`, chunkID).Scan(&topicID)
 	if err != nil {
 		return "", err
 	}
@@ -503,68 +453,7 @@ func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) 
 	return chunkTexts, nil
 }
 
-// GetParentPassagesForTopicPageRange retrieves chunks with their parent passage context for a topic page range
-func GetParentPassagesForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return nil, fmt.Errorf("topic id is required")
-	}
-	if startPage <= 0 || endPage <= 0 {
-		return nil, fmt.Errorf("start page and end page must be positive")
-	}
-	if startPage > endPage {
-		startPage, endPage = endPage, startPage
-	}
-
-	rows, err := conn.Query(`
-		SELECT c.chunk_text, COALESCE(p.heading, ''), COALESCE(p.content_text, '')
-		FROM chunks c
-		LEFT JOIN parents p ON c.parent_id = p.id AND p.topic_id = c.topic_id
-		WHERE c.topic_id = ?
-		  AND c.page_num BETWEEN ? AND ?
-		ORDER BY c.page_num ASC, c.id ASC
-	`, topicID, startPage, endPage)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var parentPassages []string
-	for rows.Next() {
-		var chunkText, parentHeading, parentContent string
-		if err := rows.Scan(&chunkText, &parentHeading, &parentContent); err != nil {
-			return nil, err
-		}
-
-		// Build parent passage context
-		var passage strings.Builder
-		if parentHeading != "" {
-			passage.WriteString("Section: ")
-			passage.WriteString(parentHeading)
-			passage.WriteString("\n")
-		}
-		if parentContent != "" {
-			passage.WriteString("Context: ")
-			passage.WriteString(parentContent)
-			passage.WriteString("\n")
-		}
-		passage.WriteString("Content: ")
-		passage.WriteString(chunkText)
-
-		parentPassages = append(parentPassages, passage.String())
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return parentPassages, nil
-}
-
-// GetTopicHeadingPageRanges returns resolved page bounds per heading for a topic.
-// Key format is parent ID (from parents table).
+// GetTopicHeadingPageRanges returns resolved page bounds per chunk ID for a topic.
 func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("database not initialized")
@@ -575,14 +464,9 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 	}
 
 	rows, err := conn.Query(`
-		SELECT
-			p.id,
-			COALESCE(MIN(NULLIF(c.page_num, 0)), 0) AS start_page,
-			COALESCE(MAX(NULLIF(c.page_num, 0)), 0) AS end_page
-		FROM parents p
-		LEFT JOIN chunks c ON c.parent_id = p.id AND c.topic_id = p.topic_id
-		WHERE p.topic_id = ?
-		GROUP BY p.id
+		SELECT id, COALESCE(page_num, 0)
+		FROM chunks
+		WHERE topic_id = ?
 	`, topicID)
 	if err != nil {
 		return nil, err
@@ -591,80 +475,21 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 		_ = rows.Close()
 	}()
 
-	ranges := make(map[string][][2]int)
+	result := make(map[string][2]int)
 	for rows.Next() {
-		var parentID string
-		var startPage int
-		var endPage int
-		if err := rows.Scan(&parentID, &startPage, &endPage); err != nil {
+		var id string
+		var pageNum int
+		if err := rows.Scan(&id, &pageNum); err != nil {
 			return nil, err
 		}
-
-		if parentID == "" {
+		if id == "" {
 			continue
 		}
-
-		if startPage > 0 && endPage <= 0 {
-			endPage = startPage
-		}
-		if endPage > 0 && startPage <= 0 {
-			startPage = endPage
-		}
-		if startPage <= 0 || endPage <= 0 {
-			continue
-		}
-		if startPage > endPage {
-			startPage, endPage = endPage, startPage
-		}
-
-		newSpan := [2]int{startPage, endPage}
-		existingSpans, ok := ranges[parentID]
-		if !ok {
-			ranges[parentID] = [][2]int{newSpan}
-			continue
-		}
-
-		// Collect all spans and sort by start position for proper merging
-		allSpans := append(existingSpans, newSpan)
-		// Sort by start position
-		sort.Slice(allSpans, func(i, j int) bool {
-			return allSpans[i][0] < allSpans[j][0]
-		})
-
-		// Single linear coalescing pass
-		coalesced := [][2]int{allSpans[0]}
-		for i := 1; i < len(allSpans); i++ {
-			current := allSpans[i]
-			last := coalesced[len(coalesced)-1]
-			// Check if overlapping or adjacent (end of last >= start of current - 1)
-			if last[1] >= current[0]-1 {
-				// Merge: extend end if needed
-				if current[1] > last[1] {
-					coalesced[len(coalesced)-1][1] = current[1]
-				}
-			} else {
-				// No overlap/adjacency, add as new span
-				coalesced = append(coalesced, current)
-			}
-		}
-		ranges[parentID] = coalesced
+		result[id] = [2]int{pageNum, pageNum}
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-
-	// Convert slice of spans back to single [2]int by taking overall min/max
-	// for backward compatibility with existing callers
-	result := make(map[string][2]int)
-	for parentID, spans := range ranges {
-		if len(spans) == 0 {
-			continue
-		}
-		if len(spans) > 1 {
-			return nil, fmt.Errorf("disjoint page ranges found for parent %q: %v", parentID, spans)
-		}
-		result[parentID] = spans[0]
 	}
 
 	return result, nil

@@ -50,9 +50,6 @@ internal/
   examiner/           # Examiner module backend
     handler.go
   
-  rag/                # Retrieval and answering
-    pipeline.go
-    embeddings.go     # Vector storage
   
   llm/                # OpenAI-compatible client
     provider.go       # Synchronous only
@@ -189,4 +186,4 @@ Task shape:
 1. Check `chunks` table for content
 2. Check the RAG embedding store (sqlite-vec) for embeddings
 3. Verify `block_id` in task context
-**Note:** The live schema uses `chunks` + `parents` and an external/virtual embedding store (see `doc/SCHEMA.md`). Replace `blocks` → `chunks` and `block_vectors` → RAG embedding store where applicable.
+**Note:** The live schema uses `chunks` and an embedding store (see `doc/SCHEMA.md`). Replace `blocks` → `chunks` and `block_vectors` → RAG embedding store where applicable.

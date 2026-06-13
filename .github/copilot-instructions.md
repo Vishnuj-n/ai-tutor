@@ -8,7 +8,6 @@
 
 ## RAG Rules
 - Always scope retrieval to current topic_id
-- Use parent-document retrieval (child → parent)
 - Enforce token limits strictly
 
 ## Go Code Rules

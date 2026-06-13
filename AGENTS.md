@@ -189,4 +189,11 @@ These must NEVER be violated:
 
 ---
 
-*Last updated: 2026-05-08*
+## Development Stage Rules
+
+- **No Backward Compatibility Required:** The application is in active development. Do not implement backward-compatible wrapper functions, legacy database table adapters, column fallback checks, or automated database migration schema repair loops. Keep schemas clean and lean.
+
+---
+
+*Last updated: 2026-06-09*
+

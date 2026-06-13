@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/retrieval"
 )
@@ -94,7 +93,7 @@ func (s *StudyService) ExplainReaderSection(sectionID string, question string) m
 		return map[string]interface{}{"error": "section ID is required"}
 	}
 
-	section, err := db.GetParentSection(sectionID)
+	section, err := db.GetChunkSection(sectionID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to fetch reader section: " + err.Error()}
 	}
@@ -186,44 +185,17 @@ func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
 func buildReaderContextBlocks(results []retrieval.SearchResult) ([]string, []string) {
 	blocks := make([]string, 0, len(results))
 	citations := make([]string, 0, len(results))
-	seenParents := make(map[string]bool)
 
 	for _, result := range results {
-		if result.ParentID == "" || seenParents[result.ParentID] {
+		text := strings.TrimSpace(result.Text)
+		if text == "" {
 			continue
-		}
-		section, err := db.GetParentSection(result.ParentID)
-		if err != nil {
-			continue
-		}
-		startPage, endPage := 0, 0
-		if ranges, rangeErr := db.GetTopicHeadingPageRanges(result.TopicID); rangeErr == nil {
-			if pageRange, ok := ranges[result.ParentID]; ok {
-				startPage, endPage = pageRange[0], pageRange[1]
-			}
 		}
 
-		heading := strings.TrimSpace(section["heading"])
-		if heading == "" {
-			heading = "Section"
-		}
-		if startPage > 0 && endPage > 0 {
-			blocks = append(blocks, fmt.Sprintf("[%s | pages %d-%d]\n%s", heading, startPage, endPage, strings.TrimSpace(result.Text)))
-			citations = append(citations, fmt.Sprintf("%s (pages %d-%d)", heading, startPage, endPage))
+		if result.PageNum > 0 {
+			blocks = append(blocks, fmt.Sprintf("[Page %d]\n%s", result.PageNum, text))
+			citations = append(citations, fmt.Sprintf("Page %d", result.PageNum))
 		} else {
-			blocks = append(blocks, fmt.Sprintf("[%s]\n%s", heading, strings.TrimSpace(result.Text)))
-			citations = append(citations, heading)
-		}
-		seenParents[result.ParentID] = true
-	}
-
-	// Fallback: if no parent sections were included, return raw result texts
-	if len(blocks) == 0 {
-		for _, result := range results {
-			text := strings.TrimSpace(result.Text)
-			if text == "" {
-				continue
-			}
 			blocks = append(blocks, text)
 			citations = append(citations, "")
 		}
