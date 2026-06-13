@@ -421,7 +421,8 @@ import {
   getLLMSettings,
   updateLLMSettings,
   saveLLMAPIKey,
-  deleteLLMAPIKey
+  deleteLLMAPIKey,
+  getLLMProviderPreset
 } from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
@@ -467,12 +468,7 @@ const llmSettings = ref({
   }
 })
 
-const providerPresets = {
-  groq: { base_url: 'https://api.groq.com/openai', model: 'openai/gpt-oss-120b' },
-  openai: { base_url: 'https://api.openai.com', model: 'gpt-4.1-mini' },
-  openrouter: { base_url: 'https://openrouter.ai/api', model: 'openai/gpt-4.1-mini' },
-  custom: { base_url: '', model: '' }
-}
+
 
 // Watch settings theme to apply it in real-time
 watch(() => settings.value.theme, (newTheme) => {
@@ -567,9 +563,9 @@ function closeRagModal() {
   saveUserSettings()
 }
 
-function applyProviderPreset(tier) {
+async function applyProviderPreset(tier) {
   const target = tier === 'heavy' ? llmSettings.value.heavy : llmSettings.value.fast
-  const preset = providerPresets[target.provider] || providerPresets.custom
+  const preset = await getLLMProviderPreset(target.provider)
   target.base_url = preset.base_url
   target.model = preset.model
 }
@@ -631,21 +627,8 @@ async function saveLLMProviderSettings() {
   success.value = ''
   try {
     savingLLM.value = true
-    const fast = {
-      ...llmSettings.value.fast,
-      has_api_key: llmSettings.value.fast.has_api_key || llmFastKey.value.trim() !== ''
-    }
-    const heavy = llmSettings.value.use_same_for_heavy
-      ? {
-          ...llmSettings.value.fast,
-          tier: 'heavy',
-          timeout_ms: llmSettings.value.heavy.timeout_ms || 90000,
-          has_api_key: fast.has_api_key
-        }
-      : {
-          ...llmSettings.value.heavy,
-          has_api_key: llmSettings.value.heavy.has_api_key || llmHeavyKey.value.trim() !== ''
-        }
+    const fast = { ...llmSettings.value.fast }
+    const heavy = { ...llmSettings.value.heavy }
 
     const res = await updateLLMSettings({
       use_same_for_heavy: llmSettings.value.use_same_for_heavy,

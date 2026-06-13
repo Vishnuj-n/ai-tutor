@@ -166,6 +166,10 @@ export function getLLMSettings() {
   return appBridge().GetLLMSettings()
 }
 
+export function getLLMProviderPreset(provider) {
+  return appBridge().GetLLMProviderPreset(provider)
+}
+
 export function updateLLMSettings(settings) {
   return appBridge().UpdateLLMSettings(settings)
 }

@@ -260,22 +260,36 @@ func GetUserSettings() (*models.UserSettings, error) {
 	// Dynamic fallback for active profile ID
 	if s.ActiveProfileID == "" {
 		defaultID, err := GetDefaultProfileID()
-		if err == nil && defaultID != "" {
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve default profile: %w", err)
+		}
+		if defaultID != "" {
+			if _, err := conn.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID); err != nil {
+				return nil, fmt.Errorf("failed to persist active profile ID: %w", err)
+			}
 			s.ActiveProfileID = defaultID
-			_, _ = conn.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID)
 		}
 	} else {
 		// Verify if the active profile still exists
 		var exists bool
-		_ = conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM study_profiles WHERE id = ?)`, s.ActiveProfileID).Scan(&exists)
+		if err := conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM study_profiles WHERE id = ?)`, s.ActiveProfileID).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("failed to check active profile existence: %w", err)
+		}
 		if !exists {
 			defaultID, err := GetDefaultProfileID()
-			if err == nil && defaultID != "" {
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve fallback default profile: %w", err)
+			}
+			if defaultID != "" {
+				if _, err := conn.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID); err != nil {
+					return nil, fmt.Errorf("failed to persist fallback active profile ID: %w", err)
+				}
 				s.ActiveProfileID = defaultID
-				_, _ = conn.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID)
 			} else {
+				if _, err := conn.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE id = 1`); err != nil {
+					return nil, fmt.Errorf("failed to clear inactive active profile ID: %w", err)
+				}
 				s.ActiveProfileID = ""
-				_, _ = conn.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE id = 1`)
 			}
 		}
 	}
