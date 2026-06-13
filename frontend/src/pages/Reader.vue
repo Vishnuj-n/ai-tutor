@@ -87,7 +87,7 @@
               v-if="isTaskFlow"
               class="primary"
               :disabled="
-                reader.loadingBundle.value || completingSession.value || !activeTaskID.value
+                !activeTaskID.value || reader.loadingBundle.value || completingSession.value
               "
               @click="completeSession"
             >
@@ -120,7 +120,7 @@
         <p v-if="isTaskFlow && completionError" class="error">{{ completionError }}</p>
       </article>
 
-      <aside class="panel chat" :class="{ closed: chat.chatCollapsed.value }">
+      <aside class="panel chat" :class="{ closed: chat.chatCollapsed.value, 'rag-off': !ragEnabled }">
         <div class="chat-head">
           <h2>AI Chat</h2>
           <button class="ghost" @click="chat.toggleChat">
@@ -128,7 +128,16 @@
           </button>
         </div>
 
-        <template v-if="!chat.chatCollapsed.value">
+        <div v-if="!chat.chatCollapsed.value && !ragSettingsLoaded.value" class="rag-disabled-overlay">
+          <h3>Loading settings...</h3>
+        </div>
+        <div v-else-if="!chat.chatCollapsed.value && ragSettingsError.value" class="rag-disabled-overlay">
+          <div class="lock-icon">⚠️</div>
+          <h3>Settings Error</h3>
+          <p>{{ ragSettingsError.value }}</p>
+          <button class="primary" @click="retryGetUserSettings">Retry</button>
+        </div>
+        <template v-else-if="!chat.chatCollapsed.value && ragEnabled">
           <p class="chat-context">
             Using topic <strong>{{ reader.selectedTopicTitle.value || 'None' }}</strong>
             <span v-if="reader.selectedNotebookTitle.value"
@@ -184,6 +193,13 @@
             {{ chat.chatLoading.value ? 'Thinking...' : 'Send' }}
           </button>
         </template>
+        
+        <div v-if="!chat.chatCollapsed.value && ragSettingsLoaded.value && !ragEnabled" class="rag-disabled-overlay">
+          <div class="lock-icon">🔒</div>
+          <h3>Local AI Retrieval Offline</h3>
+          <p>Local semantic search and Q&A is currently disabled to save memory and CPU.</p>
+          <router-link to="/settings" class="enable-rag-btn">Enable in Settings</router-link>
+        </div>
       </aside>
     </div>
   </section>
@@ -192,7 +208,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { completeReading } from '../services/appApi'
+import { completeReading, getUserSettings } from '../services/appApi'
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
 
@@ -215,6 +231,9 @@ const completionMessage = ref('')
 const completionError = ref('')
 const iframeKey = ref(0)
 const activeTaskID = ref('')
+const ragEnabled = ref(false)
+const ragSettingsLoaded = ref(false)
+const ragSettingsError = ref(null)
 
 const isTaskFlow = computed(() => !!routeTaskID.value)
 
@@ -223,6 +242,20 @@ const isTaskFlow = computed(() => !!routeTaskID.value)
 
 // Initialize on mount
 onMounted(async () => {
+  ragSettingsLoaded.value = false
+  ragSettingsError.value = null
+  try {
+    const settings = await getUserSettings()
+    if (settings && settings.rag_enabled !== undefined) {
+      ragEnabled.value = settings.rag_enabled
+    }
+    ragSettingsLoaded.value = true
+  } catch (err) {
+    console.error('Failed to load settings in Reader:', err)
+    ragSettingsError.value = err?.message || 'Failed to load settings'
+    ragSettingsLoaded.value = true
+  }
+
   console.log('[Reader] Mounted. route.query:', JSON.stringify(route.query))
   console.log('[Reader] routeTaskID:', routeTaskID.value)
 
@@ -286,6 +319,21 @@ function goPrev() {
 function goNext() {
   if (reader.goNext()) {
     iframeKey.value++
+  }
+}
+
+async function retryGetUserSettings() {
+  ragSettingsLoaded.value = false
+  ragSettingsError.value = null
+  try {
+    const settings = await getUserSettings()
+    if (settings && settings.rag_enabled !== undefined) {
+      ragEnabled.value = settings.rag_enabled
+    }
+    ragSettingsLoaded.value = true
+  } catch (err) {
+    ragSettingsError.value = err?.message || 'Failed to load settings'
+    ragSettingsLoaded.value = true
   }
 }
 
@@ -816,5 +864,57 @@ button:disabled {
   .layout.collapsed {
     grid-template-columns: 1fr;
   }
+}
+
+/* RAG Disabled styles in Reader */
+.panel.chat.rag-off {
+  background: color-mix(in srgb, var(--surface-container-low) 90%, #000000);
+  opacity: 0.85;
+}
+
+.rag-disabled-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  height: calc(100% - 60px);
+}
+
+.rag-disabled-overlay .lock-icon {
+  font-size: 32px;
+  margin-bottom: 16px;
+  opacity: 0.7;
+}
+
+.rag-disabled-overlay h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--on-surface);
+}
+
+.rag-disabled-overlay p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--on-surface-variant);
+  margin-bottom: 24px;
+}
+
+.enable-rag-btn {
+  display: inline-block;
+  padding: 8px 16px;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.enable-rag-btn:hover {
+  background: color-mix(in srgb, var(--primary) 85%, #000000);
 }
 </style>

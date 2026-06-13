@@ -9,8 +9,6 @@ import (
 	"ai-tutor/internal/models"
 )
 
-// createFlashcardsRepo writes cards to DB transactionally.
-// Used by: app_contract_test.go via CreateFlashcards (test-only coverage, production runs GetOrCreateFlashcardsForTopic)
 func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.FlashcardState) error {
 	return withTx(func(tx *sql.Tx) error {
 		for _, card := range cards {
@@ -19,20 +17,12 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 				return fmt.Errorf("failed to encode flashcard state for %s: %w", card.ID, marshalErr)
 			}
 
-			result, execErr := tx.Exec(`
+			_, execErr := tx.Exec(`
 				INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
 				VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 			`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 			if execErr != nil {
 				return execErr
-			}
-
-			rowsAffected, rowsErr := result.RowsAffected()
-			if rowsErr != nil {
-				return rowsErr
-			}
-			if rowsAffected != 1 {
-				return fmt.Errorf("flashcard %s was not inserted", card.ID)
 			}
 		}
 		return nil
@@ -286,24 +276,46 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 				return fmt.Errorf("failed to encode flashcard state for %s: %w", card.ID, marshalErr)
 			}
 
-			result, execErr := tx.Exec(`
+			_, execErr := tx.Exec(`
 				INSERT OR IGNORE INTO fsrs_cards (id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended)
 				VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 			`, card.ID, card.TopicID, card.SourceChunkID, card.Prompt, card.Answer, string(stateJSON), card.DueAt, boolToInt(card.Suspended))
 			if execErr != nil {
 				return execErr
 			}
-
-			rowsAffected, rowsErr := result.RowsAffected()
-			if rowsErr != nil {
-				return rowsErr
-			}
-			if rowsAffected != 1 {
-				return fmt.Errorf("flashcard %s was not inserted", card.ID)
-			}
 		}
 
-		cards = cardsIfNotExist
+		rows, err := tx.Query(`
+			SELECT id, topic_id, COALESCE(source_chunk_id, ''), prompt, answer, COALESCE(due_at, 0), suspended
+			FROM fsrs_cards
+			WHERE topic_id = ? AND suspended = 0
+			ORDER BY
+				CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,
+				due_at ASC,
+				created_at ASC,
+				id ASC
+		`, topicID)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = rows.Close()
+		}()
+
+		cards = make([]models.Flashcard, 0)
+		for rows.Next() {
+			var card models.Flashcard
+			var suspended bool
+			if err := rows.Scan(&card.ID, &card.TopicID, &card.SourceChunkID, &card.Prompt, &card.Answer, &card.DueAt, &suspended); err != nil {
+				return err
+			}
+			card.Suspended = suspended
+			cards = append(cards, card)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
 		existing = false
 		return nil
 	})
@@ -332,4 +344,29 @@ func getLastFlashcardReviewTimeRepoTx(tx *sql.Tx, cardID string) (int64, error) 
 		WHERE activity_type = 'flashcard' AND reference_id = ?
 	`, cardID).Scan(&lastReviewedAt)
 	return lastReviewedAt, err
+}
+
+// SaveManualFlashcardsBatch handles the storage of sandbox flashcards.
+// It explicitly clears previous manual runs for this notebook to preserve an
+// ephemeral environment and isolates them entirely from the scheduled FSRS pipeline.
+func SaveManualFlashcardsBatch(notebookID string, cards []models.Flashcard) error {
+	return withTx(func(tx *sql.Tx) error {
+		// Clean out the old manual sandbox cards for this specific notebook
+		_, err := tx.Exec(`DELETE FROM manual_flashcards WHERE notebook_id = ?`, notebookID)
+		if err != nil {
+			return err
+		}
+
+		// Insert the fresh sandbox generation batch
+		for _, card := range cards {
+			_, err = tx.Exec(`
+				INSERT INTO manual_flashcards (id, notebook_id, prompt, answer)
+				VALUES (?, ?, ?, ?)
+			`, card.ID, notebookID, card.Prompt, card.Answer)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
