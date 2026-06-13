@@ -87,7 +87,7 @@
               v-if="isTaskFlow"
               class="primary"
               :disabled="
-                !activeTaskID.value || reader.loadingBundle.value || completingSession.value
+                !activeTaskID || reader.loadingBundle.value || completingSession
               "
               @click="completeSession"
             >
@@ -128,13 +128,13 @@
           </button>
         </div>
 
-        <div v-if="!chat.chatCollapsed.value && !ragSettingsLoaded.value" class="rag-disabled-overlay">
+        <div v-if="!chat.chatCollapsed.value && !ragSettingsLoaded" class="rag-disabled-overlay">
           <h3>Loading settings...</h3>
         </div>
-        <div v-else-if="!chat.chatCollapsed.value && ragSettingsError.value" class="rag-disabled-overlay">
+        <div v-else-if="!chat.chatCollapsed.value && ragSettingsError" class="rag-disabled-overlay">
           <div class="lock-icon">⚠️</div>
           <h3>Settings Error</h3>
-          <p>{{ ragSettingsError.value }}</p>
+          <p>{{ ragSettingsError }}</p>
           <button class="primary" @click="retryGetUserSettings">Retry</button>
         </div>
         <template v-else-if="!chat.chatCollapsed.value && ragEnabled">
@@ -194,7 +194,7 @@
           </button>
         </template>
         
-        <div v-if="!chat.chatCollapsed.value && ragSettingsLoaded.value && !ragEnabled" class="rag-disabled-overlay">
+        <div v-if="!chat.chatCollapsed.value && ragSettingsLoaded && !ragEnabled" class="rag-disabled-overlay">
           <div class="lock-icon">🔒</div>
           <h3>Local AI Retrieval Offline</h3>
           <p>Local semantic search and Q&A is currently disabled to save memory and CPU.</p>

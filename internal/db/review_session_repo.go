@@ -112,9 +112,21 @@ func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) (
 }
 
 func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
+	var activeProfileID sql.NullString
+	if err := conn.QueryRow(`
+		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
+	`).Scan(&activeProfileID); err != nil && err != sql.ErrNoRows {
+		return "", 0, fmt.Errorf("getNextDueReviewNotebookRepo: reading active_profile_id: %w", err)
+	}
+
+	activeProfileStr := ""
+	if activeProfileID.Valid {
+		activeProfileStr = activeProfileID.String
+	}
+
 	var notebookID string
 	var dueCount int
-	err := conn.QueryRow(`
+	query := `
 		SELECT
 			n.id,
 			COUNT(fc.id) AS due_count
@@ -141,10 +153,21 @@ func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
 			  AND sq.task_type = 'FLASHCARD_REVIEW'
 			  AND sq.status IN ('PENDING', 'ACTIVE')
 		  )
+	`
+	var args []interface{}
+	args = append(args, now)
+	if activeProfileStr != "" {
+		query += ` AND (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
+		args = append(args, activeProfileStr)
+	}
+
+	query += `
 		GROUP BY n.id, COALESCE(n.priority, 5)
 		ORDER BY due_count DESC, COALESCE(n.priority, 5) DESC, n.id ASC
 		LIMIT 1
-	`, now).Scan(&notebookID, &dueCount)
+	`
+
+	err := conn.QueryRow(query, args...).Scan(&notebookID, &dueCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, nil
 	}

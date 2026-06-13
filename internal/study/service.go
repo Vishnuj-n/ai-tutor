@@ -362,6 +362,7 @@ func salvagePartialCards(raw string) *flashcardLLMResponse {
 
 	// Try to find card objects by splitting on '{' boundaries
 	cards := make([]flashcardLLMCard, 0)
+	seenPrompts := make(map[string]bool)
 
 	// Find all '{' positions to identify potential card objects
 	for i := 0; i < len(raw); i++ {
@@ -383,6 +384,11 @@ func salvagePartialCards(raw string) *flashcardLLMResponse {
 			if braceCount == 0 && j > i+1 {
 				cardStr := raw[i+1 : j-1] // Content between { and }
 
+				// Skip the root JSON object containing the "cards" list itself
+				if strings.Contains(cardStr, `"cards"`) {
+					continue
+				}
+
 				// Try to extract fields from this object
 				sourceChunkID := extractJSONField("{"+cardStr+"}", "source_chunk_id")
 				prompt := extractJSONField("{"+cardStr+"}", "prompt")
@@ -390,11 +396,15 @@ func salvagePartialCards(raw string) *flashcardLLMResponse {
 
 				// Only add if we have at least some non-empty required fields
 				if sourceChunkID != "" && prompt != "" && answer != "" {
-					cards = append(cards, flashcardLLMCard{
-						SourceChunkID: sourceChunkID,
-						Prompt:        prompt,
-						Answer:        answer,
-					})
+					trimmedPrompt := strings.TrimSpace(prompt)
+					if !seenPrompts[trimmedPrompt] {
+						seenPrompts[trimmedPrompt] = true
+						cards = append(cards, flashcardLLMCard{
+							SourceChunkID: sourceChunkID,
+							Prompt:        prompt,
+							Answer:        answer,
+						})
+					}
 				}
 			}
 		}

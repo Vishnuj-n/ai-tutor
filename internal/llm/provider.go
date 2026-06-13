@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"ai-tutor/internal/models"
 )
 
 const minTimeoutMs = 1
@@ -67,6 +69,68 @@ func LoadConfigFromEnvForPrefix(prefix string) *Config {
 	config.Limits = getModelLimits(config.Model)
 
 	return config
+}
+
+// LoadConfigFromSettingsForPrefix resolves config as:
+// env override -> SQLite non-secret settings + keyring secret -> provider defaults.
+func LoadConfigFromSettingsForPrefix(prefix string, settings models.LLMTierSettings, apiKey string) *Config {
+	prefix = strings.TrimSpace(prefix)
+	if prefix != "" {
+		prefix = strings.TrimSuffix(prefix, "_")
+	}
+
+	baseURLKeys := prefixedKeys(prefix, "LLM_BASE_URL", "OPENAI_ENDPOINT", "OPENAI_BASE_URL", "BASE_URL")
+	apiKeyKeys := prefixedKeys(prefix, "LLM_API_KEY", "OPENAI_API_KEY", "API_KEY")
+	modelKeys := prefixedKeys(prefix, "LLM_MODEL", "BASE_MODEL", "OPENAI_MODEL", "MODEL")
+	timeoutKeys := prefixedKeys(prefix, "LLM_TIMEOUT_MS", "OPENAI_TIMEOUT_MS", "TIMEOUT_MS")
+
+	config := &Config{
+		BaseURL:   firstNonEmpty(firstEnv(baseURLKeys...), settings.BaseURL, defaultBaseURLForProvider(settings.Provider)),
+		APIKey:    firstNonEmpty(firstEnv(apiKeyKeys...), apiKey),
+		Model:     firstNonEmpty(firstEnv(modelKeys...), settings.Model, defaultModelForProvider(settings.Provider)),
+		TimeoutMs: firstEnvInt(settings.TimeoutMs, timeoutKeys...),
+	}
+	if config.TimeoutMs <= 0 {
+		config.TimeoutMs = 30000
+	}
+	config.Limits = getModelLimits(config.Model)
+	return config
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func defaultBaseURLForProvider(provider string) string {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case "groq":
+		return "https://api.groq.com/openai"
+	case "openai":
+		return "https://api.openai.com"
+	case "openrouter":
+		return "https://openrouter.ai/api"
+	default:
+		return ""
+	}
+}
+
+func defaultModelForProvider(provider string) string {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case "groq":
+		return "openai/gpt-oss-120b"
+	case "openai":
+		return "gpt-4.1-mini"
+	case "openrouter":
+		return "openai/gpt-4.1-mini"
+	default:
+		return ""
+	}
 }
 
 // getModelLimits returns model-specific token limits with safety margins.
@@ -195,6 +259,9 @@ type openAIResponse struct {
 func (p *Provider) GenerateAnswer(prompt string) (string, error) {
 	if p.config == nil || p.config.BaseURL == "" {
 		return "", fmt.Errorf("LLM config not configured")
+	}
+	if strings.TrimSpace(p.config.APIKey) == "" {
+		return "", fmt.Errorf("LLM API key not configured")
 	}
 
 	requestBody := openAIRequest{
