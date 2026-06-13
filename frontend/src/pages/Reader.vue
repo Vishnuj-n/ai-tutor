@@ -105,13 +105,16 @@
         <div v-else-if="!reader.pdfVisible.value" class="empty">
           PDF not available for selected notebook/topic.
         </div>
-        <div v-else class="pdf-wrap">
-          <iframe
-            :key="iframeKey"
-            class="pdf-frame"
-            :src="reader.pdfSource.value"
-            title="Notebook PDF"
-          ></iframe>
+        <div v-else ref="pdfViewportRef" class="pdf-viewport">
+          <div v-if="pdfLoadError" class="empty error">{{ pdfLoadError }}</div>
+          <vue-pdf-embed
+            v-else
+            ref="pdfRef"
+            :source="reader.notebookUrl.value"
+            :page="renderedPages"
+            @rendered="handlePDFRendered"
+            @loading-failed="handlePDFLoadFailed"
+          />
         </div>
 
         <p v-if="isTaskFlow && completionMessage" class="completion-message">
@@ -206,11 +209,14 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { completeReading, getUserSettings } from '../services/appApi'
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
+import VuePdfEmbed from 'vue-pdf-embed'
+import 'vue-pdf-embed/dist/styles/annotationLayer.css'
+import 'vue-pdf-embed/dist/styles/textLayer.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -229,11 +235,28 @@ const chat = useChat()
 const completingSession = ref(false)
 const completionMessage = ref('')
 const completionError = ref('')
-const iframeKey = ref(0)
 const activeTaskID = ref('')
 const ragEnabled = ref(false)
 const ragSettingsLoaded = ref(false)
 const ragSettingsError = ref(null)
+
+// Custom PDF Viewer State & Refs
+const pdfViewportRef = ref(null)
+const pdfRef = ref(null)
+const isProgrammaticScrolling = ref(false)
+const pdfLoadError = ref('')
+let pdfObserver = null
+
+const renderedPages = computed(() => {
+  if (reader.hasNavigationBounds.value) {
+    const pages = []
+    for (let p = reader.navigationMinPage.value; p <= reader.navigationMaxPage.value; p++) {
+      pages.push(p)
+    }
+    return pages
+  }
+  return undefined
+})
 
 const isTaskFlow = computed(() => !!routeTaskID.value)
 
@@ -309,17 +332,101 @@ watch(activeTaskID, (next, prev) => {
   console.warn('[READER_STATE] activeTaskID changed', { previous: prev, next })
 })
 
+watch(() => reader.currentPage.value, (newPage) => {
+  scrollToPage(newPage)
+})
+
+watch(() => reader.notebookUrl.value, () => {
+  pdfLoadError.value = ''
+})
+
+onUnmounted(() => {
+  if (pdfObserver) {
+    pdfObserver.disconnect()
+  }
+})
+
 // Navigation methods
 function goPrev() {
-  if (reader.goPrev()) {
-    iframeKey.value++
-  }
+  reader.goPrev()
 }
 
 function goNext() {
-  if (reader.goNext()) {
-    iframeKey.value++
+  reader.goNext()
+}
+
+function scrollToPage(pageNum) {
+  if (!pdfViewportRef.value) return
+  
+  const pageEl = pdfViewportRef.value.querySelector(`[data-page="${pageNum}"]`)
+  if (!pageEl) return
+
+  // Check if it's already in the center area
+  const rect = pageEl.getBoundingClientRect()
+  const parentRect = pdfViewportRef.value.getBoundingClientRect()
+  
+  // Calculate relative top and bottom positions within the parent container
+  const relativeTop = rect.top - parentRect.top
+  const relativeBottom = rect.bottom - parentRect.top
+  const containerHeight = parentRect.height
+  
+  // We consider it visible if the page element is covering the center horizontal line of viewport
+  const isAlreadyCenter = (relativeTop <= containerHeight * 0.5 && relativeBottom >= containerHeight * 0.5)
+
+  if (!isAlreadyCenter) {
+    isProgrammaticScrolling.value = true
+    pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    
+    // Reset programmatic flag after smooth scroll is expected to complete
+    setTimeout(() => {
+      isProgrammaticScrolling.value = false
+    }, 850)
   }
+}
+
+function handlePDFRendered() {
+  console.log('[Reader] PDF rendered. Setting up observer and initial scroll.')
+  if (pdfObserver) {
+    pdfObserver.disconnect()
+  }
+
+  const pages = pdfViewportRef.value?.querySelectorAll('.vue-pdf-embed__page, .vue-pdf-embed > div')
+  if (!pages || pages.length === 0) return
+
+  pdfObserver = new IntersectionObserver(
+    (entries) => {
+      if (isProgrammaticScrolling.value) return
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const pageNum = parseInt(entry.target.dataset.page)
+          if (pageNum && pageNum !== reader.currentPage.value) {
+            reader.currentPage.value = pageNum
+          }
+        }
+      })
+    },
+    {
+      root: pdfViewportRef.value,
+      rootMargin: '-40% 0px -40% 0px',
+      threshold: 0,
+    }
+  )
+
+  pages.forEach((pageEl, index) => {
+    const pageNum = reader.hasNavigationBounds.value
+      ? reader.navigationMinPage.value + index
+      : index + 1
+    pageEl.dataset.page = pageNum
+    pdfObserver.observe(pageEl)
+  })
+
+  // Scroll to current page on load
+  scrollToPage(reader.currentPage.value)
+}
+
+function handlePDFLoadFailed(err) {
+  console.error('[Reader] PDF loading failed:', err)
+  pdfLoadError.value = err?.message || 'Failed to load PDF document.'
 }
 
 async function retryGetUserSettings() {
@@ -515,20 +622,60 @@ h3 {
   color: var(--muted-text);
 }
 
-.pdf-wrap {
-  border: 1px solid var(--surface-container-low);
+.pdf-viewport {
+  width: 100%;
+  height: calc(100vh - 160px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--background);
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  scroll-behavior: smooth;
   border-radius: 10px;
-  overflow: hidden;
-  min-height: 480px;
-  background: #f5f6f8;
 }
 
-.pdf-frame {
-  width: 100%;
-  min-height: 640px;
-  border: 0;
-  display: block;
-  background: #fff;
+.pdf-viewport :deep(.vue-pdf-embed) {
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+.pdf-viewport :deep(.vue-pdf-embed__page) {
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  margin-bottom: 0px !important;
+  box-shadow: none !important;
+}
+
+.pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  width: 100% !important;
+  height: auto !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* Theme filters */
+[data-theme="light-warm"] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: sepia(0.4) contrast(1.05) brightness(0.95);
+}
+
+[data-theme="dark-indigo"] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: invert(0.9) hue-rotate(190deg) brightness(0.9) contrast(1.1);
+}
+
+[data-theme="dark-nord"] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: invert(0.9) hue-rotate(160deg) saturate(0.8) brightness(0.9) contrast(1.1);
+}
+
+[data-theme="dark-emerald"] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: invert(0.9) hue-rotate(90deg) saturate(0.7) brightness(0.9) contrast(1.1);
 }
 
 .completion-message {
