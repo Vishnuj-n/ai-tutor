@@ -143,8 +143,31 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		}
 	}
 
-	fastLLMProvider := llm.NewProvider(llm.LoadConfigFromEnvForPrefix("FAST_LLM"))
-	heavyLLMProvider := llm.NewProvider(llm.LoadConfigFromEnvForPrefix("HEAVY_LLM"))
+	llmSettings, err := db.GetLLMSettings()
+	if err != nil {
+		utils.Warnf("failed to load LLM settings: %v. Falling back to environment config.", err)
+		llmSettings = nil
+	}
+	var fastLLMProvider *llm.Provider
+	var heavyLLMProvider *llm.Provider
+	if llmSettings != nil {
+		fastKey, err := llm.GetAPIKey("fast")
+		if err != nil {
+			utils.Warnf("FAST_LLM keyring lookup failed or missing: %v", err)
+		}
+		heavyKey, err := llm.GetAPIKey("heavy")
+		if err != nil {
+			utils.Warnf("HEAVY_LLM keyring lookup failed or missing: %v", err)
+		}
+		if heavyKey == "" && fastKey != "" && llmSettings.UseSameForHeavy {
+			heavyKey = fastKey
+		}
+		fastLLMProvider = llm.NewProvider(llm.LoadConfigFromSettingsForPrefix("FAST_LLM", llmSettings.Fast, fastKey))
+		heavyLLMProvider = llm.NewProvider(llm.LoadConfigFromSettingsForPrefix("HEAVY_LLM", llmSettings.Heavy, heavyKey))
+	} else {
+		fastLLMProvider = llm.NewProvider(llm.LoadConfigFromEnvForPrefix("FAST_LLM"))
+		heavyLLMProvider = llm.NewProvider(llm.LoadConfigFromEnvForPrefix("HEAVY_LLM"))
+	}
 	res.FastLLMProvider = fastLLMProvider
 	res.HeavyLLMProvider = heavyLLMProvider
 

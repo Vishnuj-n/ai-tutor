@@ -538,3 +538,21 @@ type UserSettings struct {
 	Theme               string `json:"theme"`
 	RAGEnabled          bool   `json:"rag_enabled"`
 }
+
+// LLMTierSettings stores non-secret OpenAI-compatible provider config.
+// API keys live in the OS credential store via go-keyring.
+type LLMTierSettings struct {
+	Tier         string `json:"tier"`
+	Provider     string `json:"provider"`
+	BaseURL      string `json:"base_url"`
+	Model        string `json:"model"`
+	TimeoutMs    int    `json:"timeout_ms"`
+	APIKeySource string `json:"api_key_source"`
+	HasAPIKey    bool   `json:"has_api_key"`
+}
+
+type LLMSettings struct {
+	UseSameForHeavy bool            `json:"use_same_for_heavy"`
+	Fast            LLMTierSettings `json:"fast"`
+	Heavy           LLMTierSettings `json:"heavy"`
+}

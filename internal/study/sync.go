@@ -57,8 +57,8 @@ func TriggerCloudSync() error {
 
 	utils.Warnf("[SYNC] Running cloud sync to: %s", settings.CloudSyncURL)
 
-	// Gather notebooks and logs from DB
-	notebooks, err := db.GetNotebooks("")
+	// Gather notebooks and logs from DB (all notebooks for sync)
+	notebooks, err := db.GetNotebooks("", "")
 	if err != nil {
 		return fmt.Errorf("failed to fetch notebooks: %w", err)
 	}

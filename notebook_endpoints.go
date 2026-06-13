@@ -510,9 +510,11 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	}
 }
 
-// GetNotebooks retrieves all notebooks, optionally filtered by topic
-func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
-	notebooks, err := db.GetNotebooks(topicID)
+// GetNotebooks retrieves all notebooks, optionally filtered by topic and profile.
+// When profileID is empty, returns all notebooks (backward compatible).
+// When profileID is set, returns only notebooks belonging to that profile or unassigned notebooks.
+func (a *App) GetNotebooks(topicID, profileID string) []map[string]interface{} {
+	notebooks, err := db.GetNotebooks(topicID, profileID)
 	if err != nil {
 		return []map[string]interface{}{
 			{"error": err.Error()},
@@ -543,7 +545,8 @@ func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
 
 // GetNotebookTopicTree returns notebook-scoped topic options for hierarchical selectors.
 func (a *App) GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
-	tree, err := db.GetNotebookTopicTree()
+	profileID := resolveExplicitActiveProfileID()
+	tree, err := db.GetNotebookTopicTree(profileID)
 	if err != nil {
 		return nil, err
 	}
