@@ -100,6 +100,8 @@
             </select>
           </div>
 
+
+
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
 
           <div class="notebook-actions">
@@ -107,6 +109,54 @@
             <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Smart Shelf: Active Lane + Dormant Warehouse -->
+    <div v-if="!loading && notebooks.length > 0" class="shelf-section">
+      <h2>Smart Shelf</h2>
+      <p class="shelf-description">Hard-gated to a maximum of 4 active textbooks to prevent study fatigue.</p>
+
+      <div class="shelf-grid">
+        <!-- Active Lane -->
+        <article class="shelf-column active-column">
+          <h3>Active Lane ({{ activeNotebooks.length }} / 4)</h3>
+          <div v-if="activeNotebooks.length === 0" class="shelf-empty">
+            No textbooks active. Activate books from the Dormant Warehouse below.
+          </div>
+          <div v-else class="shelf-list">
+            <div v-for="nb in activeNotebooks" :key="nb.id" class="shelf-card active-card">
+              <div class="shelf-card-details">
+                <h4>{{ nb.title }}</h4>
+                <p class="shelf-card-meta">Priority: <strong>{{ nb.priority }}</strong> · {{ nb.page_count }} pages</p>
+              </div>
+              <button class="shelf-action-btn sleep-btn" @click="setStudyStatus(nb.id, 'dormant')">Sleep</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- Dormant Warehouse -->
+        <article class="shelf-column dormant-column">
+          <h3>Dormant Warehouse</h3>
+          <div v-if="dormantNotebooks.length === 0" class="shelf-empty">
+            All notebooks are active or none uploaded yet.
+          </div>
+          <div v-else class="shelf-list">
+            <div v-for="nb in dormantNotebooks" :key="nb.id" class="shelf-card dormant-card">
+              <div class="shelf-card-details">
+                <h4>{{ nb.title }}</h4>
+                <p class="shelf-card-meta">Priority: <strong>{{ nb.priority }}</strong> · {{ nb.page_count }} pages</p>
+              </div>
+              <button
+                class="shelf-action-btn activate-btn"
+                :disabled="activeNotebooks.length >= 4"
+                @click="setStudyStatus(nb.id, 'active')"
+              >
+                Activate
+              </button>
+            </div>
+          </div>
+        </article>
       </div>
     </div>
 
@@ -242,7 +292,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import {
   getAvailableTopics,
   getNotebooks as fetchNotebooks,
@@ -253,6 +303,8 @@ import {
   updateNotebookTitle as apiUpdateNotebookTitle,
   updateNotebookPriority as apiUpdateNotebookPriority,
   deleteNotebook as apiDeleteNotebook,
+  updateNotebookStudyStatus,
+  getUserSettings,
 } from '../services/appApi'
 import {
   CanResolveFilePaths,
@@ -281,6 +333,8 @@ const draftNotebookTitle = ref('')
 const draftNotebookPriority = ref(5)
 const originalDraftTitle = ref('')
 const originalDraftPriority = ref(5)
+
+
 const draftPageCount = ref(1)
 const draftChapters = ref([])
 const originalDraftChapters = ref([])
@@ -294,9 +348,43 @@ const fallbackToastTimer = ref(null)
 const actionToastTimer = ref(null)
 const isDraftingSyllabus = ref(false)
 const draftingNotebookTitle = ref('')
+const activeProfileID = ref('')
+
+const activeNotebooks = computed(() =>
+  notebooks.value.filter(
+    (nb) => nb.study_status === 'active' && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
+  )
+)
+
+const dormantNotebooks = computed(() =>
+  notebooks.value.filter(
+    (nb) => (nb.study_status === 'dormant' || !nb.study_status) && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
+  )
+)
+
+async function setStudyStatus(notebookID, status) {
+  try {
+    const res = await updateNotebookStudyStatus(notebookID, status)
+    if (res?.error) {
+      showToast(`Failed to update study status: ${res.error}`)
+      return
+    }
+    await loadNotebooks()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    showToast(`Failed to update study status: ${msg}`)
+    uploadError.value = `Failed to update study status: ${msg}`
+  }
+}
 
 onMounted(async () => {
   EventsOn('ingestion-progress', handleIngestionProgress)
+
+  // Load active profile for Smart Shelf profile scoping
+  const settings = await getUserSettings()
+  if (settings && !settings.error) {
+    activeProfileID.value = settings.active_profile_id || ''
+  }
 
   // Load available topics and notebooks
   await loadTopics()
@@ -533,8 +621,10 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
 
     // Load notebook to get current priority
     const notebook = notebooks.value.find((nb) => nb.id === notebookID)
-    if (notebook && notebook.priority) {
-      draftNotebookPriority.value = notebook.priority
+    if (notebook) {
+      if (notebook.priority) {
+        draftNotebookPriority.value = notebook.priority
+      }
     }
 
     showSyllabusModal.value = true
@@ -1502,6 +1592,129 @@ function formatDate(dateString) {
   .toast-fade-leave-to {
     opacity: 0;
     transform: translateY(12px);
+  }
+}
+
+/* ── Smart Shelf ─────────────────────────────────────── */
+.shelf-section {
+  margin-top: 32px;
+}
+
+.shelf-section h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.shelf-description {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--muted-text, #888);
+}
+
+.shelf-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.shelf-column {
+  background: var(--surface-container-low, #1e1e1e);
+  border: 1px solid var(--outline-variant, #333);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.shelf-column h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.shelf-empty {
+  text-align: center;
+  padding: 24px 16px;
+  color: var(--muted-text, #888);
+  font-size: 13px;
+  border: 1px dashed var(--outline-variant, #333);
+  border-radius: 12px;
+}
+
+.shelf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shelf-card {
+  background: var(--surface-container-lowest, #161616);
+  border: 1px solid var(--outline-variant, #333);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.shelf-card-details h4 {
+  margin: 0 0 3px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.shelf-card-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-text, #888);
+}
+
+.shelf-action-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.18s;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.sleep-btn {
+  background: rgba(235, 94, 85, 0.12);
+  color: #eb5e55;
+}
+
+.sleep-btn:hover {
+  background: #eb5e55;
+  color: #fff;
+}
+
+.activate-btn {
+  background: rgba(108, 92, 231, 0.12);
+  color: var(--primary, #6c5ce7);
+}
+
+.activate-btn:hover:not(:disabled) {
+  background: var(--primary, #6c5ce7);
+  color: #fff;
+}
+
+.activate-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .shelf-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

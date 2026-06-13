@@ -1,4 +1,5 @@
 # AI Tutor App Flow
+- **Legacy term note:** The term `blocks` has been replaced by `chunks`. The API still uses `block_id` as the identifier for a chunk. See `doc/SCHEMA.md` for mapping.
 
 ## Core Philosophy: Persistent Guided Study Queue
 

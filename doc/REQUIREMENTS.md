@@ -49,7 +49,7 @@ A **Persistent Guided Study Queue** - local-first desktop assistant for studying
 	- Parse uploaded files to extract text and metadata (page counts for PDFs)
 	- **Sliding window chunking**: 2500-word chunks with 200-word overlap
 	- **NO semantic chunking** - deterministic boundaries only
-	- Persist chunks in `chunks` table with `parent_id` linking to `parents` (section headings)
+	- Persist chunks in `chunks` table linking directly to topics (`topic_id`)
 	- Store embeddings in the RAG embedding store (sqlite-vec virtual table); reference embeddings from `chunks` via `embedding_ref`
 	- **Insert READING tasks** into `study_queue` during ingestion
 	- **Synchronous processing** - no background workers for MVP

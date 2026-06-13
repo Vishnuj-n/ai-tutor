@@ -20,7 +20,6 @@ You are responsible only for AI logic and prompt design.
 
 ## RAG Constraints
 - Retrieval must always be scoped to topic_id.
-- Use parent-document retrieval: child chunks for search, parent sections for context.
 - Enforce strict token limits during prompt assembly.
 - Restrict the model to supplied context and task instructions.
 - Keep all AI calls stateless: single request, single response.

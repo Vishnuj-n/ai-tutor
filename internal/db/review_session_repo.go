@@ -111,55 +111,6 @@ func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) (
 	return cards, nil
 }
 
-// getDueReviewCardCountsByNotebookRepo returns a map of notebook IDs to their due card counts.
-// Excludes cards already linked to pending/active review tasks for consistency with session creation.
-func getDueReviewCardCountsByNotebookRepo(now int64) (map[string]int, error) {
-	rows, err := conn.Query(`
-		SELECT n.id, COUNT(fc.id)
-		FROM notebooks n
-		JOIN fsrs_cards fc
-		  ON (
-			COALESCE(n.topic_id, '') = fc.topic_id
-			OR EXISTS (
-				SELECT 1
-				FROM notebook_topics nt
-				WHERE nt.notebook_id = n.id
-				  AND nt.topic_id = fc.topic_id
-			)
-		  )
-		JOIN topics t ON t.id = fc.topic_id
-		WHERE fc.suspended = 0
-		  AND fc.due_at IS NOT NULL
-		  AND fc.due_at <= ?
-		  AND NOT EXISTS (
-			SELECT 1
-			FROM review_task_cards rtc
-			JOIN study_queue sq ON sq.id = rtc.task_id
-			WHERE rtc.card_id = fc.id
-			  AND sq.task_type = 'FLASHCARD_REVIEW'
-			  AND sq.status IN ('PENDING', 'ACTIVE')
-		  )
-		GROUP BY n.id
-	`, now)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	counts := make(map[string]int)
-	for rows.Next() {
-		var id string
-		var count int
-		if err := rows.Scan(&id, &count); err != nil {
-			return nil, err
-		}
-		counts[id] = count
-	}
-	return counts, nil
-}
-
 func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
 	var notebookID string
 	var dueCount int

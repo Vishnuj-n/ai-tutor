@@ -134,7 +134,7 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 
 ### Core Tables
 
-**Legacy term note:** Older documentation used the term `blocks` and `block_vectors`. The live schema uses `parents` + `chunks` and an embedding store; see `doc/SCHEMA.md` for exact mappings.
+**Legacy term note:** Older documentation used the term `blocks` and `block_vectors`. The live schema uses `chunks` and an embedding store; see `doc/SCHEMA.md` for exact mappings.
 
 **study_queue (NEW - The Central Queue)**
 | Field | Type | Description |
@@ -142,7 +142,7 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 | `id` | TEXT PK | Unique task identifier |
 | `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
 | `block_id` | TEXT | Reference to content block (chunk, quiz_set, etc.) |
-| `related_id` | TEXT | Optional related entity (topic_id, parent_id) |
+| `related_id` | TEXT | Optional related topic identifier |
 | `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED` |
 | `priority` | INTEGER | Lower = higher priority |
 | `created_at` | INTEGER | Unix timestamp |
@@ -150,11 +150,12 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 
 **Supporting Tables**
 
-- `topics` - id, title, status, start_page, end_page, current_page_cursor, created_at
-- `chunks` / `parents` - id, topic_id, parent_id, chunk_text, word_count, order_index
-- `questions` - id, topic_id, source_chunk_id, prompt, options_json, correct_answer
-- `fsrs_cards` - id, topic_id, source_chunk_id, prompt, answer, state_json, due_at
-- `app_events` (optional, prunable) - id, event_type, payload_json, created_at
+- `topics` - id, title, status, start_page, end_page, current_page_cursor, created_at, updated_at
+- `chunks` - id, topic_id, chunk_text, page_num, token_count, importance_score, weakness_score, embedding_ref, created_at
+- `written_questions` - id, topic_id, prompt, source_chunk_id, source_heading, source_page_start, source_page_end
+- `written_user_answers` - id, written_question_id, user_answer, score, feedback
+- `fsrs_cards` - id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended
+- `manual_flashcards` - id, notebook_id, prompt, answer
 
 ### What the Queue Replaces
 
@@ -193,17 +194,16 @@ We intentionally removed:
 3. Sliding Window Chunking → Deterministic boundaries (no AI)
 4. **Insert READING tasks** → One task per chunk into `study_queue`
 
-**Block Storage:**
+**Block Storage (chunks table):**
 
 | Field | Purpose |
 |-------|---------|
-| `id` | Unique block identifier |
-| `topic_id` | Parent topic reference |
-| `block_type` | `CHUNK`, `QUIZ`, `FLASHCARD` |
-| `content` | Text content or JSON payload |
-| `word_count` | For progress tracking |
-| `order_index` | Sequence within topic |
-| `start_page`, `end_page` | Page provenance |
+| `id` | Unique chunk identifier |
+| `topic_id` | Topic reference |
+| `chunk_text` | Text content |
+| `page_num` | Page provenance |
+| `token_count` | Word/token count |
+| `embedding_ref` | Vector store reference |
 
 ### Retrieval
 
@@ -229,14 +229,13 @@ Maintains control, cost, and predictable behavior.
 1. Validate active topic context.
 2. Embed the user query.
 3. Retrieve top-k chunks within topic scope.
-4. Expand chunk hits to parent sections.
-5. Build a structured prompt with:
+4. Build a structured prompt with:
    - User question
    - Topic metadata
-  - Retrieved context chunks
+   - Retrieved context chunks
    - Output constraints
-6. Execute one LLM request.
-7. Return response with citations/section labels.
+5. Execute one LLM request.
+6. Return response with citations.
 
 Constraints:
 

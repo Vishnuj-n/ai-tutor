@@ -122,33 +122,28 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 	if bundle.NotebookID != "" {
 		rows, err = conn.Query(`
 			SELECT
-				p.id,
-				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || CAST(COALESCE(p.order_index, 0) AS TEXT)),
-				p.content_text,
-				COALESCE(p.order_index, 0),
-				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
-			FROM parents p
-			LEFT JOIN chunks c ON c.parent_id = p.id AND c.topic_id = ?
-			LEFT JOIN notebook_chunks nc ON nc.chunk_id = c.id AND nc.notebook_id = ?
-			WHERE p.topic_id = ?
-			GROUP BY p.id, p.heading, p.content_text, p.order_index
-			ORDER BY p.order_index ASC, p.id ASC
-		`, topicID, bundle.NotebookID, topicID)
+				c.id,
+				'Page ' || CAST(COALESCE(nc.page_num, 0) AS TEXT),
+				c.chunk_text,
+				COALESCE(nc.page_num, 0),
+				COALESCE(nc.page_num, 0) AS page_num
+			FROM chunks c
+			JOIN notebook_chunks nc ON nc.chunk_id = c.id AND nc.notebook_id = ?
+			WHERE c.topic_id = ?
+			ORDER BY nc.page_num ASC, c.id ASC
+		`, bundle.NotebookID, topicID)
 	} else {
 		rows, err = conn.Query(`
 			SELECT
-				p.id,
-				COALESCE(NULLIF(TRIM(p.heading), ''), 'Section ' || CAST(COALESCE(p.order_index, 0) AS TEXT)),
-				p.content_text,
-				COALESCE(p.order_index, 0),
-				COALESCE(MIN(NULLIF(nc.page_num, 0)), 0) AS page_num
-			FROM parents p
-			LEFT JOIN chunks c ON c.parent_id = p.id AND c.topic_id = ?
-			LEFT JOIN notebook_chunks nc ON nc.chunk_id = c.id
-			WHERE p.topic_id = ?
-			GROUP BY p.id, p.heading, p.content_text, p.order_index
-			ORDER BY p.order_index ASC, p.id ASC
-		`, topicID, topicID)
+				c.id,
+				'Page ' || CAST(COALESCE(c.page_num, 0) AS TEXT),
+				c.chunk_text,
+				COALESCE(c.page_num, 0),
+				COALESCE(c.page_num, 0) AS page_num
+			FROM chunks c
+			WHERE c.topic_id = ?
+			ORDER BY c.page_num ASC, c.id ASC
+		`, topicID)
 	}
 	if err != nil {
 		return nil, err

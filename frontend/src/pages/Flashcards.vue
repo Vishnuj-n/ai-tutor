@@ -149,7 +149,7 @@ import {
   activateTask,
   completeReviewSession,
   getNotebooks,
-  generateMarathonFlashcards,
+  generateManualFlashcards as generateManualFlashcards,
   getReviewSession,
   recordCardReview,
 } from '../services/appApi.js'
@@ -211,7 +211,7 @@ async function generate() {
   reviewing.value = false
   loading.value = true
   try {
-    const res = await generateMarathonFlashcards(
+    const res = await generateManualFlashcards(
       selectedNotebookID.value,
       startPage.value,
       endPage.value

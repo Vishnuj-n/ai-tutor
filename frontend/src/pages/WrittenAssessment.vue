@@ -131,10 +131,6 @@
             <span class="score-num">{{ result.score }}</span>
             <span class="score-denom">/10</span>
           </div>
-          <div v-if="result.fsrsRating" class="fsrs-chip">
-            <span class="fsrs-rating">{{ result.fsrsRating }}</span>
-            <span class="fsrs-days">Next: {{ result.scheduledDays }}d</span>
-          </div>
         </div>
 
         <p class="result-panel__feedback">{{ result.feedback }}</p>
@@ -249,8 +245,6 @@ async function submitAnswer() {
       prompt: res.prompt,
       score: res.score,
       feedback: res.feedback,
-      fsrsRating: res.fsrsRating,
-      scheduledDays: res.scheduled_days,
     }
   } catch (e) {
     error.value = e?.message ?? 'Scoring failed.'

@@ -3,11 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
+	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -89,6 +92,18 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		}
 	}
 
+	// Auto-assign the notebook to the active profile, mirroring Chrome-style profile isolation:
+	// notebooks uploaded while a profile is active belong to that profile automatically.
+	// Only auto-assigns when an explicit ActiveProfileID is set (no fallback to oldest profile).
+	if profileID := resolveExplicitActiveProfileID(); profileID != "" {
+		if err := db.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
+			_ = a.notebookService.DeleteFile(uploadResult.FilePath)
+			return map[string]interface{}{
+				"error": fmt.Sprintf("failed to assign notebook to profile: %v", err),
+			}
+		}
+	}
+
 	status := "uploaded"
 	_ = db.UpdateNotebookStatus(uploadResult.ID, status)
 
@@ -104,6 +119,16 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		"failed_count":  0,
 		"status":        status,
 	}
+}
+
+// resolveExplicitActiveProfileID returns the active profile ID from user settings
+// only when an explicit active profile has been set — no fallback to oldest profile.
+func resolveExplicitActiveProfileID() string {
+	s, err := db.GetUserSettings()
+	if err == nil && s != nil && s.ActiveProfileID != "" {
+		return s.ActiveProfileID
+	}
+	return ""
 }
 
 // DraftNotebookSyllabus creates editable chapter ranges for HITL verification.
@@ -428,6 +453,28 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "chunk ingestion failed: " + err.Error()}
 	}
 
+	// Link new topics to notebook in database
+	if err := db.LinkNotebookTopics(notebookID, topicIDs); err != nil {
+		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		// Cleanup: delete newly created topic rows (cascades to chunks, cards, etc.) to avoid orphaned records
+		for topicID := range newlyCreatedTopicIDs {
+			_ = db.DeleteTopic(topicID)
+		}
+		return map[string]interface{}{"error": "failed to link notebook topics: " + err.Error()}
+	}
+
+	// Delete old orphaned topics that are no longer part of the new syllabus
+	if etErr == nil {
+		newTopicIDsMap := make(map[string]bool)
+		for _, tid := range topicIDs {
+			newTopicIDsMap[tid] = true
+		}
+		for _, et := range existingTopics {
+			if !newTopicIDsMap[et.TopicID] {
+				_ = db.DeleteTopic(et.TopicID)
+			}
+		}
+	}
 
 	status := "chunked"
 	emitIngestionProgress(a, ingestionProgressPayload{
@@ -441,10 +488,23 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	})
 
 	_ = db.UpdateNotebookStatus(notebookID, status)
+
+	// Trigger background indexing if RAG is enabled and embedder is active
+	ragEnabled, err := db.GetRAGEnabled()
+	if err == nil && ragEnabled && a.embedder != nil {
+		go func() {
+			indexer := retrieval.NewVectorIndexer(a.embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
+			if err := indexer.IndexAllTopics(); err != nil {
+				utils.Warnf("background vector indexing failed: %v", err)
+			}
+		}()
+	}
+
 	return map[string]interface{}{
 		"success":     true,
 		"status":      status,
 		"notebook_id": notebookID,
+		"mode":        "full_reingest",
 		"topic_ids":   topicIDs,
 		"chunk_count": len(allChunks),
 	}
@@ -471,7 +531,10 @@ func (a *App) GetNotebooks(topicID string) []map[string]interface{} {
 			"page_count":      nb.PageCount,
 			"chunk_count":     nb.ChunkCount,
 			"priority":        nb.Priority,
+			"exam_deadline":   nb.ExamDeadline,
 			"uploaded_at":     nb.UploadedAt,
+			"profile_id":      nb.ProfileID,
+			"study_status":    nb.StudyStatus,
 		})
 	}
 
@@ -572,5 +635,66 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 
 	return map[string]interface{}{
 		"success": true,
+	}
+}
+
+// GetProfileDailyPace calculates and returns the daily study pace to meet the profile deadline.
+func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		return map[string]interface{}{"error": "profile id is required"}
+	}
+
+	p, err := db.GetProfileByID(profileID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if p == nil {
+		return map[string]interface{}{"error": "profile not found"}
+	}
+
+	remainingWords, err := db.GetProfileRemainingWords(profileID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	if p.DeadlineAt <= 0 {
+		return map[string]interface{}{
+			"has_deadline":     false,
+			"deadline":         "",
+			"daily_pace":       0,
+			"remaining_words":  remainingWords,
+			"days_remaining":   0,
+			"sessions_per_day": 0,
+		}
+	}
+
+	deadlineTime := time.Unix(p.DeadlineAt, 0)
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	deadlineDate := time.Date(deadlineTime.Year(), deadlineTime.Month(), deadlineTime.Day(), 0, 0, 0, 0, now.Location())
+
+	duration := deadlineDate.Sub(today)
+	daysRemaining := int(math.Round(duration.Hours() / 24))
+
+	var dailyPace int
+	if daysRemaining > 0 {
+		dailyPace = int(math.Ceil(float64(remainingWords) / float64(daysRemaining)))
+	} else {
+		dailyPace = remainingWords
+	}
+
+	sessionsPerDay := 0.0
+	if dailyPace > 0 {
+		sessionsPerDay = float64(dailyPace) / 2500.0
+	}
+
+	return map[string]interface{}{
+		"has_deadline":    true,
+		"deadline":        deadlineTime.Format("2006-01-02"),
+		"daily_pace":      dailyPace,
+		"remaining_words": remainingWords,
+		"days_remaining":  daysRemaining,
+		"sessions_per_day": sessionsPerDay,
 	}
 }
