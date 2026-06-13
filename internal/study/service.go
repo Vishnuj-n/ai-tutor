@@ -9,6 +9,7 @@ import (
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
+	llmpkg "ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
@@ -16,7 +17,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// wordThresholdForHeavyLLM is the Marathon Mode routing threshold.
+// wordThresholdForHeavyLLM is the Manual  Mode routing threshold.
 // Content at or above this word count is routed to HEAVY_LLM to prevent
 // "Lost in the Middle" hallucinations.
 const wordThresholdForHeavyLLM = 4000
@@ -25,6 +26,7 @@ const wordThresholdForHeavyLLM = 4000
 type LLMProvider interface {
 	GenerateAnswer(prompt string) (string, error)
 	ModelName() string
+	GetLimits() llmpkg.ModelLimits
 }
 
 // Config wires all dependencies into StudyService via constructor injection.
@@ -132,11 +134,6 @@ Student answer: %s`, question.Prompt, userAnswer)
 	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
 		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
 	}
-	// Use source_chunk_id from written question for proper chunk lineage
-	fsrsResult, err := s.LogReviewTx(tx, question.TopicID, "written_question", question.ID, question.SourceChunkID, score)
-	if err != nil {
-		return map[string]interface{}{"error": "failed to update written-assessment FSRS: " + err.Error()}
-	}
 	if err := tx.Commit(); err != nil {
 		return map[string]interface{}{"error": "failed to commit transaction: " + err.Error()}
 	}
@@ -147,10 +144,6 @@ Student answer: %s`, question.Prompt, userAnswer)
 		"prompt":            question.Prompt,
 		"score":             score,
 		"feedback":          strings.TrimSpace(parsed.Feedback),
-		"fsrsRating":        fsrsResult["fsrs_rating"],
-		"scheduled_days":    fsrsResult["scheduled_days"],
-		"next_review_at":    fsrsResult["next_review_at"],
-		"review_log_id":     fsrsResult["review_log_id"],
 		"source_page_start": question.SourcePageStart,
 		"source_page_end":   question.SourcePageEnd,
 		"source_heading":    question.SourceHeading,
@@ -574,7 +567,7 @@ func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]model
 	}
 	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext raw_chunks=%d", len(chunks))
 	if len(chunks) == 0 {
-		// Return empty response instead of error for marathon mode compatibility
+		// Return empty response instead of error for manual mode compatibility
 		return []models.ChunkWithContext{}, 0, nil
 	}
 

@@ -53,11 +53,6 @@ func parseLogLevel() int {
 	}
 }
 
-func Debugf(format string, args ...interface{}) {
-	if currentLogLevel() <= levelDebug {
-		log.Printf("DEBUG: "+format, args...)
-	}
-}
 
 func Infof(format string, args ...interface{}) {
 	if currentLogLevel() <= levelInfo {
@@ -158,16 +153,6 @@ func LogReviewSession(taskID, notebookID, cardCount, event string) {
 	log.Printf("[QUEUE] task=%s type=FLASHCARD_REVIEW notebook=%s cards=%s event=%s", taskID, notebookID, cardCount, event)
 }
 
-// LogReviewSessionResume logs when an existing review session is resumed (duplicate prevention).
-func LogReviewSessionResume(taskID, status string) {
-	if currentLogLevel() > levelWarn {
-		return
-	}
-	if taskID == "" {
-		taskID = "unknown"
-	}
-	log.Printf("[QUEUE] task=%s type=FLASHCARD_REVIEW status=%s event=session_resumed", taskID, status)
-}
 
 // LogSchedulerDecision logs adaptive reading window decisions.
 func LogSchedulerDecision(topicID string, startPage, endPage int, tokenBudget, reason string) {
@@ -180,13 +165,3 @@ func LogSchedulerDecision(topicID string, startPage, endPage int, tokenBudget, r
 	log.Printf("[SCHEDULER] topic=%s window=%d-%d tokenBudget=%s reason=%s", topicID, startPage, endPage, tokenBudget, reason)
 }
 
-// LogQueueOrdering logs queue ordering decisions for debugging.
-func LogQueueOrdering(taskType, notebookID, priority, reason string) {
-	if currentLogLevel() > levelDebug {
-		return
-	}
-	if taskType == "" {
-		taskType = "unknown"
-	}
-	log.Printf("[QUEUE] type=%s notebook=%s priority=%s event=ordering_decision reason=%s", taskType, notebookID, priority, reason)
-}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ai-tutor/internal/db"
+	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
 
@@ -19,7 +20,7 @@ const maxAutomaticRereadAttempts = 3
 // GenerateFlashcardsAfterQuiz generates flashcards after successful quiz completion.
 // New cards are future-dated and intentionally excluded from immediate review materialization.
 func (s *StudyService) GenerateFlashcardsAfterQuiz(notebookID, topicID string, startPage, endPage int) (int, error) {
-	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_started source=quiz_completion notebookID=%s topicID=%s startPage=%d endPage=%d pipeline=manual_pipeline_reuse", notebookID, topicID, startPage, endPage)
+	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_started source=quiz_completion notebookID=%s topicID=%s startPage=%d endPage=%d pipeline=fsrs_cards_direct", notebookID, topicID, startPage, endPage)
 
 	// Validate inputs
 	notebookID = strings.TrimSpace(notebookID)
@@ -35,27 +36,14 @@ func (s *StudyService) GenerateFlashcardsAfterQuiz(notebookID, topicID string, s
 
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_auto_flow_confirmation using_page_bounded_context=true page_range=%d-%d no_topic_aggregation=true", startPage, endPage)
 
-	// Generate flashcards for the topic using the same pipeline as manual generation
-	result := s.GenerateMarathonFlashcardsWithTopic(topicID, notebookID, startPage, endPage)
-	if errorMsg, hasError := result["error"].(string); hasError {
-		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_failed notebookID=%s topicID=%s error=%s", notebookID, topicID, errorMsg)
-		return 0, fmt.Errorf("%s", errorMsg)
+	// Generate FSRS flashcards for the topic (bypassing manual sandbox)
+	cards, _, _, _, err := s.GenerateFSRSCardsForTopic(topicID, notebookID, startPage, endPage)
+	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_failed notebookID=%s topicID=%s error=%v", notebookID, topicID, err)
+		return 0, err
 	}
 
-	// Defensively extract card_count, handling multiple numeric types
-	cardCount := 0
-	if val, exists := result["card_count"]; exists {
-		switch v := val.(type) {
-		case int:
-			cardCount = v
-		case int64:
-			cardCount = int(v)
-		case float64:
-			cardCount = int(v)
-		default:
-			utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_unexpected_card_count_type notebookID=%s topicID=%s type=%T value=%v", notebookID, topicID, val, val)
-		}
-	}
+	cardCount := len(cards)
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed notebookID=%s topicID=%s cardCount=%d", notebookID, topicID, cardCount)
 	utils.Warnf("[FLASHCARD_PIPELINE] review_session_skipped notebookID=%s topicID=%s reason=deferred_new_cards_excluded", notebookID, topicID)
 	return cardCount, nil
@@ -156,18 +144,56 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		}
 	}
 
+	// Get model-specific token limits
+	llm := s.fastLLMProvider
+	modelName := providerModelName(llm)
+	limits := llm.GetLimits()
+	maxInputTokens := limits.MaxInputTokens
+	maxOutputTokens := limits.MaxOutputTokens
+	utils.Warnf("[QUIZ_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
+
+	// Estimate token limits and budget
+	const baseOverheadTokens = 300
+	const safetyMarginTokens = 500
+	availableBudget := maxInputTokens - baseOverheadTokens - safetyMarginTokens
+	if availableBudget < 1000 {
+		availableBudget = 1000
+	}
+
+	// Calculate word count and build context within token budget
 	totalWordCount := 0
+	currentTokens := baseOverheadTokens
 	contextParts := make([]string, 0, len(normalizedChunkIDs))
+	truncatedCount := 0
+
 	for _, chunkID := range normalizedChunkIDs {
 		text := strings.TrimSpace(chunkTextByID[chunkID])
 		if text == "" {
 			continue
 		}
+		chunkLine := fmt.Sprintf("- chunk_id: %s | text: %s\n", chunkID, text)
+		chunkTokens, err := embeddings.CountTokens(chunkLine)
+		if err != nil {
+			chunkTokens = len(strings.Fields(chunkLine))
+		}
+
+		if currentTokens+chunkTokens > availableBudget {
+			truncatedCount++
+			continue
+		}
+
 		totalWordCount += len(strings.Fields(text))
 		contextParts = append(contextParts, fmt.Sprintf("- chunk_id: %s | text: %s", chunkID, text))
+		currentTokens += chunkTokens
 	}
+
 	if len(contextParts) == 0 {
 		return models.QuizTaskPayload{}, fmt.Errorf("no chunk context found for quiz generation")
+	}
+
+	if truncatedCount > 0 {
+		utils.Warnf("[QUIZ_PIPELINE] chunk_trimming total_chunks=%d included=%d truncated=%d budget_used=%d available=%d",
+			len(normalizedChunkIDs), len(contextParts), truncatedCount, currentTokens, availableBudget)
 	}
 
 	targetCount := scaledQuizQuestionCount(totalWordCount)
@@ -269,7 +295,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	totalCount := len(payload.Questions)
 	score := 0
 	if totalCount > 0 {
-		score = int(float64(correctCount) / float64(totalCount) * 100)
+		score = (correctCount * 100) / totalCount
 	}
 	passed := score >= payload.PassingScore
 	feedback := "Review the missed concepts and retry the material."
@@ -286,6 +312,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	rereadTaskID := ""
 	rereadAttemptCount := 0
 	manualReviewRecommended := false
+	completionStatus := models.StudyTaskStatusCompleted
 	var resultPayload []byte
 
 	conn := db.GetConnection()
@@ -338,6 +365,30 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			manualReviewRecommended = true
 			feedback = "Automatic reread limit reached. Review this topic manually, then return when ready to retry."
 			attempt.Feedback = feedback
+			completionStatus = models.StudyTaskStatusFailed
+
+			// Safety transaction: Delete FSRS cards to protect purity from rote clutter
+			if _, err := tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", task.TopicID); err != nil {
+				return models.QuizResult{}, fmt.Errorf("failed to delete FSRS cards: %w", err)
+			}
+
+			// Shift session into Socratic Rescue Lane by generating an EXAMINER task
+			socraticTaskID := uuid.NewString()
+			feedbackPayload, _ := json.Marshal(map[string]string{
+				"feedback": feedback,
+				"lane":     "socratic_rescue",
+			})
+			followUps = append(followUps, models.StudyQueueTask{
+				ID:          socraticTaskID,
+				NotebookID:  task.NotebookID,
+				TopicID:     task.TopicID,
+				TaskType:    models.StudyTaskTypeExaminer,
+				Status:      models.StudyTaskStatusPending,
+				Priority:    0,
+				PayloadJSON: string(feedbackPayload),
+				StartPage:   task.StartPage,
+				EndPage:     task.EndPage,
+			})
 		}
 	}
 
@@ -356,7 +407,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	})
 
 	if err := db.CompleteTaskTx(tx, task.ID, models.CompletionResult{
-		Status:    models.StudyTaskStatusCompleted,
+		Status:    completionStatus,
 		Payload:   string(resultPayload),
 		FollowUps: followUps,
 	}); err != nil {

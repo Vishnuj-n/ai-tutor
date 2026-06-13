@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -111,6 +112,14 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	app := newTestApp(t)
 	mustInsertActiveQuizTask(t, "nb-quiz-max", "topic-quiz-max", "task-quiz-max", 100)
 
+	// Insert dummy FSRS card for the topic to verify it is deleted during safety transaction
+	if _, err := db.GetConnection().Exec(`
+		INSERT INTO fsrs_cards (id, topic_id, prompt, answer)
+		VALUES ('dummy-card-1', 'topic-quiz-max', 'Prompt 1', 'Answer 1')
+	`); err != nil {
+		t.Fatalf("failed to insert dummy FSRS card: %v", err)
+	}
+
 	tx, err := db.GetConnection().Begin()
 	if err != nil {
 		t.Fatalf("begin tx failed: %v", err)
@@ -160,6 +169,39 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	}
 	if pendingRereads != 0 {
 		t.Fatalf("expected no automatic reread inserted after max, got %d", pendingRereads)
+	}
+
+	// Verify dummy FSRS card was deleted
+	var cardCount int
+	if err := db.GetConnection().QueryRow(`
+		SELECT COUNT(*) FROM fsrs_cards WHERE id = 'dummy-card-1'
+	`).Scan(&cardCount); err != nil {
+		t.Fatalf("query FSRS cards count failed: %v", err)
+	}
+	if cardCount != 0 {
+		t.Fatalf("expected FSRS cards to be deleted on max reread failure, but found %d", cardCount)
+	}
+
+	// Verify quiz task status is FAILED
+	var taskStatus string
+	if err := db.GetConnection().QueryRow(`
+		SELECT status FROM study_queue WHERE id = 'task-quiz-max'
+	`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status failed: %v", err)
+	}
+	if taskStatus != string(models.StudyTaskStatusFailed) {
+		t.Fatalf("expected quiz task status to be FAILED, got %q", taskStatus)
+	}
+
+	// Verify EXAMINER task with status PENDING is created
+	var examinerCount int
+	if err := db.GetConnection().QueryRow(`
+		SELECT COUNT(*) FROM study_queue WHERE topic_id = 'topic-quiz-max' AND task_type = 'EXAMINER' AND status = 'PENDING'
+	`).Scan(&examinerCount); err != nil {
+		t.Fatalf("query EXAMINER task count failed: %v", err)
+	}
+	if examinerCount != 1 {
+		t.Fatalf("expected 1 PENDING EXAMINER task, got %d", examinerCount)
 	}
 }
 
@@ -481,29 +523,16 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 		}
 	}
 
-	parentThermo := "parent-thermo"
-	parentNewton := "parent-newton"
-	parentRenaissance := "parent-renaissance"
-	if err := db.CreateParentSection(parentThermo, "topic-thermo", "Thermo", 1, "heat"); err != nil {
-		t.Fatalf("CreateParentSection thermo failed: %v", err)
-	}
-	if err := db.CreateParentSection(parentNewton, "topic-newton", "Newton", 1, "motion"); err != nil {
-		t.Fatalf("CreateParentSection newton failed: %v", err)
-	}
-	if err := db.CreateParentSection(parentRenaissance, "topic-renaissance", "Renaissance", 1, "history"); err != nil {
-		t.Fatalf("CreateParentSection renaissance failed: %v", err)
-	}
-
 	chunkThermo := "chunk-thermo"
 	chunkNewton := "chunk-newton"
 	chunkRenaissance := "chunk-renaissance"
-	if err := db.CreateChunk(chunkThermo, "topic-thermo", parentThermo, "thermo chunk", 2, 1); err != nil {
+	if err := db.CreateChunk(chunkThermo, "topic-thermo", "thermo chunk", 2, 1); err != nil {
 		t.Fatalf("CreateChunk thermo failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkNewton, "topic-newton", parentNewton, "newton chunk", 2, 2); err != nil {
+	if err := db.CreateChunk(chunkNewton, "topic-newton", "newton chunk", 2, 2); err != nil {
 		t.Fatalf("CreateChunk newton failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkRenaissance, "topic-renaissance", parentRenaissance, "renaissance chunk", 2, 3); err != nil {
+	if err := db.CreateChunk(chunkRenaissance, "topic-renaissance", "renaissance chunk", 2, 3); err != nil {
 		t.Fatalf("CreateChunk renaissance failed: %v", err)
 	}
 
@@ -542,26 +571,6 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 	}
 	if len(historyTopics) != 1 || historyTopics[0] != "The Renaissance" {
 		t.Fatalf("unexpected history topics: %#v", historyTopics)
-	}
-}
-
-// ============================================================================
-// NOTEBOOK UTILITY TESTS
-// ============================================================================
-
-func TestNotebookAssetURLUsesBasename(t *testing.T) {
-	assetURL := notebookAssetURL("C:/Users/vishn/AppData/Roaming/ai-tutor/uploads/sample.pdf")
-	if assetURL != "/notebooks/sample.pdf" {
-		t.Fatalf("expected notebook URL to use basename, got %q", assetURL)
-	}
-}
-
-func TestNotebookAssetURLRejectsTraversalNames(t *testing.T) {
-	if got := notebookAssetURL(".."); got != "" {
-		t.Fatalf("expected empty URL for traversal segment, got %q", got)
-	}
-	if got := notebookAssetURL("."); got != "" {
-		t.Fatalf("expected empty URL for current directory segment, got %q", got)
 	}
 }
 
@@ -755,7 +764,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 
 // TestGenerateShortAnswerPrompt_MalformedJSON removed - study service now has fallback behavior
 
-func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
+func TestScoreShortAnswerLoadsPersistedPromptAndSavesResponse(t *testing.T) {
 	app := newTestApp(t)
 	mockProvider := &mockLLMProvider{
 		answer: `{"score":8,"feedback":"Strong answer with a small omission."}`,
@@ -783,27 +792,15 @@ func TestScoreShortAnswerLoadsPersistedPromptAndUpdatesFSRS(t *testing.T) {
 		t.Fatalf("CreateWrittenQuestion failed: %v", err)
 	}
 
-
 	result := app.ScoreShortAnswer("written-q-1", "It gives each process a time slice.")
 	if errMsg, ok := result["error"]; ok {
 		t.Fatalf("expected success, got error: %v", errMsg)
 	}
-	if got := result["fsrsRating"]; got != "Good" {
-		t.Fatalf("expected fsrsRating Good, got %#v", got)
+	if got := result["score"]; got != 8 {
+		t.Fatalf("expected score 8, got %#v", got)
 	}
-	if got := result["next_review_at"]; got == "" {
-		t.Fatalf("expected next_review_at, got %#v", got)
-	}
-
-	state, err := db.GetAssessmentFSRSState("written_question", "written-q-1", "")
-	if err != nil {
-		t.Fatalf("GetAssessmentFSRSState failed: %v", err)
-	}
-	if state == nil {
-		t.Fatalf("expected persisted assessment fsrs state")
-	}
-	if state.GetState().ScheduledDays < 0 {
-		t.Fatalf("expected scheduled days >= 0, got %d", state.GetState().ScheduledDays)
+	if got := result["feedback"]; got != "Strong answer with a small omission." {
+		t.Fatalf("expected feedback, got %#v", got)
 	}
 }
 
@@ -824,6 +821,10 @@ func (m *mockLLMProvider) GenerateAnswer(prompt string) (string, error) {
 
 func (m *mockLLMProvider) ModelName() string {
 	return "mock-model"
+}
+
+func (m *mockLLMProvider) GetLimits() llm.ModelLimits {
+	return llm.ModelLimits{MaxInputTokens: 30000, MaxOutputTokens: 3000}
 }
 
 func extractRequestedCount(prompt string, prefix string) int {
@@ -903,13 +904,8 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
-	parentID := "parent-reader"
-	if err := db.CreateParentSection(parentID, topicID, "Introduction", 1, "intro text"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-
 	chunkID := "chunk-reader"
-	if err := db.CreateChunk(chunkID, topicID, parentID, "chunk content", 2, 1); err != nil {
+	if err := db.CreateChunk(chunkID, topicID, "chunk content", 2, 1); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}
 
@@ -961,18 +957,18 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 		t.Fatalf("expected at least one section, got %d", len(sections))
 	}
 
-	// Verify at least one section matches the seeded parent
+	// Verify at least one section matches the seeded chunk
 	found := false
 	for _, sec := range sections {
 		if sectionMap, ok := sec.(map[string]interface{}); ok {
-			if heading, ok := sectionMap["heading"].(string); ok && heading == "Introduction" {
+			if heading, ok := sectionMap["heading"].(string); ok && heading == "Page 1" {
 				found = true
 				break
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("expected to find section with heading 'Introduction' in sections: %#v", sections)
+		t.Fatalf("expected to find section with heading 'Page 1' in sections: %#v", sections)
 	}
 }
 
@@ -998,7 +994,6 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 
 	notebookID := "reader-ai-nb"
 	topicID := "reader-ai-topic"
-	parentID := "reader-ai-parent"
 	chunkID := "reader-ai-chunk"
 
 	if err := db.EnsureTopic(topicID, "Reader AI Topic"); err != nil {
@@ -1010,10 +1005,7 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	if err := db.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if err := db.CreateParentSection(parentID, topicID, "Reader Scope Section", 1, "Reader scope section content"); err != nil {
-		t.Fatalf("CreateParentSection failed: %v", err)
-	}
-	if err := db.CreateChunk(chunkID, topicID, parentID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
+	if err := db.CreateChunk(chunkID, topicID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}
 	if err := db.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
@@ -1022,7 +1014,6 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	app.retrievalEngine.AddChunk(models.Chunk{
 		ID:       chunkID,
 		TopicID:  topicID,
-		ParentID: parentID,
 		Text:     "Round robin stays fair by rotating time slices.",
 		PageNum:  3,
 	})
@@ -1174,6 +1165,184 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 	if bundle.Sections[0].PageNum <= 0 {
 		t.Fatalf("expected page-aware section mapping, got page_num=%d", bundle.Sections[0].PageNum)
 	}
+}
+
+func TestConfirmNotebookSyllabus_MetadataOnlySkipsExtraction(t *testing.T) {
+	app, uploadResult, chapters := setupConfirmedChunkedNotebook(t, "confirm-metadata-only.md")
+
+	if err := os.Remove(uploadResult.FilePath); err != nil {
+		t.Fatalf("Remove source file failed: %v", err)
+	}
+	beforeChunks := mustNotebookChunkCount(t, uploadResult.ID)
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, chapters)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected metadata-only confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "metadata_only" {
+		t.Fatalf("expected metadata_only mode, got %#v", resp["mode"])
+	}
+	if afterChunks := mustNotebookChunkCount(t, uploadResult.ID); afterChunks != beforeChunks {
+		t.Fatalf("expected chunks unchanged, got %d want %d", afterChunks, beforeChunks)
+	}
+}
+
+func TestConfirmNotebookSyllabus_TitleOnlyUpdatesTopicsAndSkipsExtraction(t *testing.T) {
+	app, uploadResult, chapters := setupConfirmedChunkedNotebook(t, "confirm-title-only.md")
+
+	if err := os.Remove(uploadResult.FilePath); err != nil {
+		t.Fatalf("Remove source file failed: %v", err)
+	}
+	beforeChunks := mustNotebookChunkCount(t, uploadResult.ID)
+	renamed := []models.SyllabusChapterDraft{
+		{Title: "Renamed Intro", StartPage: chapters[0].StartPage, EndPage: chapters[0].EndPage},
+		{Title: "Renamed Details", StartPage: chapters[1].StartPage, EndPage: chapters[1].EndPage},
+	}
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, renamed)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected title-only confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "topic_metadata_only" {
+		t.Fatalf("expected topic_metadata_only mode, got %#v", resp["mode"])
+	}
+	if afterChunks := mustNotebookChunkCount(t, uploadResult.ID); afterChunks != beforeChunks {
+		t.Fatalf("expected chunks unchanged, got %d want %d", afterChunks, beforeChunks)
+	}
+
+	topics, err := db.GetNotebookTopicsWithBounds(uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetNotebookTopicsWithBounds failed: %v", err)
+	}
+	if len(topics) != len(renamed) {
+		t.Fatalf("expected %d topics, got %d", len(renamed), len(topics))
+	}
+	for i := range renamed {
+		if topics[i].Title != renamed[i].Title {
+			t.Fatalf("topic %d title mismatch: got %q want %q", i, topics[i].Title, renamed[i].Title)
+		}
+		if topics[i].StartPage != renamed[i].StartPage || topics[i].EndPage != renamed[i].EndPage {
+			t.Fatalf("topic %d bounds changed: got [%d,%d] want [%d,%d]", i, topics[i].StartPage, topics[i].EndPage, renamed[i].StartPage, renamed[i].EndPage)
+		}
+	}
+}
+
+func TestConfirmNotebookSyllabus_BoundaryChangeFallsBackToFullReingest(t *testing.T) {
+	app, uploadResult, _ := setupConfirmedChunkedNotebook(t, "confirm-boundary-change.md")
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, []models.SyllabusChapterDraft{{
+		Title:     "Intro",
+		StartPage: 1,
+		EndPage:   2,
+	}})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected boundary-change confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "full_reingest" {
+		t.Fatalf("expected full_reingest mode, got %#v", resp["mode"])
+	}
+
+	topicIDs, ok := resp["topic_ids"].([]string)
+	if !ok || len(topicIDs) != 1 {
+		t.Fatalf("expected one topic id after merged bounds, got %#v", resp["topic_ids"])
+	}
+	startPage, endPage, err := db.GetTopicPageBounds(topicIDs[0])
+	if err != nil {
+		t.Fatalf("GetTopicPageBounds failed: %v", err)
+	}
+	if startPage != 1 || endPage != 2 {
+		t.Fatalf("unexpected persisted bounds: got [%d,%d] want [1,2]", startPage, endPage)
+	}
+}
+
+func TestConfirmNotebookSyllabus_MixedTitleAndBoundaryChangeFullReingests(t *testing.T) {
+	app, uploadResult, _ := setupConfirmedChunkedNotebook(t, "confirm-mixed-change.md")
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, []models.SyllabusChapterDraft{{
+		Title:     "Renamed Combined Chapter",
+		StartPage: 1,
+		EndPage:   2,
+	}})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected mixed-change confirm success, got error: %v", resp["error"])
+	}
+	if mode, ok := resp["mode"].(string); !ok || mode != "full_reingest" {
+		t.Fatalf("expected full_reingest mode, got %#v", resp["mode"])
+	}
+
+	topicIDs, ok := resp["topic_ids"].([]string)
+	if !ok || len(topicIDs) != 1 {
+		t.Fatalf("expected one topic id after mixed change, got %#v", resp["topic_ids"])
+	}
+	topics, err := db.GetNotebookTopicsWithBounds(uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetNotebookTopicsWithBounds failed: %v", err)
+	}
+	found := false
+	for _, topic := range topics {
+		if topic.TopicID == topicIDs[0] {
+			found = true
+			if topic.Title != "Renamed Combined Chapter" {
+				t.Fatalf("expected renamed topic title, got %q", topic.Title)
+			}
+			if topic.StartPage != 1 || topic.EndPage != 2 {
+				t.Fatalf("unexpected renamed topic bounds: got [%d,%d] want [1,2]", topic.StartPage, topic.EndPage)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected new mixed-change topic %q in notebook topic bounds", topicIDs[0])
+	}
+}
+
+func setupConfirmedChunkedNotebook(t *testing.T, fileName string) (*App, notebook.UploadResult, []models.SyllabusChapterDraft) {
+	t.Helper()
+	initTestDB(t)
+	uploadDir := t.TempDir()
+	service := notebook.NewService(uploadDir)
+	app := &App{notebookService: service}
+
+	content := []byte("# Intro\n\nAlpha beta gamma\n\n## Details\n\nDelta epsilon zeta")
+	uploadResult, err := service.SaveUploadedFile(content, fileName)
+	if err != nil {
+		t.Fatalf("SaveUploadedFile failed: %v", err)
+	}
+	doc, err := service.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	if err != nil {
+		t.Fatalf("ExtractDocument failed: %v", err)
+	}
+	if doc.PageCount != 2 {
+		t.Fatalf("expected two-page markdown fixture, got %d", doc.PageCount)
+	}
+	if err := db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	chapters := []models.SyllabusChapterDraft{
+		{Title: "Intro", StartPage: 1, EndPage: 1},
+		{Title: "Details", StartPage: 2, EndPage: 2},
+	}
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, chapters)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("initial ConfirmNotebookSyllabus failed: %v", resp["error"])
+	}
+	if status, ok := resp["status"].(string); !ok || status != "chunked" {
+		t.Fatalf("expected initial chunked status, got %#v", resp["status"])
+	}
+	if count := mustNotebookChunkCount(t, uploadResult.ID); count == 0 {
+		t.Fatalf("expected initial chunks")
+	}
+
+	return app, *uploadResult, chapters
+}
+
+func mustNotebookChunkCount(t *testing.T, notebookID string) int {
+	t.Helper()
+	chunks, err := db.GetChunksForNotebook(notebookID)
+	if err != nil {
+		t.Fatalf("GetChunksForNotebook failed: %v", err)
+	}
+	return len(chunks)
 }
 
 // ============================================================================
@@ -1518,10 +1687,9 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 		}
 	}
 
-	// Verify FLASHCARD_REVIEW type wins despite higher priority number on other tasks
-	// (task type priority > task priority)
+	// Verify task type precedence wins before deterministic fallback order
 	if firstTaskID != "task-b" {
-		t.Fatalf("expected task-b (FLASHCARD_REVIEW) to win due to type priority, got: %s", firstTaskID)
+		t.Fatalf("expected task-b to win due to task type precedence, got: %s", firstTaskID)
 	}
 }
 

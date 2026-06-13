@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -259,19 +258,6 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 	}
 
 	if _, err := tx.Exec(`
-		DELETE FROM assessment_fsrs
-		WHERE activity_type = 'written_question'
-		  AND reference_id IN (
-			SELECT id
-			FROM written_questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range written fsrs state: %w", err)
-	}
-
-	if _, err := tx.Exec(`
 		DELETE FROM written_questions
 		WHERE topic_id = ?
 		  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
@@ -301,26 +287,6 @@ func GetTopicPageBounds(topicID string) (int, int, error) {
 	}
 
 	return startPage, endPage, nil
-}
-
-// GetTopicCurrentPageCursor returns the current page cursor for a topic.
-func GetTopicCurrentPageCursor(topicID string) (int, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return 0, fmt.Errorf("topic id is required")
-	}
-
-	var cursor int
-	err := conn.QueryRow(`
-		SELECT COALESCE(current_page_cursor, 0)
-		FROM topics
-		WHERE id = ?
-	`, topicID).Scan(&cursor)
-	if err != nil {
-		return 0, err
-	}
-
-	return cursor, nil
 }
 
 // NotebookTopicInfo contains topic id, title and persisted page bounds for a notebook-scoped topic
@@ -397,112 +363,6 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	}
 	utils.Warnf("[SCHEDULER] QueryNextReadingTopic selected topicID=%s notebookID=%s (ordered by notebook priority DESC)", topic.ID, topic.NotebookID)
 	return topic, true, nil
-}
-
-// QueryActiveTopics returns top N active topic titles
-func QueryActiveTopics(limit int) ([]string, error) {
-	rows, err := conn.Query(`
-		SELECT title
-		FROM topics
-		WHERE status IN ('reading', 'learned')
-		ORDER BY updated_at DESC, created_at DESC
-		LIMIT ?
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var active []string
-	for rows.Next() {
-		var title string
-		if err := rows.Scan(&title); err != nil {
-			return nil, err
-		}
-		active = append(active, title)
-	}
-	return active, nil
-}
-
-// QueryLearningTopics returns topics ready for learning
-func QueryLearningTopics(limit int) ([]models.TopicSummary, error) {
-	rows, err := conn.Query(`
-		SELECT id, title, status
-		FROM topics
-		WHERE status IN ('unseen', 'reading')
-		ORDER BY updated_at ASC, created_at ASC
-		LIMIT ?
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var topics []models.TopicSummary
-	for rows.Next() {
-		var topic models.TopicSummary
-		if err := rows.Scan(&topic.ID, &topic.Title, &topic.Status); err != nil {
-			return nil, err
-		}
-		topics = append(topics, topic)
-	}
-	return topics, nil
-}
-
-// QueryUpcomingReadingTopics returns ordered unread/in-progress topics with configured bounds.
-func QueryUpcomingReadingTopics(limit int) ([]models.ReadingTopicCursor, error) {
-	if limit <= 0 {
-		return []models.ReadingTopicCursor{}, nil
-	}
-
-	rows, err := conn.Query(`
-		SELECT
-			id,
-			title,
-			COALESCE(start_page, 0),
-			COALESCE(end_page, 0),
-			COALESCE(current_page_cursor, 0)
-		FROM topics
-		WHERE status IN ('unseen', 'reading')
-		  AND COALESCE(end_page, 0) > 0
-		  AND COALESCE(current_page_cursor, 0) < COALESCE(end_page, 0)
-		ORDER BY updated_at ASC, created_at ASC
-		LIMIT ?
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	topics := make([]models.ReadingTopicCursor, 0, limit)
-	for rows.Next() {
-		var topic models.ReadingTopicCursor
-		if err := rows.Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor); err != nil {
-			return nil, err
-		}
-		topics = append(topics, topic)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return topics, nil
-}
-
-// CountLearnedTopics returns the count of fully learned topics
-func CountLearnedTopics() (int, error) {
-	var count int
-	err := conn.QueryRow(`
-		SELECT COUNT(*)
-		FROM topics
-		WHERE status = 'learned'
-	`).Scan(&count)
-	return count, err
 }
 
 // GetAllTopicIDs returns all topic IDs currently in the database.
@@ -600,68 +460,6 @@ func UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) erro
 	return nil
 }
 
-// AppendQuestionsAndAdvanceCursor atomically appends questions and updates the reading cursor in a single transaction
-func AppendQuestionsAndAdvanceCursor(topicID string, questions []models.QuizQuestion, nextCursor int, markLearned bool) error {
-	if len(questions) == 0 {
-		return fmt.Errorf("at least one question is required")
-	}
-
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return fmt.Errorf("topic id is required")
-	}
-	if nextCursor < 0 {
-		nextCursor = 0
-	}
-
-	return withTx(func(tx *sql.Tx) error {
-		// Append questions first
-		for _, q := range questions {
-			if q.TopicID != topicID {
-				return fmt.Errorf("question topic_id %s does not match target topic %s", q.TopicID, topicID)
-			}
-			optionsJSON, marshalErr := json.Marshal(q.Options)
-			if marshalErr != nil {
-				return fmt.Errorf("failed to encode options for question %s: %w", q.ID, marshalErr)
-			}
-
-			if _, err := tx.Exec(`
-				INSERT INTO questions (
-					id, topic_id, prompt, options_json, correct_answer, explanation, hint, source_heading, source_snippet,
-					source_page_start, source_page_end, llm_model, prompt_version
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`, q.ID, topicID, q.Prompt, string(optionsJSON), q.CorrectAnswer, q.Explanation, q.Hint, q.SourceHeading, q.SourceSnippet,
-				q.SourcePageStart, q.SourcePageEnd, q.LLMModel, q.PromptVersion); err != nil {
-				return err
-			}
-		}
-
-		// Update cursor
-		status := "reading"
-		if markLearned {
-			status = "learned"
-		}
-
-		result, err := tx.Exec(`
-			UPDATE topics
-			SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, nextCursor, status, topicID)
-		if err != nil {
-			return err
-		}
-
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rowsAffected == 0 {
-			return fmt.Errorf("topic not found: %s", topicID)
-		}
-		return nil
-	})
-}
-
 // DeleteTopic removes a topic and all associated data
 func DeleteTopic(topicID string) error {
 	topicID = strings.TrimSpace(topicID)
@@ -695,11 +493,6 @@ func DeleteTopic(topicID string) error {
 		// Delete chunks
 		if _, err := tx.Exec("DELETE FROM chunks WHERE topic_id = ?", topicID); err != nil {
 			return fmt.Errorf("failed to delete chunks: %w", err)
-		}
-
-		// Delete parents
-		if _, err := tx.Exec("DELETE FROM parents WHERE topic_id = ?", topicID); err != nil {
-			return fmt.Errorf("failed to delete parents: %w", err)
 		}
 
 		// Update notebooks that reference this topic to null
