@@ -78,43 +78,176 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
 func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
-	utils.Warnf("[QUEUE] GetAllPendingTasks filter status=PENDING order=task_type, notebook_priority desc, task_priority asc, created_at asc")
-	utils.LogQueueOrdering("", "", "", "get_all_pending")
+	var activeProfileID sql.NullString
+	var skipToReadingActive bool
+	if err := conn.QueryRow(`
+		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
+	`).Scan(&activeProfileID, &skipToReadingActive); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetAllPendingTasks: reading user_settings: %w", err)
+	}
+
+	activeProfileStr := ""
+	if activeProfileID.Valid {
+		activeProfileStr = activeProfileID.String
+	}
+
+	skipVal := 0
+	if skipToReadingActive {
+		skipVal = 1
+	}
+
+	// Fallback to original simple query if no active profile is selected
+	if activeProfileStr == "" {
+		query := `
+			SELECT
+				sq.id,
+				sq.notebook_id,
+				COALESCE(sq.topic_id, ''),
+				sq.task_type,
+				sq.status,
+				sq.priority,
+				COALESCE(sq.created_at, ''),
+				COALESCE(sq.activated_at, ''),
+				COALESCE(sq.completed_at, ''),
+				COALESCE(sq.payload_json, ''),
+				COALESCE(sq.start_page, 0),
+				COALESCE(sq.end_page, 0),
+				COALESCE(t.title, COALESCE(n.title, 'Task')),
+				COALESCE(n.priority, 5)
+			FROM study_queue sq
+			JOIN notebooks n ON sq.notebook_id = n.id
+			LEFT JOIN topics t ON sq.topic_id = t.id
+			WHERE sq.status = 'PENDING'
+			ORDER BY
+				CASE sq.task_type
+					WHEN 'FLASHCARD_REVIEW' THEN 5
+					WHEN 'REREAD' THEN 4
+					WHEN 'QUIZ' THEN 3
+					WHEN 'READING' THEN 2
+					WHEN 'EXAMINER' THEN 1
+					ELSE 0
+				END DESC,
+				COALESCE(n.priority, 5) DESC,
+				sq.priority ASC,
+				COALESCE(sq.created_at, '') ASC,
+				sq.id ASC
+			LIMIT 3
+		`
+		rows, err := conn.Query(query)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			_ = rows.Close()
+		}()
+
+		tasks := make([]models.StudyQueueTask, 0)
+		for rows.Next() {
+			var task models.StudyQueueTask
+			var topicTitle string
+			var notebookPriority int
+			err := rows.Scan(
+				&task.ID,
+				&task.NotebookID,
+				&task.TopicID,
+				&task.TaskType,
+				&task.Status,
+				&task.Priority,
+				&task.CreatedAt,
+				&task.ActivatedAt,
+				&task.CompletedAt,
+				&task.PayloadJSON,
+				&task.StartPage,
+				&task.EndPage,
+				&topicTitle,
+				&notebookPriority,
+			)
+			if err != nil {
+				return nil, err
+			}
+			task.Title = topicTitle
+			tasks = append(tasks, task)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return tasks, nil
+	}
+
 	query := `
+		WITH ranked_tasks AS (
+			SELECT
+				sq.id,
+				sq.notebook_id,
+				sq.topic_id,
+				sq.task_type,
+				sq.status,
+				sq.priority,
+				sq.created_at,
+				sq.activated_at,
+				sq.completed_at,
+				sq.payload_json,
+				sq.start_page,
+				sq.end_page,
+				t.title AS topic_title,
+				n.title AS notebook_title,
+				n.priority AS notebook_priority,
+				n.profile_id,
+				n.study_status,
+				ROW_NUMBER() OVER (
+					PARTITION BY sq.notebook_id
+					ORDER BY
+						-- Escape hatch ranking
+						CASE WHEN ? = 1 THEN
+							CASE sq.task_type
+								WHEN 'REREAD' THEN 5
+								WHEN 'QUIZ' THEN 4
+								WHEN 'READING' THEN 3
+								WHEN 'EXAMINER' THEN 2
+								WHEN 'FLASHCARD_REVIEW' THEN 1
+								ELSE 0
+							END
+						ELSE
+							CASE sq.task_type
+								WHEN 'FLASHCARD_REVIEW' THEN 5
+								WHEN 'REREAD' THEN 4
+								WHEN 'QUIZ' THEN 3
+								WHEN 'READING' THEN 2
+								WHEN 'EXAMINER' THEN 1
+								ELSE 0
+							END
+						END DESC,
+						sq.priority ASC,
+						sq.created_at ASC
+				) as rn
+			FROM study_queue sq
+			JOIN notebooks n ON sq.notebook_id = n.id
+			LEFT JOIN topics t ON sq.topic_id = t.id
+			WHERE sq.status = 'PENDING'
+			  AND (
+				  ? = '' OR n.profile_id = ?
+			  )
+			  AND (
+				  ? = ''
+				  OR sq.task_type = 'FLASHCARD_REVIEW'
+				  OR n.study_status = 'active'
+			  )
+		)
 		SELECT
-			sq.id,
-			sq.notebook_id,
-			COALESCE(sq.topic_id, ''),
-			sq.task_type,
-			sq.status,
-			sq.priority,
-			COALESCE(sq.created_at, ''),
-			COALESCE(sq.activated_at, ''),
-			COALESCE(sq.completed_at, ''),
-			COALESCE(sq.payload_json, ''),
-			COALESCE(sq.start_page, 0),
-			COALESCE(sq.end_page, 0),
-			COALESCE(t.title, ''),
-			COALESCE(n.priority, 5)
-		FROM study_queue sq
-		LEFT JOIN notebooks n ON sq.notebook_id = n.id
-		LEFT JOIN topics t ON sq.topic_id = t.id
-		WHERE sq.status = 'PENDING'
+			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
+			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
+			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0),
+			COALESCE(topic_title, COALESCE(notebook_title, 'Task')),
+			COALESCE(notebook_priority, 5)
+		FROM ranked_tasks
+		WHERE rn = 1
 		ORDER BY
-			CASE sq.task_type
-				WHEN 'FLASHCARD_REVIEW' THEN 1
-				WHEN 'REREAD' THEN 2
-				WHEN 'QUIZ' THEN 3
-				WHEN 'READING' THEN 4
-				WHEN 'EXAMINER' THEN 5
-				ELSE 6
-			END,
-			COALESCE(n.priority, 5) DESC,
-			sq.priority ASC,
-			sq.created_at ASC
+			COALESCE(notebook_priority, 5) DESC,
+			notebook_title ASC,
+			id ASC
 	`
 
-	rows, err := conn.Query(query)
+	rows, err := conn.Query(query, skipVal, activeProfileStr, activeProfileStr, activeProfileStr)
 	if err != nil {
 		return nil, err
 	}
@@ -146,24 +279,30 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 		if err != nil {
 			return nil, err
 		}
-		if topicTitle != "" {
-			task.Title = topicTitle
-		}
+		task.Title = topicTitle
 		tasks = append(tasks, task)
-
-		// Debug log: show notebook priority for each task
-		utils.Warnf("[QUEUE] task id=%s type=%s notebook_id=%s task_priority=%d notebook_priority=%d (from query ordering)", task.ID, task.TaskType, task.NotebookID, task.Priority, notebookPriority)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	utils.Warnf("[QUEUE] GetAllPendingTasks result count=%d", len(tasks))
 	return tasks, nil
 }
 
 // GetAllActiveTasks returns all active tasks ordered by activation time.
 func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
+	var activeProfileID sql.NullString
+	if err := conn.QueryRow(`
+		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
+	`).Scan(&activeProfileID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetAllActiveTasks: reading user_settings: %w", err)
+	}
+
+	activeProfileStr := ""
+	if activeProfileID.Valid {
+		activeProfileStr = activeProfileID.String
+	}
+
 	query := `
 		SELECT
 			sq.id,
@@ -183,10 +322,13 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 		LEFT JOIN notebooks n ON sq.notebook_id = n.id
 		LEFT JOIN topics t ON sq.topic_id = t.id
 		WHERE sq.status = 'ACTIVE'
+		  AND (
+			  ? = '' OR n.profile_id = ?
+		  )
 		ORDER BY sq.activated_at ASC
 	`
 
-	rows, err := conn.Query(query)
+	rows, err := conn.Query(query, activeProfileStr, activeProfileStr)
 	if err != nil {
 		return nil, err
 	}
@@ -231,8 +373,98 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 // GetNextTask returns the next pending task ordered by deterministic queue rules.
 func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	notebookID = strings.TrimSpace(notebookID)
-	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q order=task_type, notebook_priority desc, task_priority asc, created_at asc", notebookID)
-	utils.LogQueueOrdering("", notebookID, "", "get_next_task")
+	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q", notebookID)
+
+	var activeProfileID sql.NullString
+	var skipToReadingActive bool
+	if err := conn.QueryRow(`
+		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
+	`).Scan(&activeProfileID, &skipToReadingActive); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetNextTask: reading user_settings: %w", err)
+	}
+
+	activeProfileStr := ""
+	if activeProfileID.Valid {
+		activeProfileStr = activeProfileID.String
+	}
+
+	skipVal := 0
+	if skipToReadingActive {
+		skipVal = 1
+	}
+
+	// Fallback to original simple query if no active profile is selected
+	if activeProfileStr == "" {
+		query := `
+			SELECT
+				sq.id,
+				sq.notebook_id,
+				COALESCE(sq.topic_id, ''),
+				sq.task_type,
+				sq.status,
+				sq.priority,
+				COALESCE(sq.created_at, ''),
+				COALESCE(sq.activated_at, ''),
+				COALESCE(sq.completed_at, ''),
+				COALESCE(sq.payload_json, ''),
+				COALESCE(sq.start_page, 0),
+				COALESCE(sq.end_page, 0),
+				COALESCE(t.title, COALESCE(n.title, 'Task')),
+				COALESCE(n.priority, 5)
+			FROM study_queue sq
+			JOIN notebooks n ON sq.notebook_id = n.id
+			LEFT JOIN topics t ON sq.topic_id = t.id
+			WHERE sq.status = 'PENDING'
+		`
+		args := make([]interface{}, 0, 2)
+		if notebookID != "" {
+			query += ` AND sq.notebook_id = ?`
+			args = append(args, notebookID)
+		}
+		query += `
+			ORDER BY
+				CASE sq.task_type
+					WHEN 'FLASHCARD_REVIEW' THEN 5
+					WHEN 'REREAD' THEN 4
+					WHEN 'QUIZ' THEN 3
+					WHEN 'READING' THEN 2
+					WHEN 'EXAMINER' THEN 1
+					ELSE 0
+				END DESC,
+				COALESCE(n.priority, 5) DESC,
+				sq.priority ASC,
+				COALESCE(sq.created_at, '') ASC,
+				sq.id ASC
+			LIMIT 1
+		`
+		task := &models.StudyQueueTask{}
+		var topicTitle string
+		var notebookPriority int
+		err := conn.QueryRow(query, args...).Scan(
+			&task.ID,
+			&task.NotebookID,
+			&task.TopicID,
+			&task.TaskType,
+			&task.Status,
+			&task.Priority,
+			&task.CreatedAt,
+			&task.ActivatedAt,
+			&task.CompletedAt,
+			&task.PayloadJSON,
+			&task.StartPage,
+			&task.EndPage,
+			&topicTitle,
+			&notebookPriority,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNoPendingTasks
+		}
+		if err != nil {
+			return nil, err
+		}
+		task.Title = topicTitle
+		return task, nil
+	}
 
 	query := `
 		SELECT
@@ -248,33 +480,56 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 			COALESCE(sq.payload_json, ''),
 			COALESCE(sq.start_page, 0),
 			COALESCE(sq.end_page, 0),
+			COALESCE(t.title, COALESCE(n.title, 'Task')),
 			COALESCE(n.priority, 5)
 		FROM study_queue sq
-		LEFT JOIN notebooks n ON sq.notebook_id = n.id
+		JOIN notebooks n ON sq.notebook_id = n.id
+		LEFT JOIN topics t ON sq.topic_id = t.id
 		WHERE sq.status = 'PENDING'
 	`
-	args := make([]interface{}, 0, 1)
+	args := make([]interface{}, 0, 5)
 	if notebookID != "" {
 		query += ` AND sq.notebook_id = ?`
 		args = append(args, notebookID)
+	} else {
+		if activeProfileStr != "" {
+			query += ` AND n.profile_id = ?`
+			args = append(args, activeProfileStr)
+		}
+		query += ` AND (sq.task_type = 'FLASHCARD_REVIEW' OR n.study_status = 'active')`
 	}
+
 	query += `
 		ORDER BY
-			CASE sq.task_type
-				WHEN 'FLASHCARD_REVIEW' THEN 1
-				WHEN 'REREAD' THEN 2
-				WHEN 'QUIZ' THEN 3
-				WHEN 'READING' THEN 4
-				WHEN 'EXAMINER' THEN 5
-				ELSE 6
-			END,
-			COALESCE(n.priority, 5) DESC,
+			CASE WHEN ? = 1 THEN
+				CASE sq.task_type
+					WHEN 'REREAD' THEN 5
+					WHEN 'QUIZ' THEN 4
+					WHEN 'READING' THEN 3
+					WHEN 'EXAMINER' THEN 2
+					WHEN 'FLASHCARD_REVIEW' THEN 1
+					ELSE 0
+				END
+			ELSE
+				CASE sq.task_type
+					WHEN 'FLASHCARD_REVIEW' THEN 5
+					WHEN 'REREAD' THEN 4
+					WHEN 'QUIZ' THEN 3
+					WHEN 'READING' THEN 2
+					WHEN 'EXAMINER' THEN 1
+					ELSE 0
+				END
+			END DESC,
 			sq.priority ASC,
-			sq.created_at ASC
+			COALESCE(n.priority, 5) DESC,
+			n.title ASC,
+			sq.id ASC
 		LIMIT 1
 	`
+	args = append(args, skipVal)
 
 	task := &models.StudyQueueTask{}
+	var topicTitle string
 	var notebookPriority int
 	err := conn.QueryRow(query, args...).Scan(
 		&task.ID,
@@ -289,6 +544,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 		&task.PayloadJSON,
 		&task.StartPage,
 		&task.EndPage,
+		&topicTitle,
 		&notebookPriority,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -297,8 +553,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Debug log: show notebook priority for next task
-	utils.Warnf("[QUEUE] GetNextTask result taskID=%s status=%s type=%s notebookID=%s topicID=%s task_priority=%d notebook_priority=%d", task.ID, task.Status, task.TaskType, task.NotebookID, task.TopicID, task.Priority, notebookPriority)
+	task.Title = topicTitle
 	return task, nil
 }
 
@@ -737,13 +992,6 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	return quizTaskID, nil
 }
 
-func saveQuizAttemptRepo(attempt models.QuizAttemptRecord) error {
-	_, err := conn.Exec(`
-		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
-	return err
-}
 
 func saveQuizAttemptRepoTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	if tx == nil {
@@ -763,24 +1011,6 @@ func boolToInt(v bool) int {
 	return 0
 }
 
-func SaveQuizAttempt(attempt models.QuizAttemptRecord) error {
-	attempt.ID = strings.TrimSpace(attempt.ID)
-	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
-	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
-	if attempt.ID == "" {
-		return fmt.Errorf("attempt id is required")
-	}
-	if attempt.TaskID == "" {
-		return fmt.Errorf("task id is required")
-	}
-	if attempt.AnswersJSON == "" {
-		return fmt.Errorf("answers json is required")
-	}
-	if attempt.CompletedAt <= 0 {
-		return fmt.Errorf("completed at is required")
-	}
-	return saveQuizAttemptRepo(attempt)
-}
 
 func SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	attempt.ID = strings.TrimSpace(attempt.ID)

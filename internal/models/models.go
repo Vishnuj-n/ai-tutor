@@ -1,7 +1,6 @@
 package models
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/open-spaced-repetition/go-fsrs/v4"
@@ -178,7 +177,6 @@ type ReadingTopicCursor struct {
 type Chunk struct {
 	ID              string
 	TopicID         string
-	ParentID        string
 	Text            string
 	ImportanceScore float64
 	WeaknessScore   float64
@@ -187,25 +185,27 @@ type Chunk struct {
 
 // ChunkWithContext is the structured prompt context passed to LLM generation.
 type ChunkWithContext struct {
-	ChunkID  string `json:"chunk_id"`
-	ParentID string `json:"parent_id,omitempty"`
-	PageNum  int    `json:"page_num"`
-	Text     string `json:"text"`
+	ChunkID string `json:"chunk_id"`
+	PageNum int    `json:"page_num"`
+	Text    string `json:"text"`
 }
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
 type Notebook struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	FilePath       string `json:"file_path"`
-	FileType       string `json:"file_type"` // "pdf", "txt", "md"
-	TopicID        string `json:"topic_id,omitempty"`
-	Status         string `json:"status"`
-	IndexingStatus string `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
-	UploadedAt     string `json:"uploaded_at"`
-	PageCount      int    `json:"page_count,omitempty"`
-	ChunkCount     int    `json:"chunk_count"`
-	Priority       int    `json:"priority"`
+	ID             string  `json:"id"`
+	Title          string  `json:"title"`
+	FilePath       string  `json:"file_path"`
+	FileType       string  `json:"file_type"` // "pdf", "txt", "md"
+	TopicID        string  `json:"topic_id,omitempty"`
+	Status         string  `json:"status"`
+	IndexingStatus string  `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
+	UploadedAt     string  `json:"uploaded_at"`
+	PageCount      int     `json:"page_count,omitempty"`
+	ChunkCount     int     `json:"chunk_count"`
+	Priority       int     `json:"priority"`
+	ExamDeadline   *string `json:"exam_deadline,omitempty"`
+	ProfileID      string  `json:"profile_id,omitempty"`
+	StudyStatus    string  `json:"study_status,omitempty"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)
@@ -520,23 +520,21 @@ type ReadingSessionResponse struct {
 	Navigation NavigationState    `json:"navigation"`
 }
 
-// Validate ensures all required fields for a successful reading session are present.
-// It returns an error if OK is true but critical data is missing.
-func (r *ReadingSessionResponse) Validate() error {
-	if !r.OK {
-		return nil // Error already reported via OK=false
-	}
-	if r.Task == nil {
-		return fmt.Errorf("missing required field: task")
-	}
-	if r.Bundle == nil {
-		return fmt.Errorf("missing required field: bundle")
-	}
-	if len(r.Bundle.Sections) == 0 {
-		return fmt.Errorf("missing required field: bundle.sections")
-	}
-	if r.PageBounds.StartPage <= 0 {
-		return fmt.Errorf("missing required field: page_bounds (start_page must be > 0)")
-	}
-	return nil
+// StudyProfile represents a user's study profile (e.g. UPSC prep).
+type StudyProfile struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	DeadlineAt int64  `json:"deadline_at"` // Unix timestamp
+	CreatedAt  string `json:"created_at,omitempty"`
+}
+
+// UserSettings represents the application settings.
+type UserSettings struct {
+	DailyStudyMinutes   int    `json:"daily_study_minutes"`
+	ActiveProfileID     string `json:"active_profile_id"`
+	SkipToReadingActive bool   `json:"skip_to_reading_active"`
+	CloudSyncURL        string `json:"cloud_sync_url"`
+	CloudAPIToken       string `json:"cloud_api_token"`
+	Theme               string `json:"theme"`
+	RAGEnabled          bool   `json:"rag_enabled"`
 }

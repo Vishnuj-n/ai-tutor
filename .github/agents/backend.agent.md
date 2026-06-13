@@ -8,7 +8,7 @@ You are responsible only for Go backend development in a Wails application.
 
 ## Scope
 - Write Go functions and backend modules.
-- Implement RAG pipeline steps: embedding, retrieval, parent-context expansion, prompt building, LLM call.
+- Implement RAG pipeline steps: embedding, retrieval, prompt building, LLM call.
 - Handle SQLite data access through a repository layer.
 - Expose backend functions to frontend through Wails bindings.
 

@@ -23,7 +23,7 @@ type SearchResult struct {
 	ChunkID         string
 	Text            string
 	TopicID         string
-	ParentID        string
+	PageNum         int
 	ImportanceScore float64
 	WeaknessScore   float64
 	Score           float64
@@ -247,9 +247,7 @@ func (e *Engine) searchWithScope(
 		k = len(chunks)
 	}
 
-	// We'll collect chunk-level results in chunkResults and then promote to
-	// parent-level results before returning, so callers always receive parent
-	// documents.
+	// We'll collect chunk-level results in chunkResults
 	var chunkResults []SearchResult
 
 	// --- ONNX path (preferred) ---
@@ -272,7 +270,7 @@ func (e *Engine) searchWithScope(
 						ChunkID:         c.ID,
 						Text:            c.Text,
 						TopicID:         c.TopicID,
-						ParentID:        c.ParentID,
+						PageNum:         c.PageNum,
 						ImportanceScore: c.ImportanceScore,
 						WeaknessScore:   c.WeaknessScore,
 						Score:           float64(len(chunkIDs) - i),
@@ -293,88 +291,12 @@ func (e *Engine) searchWithScope(
 		chunkResults = e.lexicalSearch(query, chunks, k)
 	}
 
-	// Promote chunk-level results to parent-level by aggregating scores per parent.
-	type parentAgg struct {
-		repChunkID string
-		text       string
-		topicID    string
-		parentID   string
-		score      float64
-		importance float64
-		weakness   float64
-	}
-	aggs := make(map[string]*parentAgg)
-	for _, r := range chunkResults {
-		pid := r.ParentID
-		if pid == "" {
-			// If no parent, treat chunk as its own parent by using ChunkID
-			pid = r.ChunkID
-		}
-		a, ok := aggs[pid]
-		if !ok {
-			aggs[pid] = &parentAgg{
-				repChunkID: r.ChunkID,
-				text:       r.Text,
-				topicID:    r.TopicID,
-				parentID:   pid,
-				score:      r.Score,
-				importance: r.ImportanceScore,
-				weakness:   r.WeaknessScore,
-			}
-			continue
-		}
-		// Aggregate by summing scores and keeping highest-importance/weakness
-		a.score += r.Score
-		if r.ImportanceScore > a.importance {
-			a.importance = r.ImportanceScore
-			a.text = r.Text
-			a.repChunkID = r.ChunkID
-		}
-		if r.WeaknessScore > a.weakness {
-			a.weakness = r.WeaknessScore
-		}
+	sort.Slice(chunkResults, func(i, j int) bool { return chunkResults[i].Score > chunkResults[j].Score })
+	if len(chunkResults) > topK {
+		chunkResults = chunkResults[:topK]
 	}
 
-	// Convert aggs map to slice and sort by aggregated score desc
-	parentResults := make([]SearchResult, 0, len(aggs))
-	for _, a := range aggs {
-		parentResults = append(parentResults, SearchResult{
-			ChunkID:         a.repChunkID,
-			Text:            a.text,
-			TopicID:         a.topicID,
-			ParentID:        a.parentID,
-			ImportanceScore: a.importance,
-			WeaknessScore:   a.weakness,
-			Score:           a.score,
-		})
-	}
-	sort.Slice(parentResults, func(i, j int) bool { return parentResults[i].Score > parentResults[j].Score })
-	if len(parentResults) > topK {
-		parentResults = parentResults[:topK]
-	}
-
-	for i := range parentResults {
-		parentID := strings.TrimSpace(parentResults[i].ParentID)
-		if parentID == "" {
-			continue
-		}
-		parent, err := db.GetParentSection(parentID)
-		if err != nil {
-			log.Printf("retrieval: failed to materialize parent %s, keeping representative chunk: %v", parentID, err)
-			parentResults[i].ChunkID = parentID
-			continue
-		}
-		if parentText := strings.TrimSpace(parent["content"]); parentText != "" {
-			parentResults[i].Text = parentText
-		}
-		if materializedID := strings.TrimSpace(parent["id"]); materializedID != "" {
-			parentResults[i].ChunkID = materializedID
-		} else {
-			parentResults[i].ChunkID = parentID
-		}
-	}
-
-	return parentResults, nil
+	return chunkResults, nil
 }
 
 // --- internal helpers ---
@@ -396,7 +318,7 @@ func (e *Engine) lexicalSearch(query string, chunks []models.Chunk, k int) []Sea
 			ChunkID:         c.ID,
 			Text:            c.Text,
 			TopicID:         c.TopicID,
-			ParentID:        c.ParentID,
+			PageNum:         c.PageNum,
 			ImportanceScore: c.ImportanceScore,
 			WeaknessScore:   c.WeaknessScore,
 			Score:           score,

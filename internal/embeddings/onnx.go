@@ -25,9 +25,6 @@ type OnnxEmbedder struct {
 	outputInfo    []ort.InputOutputInfo
 	dimCount      int32
 	maxSeqLen     int
-	padID         int64
-	modelPath     string
-	tokenizerPath string
 	runtimeOwned  bool
 	mu            sync.Mutex
 }
@@ -47,14 +44,6 @@ func NewOnnxEmbedder(modelPath, tokenizerPath, configuredRuntimePath string) (*O
 	tok, err := pretrained.FromFile(tokenizerPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load tokenizer %s: %w", tokenizerPath, err)
-	}
-
-	padID := int64(0)
-	for _, candidate := range []string{"[PAD]", "<pad>", "<PAD>"} {
-		if id, ok := tok.TokenToId(candidate); ok {
-			padID = int64(id)
-			break
-		}
 	}
 
 	runtimePath, err := resolveRuntimeLibraryPath(configuredRuntimePath, modelPath)
@@ -107,16 +96,13 @@ func NewOnnxEmbedder(modelPath, tokenizerPath, configuredRuntimePath string) (*O
 	}
 
 	embedder := &OnnxEmbedder{
-		tokenizer:     tok,
-		session:       session,
-		inputInfo:     inputInfo,
-		outputInfo:    outputInfo,
-		dimCount:      0,
-		maxSeqLen:     maxSeqLen,
-		padID:         padID,
-		modelPath:     modelPath,
-		tokenizerPath: tokenizerPath,
-		runtimeOwned:  runtimeOwned,
+		tokenizer:    tok,
+		session:      session,
+		inputInfo:    inputInfo,
+		outputInfo:   outputInfo,
+		dimCount:     0,
+		maxSeqLen:    maxSeqLen,
+		runtimeOwned: runtimeOwned,
 	}
 
 	warmupVec, err := embedder.embedInternal("warmup")

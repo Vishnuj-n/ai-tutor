@@ -1,6 +1,6 @@
 # AI Tutor RAG Architecture
 
-**Legacy term note:** Older docs referred to `blocks` and `block_vectors`. The live schema uses `parents` + `chunks` for content and an external/virtual embedding store (see `doc/SCHEMA.md` for mapping). This document uses the current names `chunks` / `parents` and refers to embedding storage as the RAG embedding store or `sqlite-vec` where applicable.
+**Legacy term note:** Older docs referred to `blocks` and `block_vectors`. The live schema uses `chunks` for content and an embedding store (see `doc/SCHEMA.md` for mapping). This document uses the current name `chunks` and refers to embedding storage as the RAG embedding store or `sqlite-vec` where applicable.
 
 ## 1. Purpose
 
@@ -17,7 +17,6 @@ The retrieval-augmented generation layer powers contextual AI for the current to
 ### How
 
 - Retrieve only from the active `topic_id`
-- Expand matched child chunks to their parent sections before prompting
 - Build a single-turn prompt and send one stateless LLM request
 
 ## 2. Scope and Boundaries
@@ -55,16 +54,16 @@ RAG must be deterministic about what it can see and how much it can send to the 
 - The UI sends the active `block_id` with the request (from current task)
 - Backend validates that the block exists
 - Retrieval queries the RAG embedding store (sqlite-vec virtual table) filtered by `block_id` scope
-- Return full block content for context (expand matched child chunks to their parent sections)
+- Return chunk content for context
 
 ## 4. Content Structure
 
 ### What
 
-Source material is stored in **chunks** (with `parents` for section headings) created by **sliding window chunking**:
+Source material is stored in **chunks** created by **sliding window chunking**:
 
 - **Chunk**: Content unit of ~2500 words with 200-word overlap
-- **Storage**: `chunks` table with `parent_id` referencing `parents` for section headings
+- **Storage**: `chunks` table linked directly to topics
 - **Retrieval**: Top-k chunks via the RAG embedding store (sqlite-vec) within `block_id` scope
 
 ### Why
@@ -87,22 +86,21 @@ Text → [2500 words] → [2500 words with 200 overlap] → [next 2500 words]...
 
 | Field | Purpose |
 |-------|---------|
-| `id` | Unique block identifier |
-| `topic_id` | Parent topic reference |
-| `block_type` | `CHUNK` |
-| `content` | Text content |
-| `word_count` | For progress tracking |
-| `order_index` | Sequence within topic |
-| `start_page`, `end_page` | Page provenance |
+| `id` | Unique chunk identifier |
+| `topic_id` | Topic reference |
+| `chunk_text` | Text content |
+| `page_num` | Page provenance |
+| `token_count` | Word/token count |
+| `embedding_ref` | Vector store reference |
 
 **Retrieval scope:**
 - Retrieve from the RAG embedding store (sqlite-vec virtual table)
 - Filter by `block_id` (chunk id from active task context)
-- Expand to full chunk content before prompt assembly
+- Return full chunk content for prompt assembly
 
 **What changed:**
-- Removed: parent-child hierarchy, semantic boundaries, LLM-drafted sections
-- Added: sliding window, uniform block storage, simpler retrieval
+- Removed: parent-child hierarchy, semantic boundaries, LLM-drafted sections, heading/parent expansion
+- Added: sliding window, uniform chunk storage, simpler retrieval
 
 ## 5. Retrieval Pipeline
 
@@ -120,13 +118,12 @@ Simple control flow is easier to debug and keeps AI behavior predictable.
 User question
   -> validate active topic
   -> embed query
-  -> search topic-scoped child chunks
+  -> search topic-scoped chunks
   -> ApplyHeuristicScoring (V1: no-op/basic boost, V2: weak-area boosting)
   -> select top-k matches
-  -> expand matches to parent sections
   -> assemble prompt within token budget
   -> call OpenAI-compatible model once
-  -> return answer with section labels/citations
+  -> return answer with citations
 ```
 
 Heuristic scoring contract:
@@ -145,7 +142,7 @@ Embeddings are stored in a `sqlite-vec` virtual table (RAG embedding store). Ret
 
 - SQLite extensions are connection-scoped, single persistent connection required
 - The `sqlite-vec` virtual table requires integer rowids
-  - Simplified retrieval: expand matched child chunks to their parent sections when assembling context
+  - Simplified retrieval: retrieve topic-scoped chunks directly when assembling context
 
 ### How
 
@@ -157,11 +154,11 @@ Embeddings are stored in a `sqlite-vec` virtual table (RAG embedding store). Ret
 1. Get `block_id` (chunk id) from current task context
 2. Query the sqlite-vec embedding store for that chunk's vector
 3. Calculate similarity to query embedding
-4. Return chunk content directly after expanding matched child chunks to their parent sections when assembling context
+4. Return chunk content directly
 
 **Changes from previous architecture:**
 - Removed: two-step pre-filtering, parent expansion, page_num bounds checking
-- Simpler: direct block lookup by `block_id`
+- Simpler: direct chunk lookup by `block_id`
 
 **Architectural Constraints:**
 - Connection pool fixed at 1 (`SetMaxOpenConns(1)`)
@@ -183,19 +180,18 @@ Prompt payload should include:
 
 - User question
 - Active topic metadata
-- Retrieved parent sections or section excerpts
+- Retrieved chunk excerpts
 - Output instructions
 
 Embedding metadata requirements (ingestion-time):
 
-- Persist `topic_id`, `parent_id`, and `id` in SQLite chunk rows.
+- Persist `topic_id` and `id` in SQLite chunk rows.
 - Persist vectors in sqlite-vec by integer SQLite rowid, resolved from relational `id`.
 - Keep metadata minimal but sufficient for fast topic-filtered retrieval.
 
 Prompt rules:
 
-- Keep only the most relevant sections
-- Remove duplicate context where child hits map to the same parent
+- Keep only the most relevant chunks
 - Enforce a strict max token budget before the API call
 - Prefer concise answers unless the UI explicitly requests a longer explanation
 
@@ -214,11 +210,11 @@ This prevents truncated prompts, wasted spend, and unstable responses.
 - Reserve tokens for the model response first
 - Allocate the remainder to retrieved context
 - Drop lower-ranked chunks when the budget is exceeded
-- Prefer fewer high-signal parent sections over many shallow fragments
+- Prefer fewer high-signal chunks over many shallow fragments
 
 Practical rule:
 
-- If a section cannot fit in the remaining budget, do not partially force it in unless the parser can trim it cleanly
+- If a chunk cannot fit in the remaining budget, do not partially force it in unless the parser can trim it cleanly
 
 ## 8. Answer Behavior
 
@@ -275,7 +271,7 @@ The app stays simpler, more predictable, and easier to maintain.
 
 ### What
 
-The retrieval layer depends on the content stored as `chunks` (and `parents` for section headings) and on the RAG embedding store (sqlite-vec virtual table).
+The retrieval layer depends on the content stored as `chunks` and on the RAG embedding store (sqlite-vec virtual table).
 
 ### Why
 
@@ -283,12 +279,12 @@ RAG should be traceable back to the source material and the current study state.
 
 ### How
 
-- `chunks` table stores content; `parents` holds section headings and hierarchy
+- `chunks` table stores content
 - Embeddings live in the sqlite-vec virtual table (RAG embedding store) and are referenced from `chunks` via `embedding_ref`
 - Current task provides `block_id` (a chunk id) for scoped retrieval
 - UI shows chunk reference for traceability
 
-**Schema implementation:** See `internal/db/schema.go` for the authoritative table definitions and `internal/rag` for the embedding/retrieval implementation.
+**Schema implementation:** See `internal/db/schema.go` for the authoritative table definitions and `internal/retrieval` for the embedding/retrieval implementation.
 
 **Note:** Previous `importance_score` and `weakness_score` hooks removed. Scoring now handled by FSRS state on cards or quiz results.
 
@@ -330,13 +326,12 @@ Step 4: Retrieve top-k for active topic (Two-Step Fast Retrieval)
 - Embed user query using the same tokenizer and ONNX model.
 - Step A: Pre-filter target `rowid`s by querying `topic_id` and `page_num` boundaries from the `chunks` table.
 - Step B: Execute vector similarity search on the `sqlite-vec` virtual table, restricted to the pre-filtered `rowid` set (avoiding virtual table joins).
-- Expand child hits to parent sections before prompt assembly.
 
 Step 5: Generate answer
 
-- Build a token-budgeted prompt from retrieved parent sections plus the user question.
+- Build a token-budgeted prompt from retrieved chunks plus the user question.
 - Call the configured OpenAI-compatible LLM once (stateless).
-- Return answer plus section labels/citations.
+- Return answer plus citations.
 
 ## 13. Windows Runtime Assets
 

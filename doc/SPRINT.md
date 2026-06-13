@@ -1,7 +1,7 @@
 # SPRINT.md — AI Tutor
 
 **Status:** Active roadmap for Persistent Queue Architecture  
-**Last Updated:** 2026-05-08  
+**Last Updated:** 2026-06-05  
 **Architecture:** SQLite-backed deterministic queue (NOT autonomous orchestration)
 
 ---
@@ -289,184 +289,85 @@ CREATE TABLE reread_attempts (
 
 ---
 
-### Sprint 5: Flashcard Review Tasks
+## Sprint 5: Core Foundation, Bootstrap Isolation & Settings [DONE]
 
-**Goal:** Integrate FSRS with queue — due cards become review tasks.
+**Goal:** Lock down native database queue sorting, isolate bootstrap logic, and build system configuration inputs.
 
-**Required Context:**
-
-- **Documentation:** SCHEMA.md, DATA_API.md, AGENT_MAP.md
-- **Agent Instructions:** /AGENTS.md, /internal/AGENTS.md
-- **Relevant Packages:** internal/db/, internal/study/
-- **Important Constraints:** FSRS is scheduling algorithm only, not orchestrator; one task per review session not per card
-
-**FSRS Role Clarification:**
-- FSRS is ONLY: scheduling algorithm + interval calculator
-- FSRS is NOT: orchestrator, mission engine, hidden scheduler
-
-**Review Task Model:**
-- One `FLASHCARD_REVIEW` task = one review session
-- NOT one task per card (prevents queue explosion)
-- Task payload contains list of due cards for the session
-
-**Daily Flow:**
-1. On dashboard load or explicit refresh: Query `fsrs_cards` for due cards
-2. Group by notebook, create `FLASHCARD_REVIEW` tasks
-3. Tasks enter queue at highest priority
-4. User activates task → review session begins
-5. Each card rating updates FSRS state
-6. Session complete → mark task COMPLETED
-
-**API Surface:**
-- `GenerateReviewTasks(notebookID string) ([]StudyTask, error)` — Create tasks for due cards
-- `GetReviewSession(taskID string) ReviewSession` — Get cards for this session
-- `RecordCardReview(taskID, cardID string, rating int) error` — Update FSRS state
-- `CompleteReviewSession(taskID string) error` — Mark task done
-
-**Schema:**
-```sql
--- Link review tasks to cards being reviewed
-CREATE TABLE review_task_cards (
-    task_id TEXT,
-    card_id TEXT,
-    status TEXT DEFAULT 'pending', -- pending, reviewed
-    PRIMARY KEY (task_id, card_id)
-);
-```
-
-**Rules:**
-- One session task can contain 10-20 cards (configurable)
-- Cards due together are batched into same session
-- Queue priority ensures review happens before new reading
+**Tasks:**
+- **Task 5.1**: Implement Native SQL Desktop Queue Routing (`internal/db/study_queue_repo.go`). Write the deterministic `GetAllPendingTasks()` query using Notebook Priority biasing to handle macro-interleaving.
+- **Task 5.2**: Deconstruct `app.go` God-File Setup Block. Move initialization, asset validation, and path resolvers to `internal/runtime/boot.go`.
+- **Task 5.3**: Expose System Configuration Endpoints. Create a settings persistence layer in SQLite to track `daily_study_minutes` and a user-configured `exam_target_date` timestamp.
+- **Task 5.4**: Collapse Middle-Tier Schema. Permanently delete the `parents` table and update `chunks` to reference `topic_id` directly for streamlined local RAG joins.
 
 **Deliverables:**
-- [ ] FLASHCARD_REVIEW task type
-- [ ] Due card query and batching
-- [ ] Review session payload structure
-- [ ] FSRS rating integration (existing code)
-- [ ] Session completion flow
+- [x] SQL sorting routing implementation
+- [x] Bootstrap package `boot.go`
+- [x] Updated lightweight `app.go` bridge
+- [x] Settings persistence table and Wails read/write bindings
+- [x] Flattened single-join database schema definitions
 
 ---
 
-### Sprint 6: Examiner Tasks & Mastery Triggers
+## Sprint 6: Reading, Quiz Pipelines & Deadline Pacing (Priority: Medium-High) [DONE]
 
-**Goal:** Implement Examiner mode as queue-driven optional tasks.
+**Goal:** Build bounded reading logic, content-density quiz scaling, and expose daily study velocity.
 
-**Required Context:**
-
-- **Documentation:** SCHEMA.md, DATA_API.md, AGENT_MAP.md
-- **Agent Instructions:** /AGENTS.md, /internal/AGENTS.md
-- **Relevant Packages:** internal/db/, internal/assessment/
-- **Important Constraints:** No hidden examiner orchestration, tasks are optional and queue-driven
-
-**Examiner Tasks:**
-- Inserted after mastery thresholds (e.g., 3 quizzes passed at 90%+)
-- Appear naturally in queue at priority 5 (lowest)
-- Optional — user can skip without penalty
-- NOT interrupting, NOT autonomous
-
-**Mastery Detection:**
-```sql
--- Simple threshold-based trigger
-SELECT topic_id, COUNT(*) as passed_count
-FROM user_answers ua
-JOIN questions q ON ua.question_id = q.id
-WHERE ua.score >= 90
-GROUP BY q.topic_id
-HAVING passed_count >= 3;
-```
-
-**Examiner Task Payload:**
-```json
-{
-  "written_question_ids": ["wq_...", "wq_..."],
-  "triggered_by": "mastery_threshold",
-  "optional": true
-}
-```
-
-**API Surface:**
-- `CheckMasteryTriggers(notebookID string) []MasteryTrigger` — Detect thresholds
-- `InsertExaminerTask(notebookID, topicID string) error`
-- `GetWrittenQuestions(taskID string) []WrittenQuestion`
-- `SubmitWrittenAnswer(taskID, questionID, answer string) WrittenScore`
-
-**Rules:**
-- NO hidden examiner orchestration
-- NO autonomous examiner flows
-- Tasks are optional, queue-driven, user-initiated
+**Tasks:**
+- **Task 6.1**: Enforce Backend Context Locking (`internal/study/service.go`). Pull text chunks strictly by assigned page bounds during quiz generation, removing frontend view restriction dependencies.
+- **Task 6.2**: Implement Density-Scaled Quiz Quantities (`internal/study/reader.go`). Globalize token capacities and calculate target question volume dynamically using a words-per-question density script.
+- **Task 6.3**: Wire the Deadline Velocity UI. Create a backend utility to run the target formula (`Remaining Words / Days to Exam Target`) and render the resulting required daily pace metric on the main dashboard workspace.
 
 **Deliverables:**
-- [ ] Examiner task type and payload
-- [ ] Mastery threshold detection
-- [ ] Optional task handling (skip allowed)
-- [ ] Written question integration
-- [ ] Queue-driven examiner flow
+- [x] Backend-only page range validation safety
+- [x] Scalable context-locked quiz generation
+- [x] Interactive configuration screen for setting exam deadlines
+- [x] Front-facing dashboard target telemetry widget
 
 ---
 
-### Sprint 7: Queue Balancing & Polish
+## Sprint 7: Memory Engine & Dashboard Synchronization (Priority: Medium)
 
-**Goal:** Ensure fair queue distribution and recovery robustness.
+**Goal:** Integrate type‑safe FSRS tracking and align dashboard view.
 
-**Required Context:**
-
-- **Documentation:** SCHEMA.md, DATA_API.md
-- **Agent Instructions:** /AGENTS.md, /internal/AGENTS.md
-- **Relevant Packages:** internal/db/, internal/study/
-- **Important Constraints:** Queue ordering must remain deterministic, no background queue mutation daemons
-
-**Queue Balancing:**
-
-1. **Starvation Prevention**
-   - Lower priority notebooks get minimum quota
-   - Config: `min_tasks_per_notebook_per_day = 2`
-
-2. **Priority Decay (Query-Time Only)**
-   - Old PENDING tasks get higher priority in ordering calculation
-   - Implemented as SQL ORDER BY logic, NOT background mutation
-   - Prevents infinite deferral while remaining deterministic
-
-3. **Session Boundaries**
-   - Configurable max tasks per session: `max_session_tasks = 10`
-   - Soft limit — user can continue if desired
-
-**Crash Recovery:**
-
-1. **ACTIVE Task Handling**
-   - On startup: Mark stale ACTIVE tasks back to PENDING
-   - Stale threshold: `task_active_timeout = 24 hours`
-
-2. **Reading Progress Recovery**
-   - `reading_progress` table preserves cursor
-   - User resumes at last page on restart
-
-3. **Quiz Generation Idempotency**
-   - Quiz generation keyed by (task_id, attempt_num)
-   - Re-generation on crash produces identical questions
-
-**API Surface:**
-- `ApplyQueueOrderingRules(notebookID string) error` — Apply priority adjustments (query-time only)
-- `RecoverStaleTasks() error` — Mark timed-out ACTIVE tasks
-- `GetQueueStats() QueueStats` — Per-notebook pending counts
-
-**Monitoring:**
-```sql
--- Health check queries
-SELECT notebook_id, task_type, status, COUNT(*) 
-FROM study_queue 
-GROUP BY notebook_id, task_type, status;
-```
+**Tasks:**
+- **Task 7.1**: Strict Typecasting Mapping for `go-fsrs/v4` (`internal/study/review_session.go`). Convert `ElapsedDays` to `ElapsedTime (uint64)`.
+- **Task 7.2**: Resolve Dual‑Path Split‑Brain in `GetTodayPlan` (`app.go`). Use `study_queue` as single source of truth; scheduler only aggregates review metrics.
 
 **Deliverables:**
-- [ ] Starvation prevention logic
-- [ ] Priority decay for old tasks
-- [ ] Session task limits
-- [ ] Stale task recovery
-- [ ] Queue health monitoring
-- [ ] Crash-resilient reading progress
+- [ ] FSRS type‑safe integration
+- [ ] Consistent `GetTodayPlan` logic
 
 ---
+## Sprint 8: Constraint-Based Study Groups (Priority: Medium)
+
+**Goal:** Implement multi-notebook deadline grouping and feasibility verification without autonomous AI scheduling.
+
+**Tasks:**
+- **Task 8.1**: Implement `study_groups` Table (`internal/db/schema.go`). Create schema for grouping multiple notebooks under a single master deadline. Update `notebooks` table with `group_id` foreign key.
+- **Task 8.2**: Build Feasibility Verifier (`internal/study/service.go`). Create logic to sum total unread words across a group and verify if the required daily pace is mathematically possible.
+- **Task 8.3**: Grouped Priority Multiplier (`internal/db/study_queue_repo.go`). Update Native SQL Queue Routing to temporarily boost the priority index of notebooks belonging to near-deadline groups.
+- **Task 8.4**: UI Capacity Monitor. Add a dashboard widget displaying current group load and feasibility warnings (the "Buzzing" feature) when pacing limits are exceeded.
+
+**Deliverables:**
+- [ ] `study_groups` schema and database migrations
+- [ ] Feasibility verification backend logic
+- [ ] Updated Active Lane SQL priority multiplier
+- [ ] Frontend capacity monitor and warning UI
+---
+## Sprint 9: Socratic Tutor Routing & Milestone Examiner Gate (Priority: Low / Good‑to‑Have)
+
+**Goal:** Secure prompt handling and add the 10‑session milestone gate.
+
+**Tasks:**
+- **Task 8.1**: Move Socratic Prompt Engineering to Backend (`app.go` & `Socratic.vue`). Add `AskSocraticAI` endpoint.
+- **Task 8.2**: Implement Milestone Examiner Gate (`internal/study/service.go`). Use SQLite count query; on multiples of 10 create an `EXAMINER` task.
+
+**Deliverables:**
+- [ ] Backend Socratic endpoint
+- [ ] Milestone gate implementation
+
+---
+
 
 ## Technical Implementation Notes
 

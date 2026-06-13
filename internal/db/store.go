@@ -12,6 +12,11 @@ import (
 	"ai-tutor/internal/utils"
 )
 
+// querier interface allows both *sql.DB and *sql.Tx to be used with database helper functions
+type querier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 var conn *sql.DB
 var embeddingDimension int32 = 0 // Will be set during DB initialization with vec0
 
@@ -43,7 +48,7 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	var err error
-	conn, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
+	conn, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return err
 	}
@@ -176,6 +181,148 @@ func UpsertDailyStudyMinutes(minutes int) error {
 	return err
 }
 
+// GetRAGEnabled returns the status of RAG flag.
+func GetRAGEnabled() (bool, error) {
+	var enabled bool
+	err := conn.QueryRow(`
+		SELECT COALESCE(rag_enabled, 0)
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&enabled)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return enabled, err
+}
+
+// GetUserSettings returns the full settings config.
+func GetUserSettings() (*models.UserSettings, error) {
+	var s models.UserSettings
+	var activeProfileID sql.NullString
+	err := conn.QueryRow(`
+		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0)
+		FROM user_settings
+		WHERE id = 1
+	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled)
+	if err == sql.ErrNoRows {
+		return &models.UserSettings{
+			DailyStudyMinutes: 90,
+			Theme:             "light-classic",
+			RAGEnabled:        false,
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.ActiveProfileID = activeProfileID.String
+	return &s, nil
+}
+
+// UpdateUserSettings updates the user settings.
+func UpdateUserSettings(s models.UserSettings) error {
+	var activeProfileID interface{} = nil
+	if s.ActiveProfileID != "" {
+		activeProfileID = s.ActiveProfileID
+	}
+	theme := s.Theme
+	if theme == "" {
+		theme = "light-classic"
+	}
+	_, err := conn.Exec(`
+		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			daily_study_minutes = excluded.daily_study_minutes,
+			active_profile_id = excluded.active_profile_id,
+			skip_to_reading_active = excluded.skip_to_reading_active,
+			cloud_sync_url = excluded.cloud_sync_url,
+			cloud_api_token = excluded.cloud_api_token,
+			theme = excluded.theme,
+			rag_enabled = excluded.rag_enabled,
+			updated_at = CURRENT_TIMESTAMP
+	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled)
+	return err
+}
+
+// GetProfiles retrieves all study profiles.
+func GetProfiles() ([]models.StudyProfile, error) {
+	rows, err := conn.Query(`
+		SELECT id, name, deadline_at, created_at
+		FROM study_profiles
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	profiles := make([]models.StudyProfile, 0)
+	for rows.Next() {
+		var p models.StudyProfile
+		if err := rows.Scan(&p.ID, &p.Name, &p.DeadlineAt, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, nil
+}
+
+// GetProfileByID retrieves a specific profile by ID.
+func GetProfileByID(id string) (*models.StudyProfile, error) {
+	var p models.StudyProfile
+	err := conn.QueryRow(`
+		SELECT id, name, deadline_at, created_at
+		FROM study_profiles
+		WHERE id = ?
+	`, id).Scan(&p.ID, &p.Name, &p.DeadlineAt, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreateProfile creates a new study profile.
+func CreateProfile(p models.StudyProfile) error {
+	_, err := conn.Exec(`
+		INSERT INTO study_profiles (id, name, deadline_at)
+		VALUES (?, ?, ?)
+	`, p.ID, p.Name, p.DeadlineAt)
+	return err
+}
+
+// UpdateProfile updates an existing profile.
+func UpdateProfile(p models.StudyProfile) error {
+	_, err := conn.Exec(`
+		UPDATE study_profiles
+		SET name = ?, deadline_at = ?
+		WHERE id = ?
+	`, p.Name, p.DeadlineAt, p.ID)
+	return err
+}
+
+// DeleteProfile deletes a profile atomically.
+func DeleteProfile(id string) error {
+	tx, err := conn.Begin()
+	if err != nil {
+		return fmt.Errorf("DeleteProfile: failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`UPDATE notebooks SET profile_id = NULL WHERE profile_id = ?`, id); err != nil {
+		return fmt.Errorf("DeleteProfile: failed to unlink notebooks: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE active_profile_id = ?`, id); err != nil {
+		return fmt.Errorf("DeleteProfile: failed to unlink user_settings: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM study_profiles WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("DeleteProfile: failed to delete profile: %w", err)
+	}
+	return tx.Commit()
+}
+
 // CreateFlashcards stores a new set of flashcards for one topic.
 // Used by: app_contract_test.go (test-only coverage, production code path utilizes GetOrCreateFlashcardsForTopic)
 func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
@@ -287,20 +434,6 @@ func UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDue
 	return updateFlashcardReviewRepoTx(tx, cardID, dueAt, expectedDueAt, expectedStateJSON, state, reviewLog)
 }
 
-func GetExistingReviewTaskForNotebook(notebookID string) (*models.StudyQueueTask, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
-	}
-	task, err := fetchExistingReviewTask(conn, notebookID)
-	if err != nil {
-		return nil, err
-	}
-	if task != nil {
-		utils.LogReviewSessionResume(task.ID, string(task.Status))
-	}
-	return task, nil
-}
 
 func GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
 	notebookID = strings.TrimSpace(notebookID)
@@ -323,12 +456,6 @@ func GetNextDueReviewNotebook(now int64) (string, int, error) {
 	return getNextDueReviewNotebookRepo(now)
 }
 
-func GetDueReviewCardCountsByNotebook(now int64) (map[string]int, error) {
-	if now <= 0 {
-		return nil, fmt.Errorf("current time is required")
-	}
-	return getDueReviewCardCountsByNotebookRepo(now)
-}
 
 func CreateReviewSession(notebookID string) (*models.StudyQueueTask, bool, error) {
 	notebookID = strings.TrimSpace(notebookID)
@@ -627,17 +754,6 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 	})
 }
 
-// GetChunkEmbeddingRef returns the stored embedding_ref hash for a topic-scoped chunk.
-func GetChunkEmbeddingRef(topicID, chunkID string) (string, error) {
-	var hash string
-	if err := conn.QueryRow(`
-		SELECT COALESCE(embedding_ref, '') FROM chunks WHERE id = ? AND topic_id = ?
-	`, chunkID, topicID).Scan(&hash); err != nil {
-		return "", err
-	}
-
-	return hash, nil
-}
 
 // GetChunkEmbeddingRefsForTopic returns embedding_ref values for all chunks in a topic.
 func GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {
@@ -699,45 +815,5 @@ func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) 
 	return getWrittenQuestionByIDRepo(questionID)
 }
 
-// GetAssessmentFSRSState returns shared assessment FSRS state for one quiz/written reference.
-func GetAssessmentFSRSState(activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	if activityType == "" || referenceID == "" {
-		return nil, fmt.Errorf("activity type and reference id are required")
-	}
-	return getAssessmentFSRSStateRepo(activityType, referenceID, sourceChunkID)
-}
 
-// GetAssessmentFSRSStateTx returns shared assessment FSRS state for one quiz/written reference within a transaction.
-func GetAssessmentFSRSStateTx(tx *sql.Tx, activityType, referenceID, sourceChunkID string) (*AssessmentFSRSRecord, error) {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	if activityType == "" || referenceID == "" {
-		return nil, fmt.Errorf("activity type and reference id are required")
-	}
-	return getAssessmentFSRSStateRepoTx(tx, activityType, referenceID, sourceChunkID)
-}
-
-// UpsertAssessmentFSRSReview saves shared assessment FSRS state and corresponding review log.
-func UpsertAssessmentFSRSReview(activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	topicID = strings.TrimSpace(topicID)
-	if activityType == "" || referenceID == "" || topicID == "" {
-		return fmt.Errorf("activity type, reference id, and topic id are required")
-	}
-	return upsertAssessmentFSRSReviewRepo(activityType, referenceID, topicID, sourceChunkID, state, dueAt, reviewedAt, reviewLog)
-}
-
-// UpsertAssessmentFSRSReviewTx saves shared assessment FSRS state and corresponding review log within a transaction.
-func UpsertAssessmentFSRSReviewTx(tx *sql.Tx, activityType, referenceID, topicID, sourceChunkID string, state models.FlashcardState, dueAt, reviewedAt int64, reviewLog models.FSRSReviewLog) error {
-	activityType = strings.TrimSpace(activityType)
-	referenceID = strings.TrimSpace(referenceID)
-	topicID = strings.TrimSpace(topicID)
-	if activityType == "" || referenceID == "" || topicID == "" {
-		return fmt.Errorf("activity type, reference id, and topic id are required")
-	}
-	return upsertAssessmentFSRSReviewRepoTx(tx, activityType, referenceID, topicID, sourceChunkID, state, dueAt, reviewedAt, reviewLog)
-}
 

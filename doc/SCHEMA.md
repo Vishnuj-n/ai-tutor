@@ -11,9 +11,9 @@ This document matches the tables created in `internal/db/schema.go`.
 | Layer         | Tables                                                                                                       |
 | ------------- | ------------------------------------------------------------------------------------------------------------ |
 | Queue         | `study_queue`, `reading_progress`, `review_task_cards`                                                       |
-| Content       | `notebooks`, `topics`, `parents`, `chunks`, `notebook_topics`, `notebook_chunks`, `topic_progress`           |
-| Assessment    | `questions`, `user_answers`, `quiz_attempts`, `reread_attempts`, `written_questions`, `written_user_answers` |
-| Retention     | `fsrs_cards`, `fsrs_review_log`, `assessment_fsrs`                                                           |
+| Content       | `notebooks`, `topics`, `chunks`, `notebook_topics`, `notebook_chunks`, `topic_progress`                      |
+| Assessment    | `quiz_attempts`, `reread_attempts`, `written_questions`, `written_user_answers`                              |
+| Retention     | `fsrs_cards`, `fsrs_review_log`, `manual_flashcards`                                                         |
 | Configuration | `user_settings`                                                                                              |
 
 ## Queue Tables
@@ -102,19 +102,6 @@ Topic or section container.
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
-### `parents`
-
-Stores hierarchical headings for a topic.
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | TEXT PRIMARY KEY | Parent heading identifier |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
-| `heading` | TEXT | Heading text |
-| `order_index` | INTEGER | Ordering within a topic |
-| `content_text` | TEXT NOT NULL | Headline or section text |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
-
 ### `chunks`
 
 Granular content chunks produced from the source document.
@@ -123,7 +110,6 @@ Granular content chunks produced from the source document.
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Chunk identifier |
 | `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
-| `parent_id` | TEXT NOT NULL | Reference to `parents(id)` |
 | `chunk_text` | TEXT NOT NULL | Chunk content |
 | `page_num` | INTEGER DEFAULT 0 | Source page |
 | `token_count` | INTEGER DEFAULT 0 | Token count |
@@ -177,43 +163,6 @@ Topic-level learning metadata.
 | `review_enabled` | INTEGER DEFAULT 0 | Whether review is enabled |
 
 ## Assessment Tables
-
-### `questions`
-
-Multiple-choice quiz questions.
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | TEXT PRIMARY KEY | Question identifier |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
-| `source_chunk_id` | TEXT | Optional source chunk |
-| `prompt` | TEXT NOT NULL | Question prompt |
-| `options_json` | TEXT NOT NULL | Answer options payload |
-| `correct_answer` | TEXT NOT NULL | Correct option value |
-| `explanation` | TEXT | Answer explanation |
-| `hint` | TEXT | Hint text |
-| `source_heading` | TEXT | Source heading |
-| `source_snippet` | TEXT | Source excerpt |
-| `source_page_start` | INTEGER DEFAULT 0 | Source start page |
-| `source_page_end` | INTEGER DEFAULT 0 | Source end page |
-| `llm_model` | TEXT | Model used for generation |
-| `prompt_version` | TEXT | Prompt version |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
-
-### `user_answers`
-
-Submitted answers for `questions`.
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | TEXT PRIMARY KEY | Answer identifier |
-| `question_id` | TEXT NOT NULL | Reference to `questions(id)` |
-| `user_answer` | TEXT NOT NULL | Selected answer |
-| `is_correct` | INTEGER NOT NULL | Boolean flag |
-| `score` | INTEGER NOT NULL | Per-answer score |
-| `feedback` | TEXT | Feedback text |
-| `hint` | TEXT | Hint shown or returned |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Submission time |
 
 ### `quiz_attempts`
 
@@ -324,28 +273,22 @@ CREATE INDEX idx_fsrs_review_log_activity_ref_reviewed_at ON fsrs_review_log(act
 CREATE INDEX idx_fsrs_review_log_topic_reviewed_at ON fsrs_review_log(topic_id, reviewed_at DESC);
 ```
 
-### `assessment_fsrs`
+### `manual_flashcards`
 
-FSRS state for assessment activities.
+User-created manual flashcards.
 
 | Field | Type | Description |
 |---|---|---|
-| `activity_type` | TEXT NOT NULL | Activity type |
-| `reference_id` | TEXT NOT NULL | Assessment reference |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
-| `source_chunk_id` | TEXT | Optional source chunk |
-| `state_json` | TEXT NOT NULL | FSRS state payload |
-| `due_at` | INTEGER | Next due timestamp |
-| `last_reviewed_at` | INTEGER | Last review timestamp |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Record creation time |
-| `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
-
-Primary key: `(activity_type, reference_id, source_chunk_id)`.
+| `id` | TEXT PRIMARY KEY | Card identifier |
+| `notebook_id` | TEXT NOT NULL | Reference to `notebooks(id)` |
+| `prompt` | TEXT NOT NULL | Card front |
+| `answer` | TEXT NOT NULL | Card back |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
 
 **Indexes**
 
 ```sql
-CREATE INDEX idx_assessment_fsrs_topic_due_at ON assessment_fsrs(topic_id, due_at);
+CREATE INDEX idx_manual_flashcards_notebook_id ON manual_flashcards(notebook_id);
 ```
 
 ## Configuration Table
@@ -363,8 +306,8 @@ Singleton table for global preferences.
 ## Key Relationships
 
 - `notebooks` can link to one or more `topics` through `notebook_topics`.
-- `topics` own `parents`, `chunks`, `questions`, `written_questions`, `fsrs_cards`, `fsrs_review_log`, and `assessment_fsrs` rows.
-- `questions` and `written_questions` can reference `chunks` for source context.
+- `topics` own `chunks`, `written_questions`, `fsrs_cards`, and `fsrs_review_log` rows.
+- `written_questions` and `fsrs_cards` can reference `chunks` for source context.
 - `quiz_attempts` records the outcome of a `study_queue` quiz task.
 - `review_task_cards` binds a `FLASHCARD_REVIEW` queue task to the exact cards reviewed in that session.
 
@@ -372,8 +315,8 @@ Singleton table for global preferences.
 
 The live schema no longer uses the legacy table names. Mapping (old → current):
 
-- `blocks` → `parents` + `chunks` (section headings and granular content chunks)
-- `quiz_sets` → `questions` (multiple-choice questions; see `questions.options_json`)
+- `blocks` → `chunks` (granular content chunks)
+- `quiz_sets` → dynamically generated questions (stored in task payload JSON)
 - `sources` → `notebooks` (source documents are stored in `notebooks` and linked via `notebook_chunks` / `notebook_topics`)
 - `app_config` → `user_settings` (singleton configuration stored in `user_settings`)
 - `block_vectors` → embeddings managed by the RAG embedding store; `chunks.embedding_ref` holds references to external/vector storage
@@ -382,9 +325,9 @@ These mappings are documentation-only: the code and live schema already use the 
 
 ## Data Flow Summary
 
-1. Ingestion creates `notebooks`, `topics`, `parents`, and `chunks`.
+1. Ingestion creates `notebooks`, `topics`, and `chunks`.
 2. Study work is queued through `study_queue`.
-3. Quiz generation uses `questions` and `written_questions`; answers land in `user_answers` and `written_user_answers`.
+3. Quiz generation uses `written_questions` and inline payload quiz questions; answers/attempts land in `quiz_attempts` and `written_user_answers`.
 4. Quiz completion is rolled up in `quiz_attempts`, with `reread_attempts` tracking repeated remediation.
-5. Long-term retention is handled by `fsrs_cards`, `fsrs_review_log`, and `assessment_fsrs`.
+5. Long-term retention is handled by `fsrs_cards`, `fsrs_review_log`, and `manual_flashcards`.
 6. Session-specific review mappings live in `review_task_cards`, and per-task reading cursors live in `reading_progress`.

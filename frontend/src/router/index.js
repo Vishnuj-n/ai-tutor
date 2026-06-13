@@ -9,6 +9,8 @@ import Tools from '../pages/Tools.vue'
 import ToolPlaceholder from '../pages/ToolPlaceholder.vue'
 import Settings from '../pages/Settings.vue'
 import Notebook from '../pages/Notebook.vue'
+import Onboarding from '../pages/Onboarding.vue'
+import { isOnboarded } from '../services/appApi'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -42,11 +44,29 @@ const routes = [
   },
   { path: '/notebooks', name: 'notebooks', component: Notebook },
   { path: '/settings', name: 'settings', component: Settings },
+  { path: '/onboarding', name: 'onboarding', component: Onboarding },
 ]
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes,
+})
+
+router.beforeEach(async (to, from, next) => {
+  if (to.path === '/onboarding') {
+    next()
+    return
+  }
+  try {
+    const res = await isOnboarded()
+    if (res && res.onboarded === false) {
+      next('/onboarding')
+    } else {
+      next()
+    }
+  } catch (err) {
+    next()
+  }
 })
 
 export default router
