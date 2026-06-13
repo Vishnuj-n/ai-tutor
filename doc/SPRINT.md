@@ -16,8 +16,6 @@
   - If RAG is required by the user but DLLs or CGO dependencies are missing, show a clean error/fallback status instead of crashing.
 - [ ] **Task 10.2: Asset Downloader Script**
   - Write a reliable Go/shell/Powershell asset manager command/script to download raw embedding models/onnx DLLs on-demand if missing in `%LOCALAPPDATA%/ai-tutor/assets/`.
-- [ ] **Task 10.3: SQLite Schema Lock Down**
-  - Lock the SQLite schema structure to ensure migrations are backward-compatible and prevent modifications that can break existing databases in production.
 
 ---
 
