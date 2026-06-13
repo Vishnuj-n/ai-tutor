@@ -85,7 +85,7 @@
         </div>
 
         <label class="inline-check">
-          <input type="checkbox" v-model="useSameLLMForHeavy" />
+          <input v-model="useSameLLMForHeavy" type="checkbox" />
           <span>Use same provider and model for heavy AI tasks</span>
         </label>
 
@@ -115,12 +115,12 @@
 
         <div v-if="error" class="error-banner" style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
           <span>{{ error }}</span>
-          <button type="button" @click="error = ''" style="background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
+          <button type="button" style="background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;" @click="error = ''">&times;</button>
         </div>
 
         <div class="button-row">
           <button class="secondary-button" @click="step = 1">Back</button>
-          <button class="action-button" :disabled="llmSaving || !isLLMStepValid" @click="saveLLMAndContinue">
+<button class="action-button" :disabled="llmSaving || presetLoading || !isLLMStepValid" @click="saveLLMAndContinue">
             {{ llmSaving ? 'Saving AI Settings...' : 'Next Step' }}
           </button>
         </div>
@@ -164,7 +164,7 @@
 
         <div class="rag-options">
           <label class="rag-option-card" :class="{ active: wantRag }">
-            <input type="radio" :value="true" v-model="wantRag" :disabled="isSettingUpRag" />
+            <input v-model="wantRag" type="radio" :value="true" :disabled="isSettingUpRag" />
             <div class="option-info">
               <strong>Yes, Enable Local RAG (Recommended)</strong>
               <p>Download and compile local assets (~152 MB). Requires Windows x64.</p>
@@ -172,7 +172,7 @@
           </label>
 
           <label class="rag-option-card" :class="{ active: !wantRag }">
-            <input type="radio" :value="false" v-model="wantRag" :disabled="isSettingUpRag" />
+            <input v-model="wantRag" type="radio" :value="false" :disabled="isSettingUpRag" />
             <div class="option-info">
               <strong>No, Skip Local RAG</strong>
               <p>AI Q&A will be disabled in the reader. Simple lexical fallbacks are used.</p>
@@ -336,6 +336,7 @@ const themeCardStyles = {
   'dark-emerald': { bg: 'rgba(255,255,255,0.03)', border: 'rgba(255,255,255,0.08)', blur: 'blur(20px)' },
 }
 const llmSaving = ref(false)
+const presetLoading = ref(false)
 const useSameLLMForHeavy = ref(true)
 const llmFastKey = ref('')
 const llmHeavyKey = ref('')
@@ -381,13 +382,22 @@ const isLLMStepValid = computed(() => {
 })
 
 async function applyProviderPreset(tier) {
+  presetLoading.value = true
+  error.value = ''
   const target = tier === 'heavy' ? llmHeavy.value : llmFast.value
-  const preset = await getLLMProviderPreset(target.provider)
-  target.base_url = preset.base_url
-  target.model = preset.model
+  try {
+    const preset = await getLLMProviderPreset(target.provider)
+    target.base_url = preset.base_url
+    target.model = preset.model
+  } catch (err) {
+    error.value = err.message || `Failed to load preset for ${target.provider}.`
+  } finally {
+    presetLoading.value = false
+  }
 }
 
 async function saveLLMAndContinue() {
+  if (presetLoading.value || error.value) return
   error.value = ''
   llmSaving.value = true
   try {
