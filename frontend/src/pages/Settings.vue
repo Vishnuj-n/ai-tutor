@@ -42,8 +42,8 @@
         <div class="form-group check-group">
           <label class="checkbox-container">
             <input
-              type="checkbox"
               v-model="settings.skip_to_reading_active"
+              type="checkbox"
               :disabled="loading || saving"
             />
             <span class="checkmark"></span>
@@ -57,8 +57,8 @@
         <div class="form-group check-group">
           <label class="checkbox-container">
             <input
-              type="checkbox"
               v-model="settings.rag_enabled"
+              type="checkbox"
               :disabled="loading || saving"
               @change="onRagToggle"
             />
@@ -109,7 +109,7 @@
 
         <div class="form-group check-group">
           <label class="checkbox-container">
-            <input type="checkbox" v-model="llmSettings.use_same_for_heavy" :disabled="loading || savingLLM" />
+            <input v-model="llmSettings.use_same_for_heavy" type="checkbox" :disabled="loading || savingLLM" />
             <span class="checkmark"></span>
             <div class="check-label">
               <strong>Use same provider and model for heavy AI tasks</strong>
@@ -149,7 +149,7 @@
         </div>
 
         <div class="button-row">
-          <button type="button" class="save-btn" :disabled="loading || savingLLM" @click="saveLLMProviderSettings">
+<button type="button" class="save-btn" :disabled="loading || savingLLM || presetLoading" @click="saveLLMProviderSettings">
             {{ savingLLM ? 'Saving AI Provider...' : 'Save AI Provider' }}
           </button>
           <button type="button" class="sync-btn" :disabled="loading || savingLLM" @click="removeLLMKeys">
@@ -288,8 +288,8 @@
                 <td>
                   <select
                     :value="nb.profile_id || ''"
-                    @change="handleAssignProfile(nb.id, $event.target.value)"
                     class="profile-select"
+                    @change="handleAssignProfile(nb.id, $event.target.value)"
                   >
                     <option value="">-- Unassigned --</option>
                     <option v-for="p in profiles" :key="p.id" :value="p.id">
@@ -430,6 +430,7 @@ const activeTab = ref('settings')
 const loading = ref(true)
 const saving = ref(false)
 const savingLLM = ref(false)
+const presetLoading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const success = ref('')
@@ -564,10 +565,18 @@ function closeRagModal() {
 }
 
 async function applyProviderPreset(tier) {
+  presetLoading.value = true
+  error.value = ''
   const target = tier === 'heavy' ? llmSettings.value.heavy : llmSettings.value.fast
-  const preset = await getLLMProviderPreset(target.provider)
-  target.base_url = preset.base_url
-  target.model = preset.model
+  try {
+    const preset = await getLLMProviderPreset(target.provider)
+    target.base_url = preset.base_url
+    target.model = preset.model
+  } catch (err) {
+    error.value = err.message || `Failed to load preset for ${target.provider}.`
+  } finally {
+    presetLoading.value = false
+  }
 }
 
 onMounted(async () => {
@@ -623,6 +632,7 @@ async function loadAllData() {
 }
 
 async function saveLLMProviderSettings() {
+  if (presetLoading.value || error.value) return
   error.value = ''
   success.value = ''
   try {

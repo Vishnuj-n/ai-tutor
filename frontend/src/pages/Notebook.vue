@@ -168,8 +168,8 @@
           <div class="notebook-actions">
             <button 
               class="btn-activate" 
-              @click="setStudyStatus(notebook.id, 'active')"
               :disabled="activeNotebooks.length >= 4"
+              @click="setStudyStatus(notebook.id, 'active')"
             >
               Activate
             </button>

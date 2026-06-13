@@ -6,8 +6,9 @@
       <!-- Active Profile Dropdown Selector -->
       <div class="profile-selector-container">
         <label for="active-profile-select">Current Profile:</label>
-        <select id="active-profile-select" v-model="userSettings.active_profile_id" @change="changeActiveProfile($event)"
-          class="topbar-select">
+        <select
+id="active-profile-select" v-model="userSettings.active_profile_id" class="topbar-select"
+          @change="changeActiveProfile($event)">
           <option value="">-- No Profile Selected --</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id">
             {{ p.name }}
@@ -60,7 +61,8 @@
 
       <div class="header-actions">
         <!-- Escape Hatch Quick Toggle Button -->
-        <button class="escape-hatch-toggle" :class="{ active: userSettings.skip_to_reading_active }"
+        <button
+class="escape-hatch-toggle" :class="{ active: userSettings.skip_to_reading_active }"
           @click="toggleEscapeHatch">
           {{ userSettings.skip_to_reading_active ? 'Disable Escape Hatch' : 'Skip to Reading' }}
         </button>
@@ -139,7 +141,8 @@
                   : 'Pages N/A'
             }}
           </p>
-          <button type="button" class="primary-btn" :aria-label="'Start task ' + (task.title || task.id)"
+          <button
+type="button" class="primary-btn" :aria-label="'Start task ' + (task.title || task.id)"
             @click="startTask(task)">
             Start
           </button>
