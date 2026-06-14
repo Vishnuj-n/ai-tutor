@@ -112,24 +112,19 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 								utils.Warnf("%s", res.AiInitError)
 								_ = emb.Close()
 							} else {
-								res.AiReady = true
-								res.AiInitError = ""
-								res.Embedder = emb
-								embedder = emb
 								if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
 									res.AiInitError = fmt.Sprintf("could not initialize vector table: %v", err)
 									utils.Warnf("%s", res.AiInitError)
-									res.AiReady = false
 									_ = emb.Close()
-									res.Embedder = nil
-									embedder = nil
 								} else {
 									indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
-									go func() {
-										if err := indexer.IndexAllTopics(); err != nil {
-											utils.Warnf("vector indexing failed: %v", err)
-										}
-									}()
+									if err := indexer.IndexAllTopics(); err != nil {
+										utils.Warnf("vector indexing failed: %v", err)
+									}
+									res.AiReady = true
+									res.AiInitError = ""
+									res.Embedder = emb
+									embedder = emb
 								}
 							}
 						}

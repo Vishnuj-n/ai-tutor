@@ -406,7 +406,10 @@ func (am *AssetManager) AcquireAssets(progressCallback func(status string, perce
 			return fmt.Errorf("failed to create download request: %w", err)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		client := &http.Client{
+			Timeout: 30 * time.Second,
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to download assets: %w", err)
 		}
@@ -499,7 +502,7 @@ func (am *AssetManager) AcquireAssets(progressCallback func(status string, perce
 			am.manifest = *remoteManifest
 			utils.Infof("[AssetManager] Remote manifest loaded. Asset version: %s", remoteManifest.AssetVersion)
 		} else {
-			utils.Warnf("[AssetManager] No manifest.json found in zip. File integrity will be verified by hash computation after extraction.")
+			return fmt.Errorf("no manifest.json found in remote asset archive; verification cannot be performed")
 		}
 
 		// Second pass: extract all files
@@ -552,8 +555,7 @@ func (am *AssetManager) AcquireAssets(progressCallback func(status string, perce
 	for _, name := range verifyFiles {
 		expectedHash, ok := am.manifest.FileHashes[name]
 		if !ok {
-			utils.Warnf("[AssetManager] No hash in manifest for %s, skipping verification", name)
-			continue
+			return fmt.Errorf("no hash in manifest for required file %s; verification cannot be performed", name)
 		}
 		expectedHash = strings.ToUpper(expectedHash)
 

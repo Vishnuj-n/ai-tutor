@@ -72,7 +72,7 @@
       </button>
     </template>
     
-    <div v-if="!chat.chatCollapsed.value && ragSettingsLoaded && !ragEnabled" class="rag-disabled-overlay">
+    <div v-if="!chat.chatCollapsed.value && ragSettingsLoaded && !ragEnabled && !ragSettingsError" class="rag-disabled-overlay">
       <div class="lock-icon">🔒</div>
       <h3>Local AI Retrieval Offline</h3>
       <p>Local semantic search and Q&A is currently disabled to save memory and CPU.</p>
