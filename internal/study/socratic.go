@@ -161,26 +161,8 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 
 	// 2. Build retrieved material context blocks and citations
 	blocks, citations := buildReaderContextBlocks(results)
-	// Join blocks to form initial context text
-	contextText := strings.TrimSpace(strings.Join(blocks, "\n\n"))
 
-	// 3. Prepend Socratic instructions (moved from frontend)
-	socraticPrompt := strings.Join([]string{
-		"You are a Socratic tutor.",
-		"- Begin with a short, probing question that helps the student analyze the topic.",
-		"- Follow with a concise hint that is grounded only in the selected material and retrieval scope.",
-		"- Do not provide the final answer unless the student explicitly requests it.",
-		"- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.",
-		"",
-		"Retrieved material:",
-		contextText,
-		"",
-		"Student question: " + question,
-		"",
-		"Response:",
-	}, "\n")
-
-	// 4. Generate answer using heavy LLM provider (to ensure high quality guiding responses)
+	// 3. Generate answer using heavy LLM provider (to ensure high quality guiding responses)
 	llm := s.heavyLLMProvider
 	if llm == nil {
 		llm = s.fastLLMProvider
@@ -191,70 +173,70 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 	// and the student question.
 	limits := llm.GetLimits()
 
-		// Compute tokens for prompt overhead (instructions + student question + fixed labels)
-		overheadText := strings.Join([]string{
-			"You are a Socratic tutor.",
-			"- Begin with a short, probing question that helps the student analyze the topic.",
-			"- Follow with a concise hint that is grounded only in the selected material and retrieval scope.",
-			"- Do not provide the final answer unless the student explicitly requests it.",
-			"- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.",
-			"",
-			"Student question: " + question,
-			"",
-			"Response:",
-		}, "\n")
+	// Compute tokens for prompt overhead (instructions + student question + fixed labels)
+	overheadText := strings.Join([]string{
+		"You are a Socratic tutor.",
+		"- Begin with a short, probing question that helps the student analyze the topic.",
+		"- Follow with a concise hint that is grounded only in the selected material and retrieval scope.",
+		"- Do not provide the final answer unless the student explicitly requests it.",
+		"- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.",
+		"",
+		"Student question: " + question,
+		"",
+		"Response:",
+	}, "\n")
 
-		overheadTokens := embeddings.CountTokensFallback(overheadText)
-		// Reserve a small safety margin for formatting and LLM internals
-		reserved := 50
-		available := limits.MaxInputTokens - overheadTokens - reserved
-		if available < 0 {
-			available = 0
+	overheadTokens := embeddings.CountTokensFallback(overheadText)
+	// Reserve a small safety margin for formatting and LLM internals
+	reserved := 50
+	available := limits.MaxInputTokens - overheadTokens - reserved
+	if available < 0 {
+		available = 0
+	}
+
+	// Include as many blocks as will fit into available tokens, truncating
+	// the final block if necessary. Keep citations aligned to included blocks.
+	newBlocks := make([]string, 0, len(blocks))
+	newCitations := make([]string, 0, len(citations))
+	usedTokens := 0
+	for i, blk := range blocks {
+		blkTokens := embeddings.CountTokensFallback(blk)
+		if usedTokens+blkTokens <= available {
+			newBlocks = append(newBlocks, blk)
+			newCitations = append(newCitations, citations[i])
+			usedTokens += blkTokens
+			continue
 		}
-
-		// Include as many blocks as will fit into available tokens, truncating
-		// the final block if necessary. Keep citations aligned to included blocks.
-		newBlocks := make([]string, 0, len(blocks))
-		newCitations := make([]string, 0, len(citations))
-		usedTokens := 0
-		for i, blk := range blocks {
-			blkTokens := embeddings.CountTokensFallback(blk)
-			if usedTokens+blkTokens <= available {
-				newBlocks = append(newBlocks, blk)
+		remaining := available - usedTokens
+		if remaining > 8 {
+			// Try tokenizer-based truncation for the final chunk
+			if truncated, err := embeddings.TruncateToTokens(blk, remaining); err == nil && strings.TrimSpace(truncated) != "" {
+				newBlocks = append(newBlocks, truncated)
 				newCitations = append(newCitations, citations[i])
-				usedTokens += blkTokens
-				continue
-			}
-			remaining := available - usedTokens
-			if remaining > 8 {
-				// Try tokenizer-based truncation for the final chunk
-				if truncated, err := embeddings.TruncateToTokens(blk, remaining); err == nil && strings.TrimSpace(truncated) != "" {
-					newBlocks = append(newBlocks, truncated)
-					newCitations = append(newCitations, citations[i])
-				}
-			}
-			break
-		}
-
-		// If everything was truncated away, only fall back within remaining budget.
-		if len(newBlocks) == 0 && len(blocks) > 0 {
-			safeLimit := available
-			if safeLimit > 128 {
-				safeLimit = 128
-			}
-			if safeLimit > 0 {
-				if truncated, err := embeddings.TruncateToTokens(blocks[0], safeLimit); err == nil && strings.TrimSpace(truncated) != "" {
-					newBlocks = append(newBlocks, truncated)
-					newCitations = append(newCitations, citations[0])
-				}
 			}
 		}
+		break
+	}
 
-		contextText = strings.TrimSpace(strings.Join(newBlocks, "\n\n"))
-		citations = newCitations
+	// If everything was truncated away, only fall back within remaining budget.
+	if len(newBlocks) == 0 && len(blocks) > 0 {
+		safeLimit := available
+		if safeLimit > 128 {
+			safeLimit = 128
+		}
+		if safeLimit > 0 {
+			if truncated, err := embeddings.TruncateToTokens(blocks[0], safeLimit); err == nil && strings.TrimSpace(truncated) != "" {
+				newBlocks = append(newBlocks, truncated)
+				newCitations = append(newCitations, citations[0])
+			}
+		}
+	}
+
+	contextText := strings.TrimSpace(strings.Join(newBlocks, "\n\n"))
+	citations = newCitations
 
 	// Rebuild the final prompt now that contextText may have been truncated
-	socraticPrompt = strings.Join([]string{
+	socraticPrompt := strings.Join([]string{
 		"You are a Socratic tutor.",
 		"- Begin with a short, probing question that helps the student analyze the topic.",
 		"- Follow with a concise hint that is grounded only in the selected material and retrieval scope.",
@@ -271,7 +253,7 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 
 	answer, err := llm.GenerateAnswer(socraticPrompt)
 	if err != nil {
-		return nil, fmt.Errorf("Socratic response generation failed: %w", err)
+		return nil, fmt.Errorf("socratic response generation failed: %w", err)
 	}
 
 	return map[string]interface{}{

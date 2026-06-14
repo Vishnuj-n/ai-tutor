@@ -82,7 +82,7 @@ func TriggerCloudSync() error {
 		// is returned to the pool immediately. A deferred close would hold the
 		// connection open for the full HTTP timeout, blocking any concurrent DB
 		// call (e.g. GetUserSettings from the frontend on startup).
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	payload := SyncPayload{
@@ -110,7 +110,7 @@ func TriggerCloudSync() error {
 	if err != nil {
 		return fmt.Errorf("network error during sync: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -165,7 +165,7 @@ func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download server returned status %d", resp.StatusCode)
@@ -175,7 +175,7 @@ func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	const maxDownloadBytes = 100 << 20 // 100 MiB
 	if resp.ContentLength > maxDownloadBytes {

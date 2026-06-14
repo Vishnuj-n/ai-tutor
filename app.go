@@ -1308,6 +1308,13 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		// Re-initialize DB, this time with the staged vec0.dll
 		if err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
 			emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
+			_ = db.Init(dbPath, "") // Ensure DB connection remains active and clean
+			return
+		}
+
+		if !db.IsVecExtensionLoaded() {
+			emitRagSetupFailed(a, "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
+			_ = db.Init(dbPath, "") // Revert to non-vector state
 			return
 		}
 

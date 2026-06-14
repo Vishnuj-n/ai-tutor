@@ -53,31 +53,125 @@ foreach ($pkg in $packages) {
 }
 
 Write-Host ""
-Write-Host "Step 4: Validating assets..."
+Write-Host "Step 4: Validating and acquiring RAG assets..."
 
+# Ensure TLS 1.2
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# Resolve app version — read from VERSION file if present, otherwise default to v1.0.0
+$appVersion = "v1.0.0"
+if (Test-Path ".\VERSION") {
+    $appVersion = (Get-Content ".\VERSION" -Raw).Trim()
+}
+
+# Determine the correct zip filename for this version.
+# v1.0.0 was released as "rag-assets.zip" (legacy name).
+# Subsequent versions follow "asset_windows.zip".
+$normalizedVersion = $appVersion.TrimStart("v")
+if ($normalizedVersion -eq "1.0.0") {
+    $zipFilename = "rag-assets.zip"
+} else {
+    $zipFilename = "asset_windows.zip"
+}
+
+$releaseTag = $appVersion
+$downloadUrl = "https://github.com/Vishnuj-n/ai-tutor/releases/download/$releaseTag/$zipFilename"
+Write-Host "Asset version: $appVersion  Archive: $zipFilename"
+
+$appDataDir = Join-Path $env:LOCALAPPDATA "ai-tutor\assets"
+$zipPath = Join-Path $appDataDir "rag-assets.zip"
+$localAssetDir = ".\asset"
 $assets = @(
-    "asset\tokenizer.json",
-    "asset\model_int8.onnx",
-    "asset\onnxruntime.dll",
-    "asset\vec0.dll"
+    "tokenizer.json",
+    "model_int8.onnx",
+    "onnxruntime.dll",
+    "vec0.dll"
 )
 
+# Check local workspace
+$allLocalExist = $true
 foreach ($file in $assets) {
-    if (Test-Path $file) {
-        Write-Host "$file present"
-    }
-    else {
-        Write-Host "$file MISSING"
-        $missingAssets = $true
+    if (!(Test-Path (Join-Path $localAssetDir $file))) {
+        $allLocalExist = $false
+        break
     }
 }
 
-if ($missingAssets) {
-    Write-Host ""
-    Write-Host "================================"
-    Write-Host "Dependency sync failed: missing assets"
-    Write-Host "================================"
-    exit 1
+# Check AppData
+$allAppDataExist = $true
+foreach ($file in $assets) {
+    if (!(Test-Path (Join-Path $appDataDir $file))) {
+        $allAppDataExist = $false
+        break
+    }
+}
+
+if ($allAppDataExist) {
+    Write-Host "RAG assets present in AppData directory ($appDataDir)."
+}
+elseif ($allLocalExist) {
+    Write-Host "RAG assets detected in local workspace ($localAssetDir). Syncing to AppData ($appDataDir)..."
+    if (!(Test-Path $appDataDir)) {
+        New-Item -ItemType Directory -Force -Path $appDataDir | Out-Null
+    }
+    foreach ($file in $assets) {
+        Copy-Item -Path (Join-Path $localAssetDir $file) -Destination (Join-Path $appDataDir $file) -Force
+    }
+    Write-Host "Sync complete."
+}
+else {
+    Write-Host "RAG assets missing from both AppData and local workspace."
+    Write-Host "Attempting to download RAG assets from $downloadUrl..."
+
+    # Ensure target directory exists
+    if (!(Test-Path $appDataDir)) {
+        New-Item -ItemType Directory -Force -Path $appDataDir | Out-Null
+    }
+
+    try {
+        if (Get-Command "curl.exe" -ErrorAction SilentlyContinue) {
+            curl.exe -L -f -o $zipPath $downloadUrl
+        } else {
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath
+        }
+        
+        # Check size of zip - if it's very small, it's likely a 404 error page / message
+        $zipSize = (Get-Item $zipPath).Length
+        if ($zipSize -lt 10240) { # Less than 10KB
+            throw "Downloaded file is too small ($zipSize bytes), possibly a 404 page."
+        }
+
+        Write-Host "Download complete. Extracting files..."
+        Expand-Archive -Path $zipPath -DestinationPath $appDataDir -Force
+        Write-Host "Extraction complete."
+    }
+    catch {
+        Write-Host "Warning: Could not download RAG assets: $_"
+        Write-Host "Please place the following files manually in '$localAssetDir\':"
+        foreach ($file in $assets) {
+            Write-Host "  - $file"
+        }
+    }
+    finally {
+        if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+        }
+    }
+}
+
+# If we have assets in AppData but missing in workspace, copy them to workspace
+if (Test-Path $appDataDir) {
+    foreach ($file in $assets) {
+        $src = Join-Path $appDataDir $file
+        $dst = Join-Path $localAssetDir $file
+        if ((Test-Path $src) -and !(Test-Path $dst)) {
+            Write-Host "Copying $file from AppData to local workspace ($localAssetDir)..."
+            if (!(Test-Path $localAssetDir)) {
+                New-Item -ItemType Directory -Force -Path $localAssetDir | Out-Null
+            }
+            Copy-Item -Path $src -Destination $dst -Force
+        }
+    }
 }
 
 Write-Host ""
