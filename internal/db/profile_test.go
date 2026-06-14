@@ -11,12 +11,16 @@ import (
 func TestProfileAndSettingsLifecycle(t *testing.T) {
 	tempDB := "test_profile_lifecycle.db"
 	_ = os.Remove(tempDB)
-	defer os.Remove(tempDB)
+	defer func() { _ = os.Remove(tempDB) }()
 
 	if err := Init(tempDB, ""); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer Close()
+	defer func() {
+		if err := Close(); err != nil {
+			t.Logf("Close failed: %v", err)
+		}
+	}()
 
 	// 1. Test GetUserSettings default state
 	s, err := GetUserSettings()

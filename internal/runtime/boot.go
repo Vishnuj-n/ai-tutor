@@ -39,6 +39,12 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	}
 
 	_ = godotenv.Load()
+	// If APP_ENV was not set by .env or the environment, default to "production".
+	// This prevents fresh dev/test environments from silently routing to an undefined
+	// storage path. "dev" must be explicitly opted into.
+	if os.Getenv("APP_ENV") == "" {
+		_ = os.Setenv("APP_ENV", "production")
+	}
 
 	dbPath, err := ResolveDBPath()
 	if err != nil {
@@ -80,36 +86,51 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 					utils.Warnf("%s", res.AiInitError)
 				} else {
 					// Re-initialize DB, this time with the staged vec0.dll
+					var loadErr error
 					if err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
-						res.AiInitError = fmt.Sprintf("failed to reload DB with vector extension: %v", err)
-						utils.Errorf("%s", res.AiInitError)
-						return nil, err
+						loadErr = fmt.Errorf("failed to reload DB with vector extension: %w", err)
+					} else if !db.IsVecExtensionLoaded() {
+						loadErr = fmt.Errorf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
 					}
 
-					// Init ONNX embedder using paths from AssetManager
-					emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
-					if err != nil {
-						res.AiInitError = fmt.Sprintf("failed to load ONNX embedder: %v", err)
-						utils.Warnf("%s", res.AiInitError)
+					if loadErr != nil {
+						res.AiInitError = loadErr.Error()
+						utils.Errorf("%s. Falling back to non-vector DB initialization.", res.AiInitError)
+						// Fallback: reload DB without extension so startup doesn't fail
+						if fbErr := db.Init(dbPath, ""); fbErr != nil {
+							return nil, fmt.Errorf("failed to reload DB even without vector extension: %w", fbErr)
+						}
 					} else {
-						if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
-							res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
+						// Init ONNX embedder using paths from AssetManager
+						emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+						if err != nil {
+							res.AiInitError = fmt.Sprintf("failed to load ONNX embedder: %v", err)
 							utils.Warnf("%s", res.AiInitError)
-							_ = emb.Close()
 						} else {
-							res.AiReady = true
-							res.AiInitError = ""
-							res.Embedder = emb
-							embedder = emb
-							if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
-								utils.Warnf("could not initialize vector table: %v", err)
+							if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
+								res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
+								utils.Warnf("%s", res.AiInitError)
+								_ = emb.Close()
 							} else {
-								indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
-								go func() {
-									if err := indexer.IndexAllTopics(); err != nil {
-										utils.Warnf("vector indexing failed: %v", err)
-									}
-								}()
+								res.AiReady = true
+								res.AiInitError = ""
+								res.Embedder = emb
+								embedder = emb
+								if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
+									res.AiInitError = fmt.Sprintf("could not initialize vector table: %v", err)
+									utils.Warnf("%s", res.AiInitError)
+									res.AiReady = false
+									_ = emb.Close()
+									res.Embedder = nil
+									embedder = nil
+								} else {
+									indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
+									go func() {
+										if err := indexer.IndexAllTopics(); err != nil {
+											utils.Warnf("vector indexing failed: %v", err)
+										}
+									}()
+								}
 							}
 						}
 					}

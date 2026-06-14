@@ -121,6 +121,16 @@ func Init(dbPath, vec0DllPath string) error {
 	return nil
 }
 
+// IsVecExtensionLoaded checks if the sqlite-vec (vec0) extension is loaded and functional.
+func IsVecExtensionLoaded() bool {
+	if conn == nil {
+		return false
+	}
+	var version string
+	err := conn.QueryRow("SELECT vec_version()").Scan(&version)
+	return err == nil
+}
+
 // InitWithVectorDimension initializes the database and creates the vec0 virtual table.
 // Called after ONNX embedder dimension is discovered.
 func InitWithVectorDimension(embeddingDim int32) error {
@@ -332,7 +342,11 @@ func GetLLMSettings() (*models.LLMSettings, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close LLM settings rows: %v", closeErr)
+		}
+	}()
 
 	settings := defaultLLMSettings()
 	seenFast := false
@@ -523,7 +537,11 @@ func GetProfiles() ([]models.StudyProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("warning: failed to close profiles rows: %v", closeErr)
+		}
+	}()
 
 	profiles := make([]models.StudyProfile, 0)
 	for rows.Next() {
