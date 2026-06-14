@@ -253,7 +253,7 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 
 	answer, err := llm.GenerateAnswer(socraticPrompt)
 	if err != nil {
-		return nil, fmt.Errorf("socratic response generation failed: %w", err)
+		return nil, fmt.Errorf("Socratic response generation failed: %w", err)
 	}
 
 	return map[string]interface{}{

@@ -49,7 +49,7 @@ OS_TYPE="$(uname -s)"
 if [ "$OS_TYPE" = "Darwin" ]; then
     TARGET_DIR="$HOME/Library/Caches/ai-tutor/assets"
 else
-    TARGET_DIR="$HOME/.cache/ai-tutor/assets"
+    TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ai-tutor/assets"
 fi
 
 # Resolve app version — read from VERSION file if present, otherwise default to v1.0.0

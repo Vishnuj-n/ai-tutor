@@ -221,6 +221,7 @@ const zoomScale = ref(1.0)
 const debouncedZoomScale = ref(1.0)
 let lastRenderTime = 0
 let renderTimeout = null
+let scrollTimeout = null
 const RENDER_THROTTLE_MS = 250 // rerender at most every 250ms during active gesture
 
 watch(zoomScale, (newVal) => {
@@ -437,6 +438,12 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect()
   }
+  if (renderTimeout) {
+    clearTimeout(renderTimeout)
+  }
+  if (scrollTimeout) {
+    clearTimeout(scrollTimeout)
+  }
   pageElements.clear()
 })
 
@@ -471,9 +478,13 @@ function scrollToPage(pageNum) {
     isProgrammaticScrolling.value = true
     pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
     
+    if (scrollTimeout) {
+      clearTimeout(scrollTimeout)
+    }
     // Reset programmatic flag after smooth scroll is expected to complete
-    setTimeout(() => {
+    scrollTimeout = setTimeout(() => {
       isProgrammaticScrolling.value = false
+      scrollTimeout = null
     }, 850)
   }
 }

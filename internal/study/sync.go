@@ -64,25 +64,9 @@ func TriggerCloudSync() error {
 	}
 
 	// For simplicity, fetch recent review logs (e.g., last 100)
-	var logs []models.FSRSReviewLog
-	rows, err := db.GetConnection().Query(`
-		SELECT id, topic_id, activity_type, reference_id, reviewed_at, rating, scheduled_days, state_before_json, state_after_json
-		FROM fsrs_review_log
-		ORDER BY reviewed_at DESC
-		LIMIT 100
-	`)
-	if err == nil {
-		for rows.Next() {
-			var log models.FSRSReviewLog
-			if err := rows.Scan(&log.ID, &log.TopicID, &log.ActivityType, &log.ReferenceID, &log.ReviewedAt, &log.Rating, &log.ScheduledDays, &log.StateBeforeJSON, &log.StateAfterJSON); err == nil {
-				logs = append(logs, log)
-			}
-		}
-		// Explicitly close before the HTTP POST so the single SQLite connection
-		// is returned to the pool immediately. A deferred close would hold the
-		// connection open for the full HTTP timeout, blocking any concurrent DB
-		// call (e.g. GetUserSettings from the frontend on startup).
-		_ = rows.Close()
+	logs, err := db.GetRecentReviewLogs(100)
+	if err != nil {
+		utils.Warnf("[SYNC] failed to fetch recent review logs: %v", err)
 	}
 
 	payload := SyncPayload{
