@@ -67,9 +67,7 @@ In this system, "Shadows" are an admission of failure in layout. Use them only w
 *   **Focus State:** The border opacity increases to 100% of `primary`, and the label (`label-md`) shifts to `primary` color. 
 *   **Error:** Use `error` (#9f403d) only for the helper text; the input box should remain neutral to avoid "visual shouting."
 
-### Specialized Academic Components
-*   **The "Focus Mode" Toggle:** A floating `full` rounded chip using Glassmorphism (`surface-bright` @ 70% opacity + blur).
-*   **Citation Chips:** Small `label-sm` chips using `secondary-container` backgrounds to keep them secondary to the main thesis text.
+
 
 ---
 
