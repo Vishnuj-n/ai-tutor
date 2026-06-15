@@ -112,7 +112,7 @@ func (a *App) GetAvailableTopics() []map[string]string {
 	return topics
 }
 
-func (a *App) AskSocratic(topicID string, question string) map[string]interface{} {
+func (a *App) AskSocratic(notebookID string, topicID string, question string) map[string]interface{} {
 	a.aiMutex.Lock()
 	if !a.aiReady {
 		reason := a.aiInitError
@@ -128,7 +128,7 @@ func (a *App) AskSocratic(topicID string, question string) map[string]interface{
 	}
 	svc := a.studyService
 	a.aiMutex.Unlock()
-	res, err := svc.AskSocratic(topicID, question)
+	res, err := svc.AskSocratic(notebookID, topicID, question)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -781,10 +781,13 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"cloud_api_token":        s.CloudAPIToken,
 		"theme":                  s.Theme,
 		"rag_enabled":            s.RAGEnabled,
+		"rag_notebook_chapter":   s.RAGNotebookChapter,
+		"rag_entire_notebook":    s.RAGEntireNotebook,
+		"rag_queue_study":        s.RAGQueueStudy,
 	}
 }
 
-func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool) map[string]interface{} {
+func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool) map[string]interface{} {
 	if minutes < 15 || minutes > 480 {
 		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
 	}
@@ -796,6 +799,9 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 		CloudAPIToken:       apiToken,
 		Theme:               theme,
 		RAGEnabled:          ragEnabled,
+		RAGNotebookChapter:  ragNotebookChapter,
+		RAGEntireNotebook:   ragEntireNotebook,
+		RAGQueueStudy:       ragQueueStudy,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := db.UpdateUserSettings(s); err != nil {

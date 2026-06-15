@@ -6,6 +6,7 @@ package retrieval
 
 import (
 	"container/list"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -17,6 +18,8 @@ import (
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 )
+
+var ErrInvalidNotebookContext = errors.New("invalid notebook context: notebook ID is required")
 
 // SearchResult is a single ranked chunk returned by SemanticSearch.
 type SearchResult struct {
@@ -121,7 +124,7 @@ func (e *Engine) SemanticSearch(topicID string, query string, topK int, startPag
 func (e *Engine) SemanticSearchNotebook(notebookID string, topicID string, query string, topK int) ([]SearchResult, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
+		return nil, ErrInvalidNotebookContext
 	}
 	topicID = strings.TrimSpace(topicID)
 

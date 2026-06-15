@@ -70,6 +70,53 @@
           </label>
         </div>
 
+        <div v-if="settings.rag_enabled" class="rag-sub-settings" style="margin-left: 28px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+          <div class="form-group check-group" style="margin-bottom: 0;">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.rag_notebook_chapter"
+                type="checkbox"
+                :disabled="loading || saving"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable Tutor from Notebook Chapters</strong>
+                <p class="hint">Allows accessing Socratic RAG directly from notebook chapter details.</p>
+              </div>
+            </label>
+          </div>
+
+          <div class="form-group check-group" style="margin-bottom: 0;">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.rag_entire_notebook"
+                type="checkbox"
+                :disabled="loading || saving"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable RAG for Entire Book</strong>
+                <p class="hint">Allows general queries scoped to the selected notebook in the Tutor interface.</p>
+              </div>
+            </label>
+          </div>
+
+          <div class="form-group check-group" style="margin-bottom: 0;">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.rag_queue_study"
+                type="checkbox"
+                :disabled="loading || saving"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable Tutor in Queue Study Sessions</strong>
+                <p class="hint">Shows an optional Tutor panel inside active reading tasks.</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
         <hr class="divider" />
 
         <h2>AI Provider</h2>
@@ -442,7 +489,10 @@ const settings = ref({
   cloud_sync_url: '',
   cloud_api_token: '',
   theme: 'light-classic',
-  rag_enabled: false
+  rag_enabled: false,
+  rag_notebook_chapter: true,
+  rag_entire_notebook: true,
+  rag_queue_study: true
 })
 
 const llmFastKey = ref('')
@@ -724,7 +774,10 @@ async function saveUserSettings() {
       settings.value.cloud_sync_url,
       settings.value.cloud_api_token,
       settings.value.theme,
-      settings.value.rag_enabled
+      settings.value.rag_enabled,
+      settings.value.rag_notebook_chapter,
+      settings.value.rag_entire_notebook,
+      settings.value.rag_queue_study
     )
     if (res.error) {
       error.value = res.error

@@ -494,3 +494,28 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 
 	return result, nil
 }
+
+// GetAllChunks retrieves all chunks in the system.
+func GetAllChunks() ([]models.Chunk, error) {
+	rows, err := conn.Query(`
+		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
+		FROM chunks
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chunks []models.Chunk
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(&chunk.ID, &chunk.TopicID, &chunk.Text, &chunk.ImportanceScore, &chunk.WeaknessScore, &chunk.PageNum); err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, chunk)
+	}
+	return chunks, nil
+}

@@ -2,13 +2,13 @@
   <div class="onboarding-overlay" :style="{ color: getTextColor() }">
     <div class="onboarding-card" :style="{ background: getCardStyle().bg, borderColor: getCardStyle().border, backdropFilter: getCardStyle().blur }">
       <div class="header-section">
-        <div class="logo-orb">AG</div>
-        <h1>Welcome to AntiGravity</h1>
+        <div class="logo-orb">{{ appInitials }}</div>
+        <h1>Welcome to {{ BRANDING.appName }}</h1>
         <p class="subtitle">Set up your persistent study workspace in seconds</p>
       </div>
 
       <div class="progress-bar">
-        <div class="progress-fill" :style="{ width: `${step * 20}%` }"></div>
+        <div class="progress-fill" :style="{ width: `${(step - 1) * 20}%` }"></div>
       </div>
 
       <!-- Step 1: Profile and Goal -->
@@ -159,23 +159,23 @@
 
       <!-- Step 4: RAG Settings -->
       <div v-else-if="step === 4" class="step-container">
-        <h2>4. Local AI Retrieval (RAG)</h2>
-        <p class="description">Enable context-rich Q&A. This sets up a local ONNX embedding engine and vec0 search to query books completely offline.</p>
+        <h2>4. Local AI Retrieval</h2>
+        <p class="description">Enable smart, context-aware helper tools. This sets up a local search and query system to ask questions about your textbooks completely offline.</p>
 
         <div class="rag-options">
           <label class="rag-option-card" :class="{ active: wantRag }">
             <input v-model="wantRag" type="radio" :value="true" :disabled="isSettingUpRag" />
             <div class="option-info">
-              <strong>Yes, Enable Local RAG (Recommended)</strong>
-              <p>Download and compile local assets (~152 MB). Requires Windows x64.</p>
+              <strong>Yes, Enable Local AI Search (Recommended)</strong>
+              <p>Download and configure the offline search system (~152 MB). Requires Windows x64.</p>
             </div>
           </label>
 
           <label class="rag-option-card" :class="{ active: !wantRag }">
             <input v-model="wantRag" type="radio" :value="false" :disabled="isSettingUpRag" />
             <div class="option-info">
-              <strong>No, Skip Local RAG</strong>
-              <p>AI Q&A will be disabled in the reader. Simple lexical fallbacks are used.</p>
+              <strong>No, Skip Offline Search</strong>
+              <p>AI Q&A will be limited in the reader, falling back to simple keyword matching.</p>
             </div>
           </label>
         </div>
@@ -306,6 +306,7 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { BRANDING } from '../config/branding'
 import {
   createProfile,
   updateUserSettings,
@@ -320,6 +321,19 @@ const router = useRouter()
 const step = ref(1)
 const loading = ref(false)
 const error = ref('')
+
+const appInitials = computed(() => {
+  const name = BRANDING.appName || ''
+  const matches = name.match(/[A-Z]/g)
+  if (matches && matches.length > 0) {
+    return matches.slice(0, 2).join('')
+  }
+  const words = name.split(/[\s-_]+/)
+  if (words.length > 1) {
+    return (words[0][0] + words[1][0]).toUpperCase()
+  }
+  return name.slice(0, 2).toUpperCase()
+})
 
 const profileName = ref('')
 const profileDeadline = ref('')
@@ -596,6 +610,7 @@ async function completeOnboarding() {
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
   box-sizing: border-box;
   transition: background 0.3s ease, border-color 0.3s ease;
+  border: 1px solid transparent;
 }
 
 .header-section {
@@ -623,9 +638,7 @@ h1 {
   font-weight: 800;
   margin: 0 0 8px;
   letter-spacing: -0.03em;
-  background: linear-gradient(to right, #ffffff, #e0e0e0);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: v-bind(getTextColor());
 }
 
 .subtitle {
