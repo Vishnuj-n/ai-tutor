@@ -113,6 +113,9 @@ func InitSchema(tx *sql.Tx) error {
 			cloud_api_token TEXT DEFAULT '',
 			theme TEXT DEFAULT 'light-classic',
 			rag_enabled BOOLEAN DEFAULT 0,
+			rag_notebook_chapter BOOLEAN DEFAULT 1,
+			rag_entire_notebook BOOLEAN DEFAULT 1,
+			rag_queue_study BOOLEAN DEFAULT 1,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (active_profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
@@ -344,6 +347,9 @@ func InitSchema(tx *sql.Tx) error {
 		{"user_settings", "cloud_api_token", "ALTER TABLE user_settings ADD COLUMN cloud_api_token TEXT DEFAULT ''"},
 		{"user_settings", "theme", "ALTER TABLE user_settings ADD COLUMN theme TEXT DEFAULT 'light-classic'"},
 		{"user_settings", "rag_enabled", "ALTER TABLE user_settings ADD COLUMN rag_enabled BOOLEAN DEFAULT 0"},
+		{"user_settings", "rag_notebook_chapter", "ALTER TABLE user_settings ADD COLUMN rag_notebook_chapter BOOLEAN DEFAULT 1"},
+		{"user_settings", "rag_entire_notebook", "ALTER TABLE user_settings ADD COLUMN rag_entire_notebook BOOLEAN DEFAULT 1"},
+		{"user_settings", "rag_queue_study", "ALTER TABLE user_settings ADD COLUMN rag_queue_study BOOLEAN DEFAULT 1"},
 	}
 
 	for _, stmt := range alterStatements {

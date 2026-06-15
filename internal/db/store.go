@@ -249,15 +249,18 @@ func GetUserSettings() (*models.UserSettings, error) {
 	var s models.UserSettings
 	var activeProfileID sql.NullString
 	err := conn.QueryRow(`
-		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0)
+		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0), COALESCE(rag_notebook_chapter, 1), COALESCE(rag_entire_notebook, 1), COALESCE(rag_queue_study, 1)
 		FROM user_settings
 		WHERE id = 1
-	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled)
+	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled, &s.RAGNotebookChapter, &s.RAGEntireNotebook, &s.RAGQueueStudy)
 	if err == sql.ErrNoRows {
 		s = models.UserSettings{
-			DailyStudyMinutes: 90,
-			Theme:             "light-classic",
-			RAGEnabled:        false,
+			DailyStudyMinutes:  90,
+			Theme:              "light-classic",
+			RAGEnabled:         false,
+			RAGNotebookChapter: true,
+			RAGEntireNotebook:  true,
+			RAGQueueStudy:      true,
 		}
 	} else if err != nil {
 		return nil, err
@@ -318,8 +321,8 @@ func UpdateUserSettings(s models.UserSettings) error {
 		theme = "light-classic"
 	}
 	_, err := conn.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled, rag_notebook_chapter, rag_entire_notebook, rag_queue_study)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			daily_study_minutes = excluded.daily_study_minutes,
 			active_profile_id = excluded.active_profile_id,
@@ -328,8 +331,11 @@ func UpdateUserSettings(s models.UserSettings) error {
 			cloud_api_token = excluded.cloud_api_token,
 			theme = excluded.theme,
 			rag_enabled = excluded.rag_enabled,
+			rag_notebook_chapter = excluded.rag_notebook_chapter,
+			rag_entire_notebook = excluded.rag_entire_notebook,
+			rag_queue_study = excluded.rag_queue_study,
 			updated_at = CURRENT_TIMESTAMP
-	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled)
+	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy)
 	return err
 }
 

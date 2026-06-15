@@ -156,6 +156,7 @@
       </article>
 
       <ReaderChat
+        v-if="ragEnabled && ragQueueStudy"
         :selected-topic-i-d="reader.selectedTopicID.value"
         :selected-topic-title="reader.selectedTopicTitle.value"
         :selected-notebook-i-d="reader.selectedNotebookID.value"
@@ -203,6 +204,7 @@ const completionMessage = ref('')
 const completionError = ref('')
 const activeTaskID = ref('')
 const ragEnabled = ref(false)
+const ragQueueStudy = ref(true)
 const ragSettingsLoaded = ref(false)
 const ragSettingsError = ref(null)
 
@@ -263,6 +265,9 @@ onMounted(async () => {
     const settings = await getUserSettings()
     if (settings && settings.rag_enabled !== undefined) {
       ragEnabled.value = settings.rag_enabled
+    }
+    if (settings && settings.rag_queue_study !== undefined) {
+      ragQueueStudy.value = settings.rag_queue_study
     }
     ragSettingsLoaded.value = true
   } catch (err) {
@@ -567,6 +572,9 @@ async function retryGetUserSettings() {
     const settings = await getUserSettings()
     if (settings && settings.rag_enabled !== undefined) {
       ragEnabled.value = settings.rag_enabled
+    }
+    if (settings && settings.rag_queue_study !== undefined) {
+      ragQueueStudy.value = settings.rag_queue_study
     }
     ragSettingsLoaded.value = true
   } catch (err) {

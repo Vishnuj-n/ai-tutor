@@ -1,28 +1,29 @@
 <template>
   <section class="socratic-page">
     <header class="page-header">
-      <p class="eyebrow">Socratic Tutor</p>
+      <p class="eyebrow">Tutor</p>
       <h1>Guided Thinking</h1>
     </header>
 
     <article class="chat-shell">
       <div class="chat-toolbar">
         <div class="control-group">
-          <label for="topic-select">Topic</label>
-          <select id="topic-select" v-model="selectedTopicID" @change="handleTopicChange">
-            <option value="">Choose topic</option>
-            <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
-              {{ topic.title }}
+          <label for="notebook-select">Notebook</label>
+          <select id="notebook-select" v-model="selectedNotebookID" @change="handleNotebookChange">
+            <option value="" disabled>Choose notebook</option>
+            <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
+              {{ formatNotebookLabel(notebook) }}
             </option>
           </select>
         </div>
 
         <div class="control-group">
-          <label for="notebook-select">Notebook</label>
-          <select id="notebook-select" v-model="selectedNotebookID" @change="handleNotebookChange">
-            <option value="">All notebooks</option>
-            <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
-              {{ formatNotebookLabel(notebook) }}
+          <label for="topic-select">Topic</label>
+          <select id="topic-select" v-model="selectedTopicID" @change="handleTopicChange">
+            <option v-if="ragEntireNotebookEnabled" value="">Entire book (No topic filter)</option>
+            <option v-else value="" disabled>Choose topic</option>
+            <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
+              {{ topic.title }}
             </option>
           </select>
         </div>
@@ -100,12 +101,17 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   askSocratic,
   getAvailableTopics as fetchAvailableTopics,
   getNotebooks as fetchNotebooks,
+  getUserSettings
 } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
+
+const route = useRoute()
+const ragEntireNotebookEnabled = ref(true)
 
 const availableTopics = ref([])
 const notebooks = ref([])
@@ -134,16 +140,33 @@ const effectiveTopicID = computed(() => {
 })
 
 const canSend = computed(() => {
-  return !isLoading.value && inputQuestion.value.trim().length > 0 && effectiveTopicID.value !== ''
+  const hasQuestion = inputQuestion.value.trim().length > 0
+  if (isLoading.value || !hasQuestion) {
+    return false
+  }
+  if (!selectedNotebookID.value) {
+    return false
+  }
+  if (ragEntireNotebookEnabled.value) {
+    return true
+  }
+  return effectiveTopicID.value !== ''
 })
 
 const selectionHint = computed(() => {
-  if (selectedNotebook.value && !selectedNotebook.value.topic_id && !selectedTopicID.value) {
+  if (!selectedNotebookID.value) {
+    return 'Select a notebook to start the Tutor session.'
+  }
+
+  if (selectedNotebook.value && !selectedNotebook.value.topic_id && !selectedTopicID.value && !ragEntireNotebookEnabled.value) {
     return 'Selected notebook has no linked topic yet. Choose a topic to run RAG.'
   }
 
   if (!effectiveTopicID.value) {
-    return 'Choose a topic or select a notebook that is linked to a topic.'
+    if (ragEntireNotebookEnabled.value) {
+      return `Current retrieval scope: Entire Book - ${selectedNotebook.value?.title || ''}`
+    }
+    return 'Choose a topic to run RAG.'
   }
 
   const topic = availableTopics.value.find((item) => item.id === effectiveTopicID.value)
@@ -151,7 +174,23 @@ const selectionHint = computed(() => {
 })
 
 onMounted(async () => {
+  try {
+    const res = await getUserSettings()
+    if (res && typeof res.rag_entire_notebook !== 'undefined') {
+      ragEntireNotebookEnabled.value = res.rag_entire_notebook
+    }
+  } catch (err) {
+    console.error('Failed to load user settings in Tutor:', err)
+  }
+
   await Promise.all([loadTopics(), loadNotebooks()])
+
+  if (route.query.topic_id) {
+    selectedTopicID.value = route.query.topic_id
+  }
+  if (route.query.notebook_id) {
+    selectedNotebookID.value = route.query.notebook_id
+  }
 })
 
 async function loadTopics() {
@@ -160,7 +199,7 @@ async function loadTopics() {
     const list = Array.isArray(result) ? result : Array.isArray(result?.topics) ? result.topics : []
     availableTopics.value = list
 
-    if (!selectedTopicID.value && availableTopics.value.length > 0) {
+    if (!selectedTopicID.value && availableTopics.value.length > 0 && !ragEntireNotebookEnabled.value) {
       selectedTopicID.value = availableTopics.value[0].id
     }
   } catch (err) {
@@ -215,7 +254,7 @@ async function submitQuestion() {
   await scrollToBottom()
 
   try {
-    const result = await askSocratic(topicID, question)
+    const result = await askSocratic(selectedNotebookID.value, topicID, question)
 
     if (result.error) {
       messages.value.push({

@@ -135,12 +135,12 @@ func resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int
 	return sourceHeading, sourcePageStart, sourcePageEnd
 }
 
-// AskSocratic processes a conversational query in Socratic Tutor mode, completely statelessly.
-func (s *StudyService) AskSocratic(topicID string, question string) (map[string]interface{}, error) {
+func (s *StudyService) AskSocratic(notebookID string, topicID string, question string) (map[string]interface{}, error) {
+	notebookID = strings.TrimSpace(notebookID)
 	topicID = strings.TrimSpace(topicID)
 	question = strings.TrimSpace(question)
-	if topicID == "" {
-		return nil, fmt.Errorf("topic ID is required")
+	if notebookID == "" {
+		return nil, retrieval.ErrInvalidNotebookContext
 	}
 	if question == "" {
 		return nil, fmt.Errorf("question is required")
@@ -152,9 +152,9 @@ func (s *StudyService) AskSocratic(topicID string, question string) (map[string]
 		return nil, fmt.Errorf("retrieval engine not initialized")
 	}
 
-	// 1. Semantic search for relevant chunks
+	// 1. Semantic search for relevant chunks inside the notebook scope
 	const topK = 5
-	results, err := s.retrievalEngine.SemanticSearch(topicID, question, topK, 0, 0)
+	results, err := s.retrievalEngine.SemanticSearchNotebook(notebookID, topicID, question, topK)
 	if err != nil {
 		return nil, fmt.Errorf("retrieval failed: %w", err)
 	}

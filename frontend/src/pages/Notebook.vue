@@ -84,8 +84,17 @@
             </div>
           </div>
 
-          <div v-if="notebook.topic_id" class="notebook-topic">
+          <div v-if="notebook.topic_id" class="notebook-topic" style="display: flex; align-items: center; gap: 8px;">
             <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
+            <RouterLink
+              v-if="ragEnabled && ragNotebookChapter"
+              :to="`/tutor?topic_id=${notebook.topic_id}&notebook_id=${notebook.id}`"
+              class="tutor-link-btn"
+              title="Ask Tutor (RAG)"
+              style="text-decoration: none; font-size: 13px;"
+            >
+              ◎ Ask Tutor
+            </RouterLink>
           </div>
 
           <div class="notebook-priority">
@@ -144,8 +153,17 @@
             </div>
           </div>
 
-          <div v-if="notebook.topic_id" class="notebook-topic">
+          <div v-if="notebook.topic_id" class="notebook-topic" style="display: flex; align-items: center; gap: 8px;">
             <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
+            <RouterLink
+              v-if="ragEnabled && ragNotebookChapter"
+              :to="`/tutor?topic_id=${notebook.topic_id}&notebook_id=${notebook.id}`"
+              class="tutor-link-btn"
+              title="Ask Tutor (RAG)"
+              style="text-decoration: none; font-size: 13px;"
+            >
+              ◎ Ask Tutor
+            </RouterLink>
           </div>
 
           <div v-else class="notebook-topic">
@@ -372,6 +390,7 @@ const isDraftingSyllabus = ref(false)
 const draftingNotebookTitle = ref('')
 const activeProfileID = ref('')
 const ragEnabled = ref(false)
+const ragNotebookChapter = ref(true)
 
 const activeNotebooks = computed(() => {
   if (!Array.isArray(notebooks.value)) return []
@@ -411,6 +430,9 @@ onMounted(async () => {
     if (settings && !settings.error) {
       activeProfileID.value = settings.active_profile_id || ''
       ragEnabled.value = settings.rag_enabled || false
+      if (typeof settings.rag_notebook_chapter !== 'undefined') {
+        ragNotebookChapter.value = settings.rag_notebook_chapter
+      }
     } else if (settings && settings.error) {
       settingsError.value = settings.error
     }

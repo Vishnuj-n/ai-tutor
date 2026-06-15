@@ -5,8 +5,6 @@ import Reader from '../pages/Reader.vue'
 import Quiz from '../pages/Quiz.vue'
 import Flashcards from '../pages/Flashcards.vue'
 import Socratic from '../pages/Socratic.vue'
-import Tools from '../pages/Tools.vue'
-import ToolPlaceholder from '../pages/ToolPlaceholder.vue'
 import Settings from '../pages/Settings.vue'
 import Notebook from '../pages/Notebook.vue'
 import Onboarding from '../pages/Onboarding.vue'
@@ -23,25 +21,8 @@ const routes = [
     name: 'examiner',
     component: () => import('../pages/WrittenAssessment.vue'),
   },
-  { path: '/socratic', name: 'socratic', component: Socratic },
-  { path: '/tools', name: 'tools', component: Tools },
-  {
-    path: '/tools/written-assessment',
-    redirect: '/examiner',
-    meta: { title: 'Written Assessment' },
-  },
-  {
-    path: '/tools/acronym-generator',
-    name: 'acronym-generator',
-    component: ToolPlaceholder,
-    meta: { title: 'Acronym Generator' },
-  },
-  {
-    path: '/tools/mindmap-generator',
-    name: 'mindmap-generator',
-    component: ToolPlaceholder,
-    meta: { title: 'Mindmap Generator' },
-  },
+  { path: '/tutor', name: 'tutor', component: Socratic },
+  { path: '/socratic', redirect: '/tutor' },
   { path: '/notebooks', name: 'notebooks', component: Notebook },
   { path: '/settings', name: 'settings', component: Settings },
   { path: '/onboarding', name: 'onboarding', component: Onboarding },
