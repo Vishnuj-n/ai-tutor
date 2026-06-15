@@ -1,7 +1,6 @@
 <template>
   <section class="page">
     <header class="topbar">
-      <div class="search-shell">Search knowledge base...</div>
 
       <!-- Active Profile Dropdown Selector -->
       <div class="profile-selector-container">
@@ -398,15 +397,6 @@ function startTask(task) {
   gap: 12px;
 }
 
-.search-shell {
-  flex: 1;
-  background: var(--surface-container-low);
-  color: var(--muted-text);
-  border-radius: 12px;
-  padding: 11px 14px;
-  max-width: 440px;
-  font-size: 14px;
-}
 
 .profile-selector-container {
   display: flex;

@@ -304,7 +304,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { BRANDING } from '../config/branding'
 import {
@@ -586,6 +586,10 @@ async function completeOnboarding() {
     loading.value = false
   }
 }
+
+onMounted(() => {
+  selectTheme(selectedTheme.value)
+})
 </script>
 
 <style scoped>
@@ -598,7 +602,7 @@ async function completeOnboarding() {
   justify-content: center;
   z-index: 9999;
   padding: 20px;
-  color: #ffffff;
+  color: var(--on-surface);
   font-family: 'Inter', sans-serif;
 }
 
@@ -607,10 +611,10 @@ async function completeOnboarding() {
   max-width: 500px;
   border-radius: 24px;
   padding: 40px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.08);
   box-sizing: border-box;
   transition: background 0.3s ease, border-color 0.3s ease;
-  border: 1px solid transparent;
+  border: 1px solid var(--outline-variant);
 }
 
 .header-section {
@@ -622,7 +626,8 @@ async function completeOnboarding() {
   width: 60px;
   height: 60px;
   margin: 0 auto 16px;
-  background: linear-gradient(135deg, #6c5ce7, #a8a5e6);
+  background: linear-gradient(135deg, var(--primary-dim), var(--primary));
+  color: var(--on-primary);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -630,7 +635,7 @@ async function completeOnboarding() {
   font-weight: 800;
   font-size: 20px;
   letter-spacing: -0.05em;
-  box-shadow: 0 0 30px rgba(108, 92, 231, 0.4);
+  box-shadow: 0 0 30px rgba(99, 102, 241, 0.2);
 }
 
 h1 {
@@ -642,14 +647,14 @@ h1 {
 }
 
 .subtitle {
-  color: #8a8b98;
+  color: var(--muted-text);
   font-size: 14px;
   margin: 0;
 }
 
 .progress-bar {
   height: 4px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--outline-variant);
   border-radius: 2px;
   margin-bottom: 30px;
   overflow: hidden;
@@ -657,7 +662,7 @@ h1 {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(to right, #6c5ce7, #a8a5e6);
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -675,7 +680,7 @@ h2 {
 
 .description {
   font-size: 13px;
-  color: #8a8b98;
+  color: var(--muted-text);
   line-height: 1.5;
   margin: -10px 0 10px;
 }
@@ -691,15 +696,15 @@ label {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #8a8b98;
+  color: var(--muted-text);
 }
 
 input {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
   border-radius: 12px;
   padding: 12px 16px;
-  color: #ffffff;
+  color: var(--on-surface);
   font-size: 14px;
   font-family: inherit;
   transition: border-color 0.2s, background-color 0.2s;
@@ -707,26 +712,33 @@ input {
   width: 100%;
 }
 
+input::placeholder {
+  color: var(--muted-text);
+  opacity: 0.6;
+}
+
 select {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
   border-radius: 12px;
   padding: 12px 16px;
-  color: #ffffff;
+  color: var(--on-surface);
   font-size: 14px;
   font-family: inherit;
   box-sizing: border-box;
   width: 100%;
+  transition: border-color 0.2s, background-color 0.2s;
 }
 
 select option {
-  color: #121212;
+  color: var(--on-surface);
+  background: var(--surface-container-lowest);
 }
 
-input:focus {
+input:focus, select:focus {
   outline: none;
-  border-color: #6c5ce7;
-  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--primary);
+  background: var(--surface-container);
 }
 
 .inline-check {
@@ -735,7 +747,7 @@ input:focus {
   gap: 10px;
   text-transform: none;
   letter-spacing: 0;
-  color: #e0e0e0;
+  color: var(--on-surface);
 }
 
 .inline-check input {
@@ -747,17 +759,17 @@ input:focus {
   flex-direction: column;
   gap: 14px;
   padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--outline-variant);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-container-low);
 }
 
 .action-button {
-  background: linear-gradient(to right, #6c5ce7, #8073e4);
+  background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   border: none;
   border-radius: 12px;
   padding: 14px;
-  color: #ffffff;
+  color: var(--on-primary);
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
@@ -784,11 +796,11 @@ input:focus {
 }
 
 .secondary-button {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-container-highest);
+  border: none;
   border-radius: 12px;
   padding: 14px;
-  color: #ffffff;
+  color: var(--primary);
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
@@ -798,7 +810,7 @@ input:focus {
 }
 
 .secondary-button:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-container-low);
 }
 
 .error-banner {
@@ -820,8 +832,8 @@ input:focus {
 }
 
 .theme-card {
-  background: rgba(0, 0, 0, 0.03);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
   border-radius: 14px;
   padding: 12px;
   display: flex;
@@ -831,11 +843,12 @@ input:focus {
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   width: 100%;
+  color: var(--on-surface);
 }
 
 .theme-card:hover {
-  background: rgba(0, 0, 0, 0.06);
-  border-color: rgba(0, 0, 0, 0.15);
+  background: var(--surface-container);
+  border-color: var(--outline-variant);
   transform: translateY(-2px);
 }
 
@@ -852,7 +865,7 @@ input:focus {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--outline-variant);
 }
 
 .preview-dot {
@@ -911,46 +924,48 @@ input:focus {
   gap: 16px;
   padding: 16px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
   cursor: pointer;
   transition: all 0.2s ease;
+  color: var(--on-surface);
 }
 
 .rag-option-card:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.15);
+  background: var(--surface-container);
+  border-color: var(--outline-variant);
 }
 
 .rag-option-card.active {
-  background: rgba(99, 102, 241, 0.08);
-  border-color: #6366f1;
+  background: var(--surface-container-lowest);
+  border-color: var(--primary);
 }
 
 .rag-option-card input[type="radio"] {
   margin-top: 4px;
-  accent-color: #6366f1;
+  accent-color: var(--primary);
 }
 
 .option-info strong {
   display: block;
   font-size: 14px;
-  color: #ffffff;
+  color: var(--on-surface);
   margin-bottom: 4px;
 }
 
 .option-info p {
   font-size: 12px;
-  color: #a0a0a0;
+  color: var(--muted-text);
   margin: 0;
 }
 
 .rag-setup-box {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
   border-radius: 8px;
   padding: 16px;
   margin: 20px 0;
+  color: var(--on-surface);
 }
 
 .setup-header {
@@ -980,12 +995,12 @@ input:focus {
 .setup-msg {
   font-size: 13px;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--on-surface);
 }
 
 .progress-bar-mini {
   height: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--outline-variant);
   border-radius: 3px;
   overflow: hidden;
   margin-bottom: 8px;
