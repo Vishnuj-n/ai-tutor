@@ -8,7 +8,7 @@
 
 ## Active Roadmap (Production Proofing, RAG, & Rescue Pipeline)
 
-### Sprint 10: RAG Setup, Asset Management & Environment Verification
+### Sprint 10: RAG Setup, Asset Management & Environment Verification [DONE]
 **Goal:** Make RAG and assets production-proof, verifying architecture requirements dynamically.
 
 - [ ] **Task 10.1: Dynamic CGO & Vector Extension Verification**
@@ -53,6 +53,17 @@
 
 ---
 
+### SPRITN 13 User Asset Provisioning
+
+- Detect missing RAG assets
+- Download assets from GitHub Releases
+- Show progress UI
+- Verify hashes
+- Resume failed downloads
+- Allow manual asset location
+
+Refer doc\future_plan\cross_platform_asset_delivery.md
+
 ## Archive / Historical Completed Sprints
 
 <details>
@@ -89,6 +100,7 @@ CREATE TABLE study_queue (
 - [x] Queue state query for Dashboard
 
 ---
+
 
 ### Sprint 2: Reading Flow & Page Locking [DONE]
 **Goal:** Implement deterministic reading tasks with page-range locking.
