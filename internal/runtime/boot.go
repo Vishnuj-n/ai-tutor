@@ -120,11 +120,13 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 									indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
 									if err := indexer.IndexAllTopics(); err != nil {
 										utils.Warnf("vector indexing failed: %v", err)
+										_ = emb.Close()
+									} else {
+										res.AiReady = true
+										res.AiInitError = ""
+										res.Embedder = emb
+										embedder = emb
 									}
-									res.AiReady = true
-									res.AiInitError = ""
-									res.Embedder = emb
-									embedder = emb
 								}
 							}
 						}

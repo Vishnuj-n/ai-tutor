@@ -53,7 +53,7 @@
 
 ---
 
-### SPRITN 13 User Asset Provisioning
+### SPRINT 13 User Asset Provisioning
 
 - Detect missing RAG assets
 - Download assets from GitHub Releases
@@ -62,7 +62,7 @@
 - Resume failed downloads
 - Allow manual asset location
 
-Refer doc\future_plan\cross_platform_asset_delivery.md
+Refer doc/future_plan/cross_platform_asset_delivery.md
 
 - Added in onboarding and settings
 

@@ -67,6 +67,7 @@ func TriggerCloudSync() error {
 	logs, err := db.GetRecentReviewLogs(100)
 	if err != nil {
 		utils.Warnf("[SYNC] failed to fetch recent review logs: %v", err)
+		return err
 	}
 
 	payload := SyncPayload{

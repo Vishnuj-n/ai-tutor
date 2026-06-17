@@ -237,6 +237,9 @@ Write-Host "================================"
 if ($missingAssets) {
     Write-Host "Dependency sync completed with warnings!"
     Write-Host "RAG assets for $appVersion are missing or incomplete - place them manually before building (see above)."
+    Write-Host "================================"
+    Write-Host ""
+    exit 1
 } else {
     Write-Host "Dependency sync complete!"
 }
