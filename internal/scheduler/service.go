@@ -105,13 +105,14 @@ type Service interface {
 }
 
 // New creates a new scheduler service with real database queries.
-func New(opts ...Option) Service {
-	s := &service{
-		queryDueReviewCards:        db.QueryDueReviewCards,
-		queryDailyStudyMinute:      db.GetDailyStudyMinutes,
-		queryNextReadingTopic:      db.QueryNextReadingTopic,
-		queryTokensPerPageMap:      db.GetTokensPerPageMap,
-		queryNextDueReviewNotebook: db.GetNextDueReviewNotebook,
+func New(repo *db.Repository, opts ...Option) Service {
+	s := &service{}
+	if repo != nil {
+		s.queryDueReviewCards = repo.QueryDueReviewCards
+		s.queryDailyStudyMinute = repo.GetDailyStudyMinutes
+		s.queryNextReadingTopic = repo.QueryNextReadingTopic
+		s.queryTokensPerPageMap = repo.GetTokensPerPageMap
+		s.queryNextDueReviewNotebook = repo.GetNextDueReviewNotebook
 	}
 
 	for _, opt := range opts {

@@ -3,12 +3,46 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"ai-tutor/internal/models"
 )
 
-func insertFSRSReviewLogRepo(reviewLog models.FSRSReviewLog) error {
-	return withTx(func(tx *sql.Tx) error {
+// InsertFSRSReviewLog inserts one generic FSRS review event.
+func (r *Repository) InsertFSRSReviewLog(reviewLog models.FSRSReviewLog) error {
+	reviewLog.ID = strings.TrimSpace(reviewLog.ID)
+	reviewLog.TopicID = strings.TrimSpace(reviewLog.TopicID)
+	reviewLog.ActivityType = strings.TrimSpace(reviewLog.ActivityType)
+	reviewLog.ReferenceID = strings.TrimSpace(reviewLog.ReferenceID)
+	reviewLog.StateBeforeJSON = strings.TrimSpace(reviewLog.StateBeforeJSON)
+	reviewLog.StateAfterJSON = strings.TrimSpace(reviewLog.StateAfterJSON)
+
+	if reviewLog.ID == "" {
+		return fmt.Errorf("review log id is required")
+	}
+	if reviewLog.TopicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if reviewLog.ActivityType == "" {
+		return fmt.Errorf("activity type is required")
+	}
+	if reviewLog.ReferenceID == "" {
+		return fmt.Errorf("reference id is required")
+	}
+	if reviewLog.ReviewedAt <= 0 {
+		return fmt.Errorf("reviewed at is required")
+	}
+	if reviewLog.Rating < 1 || reviewLog.Rating > 4 {
+		return fmt.Errorf("rating must be between 1 and 4")
+	}
+	if reviewLog.StateBeforeJSON == "" || reviewLog.StateAfterJSON == "" {
+		return fmt.Errorf("review state json values are required")
+	}
+	if reviewLog.ScheduledDays < 0 {
+		return fmt.Errorf("scheduled days must be non-negative")
+	}
+
+	return r.withTx(func(tx *sql.Tx) error {
 		var validatedTopicID string
 		if err := tx.QueryRow(`SELECT id FROM topics WHERE id = ?`, reviewLog.TopicID).Scan(&validatedTopicID); err != nil {
 			if err == sql.ErrNoRows {
@@ -32,8 +66,8 @@ func insertFSRSReviewLogRepo(reviewLog models.FSRSReviewLog) error {
 }
 
 // GetRecentReviewLogs retrieves recent FSRS review logs.
-func GetRecentReviewLogs(limit int) ([]models.FSRSReviewLog, error) {
-	rows, err := conn.Query(`
+func (r *Repository) GetRecentReviewLogs(limit int) ([]models.FSRSReviewLog, error) {
+	rows, err := r.db.Query(`
 		SELECT id, topic_id, activity_type, reference_id, reviewed_at, rating, scheduled_days, state_before_json, state_after_json
 		FROM fsrs_review_log
 		ORDER BY reviewed_at DESC

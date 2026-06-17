@@ -21,7 +21,7 @@ func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, e
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, tokenCount, err := s.buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -55,7 +55,7 @@ func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, e
 
 	syntheticTopicID := fmt.Sprintf("comprehensive-%s-p%d-%d", notebookID, startPage, endPage)
 
-	if err := db.EnsureTopicsBatch([]db.TopicBatchItem{{
+	if err := s.repo.EnsureTopicsBatch([]db.TopicBatchItem{{
 		TopicID: syntheticTopicID,
 		Title:   fmt.Sprintf("Comprehensive %s p%d-%d", notebookID, startPage, endPage),
 	}}); err != nil {
@@ -72,7 +72,7 @@ func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, e
 		LLMModel:        providerModelName(llm),
 		PromptVersion:   "comprehensive-exam-v1",
 	}
-	if err := db.CreateWrittenQuestion(question); err != nil {
+	if err := s.repo.CreateWrittenQuestion(question); err != nil {
 		return map[string]interface{}{"error": "failed to persist comprehensive exam question: " + err.Error()}
 	}
 

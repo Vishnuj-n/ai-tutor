@@ -18,7 +18,7 @@ func (s *StudyService) GetReviewSession(taskID string) (*models.ReviewSession, e
 	if taskID == "" {
 		return nil, fmt.Errorf("task ID is required")
 	}
-	return db.GetReviewSession(taskID)
+	return s.repo.GetReviewSession(taskID)
 }
 
 func (s *StudyService) ApplyFlashcardReview(cardID string, ratingCode int) (*models.Flashcard, *models.FlashcardState, string, error) {
@@ -32,9 +32,9 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		err   error
 	)
 	if tx != nil {
-		card, state, err = db.GetFlashcardByIDTx(tx, cardID)
+		card, state, err = s.repo.GetFlashcardByIDTx(tx, cardID)
 	} else {
-		card, state, err = db.GetFlashcardByID(cardID)
+		card, state, err = s.repo.GetFlashcardByID(cardID)
 	}
 	if err != nil {
 		return nil, nil, "", err
@@ -56,9 +56,9 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 
 	var lastReviewedAt int64
 	if tx != nil {
-		lastReviewedAt, err = db.GetLastFlashcardReviewTimeTx(tx, cardID)
+		lastReviewedAt, err = s.repo.GetLastFlashcardReviewTimeTx(tx, cardID)
 	} else {
-		lastReviewedAt, err = db.GetLastFlashcardReviewTime(cardID)
+		lastReviewedAt, err = s.repo.GetLastFlashcardReviewTime(cardID)
 	}
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to retrieve last reviewed time: %w", err)
@@ -88,11 +88,11 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		StateAfterJSON:  string(stateAfterJSONBytes),
 	}
 	if tx != nil {
-		if err := db.UpdateFlashcardReviewTx(tx, cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
+		if err := s.repo.UpdateFlashcardReviewTx(tx, cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
 			return nil, nil, "", err
 		}
 	} else {
-		if err := db.UpdateFlashcardReview(cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
+		if err := s.repo.UpdateFlashcardReview(cardID, dueAt, card.DueAt, string(stateBeforeJSONBytes), nextState, reviewLog); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -110,7 +110,7 @@ func (s *StudyService) RecordCardReview(taskID, cardID string, rating int) (int,
 		return 0, fmt.Errorf("rating must be between 1 and 4")
 	}
 
-	tx, err := db.GetConnection().Begin()
+	tx, err := s.repo.GetConnection().Begin()
 	if err != nil {
 		return 0, err
 	}
@@ -121,7 +121,7 @@ func (s *StudyService) RecordCardReview(taskID, cardID string, rating int) (int,
 		}
 	}()
 
-	task, err := db.GetTaskByIDTx(tx, taskID)
+	task, err := s.repo.GetTaskByIDTx(tx, taskID)
 	if err != nil {
 		return 0, err
 	}
@@ -132,14 +132,14 @@ func (s *StudyService) RecordCardReview(taskID, cardID string, rating int) (int,
 		return 0, db.ErrTaskNotActive
 	}
 
-	if err := db.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
+	if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
 		return 0, err
 	}
 	if _, _, _, err := s.applyFlashcardReview(tx, cardID, rating); err != nil {
 		return 0, err
 	}
 
-	remaining, err := db.RemainingReviewTaskCardsTx(tx, taskID)
+	remaining, err := s.repo.RemainingReviewTaskCardsTx(tx, taskID)
 	if err != nil {
 		return 0, err
 	}
@@ -156,5 +156,5 @@ func (s *StudyService) CompleteReviewSession(taskID string) error {
 	if taskID == "" {
 		return fmt.Errorf("task ID is required")
 	}
-	return db.CompleteReviewSession(taskID)
+	return s.repo.CompleteReviewSession(taskID)
 }
