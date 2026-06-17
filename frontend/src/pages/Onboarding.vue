@@ -332,7 +332,7 @@ const appInitials = computed(() => {
   if (words.length > 1) {
     return (words[0][0] + words[1][0]).toUpperCase()
   }
-  return name.slice(0, 2).toUpperCase()
+  return name.slice(0, 2).toUpperCase() || 'APP'
 })
 
 const profileName = ref('')

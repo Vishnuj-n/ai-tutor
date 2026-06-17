@@ -383,9 +383,6 @@ func (am *AssetManager) AcquireAssets(progressCallback func(status string, perce
 
 		// Normalize AppVersion for the manifest
 		manifestVersion := strings.TrimPrefix(AppVersion, "v")
-		if manifestVersion == "0.0.0-dev" {
-			manifestVersion = "0.0.0-dev"
-		}
 
 		localManifest := AssetManifest{
 			AssetVersion:  manifestVersion,
@@ -407,7 +404,7 @@ func (am *AssetManager) AcquireAssets(progressCallback func(status string, perce
 		}
 
 		client := &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 10 * time.Minute,
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -646,8 +643,6 @@ func copyFileWithProgress(src, dst string, startPct, endPct int, msg, detail str
 			currentPct := startPct + int((float64(written)/float64(totalSize))*float64(pctRange))
 			cb("acquiring", currentPct, msg, fmt.Sprintf("%s (%d%%)", detail, int((float64(written)/float64(totalSize))*100)))
 
-			// Sleep slightly to simulate network throttling/download appearance
-			time.Sleep(15 * time.Millisecond)
 		}
 		if er != nil {
 			if er == io.EOF {

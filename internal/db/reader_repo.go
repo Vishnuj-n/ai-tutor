@@ -517,5 +517,8 @@ func GetAllChunks() ([]models.Chunk, error) {
 		}
 		chunks = append(chunks, chunk)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return chunks, nil
 }
