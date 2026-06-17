@@ -64,6 +64,11 @@ func (a *App) waitForReady() {
 	}
 }
 
+func (a *App) getRepo() *db.Repository {
+	a.waitForReady()
+	return a.repo
+}
+
 func (a *App) startup(ctx context.Context) {
 	if a.readyChan != nil {
 		defer close(a.readyChan)
@@ -96,11 +101,15 @@ func (a *App) Greet(name string) string {
 }
 
 func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string]interface{} {
-	bundle, err := a.repo.GetReaderTopicBundle(topicID, notebookID)
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	bundle, err := repo.GetReaderTopicBundle(topicID, notebookID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	topicStartPage, topicEndPage, boundsErr := a.repo.GetTopicPageBounds(topicID)
+	topicStartPage, topicEndPage, boundsErr := repo.GetTopicPageBounds(topicID)
 	if boundsErr != nil {
 		topicStartPage, topicEndPage = 0, 0
 	}
@@ -121,7 +130,11 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 }
 
 func (a *App) GetAvailableTopics() []map[string]string {
-	topics, err := a.repo.GetAllTopics()
+	repo := a.getRepo()
+	if repo == nil {
+		return []map[string]string{}
+	}
+	topics, err := repo.GetAllTopics()
 	if err != nil {
 		return []map[string]string{}
 	}
@@ -129,6 +142,10 @@ func (a *App) GetAvailableTopics() []map[string]string {
 }
 
 func (a *App) AskSocratic(notebookID string, topicID string, question string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	a.aiMutex.Lock()
 	if !a.aiReady {
 		reason := a.aiInitError
@@ -152,6 +169,10 @@ func (a *App) AskSocratic(notebookID string, topicID string, question string) ma
 }
 
 func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPage, chapterStartPage, chapterEndPage int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	a.aiMutex.Lock()
 	if !a.aiReady {
 		reason := a.aiInitError
@@ -179,6 +200,10 @@ func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPa
 }
 
 func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	a.aiMutex.Lock()
 	if !a.aiReady || a.embedder == nil {
 		reason := a.aiInitError
@@ -218,6 +243,10 @@ func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
 }
 
 func (a *App) GetTodayPlan() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.scheduler == nil {
 		return map[string]interface{}{"error": "scheduler not initialized"}
 	}
@@ -225,11 +254,11 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 
 	// Canonical queue recovery/materialization path for dashboard:
 	// if ACTIVE/PENDING queue tasks exist, surface those directly.
-	activeQueueTasks, err := a.repo.GetAllActiveTasks()
+	activeQueueTasks, err := repo.GetAllActiveTasks()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	pendingQueueTasks, err := a.repo.GetAllPendingTasks()
+	pendingQueueTasks, err := repo.GetAllPendingTasks()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -239,11 +268,11 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	if len(activeQueueTasks) > 0 || len(pendingQueueTasks) > 0 {
 		// Bypass scheduler's synthetic BuildTodayPlan to save DB scan and token budget cycles.
 		// Query due review cards and daily minutes directly.
-		dueCards, err := a.repo.QueryDueReviewCards(now.Unix())
+		dueCards, err := repo.QueryDueReviewCards(now.Unix())
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}
 		}
-		dailyStudyMinutes, err := a.repo.GetDailyStudyMinutes()
+		dailyStudyMinutes, err := repo.GetDailyStudyMinutes()
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}
 		}
@@ -333,14 +362,14 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	// Count active notebooks for the dashboard empty-state distinction.
 	var activeNotebookCount int
 	var activeProfileID sql.NullString
-	if err := a.repo.GetConnection().QueryRow(`SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1`).Scan(&activeProfileID); err == nil && activeProfileID.Valid && activeProfileID.String != "" {
-		_ = a.repo.GetConnection().QueryRow(`
+	if err := repo.GetConnection().QueryRow(`SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1`).Scan(&activeProfileID); err == nil && activeProfileID.Valid && activeProfileID.String != "" {
+		_ = repo.GetConnection().QueryRow(`
 			SELECT COUNT(*) FROM notebooks 
 			WHERE study_status = 'active' 
 			  AND (profile_id = ? OR profile_id IS NULL OR profile_id = '')
 		`, activeProfileID.String).Scan(&activeNotebookCount)
 	} else {
-		_ = a.repo.GetConnection().QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&activeNotebookCount)
+		_ = repo.GetConnection().QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&activeNotebookCount)
 	}
 
 	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
@@ -411,15 +440,19 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 }
 
 func (a *App) ActivateTask(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if taskID == models.ReviewTaskDailyID {
 		return map[string]interface{}{"ok": true}
 	}
-	if task, err := a.repo.GetTaskByID(taskID); err == nil {
+	if task, err := repo.GetTaskByID(taskID); err == nil {
 		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
 	} else {
 		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s loadError=%v", taskID, err)
 	}
-	if err := a.repo.ActivateTask(taskID); err != nil {
+	if err := repo.ActivateTask(taskID); err != nil {
 		switch err {
 		case db.ErrTaskNotFound:
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
@@ -433,10 +466,14 @@ func (a *App) ActivateTask(taskID string) map[string]interface{} {
 }
 
 func (a *App) CompleteTask(taskID string, result models.CompletionResult) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if strings.TrimSpace(taskID) == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
-	if err := a.repo.CompleteTask(taskID, result); err != nil {
+	if err := repo.CompleteTask(taskID, result); err != nil {
 		switch err {
 		case db.ErrTaskNotFound:
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
@@ -450,10 +487,14 @@ func (a *App) CompleteTask(taskID string, result models.CompletionResult) map[st
 }
 
 func (a *App) SkipTask(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if strings.TrimSpace(taskID) == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
-	if err := a.repo.SkipTask(taskID); err != nil {
+	if err := repo.SkipTask(taskID); err != nil {
 		switch err {
 		case db.ErrTaskNotFound:
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
@@ -465,10 +506,14 @@ func (a *App) SkipTask(taskID string) map[string]interface{} {
 }
 
 func (a *App) GetQueueState(notebookID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if strings.TrimSpace(notebookID) == "" {
 		return map[string]interface{}{"error": "notebook ID is required", "code": 400}
 	}
-	state, err := a.repo.GetQueueState(notebookID)
+	state, err := repo.GetQueueState(notebookID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -480,6 +525,10 @@ func (a *App) GetQueueState(notebookID string) map[string]interface{} {
 // Accepts the full routing context so scheduler-suggested tasks (not yet in study_queue)
 // can be materialized as real queue rows on first open.
 func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, startPage, endPage int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	taskID = strings.TrimSpace(taskID)
 	notebookID = strings.TrimSpace(notebookID)
 	topicID = strings.TrimSpace(topicID)
@@ -489,7 +538,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 	utils.Warnf("[READER_INIT] InitializeReadingSession entry taskID=%s notebookID=%s topicID=%s startPage=%d endPage=%d", taskID, notebookID, topicID, startPage, endPage)
 
 	seedTaskID := taskID
-	existingTask, existingErr := a.repo.GetTaskByID(seedTaskID)
+	existingTask, existingErr := repo.GetTaskByID(seedTaskID)
 
 	// If task doesn't exist yet (e.g. scheduler-generated synthetic ID),
 	// insert it as a real READING task so the queue lifecycle can proceed.
@@ -498,7 +547,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 		if notebookID == "" || topicID == "" {
 			return map[string]interface{}{"error": "task not found and notebookID/topicID required to create it", "code": 400}
 		}
-		insertErr := a.repo.InsertStudyTask(models.StudyQueueTask{
+		insertErr := repo.InsertStudyTask(models.StudyQueueTask{
 			ID:         seedTaskID,
 			NotebookID: notebookID,
 			TopicID:    topicID,
@@ -534,7 +583,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 		}
 		taskID = uuid.NewString()
 		utils.Warnf("[READER_INIT] InitializeReadingSession task terminal, creating new queue row taskID=%s oldStatus=%s notebookID=%s topicID=%s", taskID, existingTask.Status, notebookID, topicID)
-		insertErr := a.repo.InsertStudyTask(models.StudyQueueTask{
+		insertErr := repo.InsertStudyTask(models.StudyQueueTask{
 			ID:         taskID,
 			NotebookID: notebookID,
 			TopicID:    topicID,
@@ -550,19 +599,19 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 	}
 
 	// Activate task (idempotent if already active)
-	if task, err := a.repo.GetTaskByID(taskID); err == nil {
+	if task, err := repo.GetTaskByID(taskID); err == nil {
 		utils.Warnf("[READER_INIT] InitializeReadingSession queue task before activate taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
 	} else {
 		utils.Warnf("[READER_INIT] InitializeReadingSession queue task pre-activate load error taskID=%s err=%v", taskID, err)
 	}
-	if err := a.repo.ActivateTask(taskID); err != nil {
+	if err := repo.ActivateTask(taskID); err != nil {
 		utils.Warnf("[READER_INIT] InitializeReadingSession activate result taskID=%s err=%v", taskID, err)
 	} else {
 		utils.Warnf("[READER_INIT] InitializeReadingSession activate result taskID=%s ok=true", taskID)
 	}
 
 	// Load reading task with all context
-	task, err := a.repo.GetReadingTask(taskID)
+	task, err := repo.GetReadingTask(taskID)
 	if err != nil {
 		if err == db.ErrTaskNotFound {
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
@@ -571,7 +620,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 	}
 
 	// Get topic bundle for additional metadata
-	bundle, err := a.repo.GetReaderTopicBundle(task.TopicID, task.NotebookID)
+	bundle, err := repo.GetReaderTopicBundle(task.TopicID, task.NotebookID)
 	if err != nil {
 		// Return task-only response if bundle fails
 		return map[string]interface{}{
@@ -592,7 +641,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 
 	// Get current progress from reading_progress table
 	var currentPage int
-	err = a.repo.GetConnection().QueryRow(`
+	err = repo.GetConnection().QueryRow(`
 		SELECT COALESCE(current_page, 0) FROM reading_progress WHERE task_id = ?
 	`, taskID).Scan(&currentPage)
 	if err != nil || currentPage == 0 {
@@ -625,6 +674,10 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 }
 
 func (a *App) CompleteReading(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading entry rejected: taskID empty")
@@ -633,7 +686,7 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	utils.Warnf("[COMPLETE_SESSION] CompleteReading entry taskID=%s", taskID)
 
 	// Trust-based completion: just validate task exists and is active
-	task, err := a.repo.GetReadingTask(taskID)
+	task, err := repo.GetReadingTask(taskID)
 	if err != nil {
 		switch err {
 		case db.ErrTaskNotFound:
@@ -652,7 +705,7 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	}
 
 	// Generate quiz from full assigned chunk range (no page validation)
-	chunks, err := a.repo.GetChunksForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
+	chunks, err := repo.GetChunksForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
 	if err != nil {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup error taskID=%s err=%v", taskID, err)
 		return map[string]interface{}{"error": err.Error()}
@@ -676,7 +729,7 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 	// Complete reading task and generate follow-up quiz
 	// No page completion validation required - user decides when done
 	utils.Warnf("[COMPLETE_SESSION] CompleteReading before CompleteReadingWithGeneratedQuiz taskID=%s", taskID)
-	quizTaskID, err := a.repo.CompleteReadingWithGeneratedQuiz(taskID, quizPayload)
+	quizTaskID, err := repo.CompleteReadingWithGeneratedQuiz(taskID, quizPayload)
 	if err != nil {
 		switch err {
 		case db.ErrTaskNotFound:
@@ -696,11 +749,15 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 }
 
 func (a *App) GetTask(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
-	task, err := a.repo.GetTaskByID(taskID)
+	task, err := repo.GetTaskByID(taskID)
 	if err != nil {
 		if err == db.ErrTaskNotFound {
 			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
@@ -711,6 +768,10 @@ func (a *App) GetTask(taskID string) map[string]interface{} {
 }
 
 func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -718,6 +779,10 @@ func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int
 }
 
 func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -738,11 +803,15 @@ func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[
 // GenerateFlashcardsForQuizTask generates flashcards based on a passed quiz task.
 // Newly generated cards are future-dated and do not create an immediate review task.
 func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 
-	task, err := a.repo.GetTaskByID(taskID)
+	task, err := repo.GetTaskByID(taskID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -768,7 +837,11 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 }
 
 func (a *App) GetDailyStudySettings() map[string]interface{} {
-	minutes, err := a.repo.GetDailyStudyMinutes()
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	minutes, err := repo.GetDailyStudyMinutes()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -776,20 +849,24 @@ func (a *App) GetDailyStudySettings() map[string]interface{} {
 }
 
 func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if minutes < 15 || minutes > 480 {
 		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
 	}
-	if err := a.repo.UpsertDailyStudyMinutes(minutes); err != nil {
+	if err := repo.UpsertDailyStudyMinutes(minutes); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true, "daily_study_minutes": minutes}
 }
 func (a *App) GetUserSettings() map[string]interface{} {
-	a.waitForReady()
-	if a.repo == nil {
+	repo := a.getRepo()
+	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
 	}
-	s, err := a.repo.GetUserSettings()
+	s, err := repo.GetUserSettings()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -808,6 +885,10 @@ func (a *App) GetUserSettings() map[string]interface{} {
 }
 
 func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if minutes < 15 || minutes > 480 {
 		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
 	}
@@ -824,7 +905,7 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 		RAGQueueStudy:       ragQueueStudy,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
-	if err := a.repo.UpdateUserSettings(s); err != nil {
+	if err := repo.UpdateUserSettings(s); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
@@ -848,7 +929,11 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 }
 
 func (a *App) GetLLMSettings() map[string]interface{} {
-	settings, err := a.repo.GetLLMSettings()
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	settings, err := repo.GetLLMSettings()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -889,7 +974,11 @@ func (a *App) GetLLMProviderPreset(provider string) map[string]interface{} {
 }
 
 func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interface{} {
-	current, err := a.repo.GetLLMSettings()
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	current, err := repo.GetLLMSettings()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -912,7 +1001,7 @@ func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interfac
 	if settings.UseSameForHeavy {
 		settings.Heavy.HasAPIKey = settings.Fast.HasAPIKey
 	}
-	if err := a.repo.UpdateLLMSettings(settings); err != nil {
+	if err := repo.UpdateLLMSettings(settings); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	if err := a.reloadLLMProviders(); err != nil {
@@ -922,6 +1011,10 @@ func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interfac
 }
 
 func (a *App) SaveLLMAPIKey(tier string, key string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	tier = normalizeLLMTierForApp(tier)
 	if tier == "" {
 		return map[string]interface{}{"error": "tier must be fast or heavy"}
@@ -929,7 +1022,7 @@ func (a *App) SaveLLMAPIKey(tier string, key string) map[string]interface{} {
 	if err := llm.SaveAPIKey(tier, key); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	if err := a.repo.MarkLLMKeyStored(tier, true); err != nil {
+	if err := repo.MarkLLMKeyStored(tier, true); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	if err := a.reloadLLMProviders(); err != nil {
@@ -939,6 +1032,10 @@ func (a *App) SaveLLMAPIKey(tier string, key string) map[string]interface{} {
 }
 
 func (a *App) DeleteLLMAPIKey(tier string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	tier = normalizeLLMTierForApp(tier)
 	if tier == "" {
 		return map[string]interface{}{"error": "tier must be fast or heavy"}
@@ -946,7 +1043,7 @@ func (a *App) DeleteLLMAPIKey(tier string) map[string]interface{} {
 	if err := llm.DeleteAPIKey(tier); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	if err := a.repo.MarkLLMKeyStored(tier, false); err != nil {
+	if err := repo.MarkLLMKeyStored(tier, false); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	if err := a.reloadLLMProviders(); err != nil {
@@ -1015,7 +1112,11 @@ func sameLLMSettingsForUI(a, b models.LLMTierSettings) bool {
 }
 
 func (a *App) GetProfiles() map[string]interface{} {
-	profiles, err := a.repo.GetProfiles()
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	profiles, err := repo.GetProfiles()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -1023,6 +1124,10 @@ func (a *App) GetProfiles() map[string]interface{} {
 }
 
 func (a *App) CreateProfile(name string, deadlineStr string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return map[string]interface{}{"error": "profile name is required"}
@@ -1036,16 +1141,16 @@ func (a *App) CreateProfile(name string, deadlineStr string) map[string]interfac
 		Name:       name,
 		DeadlineAt: deadlineTime.Unix(),
 	}
-	if err := a.repo.CreateProfile(p); err != nil {
+	if err := repo.CreateProfile(p); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
 	// If no active profile is set yet, make this the default automatically.
 	// First profile created = default active profile.
-	s, err := a.repo.GetUserSettings()
+	s, err := repo.GetUserSettings()
 	if err == nil && s != nil && s.ActiveProfileID == "" {
 		s.ActiveProfileID = p.ID
-		if err := a.repo.UpdateUserSettings(*s); err != nil {
+		if err := repo.UpdateUserSettings(*s); err != nil {
 			return map[string]interface{}{"error": "profile created but failed to set as active: " + err.Error()}
 		}
 	}
@@ -1054,6 +1159,10 @@ func (a *App) CreateProfile(name string, deadlineStr string) map[string]interfac
 }
 
 func (a *App) UpdateProfile(id string, name string, deadlineStr string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
 	if id == "" || name == "" {
@@ -1068,43 +1177,55 @@ func (a *App) UpdateProfile(id string, name string, deadlineStr string) map[stri
 		Name:       name,
 		DeadlineAt: deadlineTime.Unix(),
 	}
-	if err := a.repo.UpdateProfile(p); err != nil {
+	if err := repo.UpdateProfile(p); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) DeleteProfile(id string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return map[string]interface{}{"error": "profile id is required"}
 	}
-	if err := a.repo.DeleteProfile(id); err != nil {
+	if err := repo.DeleteProfile(id); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) AssignNotebookToProfile(notebookID, profileID string) map[string]interface{} {
-	if err := a.repo.AssignNotebookToProfile(notebookID, profileID); err != nil {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if err := repo.AssignNotebookToProfile(notebookID, profileID); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) UpdateNotebookStudyStatus(notebookID, studyStatus string) map[string]interface{} {
-	if err := a.repo.UpdateNotebookStudyStatus(notebookID, studyStatus); err != nil {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if err := repo.UpdateNotebookStudyStatus(notebookID, studyStatus); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) IsOnboarded() map[string]interface{} {
-	a.waitForReady()
-	if a.repo == nil {
+	repo := a.getRepo()
+	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized", "onboarded": false}
 	}
-	profiles, err := a.repo.GetProfiles()
+	profiles, err := repo.GetProfiles()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error(), "onboarded": false}
 	}
@@ -1113,6 +1234,10 @@ func (a *App) IsOnboarded() map[string]interface{} {
 }
 
 func (a *App) TriggerCloudSync() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if err := study.TriggerCloudSync(a.repo); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -1122,6 +1247,10 @@ func (a *App) TriggerCloudSync() map[string]interface{} {
 // ---------- Manual Mode endpoints (Phase 1 new) ---------
 
 func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -1129,6 +1258,10 @@ func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int
 }
 
 func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -1136,12 +1269,16 @@ func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage in
 }
 
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 
 	// Get notebook for this topic (no profile filter - topic-scoped)
-	notebooks, err := a.repo.GetNotebooks(topicID, "")
+	notebooks, err := repo.GetNotebooks(topicID, "")
 	if err != nil {
 		return map[string]interface{}{"error": "failed to get notebook: " + err.Error()}
 	}
@@ -1151,7 +1288,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 	notebookID := notebooks[0].ID
 
 	// Get page bounds for this topic
-	startPage, endPage, err := a.repo.GetTopicPageBounds(topicID)
+	startPage, endPage, err := repo.GetTopicPageBounds(topicID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to get topic page bounds: " + err.Error()}
 	}
@@ -1190,6 +1327,10 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 }
 
 func (a *App) GetReviewSession(taskID string, notebookID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -1199,7 +1340,7 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 		requestedNotebookID := notebookID
 		utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materializing synthetic task notebookID=%s", notebookID)
 		if notebookID == "" {
-			resolvedNotebookID, dueCount, err := a.repo.GetNextDueReviewNotebook(time.Now().Unix())
+			resolvedNotebookID, dueCount, err := repo.GetNextDueReviewNotebook(time.Now().Unix())
 			if err != nil {
 				return map[string]interface{}{"error": "Failed to resolve notebook for review materialization: " + err.Error()}
 			}
@@ -1216,7 +1357,7 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 
 		// CreateReviewSession materializes a review session in the DB for the given notebookID.
 		// Returns the session Task (with a newly-created ID) and a boolean indicating if an existing legacy session was reused.
-		task, reused, err := a.repo.CreateReviewSession(notebookID)
+		task, reused, err := repo.CreateReviewSession(notebookID)
 		if err != nil {
 			return map[string]interface{}{"error": "Failed to materialize review session: " + err.Error()}
 		}
@@ -1237,6 +1378,10 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 }
 
 func (a *App) RecordCardReview(taskID, cardID string, rating int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -1257,6 +1402,10 @@ func (a *App) RecordCardReview(taskID, cardID string, rating int) map[string]int
 }
 
 func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -1276,6 +1425,10 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 }
 
 func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
@@ -1287,6 +1440,10 @@ var ragSetupMutex sync.Mutex
 var isRagSettingUp bool
 
 func (a *App) InitializeRAG() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	ragSetupMutex.Lock()
 	if isRagSettingUp {
 		ragSetupMutex.Unlock()
@@ -1349,7 +1506,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		}
 		a.repo = newRepo
 
-		if !a.repo.IsVecExtensionLoaded() {
+		if !repo.IsVecExtensionLoaded() {
 			fbRepo, fbErr := db.Init(dbPath, "")
 			if fbErr != nil {
 				emitRagSetupFailed(a, fmt.Sprintf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary), and fallback non-vector initialization also failed: %v", fbErr))
@@ -1374,7 +1531,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		}
 
 		// Set dimensions
-		if err := a.repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
+		if err := repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
 			utils.Warnf("could not initialize vector table: %v", err)
 		}
 
@@ -1396,10 +1553,10 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		}
 
 		// Save settings in DB to reflect RAG is enabled
-		settings, err := a.repo.GetUserSettings()
+		settings, err := repo.GetUserSettings()
 		if err == nil {
 			settings.RAGEnabled = true
-			_ = a.repo.UpdateUserSettings(*settings)
+			_ = repo.UpdateUserSettings(*settings)
 		}
 
 		// Emit indexing-in-progress event before starting vector indexing
