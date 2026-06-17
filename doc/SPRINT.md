@@ -64,6 +64,8 @@
 
 Refer doc\future_plan\cross_platform_asset_delivery.md
 
+- Added in onboarding and settings
+
 ## Archive / Historical Completed Sprints
 
 <details>

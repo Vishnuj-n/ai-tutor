@@ -591,9 +591,9 @@ type wordSpan struct {
 	text  string
 }
 
-// SplitPageIntoSemanticChunks splits page-local text near semantic boundaries around targetWords.
+// SplitPageIntoChunks splits page-local text near semantic boundaries around targetWords.
 // It never crosses page boundaries because callers provide one page body at a time.
-func SplitPageIntoSemanticChunks(text string, targetWords int) []string {
+func SplitPageIntoChunks(text string, targetWords int) []string {
 	if targetWords <= 0 {
 		targetWords = DefaultSemanticChunkTargetWords
 	}
