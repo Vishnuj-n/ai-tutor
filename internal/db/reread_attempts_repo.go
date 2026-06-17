@@ -7,14 +7,14 @@ import (
 	"strings"
 )
 
-func GetRereadAttemptCount(topicID string) (int, error) {
+func (r *Repository) GetRereadAttemptCount(topicID string) (int, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return 0, fmt.Errorf("topic id is required")
 	}
 
 	var count int
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT COALESCE(attempt_count, 0)
 		FROM reread_attempts
 		WHERE topic_id = ?
@@ -28,7 +28,7 @@ func GetRereadAttemptCount(topicID string) (int, error) {
 	return count, nil
 }
 
-func IncrementRereadAttemptCountTx(tx *sql.Tx, topicID string) (int, error) {
+func (r *Repository) IncrementRereadAttemptCountTx(tx *sql.Tx, topicID string) (int, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return 0, fmt.Errorf("topic id is required")
@@ -48,7 +48,7 @@ func IncrementRereadAttemptCountTx(tx *sql.Tx, topicID string) (int, error) {
 	return count, nil
 }
 
-func ResetRereadAttemptCountTx(tx *sql.Tx, topicID string) error {
+func (r *Repository) ResetRereadAttemptCountTx(tx *sql.Tx, topicID string) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return fmt.Errorf("topic id is required")

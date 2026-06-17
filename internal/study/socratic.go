@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/retrieval"
@@ -80,7 +79,7 @@ Retrieved material:
 	}
 
 	// Resolve lineage from cited chunks.
-	sourceHeading, sourcePageStart, sourcePageEnd := resolveSocraticLineage(topicID, chunkIDs)
+	sourceHeading, sourcePageStart, sourcePageEnd := s.resolveSocraticLineage(topicID, chunkIDs)
 
 	question := models.WrittenQuestion{
 		ID:              uuid.NewString(),
@@ -92,7 +91,7 @@ Retrieved material:
 		LLMModel:        providerModelName(s.fastLLMProvider),
 		PromptVersion:   "written-v1-persisted",
 	}
-	if err := db.CreateWrittenQuestion(question); err != nil {
+	if err := s.repo.CreateWrittenQuestion(question); err != nil {
 		return map[string]interface{}{"error": "failed to persist short-answer prompt: " + err.Error()}
 	}
 	return map[string]interface{}{
@@ -106,11 +105,11 @@ Retrieved material:
 }
 
 // resolveSocraticLineage resolves the heading / page range from chunk IDs.
-func resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int) {
+func (s *StudyService) resolveSocraticLineage(topicID string, chunkIDs []string) (string, int, int) {
 	if len(chunkIDs) == 0 {
 		return "", 0, 0
 	}
-	headingPageRanges, err := db.GetTopicHeadingPageRanges(topicID)
+	headingPageRanges, err := s.repo.GetTopicHeadingPageRanges(topicID)
 	if err != nil {
 		utils.Warnf("could not resolve socratic lineage for topic %s: %v", topicID, err)
 		return "", 0, 0

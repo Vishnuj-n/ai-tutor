@@ -25,7 +25,7 @@ func (s *StudyService) GenerateManualFlashcards(notebookID string, startPage, en
 		cards[i].TopicID = syntheticTopicID
 	}
 
-	err = db.SaveManualFlashcardsBatch(notebookID, cards)
+	err = s.repo.SaveManualFlashcardsBatch(notebookID, cards)
 	if err != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] manual_flashcard_persistence result=error notebookID=%s err=%v", notebookID, err)
 		return map[string]interface{}{"error": "failed to persist manual flashcards: " + err.Error()}
@@ -65,12 +65,12 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 	}
 
 	topicTitle := topicID // Fallback title
-	err = db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: topicID, Title: topicTitle}})
+	err = s.repo.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: topicID, Title: topicTitle}})
 	if err != nil {
 		return nil, nil, false, "", fmt.Errorf("failed to ensure topic: %w", err)
 	}
 
-	err = db.EnsureNotebookTopic(notebookID, topicID)
+	err = s.repo.EnsureNotebookTopic(notebookID, topicID)
 	if err != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] failed to link topic to notebook topicID=%s notebookID=%s err=%v", topicID, notebookID, err)
 	}
@@ -80,7 +80,7 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 		states[card.ID] = models.FlashcardState{}
 	}
 
-	cards, existing, err := db.GetOrCreateFlashcardsForTopic(topicID, cards, states)
+	cards, existing, err := s.repo.GetOrCreateFlashcardsForTopic(topicID, cards, states)
 	if err != nil {
 		return nil, nil, false, "", fmt.Errorf("failed to persist FSRS flashcards: %w", err)
 	}
@@ -89,7 +89,7 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 	for i, card := range cards {
 		cardIDs[i] = card.ID
 	}
-	persistedStates, err := db.GetFlashcardStatesByIDs(cardIDs)
+	persistedStates, err := s.repo.GetFlashcardStatesByIDs(cardIDs)
 	if err != nil {
 		return nil, nil, false, "", fmt.Errorf("failed to fetch flashcard states: %w", err)
 	}
@@ -107,7 +107,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 		return nil, "", fmt.Errorf("invalid page range: start=%d end=%d", startPage, endPage)
 	}
 
-	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, tokenCount, err := s.buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return nil, "", err
 	}

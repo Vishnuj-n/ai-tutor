@@ -20,7 +20,7 @@ var (
 )
 
 // InsertStudyTask inserts one task row in study_queue.
-func InsertStudyTask(task models.StudyQueueTask) error {
+func (r *Repository) InsertStudyTask(task models.StudyQueueTask) error {
 	task.ID = strings.TrimSpace(task.ID)
 	task.NotebookID = strings.TrimSpace(task.NotebookID)
 	task.TopicID = strings.TrimSpace(task.TopicID)
@@ -38,7 +38,7 @@ func InsertStudyTask(task models.StudyQueueTask) error {
 		task.Status = models.StudyTaskStatusPending
 	}
 
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		INSERT INTO study_queue (
 			id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
 		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
@@ -50,13 +50,13 @@ func InsertStudyTask(task models.StudyQueueTask) error {
 }
 
 // GetTaskByID returns one queue task by id.
-func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
+func (r *Repository) GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")
 	}
 	task := &models.StudyQueueTask{}
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT
 			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
 			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
@@ -76,11 +76,12 @@ func GetTaskByID(taskID string) (*models.StudyQueueTask, error) {
 	return task, nil
 }
 
+
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
-func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
+func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	var activeProfileID sql.NullString
 	var skipToReadingActive bool
-	if err := conn.QueryRow(`
+	if err := r.db.QueryRow(`
 		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
 	`).Scan(&activeProfileID, &skipToReadingActive); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllPendingTasks: reading user_settings: %w", err)
@@ -133,7 +134,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 				sq.id ASC
 			LIMIT 3
 		`
-		rows, err := conn.Query(query)
+		rows, err := r.db.Query(query)
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +248,7 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			id ASC
 	`
 
-	rows, err := conn.Query(query, skipVal, activeProfileStr, activeProfileStr, activeProfileStr)
+	rows, err := r.db.Query(query, skipVal, activeProfileStr, activeProfileStr, activeProfileStr)
 	if err != nil {
 		return nil, err
 	}
@@ -290,9 +291,9 @@ func GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 }
 
 // GetAllActiveTasks returns all active tasks ordered by activation time.
-func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
+func (r *Repository) GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 	var activeProfileID sql.NullString
-	if err := conn.QueryRow(`
+	if err := r.db.QueryRow(`
 		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
 	`).Scan(&activeProfileID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllActiveTasks: reading user_settings: %w", err)
@@ -328,7 +329,7 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 		ORDER BY sq.activated_at ASC
 	`
 
-	rows, err := conn.Query(query, activeProfileStr, activeProfileStr)
+	rows, err := r.db.Query(query, activeProfileStr, activeProfileStr)
 	if err != nil {
 		return nil, err
 	}
@@ -371,13 +372,13 @@ func GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 }
 
 // GetNextTask returns the next pending task ordered by deterministic queue rules.
-func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
+func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q", notebookID)
 
 	var activeProfileID sql.NullString
 	var skipToReadingActive bool
-	if err := conn.QueryRow(`
+	if err := r.db.QueryRow(`
 		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
 	`).Scan(&activeProfileID, &skipToReadingActive); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetNextTask: reading user_settings: %w", err)
@@ -440,7 +441,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 		task := &models.StudyQueueTask{}
 		var topicTitle string
 		var notebookPriority int
-		err := conn.QueryRow(query, args...).Scan(
+		err := r.db.QueryRow(query, args...).Scan(
 			&task.ID,
 			&task.NotebookID,
 			&task.TopicID,
@@ -531,7 +532,7 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 	task := &models.StudyQueueTask{}
 	var topicTitle string
 	var notebookPriority int
-	err := conn.QueryRow(query, args...).Scan(
+	err := r.db.QueryRow(query, args...).Scan(
 		&task.ID,
 		&task.NotebookID,
 		&task.TopicID,
@@ -558,18 +559,18 @@ func GetNextTask(notebookID string) (*models.StudyQueueTask, error) {
 }
 
 // ActivateTask moves one task from PENDING to ACTIVE.
-func ActivateTask(taskID string) error {
+func (r *Repository) ActivateTask(taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return fmt.Errorf("task id is required")
 	}
 	var beforeStatus string
-	if err := conn.QueryRow(`SELECT COALESCE(status, '') FROM study_queue WHERE id = ?`, taskID).Scan(&beforeStatus); err == nil {
+	if err := r.db.QueryRow(`SELECT COALESCE(status, '') FROM study_queue WHERE id = ?`, taskID).Scan(&beforeStatus); err == nil {
 		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s status=%s", taskID, beforeStatus)
 	} else {
 		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s statusLoadErr=%v", taskID, err)
 	}
-	res, err := conn.Exec(`
+	res, err := r.db.Exec(`
 		UPDATE study_queue
 		SET status = 'ACTIVE', activated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = 'PENDING'
@@ -586,7 +587,7 @@ func ActivateTask(taskID string) error {
 		return nil
 	}
 	var exists int
-	if err := conn.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
 		utils.Warnf("[QUEUE] ActivateTask existence check error taskID=%s err=%v", taskID, err)
 		return err
 	}
@@ -599,7 +600,7 @@ func ActivateTask(taskID string) error {
 }
 
 // CompleteTaskTx marks ACTIVE task as terminal and inserts explicit follow-up tasks transactionally.
-func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) error {
+func (r *Repository) CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return fmt.Errorf("task id is required")
@@ -678,10 +679,10 @@ func CompleteTaskTx(tx *sql.Tx, taskID string, result models.CompletionResult) e
 }
 
 // CompleteTask marks ACTIVE task as terminal and inserts explicit follow-up tasks transactionally.
-func CompleteTask(taskID string, result models.CompletionResult) error {
+func (r *Repository) CompleteTask(taskID string, result models.CompletionResult) error {
 	utils.Warnf("[QUEUE] CompleteTask transaction start taskID=%s", strings.TrimSpace(taskID))
-	err := withTx(func(tx *sql.Tx) error {
-		if err := CompleteTaskTx(tx, taskID, result); err != nil {
+	err := r.withTx(func(tx *sql.Tx) error {
+		if err := r.CompleteTaskTx(tx, taskID, result); err != nil {
 			utils.Warnf("[QUEUE] CompleteTask transaction error taskID=%s err=%v", strings.TrimSpace(taskID), err)
 			return err
 		}
@@ -695,12 +696,12 @@ func CompleteTask(taskID string, result models.CompletionResult) error {
 }
 
 // SkipTask marks one task as SKIPPED.
-func SkipTask(taskID string) error {
+func (r *Repository) SkipTask(taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return fmt.Errorf("task id is required")
 	}
-	res, err := conn.Exec(`
+	res, err := r.db.Exec(`
 		UPDATE study_queue
 		SET status = 'SKIPPED', completed_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status IN ('PENDING', 'ACTIVE')
@@ -716,7 +717,7 @@ func SkipTask(taskID string) error {
 		return nil
 	}
 	var exists int
-	if err := conn.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
 		return err
 	}
 	if exists == 0 {
@@ -726,7 +727,7 @@ func SkipTask(taskID string) error {
 }
 
 // GetQueueState returns pending counts by task type, optionally filtered by notebook.
-func GetQueueState(notebookID string) (models.QueueState, error) {
+func (r *Repository) GetQueueState(notebookID string) (models.QueueState, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	state := models.QueueState{
 		NotebookID: notebookID,
@@ -745,7 +746,7 @@ func GetQueueState(notebookID string) (models.QueueState, error) {
 	}
 	query += ` GROUP BY task_type`
 
-	rows, err := conn.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return state, err
 	}
@@ -769,14 +770,14 @@ func GetQueueState(notebookID string) (models.QueueState, error) {
 }
 
 // GetReadingTask returns one reader-compatible task with locked bounds and persisted cursor.
-func GetReadingTask(taskID string) (*models.ReadingTask, error) {
+func (r *Repository) GetReadingTask(taskID string) (*models.ReadingTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")
 	}
 
 	task := &models.ReadingTask{}
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT
 			sq.id,
 			sq.notebook_id,
@@ -805,7 +806,7 @@ func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 	// This allows READING tasks created without bounds to still be initialized and completed.
 	if (task.StartPage <= 0 || task.EndPage <= 0) && task.TopicID != "" {
 		var topicStart, topicEnd int
-		boundsErr := conn.QueryRow(`
+		boundsErr := r.db.QueryRow(`
 			SELECT COALESCE(start_page, 1), COALESCE(end_page, start_page)
 			FROM topics WHERE id = ?
 		`, task.TopicID).Scan(&topicStart, &topicEnd)
@@ -838,8 +839,8 @@ func GetReadingTask(taskID string) (*models.ReadingTask, error) {
 
 // PersistReadingProgress persists page progress without validating completion.
 // Used in trust-based completion model where user decides when reading is complete.
-func PersistReadingProgress(taskID string, finalPage int) (bool, error) {
-	task, err := GetReadingTask(taskID)
+func (r *Repository) PersistReadingProgress(taskID string, finalPage int) (bool, error) {
+	task, err := r.GetReadingTask(taskID)
 	if err != nil {
 		return false, err
 	}
@@ -851,7 +852,7 @@ func PersistReadingProgress(taskID string, finalPage int) (bool, error) {
 		finalPage = task.EndPage
 	}
 
-	err = withTx(func(tx *sql.Tx) error {
+	err = r.withTx(func(tx *sql.Tx) error {
 		_, err = tx.Exec(`
 			INSERT INTO reading_progress (task_id, current_page, last_accessed_at)
 			VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -885,7 +886,7 @@ func PersistReadingProgress(taskID string, finalPage int) (bool, error) {
 }
 
 // CompleteReadingWithGeneratedQuiz completes an ACTIVE reader-compatible task and inserts a QUIZ follow-up with payload.
-func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTaskPayload) (string, error) {
+func (r *Repository) CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTaskPayload) (string, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return "", fmt.Errorf("task id is required")
@@ -912,7 +913,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	var currentPage int
 	var status string
 
-	err = conn.QueryRow(`
+	err = r.db.QueryRow(`
 		SELECT
 			sq.id,
 			sq.notebook_id,
@@ -944,7 +945,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 	}
 
 	quizTaskID := uuid.NewString()
-	err = withTx(func(tx *sql.Tx) error {
+	err = r.withTx(func(tx *sql.Tx) error {
 		// Synchronize topics.current_page_cursor to keep both cursor systems aligned.
 		// Completion is authoritative for the assigned reading window, so cursor must
 		// advance to at least end_page to prevent scheduler rematerializing the same window.
@@ -964,7 +965,7 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 			}
 		}
 
-		err = CompleteTaskTx(tx, seed.ID, models.CompletionResult{
+		err = r.CompleteTaskTx(tx, seed.ID, models.CompletionResult{
 			Status: models.StudyTaskStatusCompleted,
 			FollowUps: []models.StudyQueueTask{
 				{
@@ -993,26 +994,8 @@ func CompleteReadingWithGeneratedQuiz(taskID string, quizPayload models.QuizTask
 }
 
 
-func saveQuizAttemptRepoTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
-	if tx == nil {
-		return fmt.Errorf("nil tx passed to saveQuizAttemptRepoTx")
-	}
-	_, err := tx.Exec(`
-		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
-	return err
-}
-
-func boolToInt(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
-}
-
-
-func SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
+// SaveQuizAttemptTx saves one quiz attempt record transactionally.
+func (r *Repository) SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	attempt.ID = strings.TrimSpace(attempt.ID)
 	attempt.TaskID = strings.TrimSpace(attempt.TaskID)
 	attempt.AnswersJSON = strings.TrimSpace(attempt.AnswersJSON)
@@ -1031,5 +1014,9 @@ func SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	if tx == nil {
 		return fmt.Errorf("nil tx passed to SaveQuizAttemptTx")
 	}
-	return saveQuizAttemptRepoTx(tx, attempt)
+	_, err := tx.Exec(`
+		INSERT INTO quiz_attempts (id, task_id, score, passed, answers_json, feedback, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
+	return err
 }
