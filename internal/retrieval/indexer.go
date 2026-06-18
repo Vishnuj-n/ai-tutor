@@ -22,14 +22,16 @@ type IndexerConfig struct {
 
 // VectorIndexer manages persistent vector indexing with checksum-based incremental updates.
 type VectorIndexer struct {
+	repo     *db.Repository
 	embedder *embeddings.OnnxEmbedder
 	config   IndexerConfig
 	ctx      context.Context
 }
 
 // NewVectorIndexer creates a new vector indexer.
-func NewVectorIndexer(embedder *embeddings.OnnxEmbedder, config IndexerConfig, ctx context.Context) *VectorIndexer {
+func NewVectorIndexer(repo *db.Repository, embedder *embeddings.OnnxEmbedder, config IndexerConfig, ctx context.Context) *VectorIndexer {
 	return &VectorIndexer{
+		repo:     repo,
 		embedder: embedder,
 		config:   config,
 		ctx:      ctx,
@@ -45,7 +47,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	}
 
 	// Fetch all chunks for the topic
-	chunks, err := db.GetChunksForTopic(topicID)
+	chunks, err := vi.repo.GetChunksForTopic(topicID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch chunks for topic %s: %w", topicID, err)
 	}
@@ -59,7 +61,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 	chunkHashRefs := map[string]string{}
 	if vi.config.RecomputeOnHashMismatch && !vi.config.ForceReindex {
-		chunkHashRefs, err = db.GetChunkEmbeddingRefsForTopic(topicID)
+		chunkHashRefs, err = vi.repo.GetChunkEmbeddingRefsForTopic(topicID)
 		if err != nil {
 			return fmt.Errorf("failed to fetch embedding refs for topic %s: %w", topicID, err)
 		}
@@ -129,11 +131,11 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	}
 
 	// Batch store vectors
-	if err := db.UpsertChunkVectorsBatch(vectorBatch); err != nil {
+	if err := vi.repo.UpsertChunkVectorsBatch(vectorBatch); err != nil {
 		utils.Warnf("failed to batch store vectors for topic %s: %v", topicID, err)
 		// Fall back to individual operations on batch failure
 		for _, item := range vectorBatch {
-			if err := db.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
+			if err := vi.repo.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
 				utils.Warnf("failed to store vector for chunk %s: %v", item.ChunkID, err)
 				failedChunks[item.ChunkID] = struct{}{}
 			}
@@ -141,11 +143,11 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	}
 
 	// Batch update embedding metadata
-	if err := db.UpdateChunkEmbeddingsBatch(embeddingBatch); err != nil {
+	if err := vi.repo.UpdateChunkEmbeddingsBatch(embeddingBatch); err != nil {
 		utils.Warnf("failed to batch update embedding metadata for topic %s: %v", topicID, err)
 		// Fall back to individual operations on batch failure
 		for _, item := range embeddingBatch {
-			if err := db.UpdateChunkEmbedding(item.ChunkID, item.Hash); err != nil {
+			if err := vi.repo.UpdateChunkEmbedding(item.ChunkID, item.Hash); err != nil {
 				utils.Warnf("failed to update chunk embedding metadata for chunk %s: %v", item.ChunkID, err)
 				failedChunks[item.ChunkID] = struct{}{}
 			}
@@ -160,13 +162,13 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 // IndexAllTopics reindexes all topics in the database.
 // Updates notebook indexing_status from PENDING -> INDEXING -> READY/FAILED.
 func (vi *VectorIndexer) IndexAllTopics() error {
-	topicIDs, err := db.GetAllTopicIDs()
+	topicIDs, err := vi.repo.GetAllTopicIDs()
 	if err != nil {
 		return fmt.Errorf("failed to get topic IDs: %w", err)
 	}
 
 	// Get all notebooks with PENDING indexing status (no profile filter for indexing)
-	notebooks, err := db.GetNotebooks("", "")
+	notebooks, err := vi.repo.GetNotebooks("", "")
 	if err != nil {
 		utils.Warnf("failed to fetch notebooks for indexing: %v", err)
 		// Continue anyway, we'll index by topic
@@ -176,7 +178,7 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 	indexingNotebookIDs := make(map[string]struct{})
 	for _, nb := range notebooks {
 		if nb.IndexingStatus == "PENDING" {
-			if err := db.UpdateNotebookIndexingStatus(nb.ID, "INDEXING"); err == nil {
+			if err := vi.repo.UpdateNotebookIndexingStatus(nb.ID, "INDEXING"); err == nil {
 				indexingNotebookIDs[nb.ID] = struct{}{}
 			}
 		}
@@ -190,7 +192,7 @@ func (vi *VectorIndexer) IndexAllTopics() error {
 
 	// Set indexing status to READY for notebooks that were being indexed
 	for notebookID := range indexingNotebookIDs {
-		_ = db.UpdateNotebookIndexingStatus(notebookID, "READY")
+		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY")
 	}
 
 	return nil

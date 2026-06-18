@@ -4,14 +4,14 @@ import "fmt"
 
 // SeedDemoDataForTests inserts demo content for test isolation.
 // This function is only called from test setUp helpers; never imported by production code.
-func SeedDemoDataForTests() error {
+func (r *Repository) SeedDemoDataForTests() error {
 	// Guard against uninitialized database
-	if conn == nil {
+	if r == nil || r.db == nil {
 		return fmt.Errorf("database not initialized; call db.Init() first")
 	}
 
 	// Begin transaction for atomic seed operation to ensure idempotency and atomicity
-	tx, err := conn.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return err
 	}

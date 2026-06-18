@@ -20,6 +20,7 @@ import (
 
 // BootResult holds the initialized states and services for the application.
 type BootResult struct {
+	Repo              *db.Repository
 	Embedder          *embeddings.OnnxEmbedder
 	RetrievalEngine   *retrieval.Engine
 	FastLLMProvider   *llm.Provider
@@ -54,15 +55,17 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	}
 
 	// 1. Initialize DB without loading vec0 extension first (so we can query settings safely)
-	if err := db.Init(dbPath, ""); err != nil {
+	repo, err := db.Init(dbPath, "")
+	if err != nil {
 		res.AiInitError = err.Error()
 		utils.Errorf("initializing database: %v", err)
 		return nil, err
 	}
+	res.Repo = repo
 	utils.Infof("Database initialized at %s (extension pre-load phase)", dbPath)
 
 	// Check if RAG is enabled in database
-	ragEnabled, err := db.GetRAGEnabled()
+	ragEnabled, err := res.Repo.GetRAGEnabled()
 	if err != nil {
 		utils.Warnf("failed to get RAGEnabled status: %v. Defaulting to false.", err)
 		ragEnabled = false
@@ -87,19 +90,27 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 				} else {
 					// Re-initialize DB, this time with the staged vec0.dll
 					var loadErr error
-					if err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
+					if newRepo, err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
 						loadErr = fmt.Errorf("failed to reload DB with vector extension: %w", err)
-					} else if !db.IsVecExtensionLoaded() {
+					} else if !newRepo.IsVecExtensionLoaded() {
 						loadErr = fmt.Errorf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
+						_ = newRepo.Close()
+					} else {
+						// Success, close the old one and swap
+						_ = res.Repo.Close()
+						res.Repo = newRepo
 					}
 
 					if loadErr != nil {
 						res.AiInitError = loadErr.Error()
 						utils.Errorf("%s. Falling back to non-vector DB initialization.", res.AiInitError)
 						// Fallback: reload DB without extension so startup doesn't fail
-						if fbErr := db.Init(dbPath, ""); fbErr != nil {
+						fbRepo, fbErr := db.Init(dbPath, "")
+						if fbErr != nil {
 							return nil, fmt.Errorf("failed to reload DB even without vector extension: %w", fbErr)
 						}
+						_ = res.Repo.Close()
+						res.Repo = fbRepo
 					} else {
 						// Init ONNX embedder using paths from AssetManager
 						emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
@@ -112,12 +123,12 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 								utils.Warnf("%s", res.AiInitError)
 								_ = emb.Close()
 							} else {
-								if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
+								if err := res.Repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
 									res.AiInitError = fmt.Sprintf("could not initialize vector table: %v", err)
 									utils.Warnf("%s", res.AiInitError)
 									_ = emb.Close()
 								} else {
-									indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
+									indexer := retrieval.NewVectorIndexer(res.Repo, emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
 									if err := indexer.IndexAllTopics(); err != nil {
 										utils.Warnf("vector indexing failed: %v", err)
 										_ = emb.Close()
@@ -138,19 +149,19 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		utils.Infof("RAG is disabled in user settings. Skipping asset validation and local AI initialization.")
 	}
 
-	study.StartCloudSyncLoop()
+	study.StartCloudSyncLoop(res.Repo)
 
-	res.Scheduler = scheduler.New()
+	res.Scheduler = scheduler.New(res.Repo)
 
 	// Init shared retrieval engine (embedder may be nil, which triggers lexical fallback)
-	res.RetrievalEngine = retrieval.NewEngine(embedder)
+	res.RetrievalEngine = retrieval.NewEngine(res.Repo, embedder)
 
-	topicIDs, err := db.GetAllTopicIDs()
+	topicIDs, err := res.Repo.GetAllTopicIDs()
 	if err != nil {
 		utils.Warnf("could not list topics for lexical fallback: %v", err)
 		topicIDs = []string{}
 	}
-	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
+	chunksByTopic, err := res.Repo.GetChunksForTopics(topicIDs)
 	if err != nil {
 		utils.Warnf("could not batch-load chunks: %v", err)
 	} else {
@@ -161,7 +172,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		}
 	}
 
-	llmSettings, err := db.GetLLMSettings()
+	llmSettings, err := res.Repo.GetLLMSettings()
 	if err != nil {
 		utils.Warnf("failed to load LLM settings: %v. Falling back to environment config.", err)
 		llmSettings = nil
@@ -190,6 +201,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	res.HeavyLLMProvider = heavyLLMProvider
 
 	res.StudyService = study.NewStudyService(study.Config{
+		Repo:             res.Repo,
 		FastLLMProvider:  fastLLMProvider,
 		HeavyLLMProvider: heavyLLMProvider,
 		RetrievalEngine:  res.RetrievalEngine,

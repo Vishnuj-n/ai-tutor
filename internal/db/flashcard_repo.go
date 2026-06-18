@@ -9,9 +9,27 @@ import (
 	"ai-tutor/internal/models"
 )
 
-func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.FlashcardState) error {
-	return withTx(func(tx *sql.Tx) error {
-		for _, card := range cards {
+// CreateFlashcards stores a new set of flashcards for one topic.
+// Used by: app_contract_test.go (test-only coverage, production code path utilizes GetOrCreateFlashcardsForTopic)
+func (r *Repository) CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if len(cards) == 0 {
+		return fmt.Errorf("at least one flashcard is required")
+	}
+	if len(states) == 0 {
+		return fmt.Errorf("flashcard states are required")
+	}
+
+	normalizedCards, err := normalizeValidateFlashcards(topicID, cards, states)
+	if err != nil {
+		return err
+	}
+
+	return r.withTx(func(tx *sql.Tx) error {
+		for _, card := range normalizedCards {
 			stateJSON, marshalErr := json.Marshal(states[card.ID])
 			if marshalErr != nil {
 				return fmt.Errorf("failed to encode flashcard state for %s: %w", card.ID, marshalErr)
@@ -29,15 +47,24 @@ func createFlashcardsRepo(cards []models.Flashcard, states map[string]models.Fla
 	})
 }
 
-func getFlashcardByIDRepo(cardID string) (*models.Flashcard, *models.FlashcardState, error) {
-	return getFlashcardByIDQuerier(conn, cardID)
+// GetFlashcardByID returns one flashcard and its scheduler state.
+func (r *Repository) GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return nil, nil, fmt.Errorf("flashcard id is required")
+	}
+	return r.getFlashcardByIDQuerier(r.db, cardID)
 }
 
-func getFlashcardByIDRepoTx(tx *sql.Tx, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
-	return getFlashcardByIDQuerier(tx, cardID)
+func (r *Repository) GetFlashcardByIDTx(tx *sql.Tx, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return nil, nil, fmt.Errorf("flashcard id is required")
+	}
+	return r.getFlashcardByIDQuerier(tx, cardID)
 }
 
-func getFlashcardByIDQuerier(q querier, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
+func (r *Repository) getFlashcardByIDQuerier(q querier, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
 	var card models.Flashcard
 	var stateJSON sql.NullString
 	var suspended bool
@@ -65,16 +92,29 @@ func getFlashcardByIDQuerier(q querier, cardID string) (*models.Flashcard, *mode
 	return &card, &state, nil
 }
 
-// getFlashcardStatesByIDsRepo returns a map of flashcard states keyed by card ID for the given card IDs
-func getFlashcardStatesByIDsRepo(cardIDs []string) (map[string]models.FlashcardState, error) {
+// GetFlashcardStatesByIDs returns a map of flashcard states keyed by card ID for the given card IDs
+func (r *Repository) GetFlashcardStatesByIDs(cardIDs []string) (map[string]models.FlashcardState, error) {
 	if len(cardIDs) == 0 {
 		return make(map[string]models.FlashcardState), nil
 	}
 
+	// Trim and validate card IDs
+	trimmedIDs := make([]string, 0, len(cardIDs))
+	for _, id := range cardIDs {
+		trimmedID := strings.TrimSpace(id)
+		if trimmedID != "" {
+			trimmedIDs = append(trimmedIDs, trimmedID)
+		}
+	}
+
+	if len(trimmedIDs) == 0 {
+		return make(map[string]models.FlashcardState), nil
+	}
+
 	// Create placeholders for the IN clause
-	placeholders := make([]string, len(cardIDs))
-	args := make([]interface{}, len(cardIDs))
-	for i, id := range cardIDs {
+	placeholders := make([]string, len(trimmedIDs))
+	args := make([]interface{}, len(trimmedIDs))
+	for i, id := range trimmedIDs {
 		placeholders[i] = "?"
 		args[i] = id
 	}
@@ -85,7 +125,7 @@ func getFlashcardStatesByIDsRepo(cardIDs []string) (map[string]models.FlashcardS
 		WHERE id IN (%s)
 	`, strings.Join(placeholders, ","))
 
-	rows, err := conn.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,13 +159,21 @@ func getFlashcardStatesByIDsRepo(cardIDs []string) (map[string]models.FlashcardS
 	return states, nil
 }
 
-func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+// UpdateFlashcardReview updates scheduling state after a review grade.
+func (r *Repository) UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return fmt.Errorf("flashcard id is required")
+	}
+	if dueAt <= 0 {
+		return fmt.Errorf("due time is required")
+	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		result, err := tx.Exec(`
 			UPDATE fsrs_cards
 			SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
@@ -170,7 +218,14 @@ func updateFlashcardReviewRepo(cardID string, dueAt int64, expectedDueAt int64, 
 	})
 }
 
-func updateFlashcardReviewRepoTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+func (r *Repository) UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return fmt.Errorf("flashcard id is required")
+	}
+	if dueAt <= 0 {
+		return fmt.Errorf("due time is required")
+	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
@@ -219,16 +274,39 @@ func updateFlashcardReviewRepoTx(tx *sql.Tx, cardID string, dueAt int64, expecte
 	return nil
 }
 
-func countFlashcardsForTopicRepo(topicID string) (int, error) {
+// CountFlashcardsForTopic returns how many flashcards exist for a topic.
+func (r *Repository) CountFlashcardsForTopic(topicID string) (int, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, fmt.Errorf("topic id is required")
+	}
 	var count int
-	err := conn.QueryRow(`SELECT COUNT(*) FROM fsrs_cards WHERE topic_id = ? AND suspended = 0`, topicID).Scan(&count)
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM fsrs_cards WHERE topic_id = ? AND suspended = 0`, topicID).Scan(&count)
 	return count, err
 }
 
-func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.Flashcard, statesIfNotExist map[string]models.FlashcardState) ([]models.Flashcard, bool, error) {
+// GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.
+func (r *Repository) GetOrCreateFlashcardsForTopic(topicID string, cardsIfNotExist []models.Flashcard, statesIfNotExist map[string]models.FlashcardState) ([]models.Flashcard, bool, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, false, fmt.Errorf("topic id is required")
+	}
+
+	if len(cardsIfNotExist) == 0 {
+		return nil, false, fmt.Errorf("at least one flashcard is required to create")
+	}
+	if len(statesIfNotExist) == 0 {
+		return nil, false, fmt.Errorf("flashcard states are required to create")
+	}
+
+	normalizedCards, err := normalizeValidateFlashcards(topicID, cardsIfNotExist, statesIfNotExist)
+	if err != nil {
+		return nil, false, err
+	}
+
 	var cards []models.Flashcard
 	var existing bool
-	err := withTx(func(tx *sql.Tx) error {
+	err = r.withTx(func(tx *sql.Tx) error {
 		var count int
 		err := tx.QueryRow(`SELECT COUNT(*) FROM fsrs_cards WHERE topic_id = ? AND suspended = 0`, topicID).Scan(&count)
 		if err != nil {
@@ -270,7 +348,7 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 			return nil
 		}
 
-		for _, card := range cardsIfNotExist {
+		for _, card := range normalizedCards {
 			stateJSON, marshalErr := json.Marshal(statesIfNotExist[card.ID])
 			if marshalErr != nil {
 				return fmt.Errorf("failed to encode flashcard state for %s: %w", card.ID, marshalErr)
@@ -326,9 +404,14 @@ func getOrCreateFlashcardsForTopicRepo(topicID string, cardsIfNotExist []models.
 	return cards, existing, nil
 }
 
-func getLastFlashcardReviewTimeRepo(cardID string) (int64, error) {
+// GetLastFlashcardReviewTime retrieves the last review time for a flashcard.
+func (r *Repository) GetLastFlashcardReviewTime(cardID string) (int64, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return 0, fmt.Errorf("flashcard id is required")
+	}
 	var lastReviewedAt int64
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT COALESCE(MAX(reviewed_at), 0)
 		FROM fsrs_review_log
 		WHERE activity_type = 'flashcard' AND reference_id = ?
@@ -336,7 +419,12 @@ func getLastFlashcardReviewTimeRepo(cardID string) (int64, error) {
 	return lastReviewedAt, err
 }
 
-func getLastFlashcardReviewTimeRepoTx(tx *sql.Tx, cardID string) (int64, error) {
+// GetLastFlashcardReviewTimeTx retrieves the last review time for a flashcard within a transaction.
+func (r *Repository) GetLastFlashcardReviewTimeTx(tx *sql.Tx, cardID string) (int64, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return 0, fmt.Errorf("flashcard id is required")
+	}
 	var lastReviewedAt int64
 	err := tx.QueryRow(`
 		SELECT COALESCE(MAX(reviewed_at), 0)
@@ -347,10 +435,8 @@ func getLastFlashcardReviewTimeRepoTx(tx *sql.Tx, cardID string) (int64, error) 
 }
 
 // SaveManualFlashcardsBatch handles the storage of sandbox flashcards.
-// It explicitly clears previous manual runs for this notebook to preserve an
-// ephemeral environment and isolates them entirely from the scheduled FSRS pipeline.
-func SaveManualFlashcardsBatch(notebookID string, cards []models.Flashcard) error {
-	return withTx(func(tx *sql.Tx) error {
+func (r *Repository) SaveManualFlashcardsBatch(notebookID string, cards []models.Flashcard) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		// Clean out the old manual sandbox cards for this specific notebook
 		_, err := tx.Exec(`DELETE FROM manual_flashcards WHERE notebook_id = ?`, notebookID)
 		if err != nil {
@@ -369,4 +455,55 @@ func SaveManualFlashcardsBatch(notebookID string, cards []models.Flashcard) erro
 		}
 		return nil
 	})
+}
+
+func normalizeValidateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) ([]models.Flashcard, error) {
+	normalizedCards := make([]models.Flashcard, 0, len(cards))
+	seenIDs := make(map[string]bool)
+	seenTopicPrompts := make(map[string]bool)
+
+	for _, card := range cards {
+		card.ID = strings.TrimSpace(card.ID)
+		card.TopicID = strings.TrimSpace(card.TopicID)
+		if card.TopicID == "" {
+			card.TopicID = topicID
+		} else if card.TopicID != topicID {
+			return nil, fmt.Errorf("flashcard topic id must match topic id")
+		}
+		card.Prompt = strings.TrimSpace(card.Prompt)
+		card.Answer = strings.TrimSpace(card.Answer)
+		if card.ID == "" {
+			return nil, fmt.Errorf("flashcard id is required")
+		}
+		if card.Prompt == "" || card.Answer == "" {
+			return nil, fmt.Errorf("flashcard prompt and answer are required")
+		}
+		if _, ok := states[card.ID]; !ok {
+			return nil, fmt.Errorf("flashcard state is required for %s", card.ID)
+		}
+
+		// Check for duplicate IDs
+		if seenIDs[card.ID] {
+			return nil, fmt.Errorf("duplicate flashcard id found: %s", card.ID)
+		}
+		seenIDs[card.ID] = true
+
+		// Check for duplicate (topic_id, prompt) pairs
+		topicPromptKey := card.TopicID + "|" + card.Prompt
+		if seenTopicPrompts[topicPromptKey] {
+			return nil, fmt.Errorf("duplicate (topic_id, prompt) pair found: topic_id=%s, prompt=%s", card.TopicID, card.Prompt)
+		}
+		seenTopicPrompts[topicPromptKey] = true
+
+		normalizedCards = append(normalizedCards, card)
+	}
+
+	return normalizedCards, nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

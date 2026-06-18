@@ -8,29 +8,39 @@ import (
 	"strings"
 )
 
-type chunkVectorBatchItemRepo struct {
+// ChunkVectorBatchItem contains one vector persistence request.
+type ChunkVectorBatchItem struct {
 	ChunkID      string
 	Vector       []float32
 	EmbeddingRef string
 }
 
-func upsertChunkVectorRepo(chunkID string, vector []float32) error {
-	if len(vector) != int(embeddingDimension) {
-		return fmt.Errorf("vector dimension mismatch: got %d, expected %d", len(vector), embeddingDimension)
+// UpsertChunkVector stores or updates a chunk embedding vector.
+func (r *Repository) UpsertChunkVector(chunkID string, vector []float32) error {
+	chunkID = strings.TrimSpace(chunkID)
+	if chunkID == "" {
+		return fmt.Errorf("chunk id is required")
+	}
+	if len(vector) == 0 {
+		return fmt.Errorf("vector is required")
 	}
 
-	vectorJSON, err := vectorToJSONRepo(vector)
+	if len(vector) != int(r.embeddingDimension) {
+		return fmt.Errorf("vector dimension mismatch: got %d, expected %d", len(vector), r.embeddingDimension)
+	}
+
+	vectorJSON, err := r.vectorToJSON(vector)
 	if err != nil {
 		return fmt.Errorf("failed to encode vector: %w", err)
 	}
 
-	rowID, err := lookupChunkRowIDRepo(chunkID)
+	rowID, err := r.lookupChunkRowID(chunkID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve chunk rowid for %s: %w", chunkID, err)
 	}
 
 	var exists int
-	err = conn.QueryRow(`
+	err = r.db.QueryRow(`
 		SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?
 	`, rowID).Scan(&exists)
 	if err != nil && err != sql.ErrNoRows {
@@ -38,33 +48,32 @@ func upsertChunkVectorRepo(chunkID string, vector []float32) error {
 	}
 
 	if exists > 0 {
-		_, err = conn.Exec(`
+		_, err = r.db.Exec(`
 			UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?
 		`, vectorJSON, rowID)
 		return err
 	}
 
-	_, err = conn.Exec(`
+	_, err = r.db.Exec(`
 		INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)
 	`, rowID, vectorJSON)
 	return err
 }
 
-func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
+// UpsertChunkVectorsBatch stores vectors and embedding refs in a single transaction.
+func (r *Repository) UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		// Prepare statements to prevent re-compilation in the loop
 		stmtGetRowID, err := tx.Prepare(`SELECT rowid FROM chunks WHERE id = ?`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare stmtGetRowID: %w", err)
 		}
 		defer func() {
-			if closeErr := stmtGetRowID.Close(); closeErr != nil {
-				log.Printf("warning: failed to close stmtGetRowID: %v", closeErr)
-			}
+			_ = stmtGetRowID.Close()
 		}()
 
 		stmtCheckExists, err := tx.Prepare(`SELECT COUNT(*) FROM chunk_vectors WHERE rowid = ?`)
@@ -72,9 +81,7 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 			return fmt.Errorf("failed to prepare stmtCheckExists: %w", err)
 		}
 		defer func() {
-			if closeErr := stmtCheckExists.Close(); closeErr != nil {
-				log.Printf("warning: failed to close stmtCheckExists: %v", closeErr)
-			}
+			_ = stmtCheckExists.Close()
 		}()
 
 		stmtUpdateVector, err := tx.Prepare(`UPDATE chunk_vectors SET embedding = ? WHERE rowid = ?`)
@@ -82,9 +89,7 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 			return fmt.Errorf("failed to prepare stmtUpdateVector: %w", err)
 		}
 		defer func() {
-			if closeErr := stmtUpdateVector.Close(); closeErr != nil {
-				log.Printf("warning: failed to close stmtUpdateVector: %v", closeErr)
-			}
+			_ = stmtUpdateVector.Close()
 		}()
 
 		stmtInsertVector, err := tx.Prepare(`INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)`)
@@ -92,9 +97,7 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 			return fmt.Errorf("failed to prepare stmtInsertVector: %w", err)
 		}
 		defer func() {
-			if closeErr := stmtInsertVector.Close(); closeErr != nil {
-				log.Printf("warning: failed to close stmtInsertVector: %v", closeErr)
-			}
+			_ = stmtInsertVector.Close()
 		}()
 
 		stmtUpdateRef, err := tx.Prepare(`UPDATE chunks SET embedding_ref = ? WHERE id = ?`)
@@ -102,17 +105,23 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 			return fmt.Errorf("failed to prepare stmtUpdateRef: %w", err)
 		}
 		defer func() {
-			if closeErr := stmtUpdateRef.Close(); closeErr != nil {
-				log.Printf("warning: failed to close stmtUpdateRef: %v", closeErr)
-			}
+			_ = stmtUpdateRef.Close()
 		}()
 
 		for _, item := range items {
-			if len(item.Vector) != int(embeddingDimension) {
-				return fmt.Errorf("vector dimension mismatch for chunk %s: got %d, expected %d", item.ChunkID, len(item.Vector), embeddingDimension)
+			item.ChunkID = strings.TrimSpace(item.ChunkID)
+			if item.ChunkID == "" {
+				return fmt.Errorf("chunk id is required for each batch item")
+			}
+			if len(item.Vector) == 0 {
+				return fmt.Errorf("vector is required for each batch item")
 			}
 
-			vectorJSON, encodeErr := vectorToJSONRepo(item.Vector)
+			if len(item.Vector) != int(r.embeddingDimension) {
+				return fmt.Errorf("vector dimension mismatch for chunk %s: got %d, expected %d", item.ChunkID, len(item.Vector), r.embeddingDimension)
+			}
+
+			vectorJSON, encodeErr := r.vectorToJSON(item.Vector)
 			if encodeErr != nil {
 				return fmt.Errorf("failed to encode vector for chunk %s: %w", item.ChunkID, encodeErr)
 			}
@@ -148,17 +157,30 @@ func upsertChunkVectorsBatchRepo(items []chunkVectorBatchItemRepo) (err error) {
 	})
 }
 
-func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, startPage int, endPage int) ([]string, error) {
-	if embeddingDimension <= 0 {
+// SearchVectorsForTopic finds the top-k most similar vectors for a topic-scoped query.
+// When startPage and endPage are positive, search is context-locked to that page window.
+func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32, k int, startPage int, endPage int) ([]string, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil, fmt.Errorf("topic id is required")
+	}
+	if len(queryVector) == 0 {
+		return nil, fmt.Errorf("query vector is required")
+	}
+	if k <= 0 || k > maxRetrievalK {
+		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
+	}
+
+	if r.embeddingDimension <= 0 {
 		log.Printf("warning: vector search skipped for topic %s because embedding dimension is not initialized", topicID)
 		return []string{}, nil
 	}
 
-	if len(queryVector) != int(embeddingDimension) {
-		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), embeddingDimension)
+	if len(queryVector) != int(r.embeddingDimension) {
+		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), r.embeddingDimension)
 	}
 
-	queryVectorJSON, err := vectorToJSONRepo(queryVector)
+	queryVectorJSON, err := r.vectorToJSON(queryVector)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode query vector: %w", err)
 	}
@@ -179,14 +201,12 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, sta
 		rowidArgs = append(rowidArgs, startPage, endPage)
 	}
 
-	rowRows, err := conn.Query(rowidQuery, rowidArgs...)
+	rowRows, err := r.db.Query(rowidQuery, rowidArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("chunk prefilter failed: %w", err)
 	}
 	defer func() {
-		if closeErr := rowRows.Close(); closeErr != nil {
-			log.Printf("warning: failed to close chunk prefilter rows: %v", closeErr)
-		}
+		_ = rowRows.Close()
 	}()
 
 	allowedChunkByRowID := make(map[int64]string)
@@ -221,7 +241,7 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, sta
 		LIMIT ?
 	`
 
-	rows, err := conn.Query(vectorSQL, vectorArgs...)
+	rows, err := r.db.Query(vectorSQL, vectorArgs...)
 	if err != nil {
 		if isVectorUnavailableError(err) {
 			log.Printf("warning: vector search unavailable for topic %s, using lexical fallback: %v", topicID, err)
@@ -230,9 +250,7 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, sta
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			log.Printf("warning: failed to close vector search rows: %v", closeErr)
-		}
+		_ = rows.Close()
 	}()
 
 	chunkIDs := make([]string, 0, k)
@@ -253,22 +271,34 @@ func searchVectorsForTopicRepo(topicID string, queryVector []float32, k int, sta
 	return chunkIDs, nil
 }
 
-func searchVectorsForNotebookRepo(notebookID string, queryVector []float32, k int) ([]string, error) {
-	if embeddingDimension <= 0 {
+// SearchVectorsForNotebook finds the top-k most similar vectors for a notebook-scoped query.
+func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []float32, k int) ([]string, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook id is required")
+	}
+	if len(queryVector) == 0 {
+		return nil, fmt.Errorf("query vector is required")
+	}
+	if k <= 0 || k > maxRetrievalK {
+		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
+	}
+
+	if r.embeddingDimension <= 0 {
 		log.Printf("warning: vector search skipped for notebook %s because embedding dimension is not initialized", notebookID)
 		return []string{}, nil
 	}
 
-	if len(queryVector) != int(embeddingDimension) {
-		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), embeddingDimension)
+	if len(queryVector) != int(r.embeddingDimension) {
+		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), r.embeddingDimension)
 	}
 
-	queryVectorJSON, err := vectorToJSONRepo(queryVector)
+	queryVectorJSON, err := r.vectorToJSON(queryVector)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode query vector: %w", err)
 	}
 
-	rowRows, err := conn.Query(`
+	rowRows, err := r.db.Query(`
 		SELECT DISTINCT c.rowid, c.id
 		FROM notebook_chunks nc
 		JOIN chunks c ON c.id = nc.chunk_id
@@ -278,9 +308,7 @@ func searchVectorsForNotebookRepo(notebookID string, queryVector []float32, k in
 		return nil, fmt.Errorf("chunk prefilter failed: %w", err)
 	}
 	defer func() {
-		if closeErr := rowRows.Close(); closeErr != nil {
-			log.Printf("warning: failed to close notebook chunk prefilter rows: %v", closeErr)
-		}
+		_ = rowRows.Close()
 	}()
 
 	allowedChunkByRowID := make(map[int64]string)
@@ -306,7 +334,7 @@ func searchVectorsForNotebookRepo(notebookID string, queryVector []float32, k in
 		return nil, fmt.Errorf("failed to encode allowed row ids: %w", err)
 	}
 
-	rows, err := conn.Query(`
+	rows, err := r.db.Query(`
 		SELECT rowid
 		FROM chunk_vectors
 		WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
@@ -321,9 +349,7 @@ func searchVectorsForNotebookRepo(notebookID string, queryVector []float32, k in
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			log.Printf("warning: failed to close notebook vector search rows: %v", closeErr)
-		}
+		_ = rows.Close()
 	}()
 
 	chunkIDs := make([]string, 0, k)
@@ -344,7 +370,7 @@ func searchVectorsForNotebookRepo(notebookID string, queryVector []float32, k in
 	return chunkIDs, nil
 }
 
-func vectorToJSONRepo(vector []float32) (string, error) {
+func (r *Repository) vectorToJSON(vector []float32) (string, error) {
 	if len(vector) == 0 {
 		return "[]", nil
 	}
@@ -362,9 +388,9 @@ func vectorToJSONRepo(vector []float32) (string, error) {
 	return string(encoded), nil
 }
 
-func lookupChunkRowIDRepo(chunkID string) (int64, error) {
+func (r *Repository) lookupChunkRowID(chunkID string) (int64, error) {
 	var rowID int64
-	if err := conn.QueryRow(`
+	if err := r.db.QueryRow(`
 		SELECT rowid FROM chunks WHERE id = ?
 	`, chunkID).Scan(&rowID); err != nil {
 		return 0, err
