@@ -17,6 +17,7 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 var ErrInvalidNotebookContext = errors.New("invalid notebook context: notebook ID is required")
@@ -289,6 +290,8 @@ func (e *Engine) searchWithScope(
 		} else {
 			log.Printf("retrieval: query embedding failed, falling back to lexical: %v", embedErr)
 		}
+	} else {
+		utils.RagLogger.Printf("retrieval: %s: embedder is nil; semantic engine pointer was unallocated, falling back to lexical search", scopeName)
 	}
 
 	// If ONNX didn't produce results, use lexical fallback

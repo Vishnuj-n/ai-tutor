@@ -4,8 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
+
+	"ai-tutor/internal/utils"
 )
 
 // ChunkVectorBatchItem contains one vector persistence request.
@@ -172,7 +173,9 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 	}
 
 	if r.embeddingDimension <= 0 {
-		log.Printf("warning: vector search skipped for topic %s because embedding dimension is not initialized", topicID)
+		msg := fmt.Sprintf("warning: vector search skipped for topic %s because embedding dimension is not initialized", topicID)
+		utils.RagLogger.Printf("%s", msg)
+		utils.ErrLogger.Printf("%s", msg)
 		return []string{}, nil
 	}
 
@@ -244,7 +247,9 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 	rows, err := r.db.Query(vectorSQL, vectorArgs...)
 	if err != nil {
 		if isVectorUnavailableError(err) {
-			log.Printf("warning: vector search unavailable for topic %s, using lexical fallback: %v", topicID, err)
+			msg := fmt.Sprintf("warning: vector search unavailable for topic %s, using lexical fallback: %v", topicID, err)
+			utils.RagLogger.Printf("%s", msg)
+			utils.ErrLogger.Printf("%s", msg)
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("vector search failed: %w", err)
@@ -285,7 +290,9 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 	}
 
 	if r.embeddingDimension <= 0 {
-		log.Printf("warning: vector search skipped for notebook %s because embedding dimension is not initialized", notebookID)
+		msg := fmt.Sprintf("warning: vector search skipped for notebook %s because embedding dimension is not initialized", notebookID)
+		utils.RagLogger.Printf("%s", msg)
+		utils.ErrLogger.Printf("%s", msg)
 		return []string{}, nil
 	}
 
@@ -343,7 +350,9 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 	`, string(allowedRowIDsJSON), queryVectorJSON, k)
 	if err != nil {
 		if isVectorUnavailableError(err) {
-			log.Printf("warning: vector search unavailable for notebook %s, using lexical fallback: %v", notebookID, err)
+			msg := fmt.Sprintf("warning: vector search unavailable for notebook %s, using lexical fallback: %v", notebookID, err)
+			utils.RagLogger.Printf("%s", msg)
+			utils.ErrLogger.Printf("%s", msg)
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("vector search failed: %w", err)
