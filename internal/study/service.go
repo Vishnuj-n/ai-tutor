@@ -31,6 +31,7 @@ type LLMProvider interface {
 
 // Config wires all dependencies into StudyService via constructor injection.
 type Config struct {
+	Repo             *db.Repository
 	FastLLMProvider  LLMProvider
 	HeavyLLMProvider LLMProvider
 	RetrievalEngine  *retrieval.Engine
@@ -39,6 +40,7 @@ type Config struct {
 // StudyService owns all study-mode generation and scoring logic.
 // quiz.go, flashcard.go, examiner.go, and socratic.go add methods to this type.
 type StudyService struct {
+	repo             *db.Repository
 	fastLLMProvider  LLMProvider
 	heavyLLMProvider LLMProvider
 	retrievalEngine  *retrieval.Engine
@@ -47,6 +49,7 @@ type StudyService struct {
 // NewStudyService constructs a StudyService from injected dependencies.
 func NewStudyService(cfg Config) *StudyService {
 	return &StudyService{
+		repo:             cfg.Repo,
 		fastLLMProvider:  cfg.FastLLMProvider,
 		heavyLLMProvider: cfg.HeavyLLMProvider,
 		retrievalEngine:  cfg.RetrievalEngine,
@@ -75,7 +78,7 @@ func (s *StudyService) ScoreShortAnswer(questionID, userAnswer string) map[strin
 		return map[string]interface{}{"error": "FAST_LLM provider not initialized"}
 	}
 
-	question, err := db.GetWrittenQuestionByID(questionID)
+	question, err := s.repo.GetWrittenQuestionByID(questionID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to fetch written question: " + err.Error()}
 	}
@@ -113,7 +116,7 @@ Student answer: %s`, question.Prompt, userAnswer)
 		score = 10
 	}
 
-	tx, err := db.GetConnection().Begin()
+	tx, err := s.repo.GetConnection().Begin()
 	if err != nil {
 		return map[string]interface{}{"error": "failed to begin transaction: " + err.Error()}
 	}
@@ -131,7 +134,7 @@ Student answer: %s`, question.Prompt, userAnswer)
 		UserAnswer:    userAnswer,
 		SourceHeading: question.SourceHeading,
 	}
-	if err := db.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
+	if err := s.repo.SaveWrittenAnswerTx(tx, writtenAnswer); err != nil {
 		return map[string]interface{}{"error": "failed to save written answer: " + err.Error()}
 	}
 	if err := tx.Commit(); err != nil {
@@ -573,9 +576,9 @@ func ScaledFlashcardCount(wordCount int) int {
 // buildPageBoundedContext fetches structured chunk context for a notebook page range
 // and returns (chunks, tokenCount, error).
 // This is the canonical bounded context pipeline used by both manual and automatic flashcard generation.
-func buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
+func (s *StudyService) buildPageBoundedContext(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, int, error) {
 	utils.Warnf("[FLASHCARD_PIPELINE] buildPageBoundedContext entry notebookID=%s page_range=%d-%d", notebookID, startPage, endPage)
-	chunks, err := db.GetChunksWithContextByNotebookPageRange(notebookID, startPage, endPage)
+	chunks, err := s.repo.GetChunksWithContextByNotebookPageRange(notebookID, startPage, endPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to load page-bounded context: %w", err)
 	}

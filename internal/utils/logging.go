@@ -54,6 +54,12 @@ func parseLogLevel() int {
 }
 
 
+func Debugf(format string, args ...interface{}) {
+	if currentLogLevel() <= levelDebug {
+		log.Printf("DEBUG: "+format, args...)
+	}
+}
+
 func Infof(format string, args ...interface{}) {
 	if currentLogLevel() <= levelInfo {
 		log.Printf("INFO: "+format, args...)
@@ -165,3 +171,25 @@ func LogSchedulerDecision(topicID string, startPage, endPage int, tokenBudget, r
 	log.Printf("[SCHEDULER] topic=%s window=%d-%d tokenBudget=%s reason=%s", topicID, startPage, endPage, tokenBudget, reason)
 }
 
+// ---------- Boot / Init Logging ----------
+
+// LogBoot logs a named RAG/boot initialization step with its outcome.
+// stage is a short name like "rag-assets", "vec-extension", "onnx-embedder".
+// outcome is "ok", "skipped", or "failed".
+func LogBoot(stage, outcome, detail string) {
+	if currentLogLevel() > levelInfo {
+		return
+	}
+	log.Printf("[BOOT] stage=%s outcome=%s detail=%q", stage, outcome, detail)
+}
+
+// ---------- Retrieval Logging ----------
+
+// LogRetrieval logs a single retrieval call with its scope, mode, and result count.
+// mode is "vector" or "lexical". scope is "topic" or "notebook".
+func LogRetrieval(scope, mode, id string, topK, got int, reason string) {
+	if currentLogLevel() > levelInfo {
+		return
+	}
+	log.Printf("[RETRIEVAL] scope=%s mode=%s id=%s topK=%d got=%d reason=%q", scope, mode, id, topK, got, reason)
+}

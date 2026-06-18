@@ -14,16 +14,16 @@ func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing
 	initDBForTest(t, false, 0)
 
 	notebookID := "nb-rollback"
-	if err := EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
+	if err := testRepo.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := CreateNotebook(notebookID, "Rollback Notebook", "/tmp/rollback.txt", "txt", "os-scheduling", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Rollback Notebook", "/tmp/rollback.txt", "txt", "os-scheduling", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if err := UpdateNotebookStatus(notebookID, "uploaded_unlinked"); err != nil {
+	if err := testRepo.UpdateNotebookStatus(notebookID, "uploaded_unlinked"); err != nil {
 		t.Fatalf("UpdateNotebookStatus failed: %v", err)
 	}
-	if err := UpdateNotebookChunkCount(notebookID, 7); err != nil {
+	if err := testRepo.UpdateNotebookChunkCount(notebookID, 7); err != nil {
 		t.Fatalf("UpdateNotebookChunkCount failed: %v", err)
 	}
 
@@ -40,7 +40,7 @@ func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing
 		},
 	}
 
-	err := IngestNotebookContentByTopic(notebookID, groups)
+	err := testRepo.IngestNotebookContentByTopic(notebookID, groups)
 	if err == nil {
 		t.Fatalf("expected ingestion to fail for empty topic id")
 	}
@@ -50,7 +50,7 @@ func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing
 
 	var status string
 	var chunkCount int
-	if err := conn.QueryRow(`SELECT status, chunk_count FROM notebooks WHERE id = ?`, notebookID).Scan(&status, &chunkCount); err != nil {
+	if err := testRepo.db.QueryRow(`SELECT status, chunk_count FROM notebooks WHERE id = ?`, notebookID).Scan(&status, &chunkCount); err != nil {
 		t.Fatalf("failed to read notebook state: %v", err)
 	}
 	if status != "uploaded_unlinked" {
@@ -69,47 +69,47 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 	autoTopicID := "nb-" + notebookID + "-topic-a"
 	keepTopicID := "topic-keep"
 
-	if err := EnsureTopic(autoTopicID, "Auto Topic"); err != nil {
+	if err := testRepo.EnsureTopic(autoTopicID, "Auto Topic"); err != nil {
 		t.Fatalf("EnsureTopic auto failed: %v", err)
 	}
-	if err := EnsureTopic(keepTopicID, "Keep Topic"); err != nil {
+	if err := testRepo.EnsureTopic(keepTopicID, "Keep Topic"); err != nil {
 		t.Fatalf("EnsureTopic keep failed: %v", err)
 	}
-	if _, err := conn.Exec(`INSERT INTO topic_progress (topic_id, mastery_score) VALUES (?, 0.1)`, autoTopicID); err != nil {
+	if _, err := testRepo.db.Exec(`INSERT INTO topic_progress (topic_id, mastery_score) VALUES (?, 0.1)`, autoTopicID); err != nil {
 		t.Fatalf("failed to insert topic_progress: %v", err)
 	}
 
-	if err := CreateNotebook(notebookID, "Delete Notebook", "/tmp/del.txt", "txt", autoTopicID, 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Delete Notebook", "/tmp/del.txt", "txt", autoTopicID, 1); err != nil {
 		t.Fatalf("CreateNotebook delete target failed: %v", err)
 	}
-	if err := CreateNotebook(keepNotebookID, "Keep Notebook", "/tmp/keep.txt", "txt", keepTopicID, 1); err != nil {
+	if err := testRepo.CreateNotebook(keepNotebookID, "Keep Notebook", "/tmp/keep.txt", "txt", keepTopicID, 1); err != nil {
 		t.Fatalf("CreateNotebook keep target failed: %v", err)
 	}
 
 	chunkDelID := "chunk-del"
-	if err := CreateChunk(chunkDelID, autoTopicID, "delete chunk body", 3, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkDelID, autoTopicID, "delete chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk delete failed: %v", err)
 	}
-	if err := LinkChunksToNotebook(notebookID, []string{chunkDelID}); err != nil {
+	if err := testRepo.LinkChunksToNotebook(notebookID, []string{chunkDelID}); err != nil {
 		t.Fatalf("LinkChunksToNotebook delete failed: %v", err)
 	}
 
 	chunkKeepID := "chunk-keep"
-	if err := CreateChunk(chunkKeepID, keepTopicID, "keep chunk body", 3, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkKeepID, keepTopicID, "keep chunk body", 3, 1); err != nil {
 		t.Fatalf("CreateChunk keep failed: %v", err)
 	}
-	if err := LinkChunksToNotebook(keepNotebookID, []string{chunkKeepID}); err != nil {
+	if err := testRepo.LinkChunksToNotebook(keepNotebookID, []string{chunkKeepID}); err != nil {
 		t.Fatalf("LinkChunksToNotebook keep failed: %v", err)
 	}
 
-	if err := UpsertChunkVector(chunkDelID, []float32{1, 0, 0}); err != nil {
+	if err := testRepo.UpsertChunkVector(chunkDelID, []float32{1, 0, 0}); err != nil {
 		t.Fatalf("UpsertChunkVector delete failed: %v", err)
 	}
-	if err := UpsertChunkVector(chunkKeepID, []float32{0, 1, 0}); err != nil {
+	if err := testRepo.UpsertChunkVector(chunkKeepID, []float32{0, 1, 0}); err != nil {
 		t.Fatalf("UpsertChunkVector keep failed: %v", err)
 	}
 
-	if err := DeleteNotebook(notebookID); err != nil {
+	if err := testRepo.DeleteNotebook(notebookID); err != nil {
 		t.Fatalf("DeleteNotebook failed: %v", err)
 	}
 
@@ -134,33 +134,33 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 
 	topicA := "topic-scope-a"
 	topicB := "topic-scope-b"
-	if err := EnsureTopic(topicA, "Topic A"); err != nil {
+	if err := testRepo.EnsureTopic(topicA, "Topic A"); err != nil {
 		t.Fatalf("EnsureTopic topicA failed: %v", err)
 	}
-	if err := EnsureTopic(topicB, "Topic B"); err != nil {
+	if err := testRepo.EnsureTopic(topicB, "Topic B"); err != nil {
 		t.Fatalf("EnsureTopic topicB failed: %v", err)
 	}
 
 	chunkA := "chunk-scope-a"
-	if err := CreateChunk(chunkA, topicA, "topic a chunk", 3, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkA, topicA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk topicA failed: %v", err)
 	}
 
 	chunkB := "chunk-scope-b"
-	if err := CreateChunk(chunkB, topicB, "topic b chunk", 3, 2); err != nil {
+	if err := testRepo.CreateChunk(chunkB, topicB, "topic b chunk", 3, 2); err != nil {
 		t.Fatalf("CreateChunk topicB failed: %v", err)
 	}
 
 	// Topic B is globally closer to the query, but scoped search for topic A must never return it.
-	if err := UpsertChunkVector(chunkA, []float32{0, 1, 0}); err != nil {
+	if err := testRepo.UpsertChunkVector(chunkA, []float32{0, 1, 0}); err != nil {
 		t.Fatalf("UpsertChunkVector chunkA failed: %v", err)
 	}
-	if err := UpsertChunkVector(chunkB, []float32{1, 0, 0}); err != nil {
+	if err := testRepo.UpsertChunkVector(chunkB, []float32{1, 0, 0}); err != nil {
 		t.Fatalf("UpsertChunkVector chunkB failed: %v", err)
 	}
 
 	query := []float32{1, 0, 0}
-	gotA, err := SearchVectorsForTopic(topicA, query, 5, 0, 0)
+	gotA, err := testRepo.SearchVectorsForTopic(topicA, query, 5, 0, 0)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicA failed: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 		t.Fatalf("expected scoped results to contain chunkA, got %#v", gotA)
 	}
 
-	gotB, err := SearchVectorsForTopic(topicB, query, 5, 0, 0)
+	gotB, err := testRepo.SearchVectorsForTopic(topicB, query, 5, 0, 0)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicB failed: %v", err)
 	}
@@ -188,27 +188,27 @@ func TestGetNotebookTopicTreeDeduplicatesTopicRowsPerNotebook(t *testing.T) {
 
 	notebookID := "nb-tree-dedupe"
 	topicID := "topic-tree-dedupe"
-	if err := CreateNotebook(notebookID, "Dedupe Notebook", "/tmp/dedupe.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Dedupe Notebook", "/tmp/dedupe.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if err := EnsureTopic(topicID, "Shared Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Shared Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
 	chunkA := "chunk-tree-dedupe-a"
 	chunkB := "chunk-tree-dedupe-b"
-	if err := CreateChunk(chunkA, topicID, "chunk a", 2, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkA, topicID, "chunk a", 2, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
-	if err := CreateChunk(chunkB, topicID, "chunk b", 2, 2); err != nil {
+	if err := testRepo.CreateChunk(chunkB, topicID, "chunk b", 2, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
-	if err := LinkChunksToNotebook(notebookID, []string{chunkA, chunkB}); err != nil {
+	if err := testRepo.LinkChunksToNotebook(notebookID, []string{chunkA, chunkB}); err != nil {
 		t.Fatalf("LinkChunksToNotebook failed: %v", err)
 	}
 
-	tree, err := GetNotebookTopicTree("")
+	tree, err := testRepo.GetNotebookTopicTree("")
 	if err != nil {
 		t.Fatalf("GetNotebookTopicTree failed: %v", err)
 	}
@@ -226,33 +226,33 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 
 	topicA := "topic-window-a"
 	topicB := "topic-window-b"
-	if err := EnsureTopic(topicA, "Topic A"); err != nil {
+	if err := testRepo.EnsureTopic(topicA, "Topic A"); err != nil {
 		t.Fatalf("EnsureTopic topicA failed: %v", err)
 	}
-	if err := EnsureTopic(topicB, "Topic B"); err != nil {
+	if err := testRepo.EnsureTopic(topicB, "Topic B"); err != nil {
 		t.Fatalf("EnsureTopic topicB failed: %v", err)
 	}
 
 	chunkA := "chunk-window-a"
-	if err := CreateChunk(chunkA, topicA, "topic a chunk", 3, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkA, topicA, "topic a chunk", 3, 1); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
 
 	chunkB := "chunk-window-b"
-	if err := CreateChunk(chunkB, topicB, "topic b chunk", 8, 2); err != nil {
+	if err := testRepo.CreateChunk(chunkB, topicB, "topic b chunk", 8, 2); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
-	if err := UpsertChunkVector(chunkA, []float32{1, 0, 0}); err != nil {
+	if err := testRepo.UpsertChunkVector(chunkA, []float32{1, 0, 0}); err != nil {
 		t.Fatalf("UpsertChunkVector chunkA failed: %v", err)
 	}
-	if err := UpsertChunkVector(chunkB, []float32{1, 0, 0}); err != nil {
+	if err := testRepo.UpsertChunkVector(chunkB, []float32{1, 0, 0}); err != nil {
 		t.Fatalf("UpsertChunkVector chunkB failed: %v", err)
 	}
 
 	query := []float32{1, 0, 0}
 
-	gotAIn, err := SearchVectorsForTopic(topicA, query, 5, 2, 4)
+	gotAIn, err := testRepo.SearchVectorsForTopic(topicA, query, 5, 2, 4)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicA in-range failed: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 		t.Fatalf("expected in-range results to exclude chunkB, got %#v", gotAIn)
 	}
 
-	gotAOut, err := SearchVectorsForTopic(topicA, query, 5, 7, 9)
+	gotAOut, err := testRepo.SearchVectorsForTopic(topicA, query, 5, 7, 9)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicA out-of-range failed: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 		t.Fatalf("expected out-of-range results to exclude chunkA, got %#v", gotAOut)
 	}
 
-	gotBIn, err := SearchVectorsForTopic(topicB, query, 5, 7, 9)
+	gotBIn, err := testRepo.SearchVectorsForTopic(topicB, query, 5, 7, 9)
 	if err != nil {
 		t.Fatalf("SearchVectorsForTopic topicB in-range failed: %v", err)
 	}
@@ -284,27 +284,27 @@ func TestGetNotebookTopicTreeIncludesTopiclessAndIgnoresBrokenLinks(t *testing.T
 	initDBForTest(t, false, 0)
 
 	notebookID := "nb-tree-empty"
-	if err := CreateNotebook(notebookID, "Empty Notebook", "/tmp/empty.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Empty Notebook", "/tmp/empty.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
-	if _, err := conn.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+	if _, err := testRepo.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
 		t.Fatalf("failed to disable foreign keys: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := conn.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		if _, err := testRepo.db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 			t.Fatalf("failed to re-enable foreign keys: %v", err)
 		}
 	})
 
-	if _, err := conn.Exec(`
+	if _, err := testRepo.db.Exec(`
 		INSERT INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
 		VALUES (?, ?, ?, ?)
 	`, "broken-link", notebookID, "missing-chunk", 1); err != nil {
 		t.Fatalf("failed to insert broken notebook chunk link: %v", err)
 	}
 
-	tree, err := GetNotebookTopicTree("")
+	tree, err := testRepo.GetNotebookTopicTree("")
 	if err != nil {
 		t.Fatalf("GetNotebookTopicTree failed: %v", err)
 	}
@@ -323,7 +323,7 @@ func distanceFunctionAvailable(t *testing.T) bool {
 	t.Helper()
 
 	var distance float64
-	err := conn.QueryRow(`SELECT distance(?, ?)`, "[1,0,0]", "[1,0,0]").Scan(&distance)
+	err := testRepo.db.QueryRow(`SELECT distance(?, ?)`, "[1,0,0]", "[1,0,0]").Scan(&distance)
 	if err != nil {
 		return false
 	}
@@ -335,7 +335,7 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	notebookID := "nb-whitespace-test"
-	if err := CreateNotebook(notebookID, "Whitespace Test Notebook", "/tmp/ws.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Whitespace Test Notebook", "/tmp/ws.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -347,7 +347,7 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 		},
 	}
 
-	err := IngestNotebookContentByTopic("   ", groups)
+	err := testRepo.IngestNotebookContentByTopic("   ", groups)
 	if err == nil {
 		t.Fatal("expected IngestNotebookContentByTopic to reject whitespace-only notebookID")
 	}
@@ -363,7 +363,7 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 		},
 	}
 
-	err = IngestNotebookContentByTopic(notebookID, groups2)
+	err = testRepo.IngestNotebookContentByTopic(notebookID, groups2)
 	if err == nil {
 		t.Fatal("expected IngestNotebookContentByTopic to reject whitespace-only TopicID")
 	}
@@ -381,12 +381,12 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 		},
 	}
 
-	if err := EnsureTopic("valid-topic-ws", "Valid Topic"); err != nil {
+	if err := testRepo.EnsureTopic("valid-topic-ws", "Valid Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
 	// This should succeed - whitespace should be trimmed from TopicID
-	err = IngestNotebookContentByTopic("  "+notebookID+"  ", validGroups)
+	err = testRepo.IngestNotebookContentByTopic("  "+notebookID+"  ", validGroups)
 	if err != nil {
 		t.Fatalf("IngestNotebookContentByTopic with trimmed IDs failed: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	assertCountEquals(t, `SELECT COUNT(*) FROM chunks WHERE id = ?`, "c-ws-1", 1)
 
 	var chunkTopicID string
-	if err := conn.QueryRow(`SELECT topic_id FROM chunks WHERE id = ?`, "c-ws-1").Scan(&chunkTopicID); err != nil {
+	if err := testRepo.db.QueryRow(`SELECT topic_id FROM chunks WHERE id = ?`, "c-ws-1").Scan(&chunkTopicID); err != nil {
 		t.Fatalf("failed to query chunk topic_id: %v", err)
 	}
 	if chunkTopicID != "valid-topic-ws" {
@@ -408,10 +408,10 @@ func TestGetChunkTextsForTopicPageRangeIncludesBufferPage(t *testing.T) {
 
 	topicID := "completion-context-topic"
 	notebookID := "completion-context-notebook"
-	if err := EnsureTopic(topicID, "Completion Context"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Completion Context"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := CreateNotebook(notebookID, "Completion Context", "/tmp/context.txt", "txt", "", 4); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Completion Context", "/tmp/context.txt", "txt", "", 4); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -424,11 +424,11 @@ func TestGetChunkTextsForTopicPageRangeIncludesBufferPage(t *testing.T) {
 			{ID: "completion-context-c4", Text: "page four", TokenCount: 2, PageNum: 4},
 		},
 	}}
-	if err := IngestNotebookContentByTopic(notebookID, groups); err != nil {
+	if err := testRepo.IngestNotebookContentByTopic(notebookID, groups); err != nil {
 		t.Fatalf("IngestNotebookContentByTopic failed: %v", err)
 	}
 
-	texts, err := GetChunkTextsForTopicPageRange(topicID, 1, 3)
+	texts, err := testRepo.GetChunkTextsForTopicPageRange(topicID, 1, 3)
 	if err != nil {
 		t.Fatalf("GetChunkTextsForTopicPageRange failed: %v", err)
 	}
@@ -442,29 +442,29 @@ func TestUpdateTopicReadingCursorMarksLearnedAtEnd(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "cursor-topic"
-	if err := EnsureTopic(topicID, "Cursor Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Cursor Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := UpdateTopicPageBounds(topicID, 1, 4); err != nil {
+	if err := testRepo.UpdateTopicPageBounds(topicID, 1, 4); err != nil {
 		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
 	}
 
-	if err := UpdateTopicReadingCursor(topicID, 3, false); err != nil {
+	if err := testRepo.UpdateTopicReadingCursor(topicID, 3, false); err != nil {
 		t.Fatalf("UpdateTopicReadingCursor reading failed: %v", err)
 	}
 	var cursor int
 	var status string
-	if err := conn.QueryRow(`SELECT current_page_cursor, status FROM topics WHERE id = ?`, topicID).Scan(&cursor, &status); err != nil {
+	if err := testRepo.db.QueryRow(`SELECT current_page_cursor, status FROM topics WHERE id = ?`, topicID).Scan(&cursor, &status); err != nil {
 		t.Fatalf("failed to read topic cursor: %v", err)
 	}
 	if cursor != 3 || status != "reading" {
 		t.Fatalf("unexpected reading cursor/status: cursor=%d status=%s", cursor, status)
 	}
 
-	if err := UpdateTopicReadingCursor(topicID, 5, true); err != nil {
+	if err := testRepo.UpdateTopicReadingCursor(topicID, 5, true); err != nil {
 		t.Fatalf("UpdateTopicReadingCursor learned failed: %v", err)
 	}
-	if err := conn.QueryRow(`SELECT current_page_cursor, status FROM topics WHERE id = ?`, topicID).Scan(&cursor, &status); err != nil {
+	if err := testRepo.db.QueryRow(`SELECT current_page_cursor, status FROM topics WHERE id = ?`, topicID).Scan(&cursor, &status); err != nil {
 		t.Fatalf("failed to read learned cursor: %v", err)
 	}
 	if cursor != 5 || status != "learned" {
@@ -479,17 +479,17 @@ func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
 	}
 
 	topicID := "perf-vector-topic"
-	if err := EnsureTopic(topicID, "Perf Vector Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Perf Vector Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 	for i := 1; i <= 120; i++ {
 		chunkID := fmt.Sprintf("perf-vector-c%03d", i)
-		if err := insertChunkRow(conn, topicID, NotebookChunkInput{
+		if err := insertChunkRow(testRepo.db, topicID, NotebookChunkInput{
 			ID: chunkID, Text: fmt.Sprintf("chunk %d", i), TokenCount: 2, PageNum: (i % 12) + 1,
 		}); err != nil {
 			t.Fatalf("insertChunkRow failed: %v", err)
 		}
-		if err := UpsertChunkVector(chunkID, []float32{float32(i % 3), float32((i + 1) % 3), 1}); err != nil {
+		if err := testRepo.UpsertChunkVector(chunkID, []float32{float32(i % 3), float32((i + 1) % 3), 1}); err != nil {
 			t.Fatalf("UpsertChunkVector failed: %v", err)
 		}
 	}
@@ -498,7 +498,7 @@ func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
 	query := []float32{1, 0, 1}
 	for i := 0; i < 160; i++ {
 		started := time.Now()
-		if _, err := SearchVectorsForTopic(topicID, query, 5, 3, 8); err != nil {
+		if _, err := testRepo.SearchVectorsForTopic(topicID, query, 5, 3, 8); err != nil {
 			t.Fatalf("SearchVectorsForTopic failed: %v", err)
 		}
 		durations = append(durations, time.Since(started))
@@ -534,7 +534,7 @@ func TestInsertFSRSReviewLogSuccessfulInsertion(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-fsrs-topic"
-	if err := EnsureTopic(topicID, "FSRS Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "FSRS Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -550,14 +550,14 @@ func TestInsertFSRSReviewLogSuccessfulInsertion(t *testing.T) {
 		StateAfterJSON:  `{"reps":1,"stability":2.5}`,
 	}
 
-	if err := InsertFSRSReviewLog(reviewLog); err != nil {
+	if err := testRepo.InsertFSRSReviewLog(reviewLog); err != nil {
 		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
 	}
 
 	// Verify log was persisted
 	var id, activity, ref, before, after string
 	var reviewed, rating, scheduled int64
-	if err := conn.QueryRow(`
+	if err := testRepo.db.QueryRow(`
 		SELECT id, activity_type, reference_id, reviewed_at, rating, scheduled_days,
 		       state_before_json, state_after_json
 		FROM fsrs_review_log
@@ -594,7 +594,7 @@ func TestInsertFSRSReviewLogRejectsMissingTopic(t *testing.T) {
 		StateAfterJSON:  `{}`,
 	}
 
-	err := InsertFSRSReviewLog(reviewLog)
+	err := testRepo.InsertFSRSReviewLog(reviewLog)
 	if err == nil {
 		t.Fatalf("expected error for missing topic, got success")
 	}
@@ -609,7 +609,7 @@ func TestInsertFSRSReviewLogRejectsInvalidRating(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-rating-topic"
-	if err := EnsureTopic(topicID, "Rating Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Rating Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -637,7 +637,7 @@ func TestInsertFSRSReviewLogRejectsInvalidRating(t *testing.T) {
 				StateAfterJSON:  `{}`,
 			}
 
-			err := InsertFSRSReviewLog(reviewLog)
+			err := testRepo.InsertFSRSReviewLog(reviewLog)
 			if err == nil {
 				t.Fatalf("expected error for rating %d, got success", tt.rating)
 			}
@@ -654,7 +654,7 @@ func TestInsertFSRSReviewLogRejectsEmptyID(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-empty-id-topic"
-	if err := EnsureTopic(topicID, "Empty ID Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Empty ID Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -670,7 +670,7 @@ func TestInsertFSRSReviewLogRejectsEmptyID(t *testing.T) {
 		StateAfterJSON:  `{}`,
 	}
 
-	err := InsertFSRSReviewLog(reviewLog)
+	err := testRepo.InsertFSRSReviewLog(reviewLog)
 	if err == nil {
 		t.Fatalf("expected error for empty ID, got success")
 	}
@@ -683,7 +683,7 @@ func TestInsertFSRSReviewLogRejectsEmptyActivityType(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-activity-topic"
-	if err := EnsureTopic(topicID, "Activity Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Activity Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -699,7 +699,7 @@ func TestInsertFSRSReviewLogRejectsEmptyActivityType(t *testing.T) {
 		StateAfterJSON:  `{}`,
 	}
 
-	err := InsertFSRSReviewLog(reviewLog)
+	err := testRepo.InsertFSRSReviewLog(reviewLog)
 	if err == nil {
 		t.Fatalf("expected error for empty activity type, got success")
 	}
@@ -712,7 +712,7 @@ func TestInsertFSRSReviewLogRejectsEmptyReferenceID(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-ref-id-topic"
-	if err := EnsureTopic(topicID, "Ref ID Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Ref ID Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -728,7 +728,7 @@ func TestInsertFSRSReviewLogRejectsEmptyReferenceID(t *testing.T) {
 		StateAfterJSON:  `{}`,
 	}
 
-	err := InsertFSRSReviewLog(reviewLog)
+	err := testRepo.InsertFSRSReviewLog(reviewLog)
 	if err == nil {
 		t.Fatalf("expected error for empty reference id, got success")
 	}
@@ -741,7 +741,7 @@ func TestInsertFSRSReviewLogRejectsInvalidReviewedAt(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-reviewed-at-topic"
-	if err := EnsureTopic(topicID, "Reviewed At Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Reviewed At Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -767,7 +767,7 @@ func TestInsertFSRSReviewLogRejectsInvalidReviewedAt(t *testing.T) {
 				StateAfterJSON:  `{}`,
 			}
 
-			err := InsertFSRSReviewLog(reviewLog)
+			err := testRepo.InsertFSRSReviewLog(reviewLog)
 			if err == nil {
 				t.Fatalf("expected error for reviewed_at=%d, got success", tt.reviewedAt)
 			}
@@ -784,7 +784,7 @@ func TestInsertFSRSReviewLogRejectsEmptyStateJSON(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-json-topic"
-	if err := EnsureTopic(topicID, "JSON Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "JSON Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -815,7 +815,7 @@ func TestInsertFSRSReviewLogRejectsEmptyStateJSON(t *testing.T) {
 				StateAfterJSON:  tt.stateAfterJSON,
 			}
 
-			err := InsertFSRSReviewLog(reviewLog)
+			err := testRepo.InsertFSRSReviewLog(reviewLog)
 			if tt.shouldFail {
 				if err == nil {
 					t.Fatalf("expected error for %s, got success", tt.name)
@@ -838,7 +838,7 @@ func TestInsertFSRSReviewLogRejectsNegativeScheduledDays(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "test-scheduled-days-topic"
-	if err := EnsureTopic(topicID, "Scheduled Days Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Scheduled Days Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
@@ -854,7 +854,7 @@ func TestInsertFSRSReviewLogRejectsNegativeScheduledDays(t *testing.T) {
 		StateAfterJSON:  `{}`,
 	}
 
-	err := InsertFSRSReviewLog(reviewLog)
+	err := testRepo.InsertFSRSReviewLog(reviewLog)
 	if err == nil {
 		t.Fatalf("expected error for negative scheduled_days, got success")
 	}
@@ -869,7 +869,7 @@ func TestInitEnablesForeignKeys(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	var enabled int
-	if err := conn.QueryRow(`PRAGMA foreign_keys`).Scan(&enabled); err != nil {
+	if err := testRepo.db.QueryRow(`PRAGMA foreign_keys`).Scan(&enabled); err != nil {
 		t.Fatalf("PRAGMA foreign_keys failed: %v", err)
 	}
 	if enabled != 1 {
@@ -881,10 +881,10 @@ func TestTopicDeletionCascadesToFSRSTables(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "cascade-fsrs-topic"
-	if err := EnsureTopic(topicID, "Cascade FSRS Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Cascade FSRS Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := CreateFlashcards(topicID, []models.Flashcard{{
+	if err := testRepo.CreateFlashcards(topicID, []models.Flashcard{{
 		ID:      "cascade-card",
 		TopicID: topicID,
 		Prompt:  "Prompt?",
@@ -895,7 +895,7 @@ func TestTopicDeletionCascadesToFSRSTables(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateFlashcards failed: %v", err)
 	}
-	if err := InsertFSRSReviewLog(models.FSRSReviewLog{
+	if err := testRepo.InsertFSRSReviewLog(models.FSRSReviewLog{
 		ID:              "cascade-log",
 		TopicID:         topicID,
 		ActivityType:    "flashcard",
@@ -909,7 +909,7 @@ func TestTopicDeletionCascadesToFSRSTables(t *testing.T) {
 		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
 	}
 
-	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
+	if _, err := testRepo.db.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
 		t.Fatalf("topic delete failed: %v", err)
 	}
 
@@ -921,11 +921,11 @@ func TestTopicDeletionCascadesToAssessmentTables(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "cascade-assessment-topic"
-	if err := EnsureTopic(topicID, "Cascade Assessment Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Cascade Assessment Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
-	if _, err := conn.Exec(`
+	if _, err := testRepo.db.Exec(`
 		INSERT INTO written_questions (
 			id, topic_id, prompt, source_heading, source_page_start, source_page_end, llm_model, prompt_version
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -933,7 +933,7 @@ func TestTopicDeletionCascadesToAssessmentTables(t *testing.T) {
 		t.Fatalf("insert written_questions failed: %v", err)
 	}
 
-	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
+	if _, err := testRepo.db.Exec(`DELETE FROM topics WHERE id = ?`, topicID); err != nil {
 		t.Fatalf("topic delete failed: %v", err)
 	}
 
@@ -944,14 +944,14 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 	initDBForTest(t, false, 0)
 
 	topicID := "shrink-topic"
-	if err := EnsureTopic(topicID, "Shrink Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Shrink Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := UpdateTopicPageBounds(topicID, 1, 10); err != nil {
+	if err := testRepo.UpdateTopicPageBounds(topicID, 1, 10); err != nil {
 		t.Fatalf("initial UpdateTopicPageBounds failed: %v", err)
 	}
 
-	if err := CreateWrittenQuestion(models.WrittenQuestion{
+	if err := testRepo.CreateWrittenQuestion(models.WrittenQuestion{
 		ID:              "written-in-range",
 		TopicID:         topicID,
 		Prompt:          "Explain in range",
@@ -960,7 +960,7 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 	}); err != nil {
 		t.Fatalf("CreateWrittenQuestion in range failed: %v", err)
 	}
-	if err := CreateWrittenQuestion(models.WrittenQuestion{
+	if err := testRepo.CreateWrittenQuestion(models.WrittenQuestion{
 		ID:              "written-out-range",
 		TopicID:         topicID,
 		Prompt:          "Explain out of range",
@@ -969,7 +969,7 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 	}); err != nil {
 		t.Fatalf("CreateWrittenQuestion out of range failed: %v", err)
 	}
-	if err := InsertFSRSReviewLog(models.FSRSReviewLog{
+	if err := testRepo.InsertFSRSReviewLog(models.FSRSReviewLog{
 		ID:              "log-written-out-range",
 		TopicID:         topicID,
 		ActivityType:    "written_question",
@@ -983,7 +983,7 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
 	}
 
-	if err := UpdateTopicPageBounds(topicID, 1, 5); err != nil {
+	if err := testRepo.UpdateTopicPageBounds(topicID, 1, 5); err != nil {
 		t.Fatalf("shrink UpdateTopicPageBounds failed: %v", err)
 	}
 
@@ -996,17 +996,17 @@ func TestGetTotalChunkTokensFallsBackWhenTokenCountMissing(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "token-fallback-topic"
-	if err := EnsureTopic(topicID, "Token Fallback Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Token Fallback Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := CreateChunk("token-c1", topicID, "abcdabcd", 0, 1); err != nil {
+	if err := testRepo.CreateChunk("token-c1", topicID, "abcdabcd", 0, 1); err != nil {
 		t.Fatalf("CreateChunk c1 failed: %v", err)
 	}
-	if err := CreateChunk("token-c2", topicID, "abcdefghijkl", 3, 2); err != nil {
+	if err := testRepo.CreateChunk("token-c2", topicID, "abcdefghijkl", 3, 2); err != nil {
 		t.Fatalf("CreateChunk c2 failed: %v", err)
 	}
 
-	total, err := GetTotalChunkTokens(topicID)
+	total, err := testRepo.GetTotalChunkTokens(topicID)
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokens failed: %v", err)
 	}
@@ -1014,7 +1014,7 @@ func TestGetTotalChunkTokensFallsBackWhenTokenCountMissing(t *testing.T) {
 		t.Fatalf("expected token total 5, got %d", total)
 	}
 
-	rangeTotal, err := GetTotalChunkTokensForPageRange(topicID, 1, 1)
+	rangeTotal, err := testRepo.GetTotalChunkTokensForPageRange(topicID, 1, 1)
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokensForPageRange failed: %v", err)
 	}

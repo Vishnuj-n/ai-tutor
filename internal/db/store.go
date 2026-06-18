@@ -17,8 +17,10 @@ type querier interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-var conn *sql.DB
-var embeddingDimension int32 = 0 // Will be set during DB initialization with vec0
+type Repository struct {
+	db                 *sql.DB
+	embeddingDimension int32
+}
 
 const maxRetrievalK = 100 // Maximum k allowed for vector search retrieval
 
@@ -28,44 +30,35 @@ const (
 )
 
 // Close releases the active SQLite connection.
-func Close() error {
-	if conn == nil {
+func (r *Repository) Close() error {
+	if r.db == nil {
 		return nil
 	}
-	err := conn.Close()
-	conn = nil
+	err := r.db.Close()
+	r.db = nil
 	return err
 }
 
 // GetConnection returns the underlying database connection for transaction management.
-func GetConnection() *sql.DB {
-	return conn
+func (r *Repository) GetConnection() *sql.DB {
+	return r.db
 }
 
 // Init initializes the SQLite database and creates tables
 // vec0DllPath should be the absolute path to vec0.dll (sqlite-vec extension)
-func Init(dbPath, vec0DllPath string) error {
-	if conn != nil {
-		if err := conn.Close(); err != nil {
-			return fmt.Errorf("failed to close previous database connection: %w", err)
-		}
-		conn = nil
-	}
-
-	var err error
-	conn, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
+func Init(dbPath, vec0DllPath string) (*Repository, error) {
+	dbConn, err := sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	conn.SetMaxOpenConns(1)
-	conn.SetMaxIdleConns(1)
+	dbConn.SetMaxOpenConns(1)
+	dbConn.SetMaxIdleConns(1)
 
-	if err := conn.Ping(); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+	if err := dbConn.Ping(); err != nil {
+		if closeErr := dbConn.Close(); closeErr != nil {
 			log.Printf("Warning: failed to close database connection after ping error: %v", closeErr)
 		}
-		conn = nil
-		return err
+		return nil, err
 	}
 
 	// Load sqlite-vec extension if available
@@ -78,7 +71,7 @@ func Init(dbPath, vec0DllPath string) error {
 				absPath = vec0DllPath
 			}
 			// Use driver-level extension loading (SQL load_extension may be blocked as "not authorized").
-			if err := loadExtension(conn, absPath); err != nil {
+			if err := loadExtension(dbConn, absPath); err != nil {
 				log.Printf("Warning: could not load sqlite-vec extension from %s: %v", absPath, err)
 				// Non-fatal; continue without vec0 for backward compat
 			} else {
@@ -90,64 +83,61 @@ func Init(dbPath, vec0DllPath string) error {
 	}
 
 	// Nuclear strategy: Initialize schema with a single transaction
-	tx, err := conn.Begin()
+	tx, err := dbConn.Begin()
 	if err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := dbConn.Close(); closeErr != nil {
 			log.Printf("Warning: failed to close database connection after begin error: %v", closeErr)
 		}
-		conn = nil
-		return fmt.Errorf("failed to begin schema transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin schema transaction: %w", err)
 	}
 	defer func() {
 		_ = tx.Rollback()
 	}()
 
 	if err := InitSchema(tx); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := dbConn.Close(); closeErr != nil {
 			log.Printf("Warning: failed to close database connection after schema error: %v", closeErr)
 		}
-		conn = nil
-		return fmt.Errorf("failed to initialize schema: %w", err)
+		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := dbConn.Close(); closeErr != nil {
 			log.Printf("Warning: failed to close database connection after commit error: %v", closeErr)
 		}
-		conn = nil
-		return fmt.Errorf("failed to commit schema transaction: %w", err)
+		return nil, fmt.Errorf("failed to commit schema transaction: %w", err)
 	}
 
-	return nil
+	return &Repository{db: dbConn}, nil
 }
 
 // IsVecExtensionLoaded checks if the sqlite-vec (vec0) extension is loaded and functional.
-func IsVecExtensionLoaded() bool {
-	if conn == nil {
+func (r *Repository) IsVecExtensionLoaded() bool {
+	if r.db == nil {
 		return false
 	}
 	var version string
-	err := conn.QueryRow("SELECT vec_version()").Scan(&version)
+	err := r.db.QueryRow("SELECT vec_version()").Scan(&version)
 	return err == nil
 }
 
 // InitWithVectorDimension initializes the database and creates the vec0 virtual table.
 // Called after ONNX embedder dimension is discovered.
-func InitWithVectorDimension(embeddingDim int32) error {
+func (r *Repository) InitWithVectorDimension(embeddingDim int32) error {
 	if embeddingDim <= 0 {
 		return fmt.Errorf("invalid embedding dimension: %d", embeddingDim)
 	}
-	embeddingDimension = embeddingDim
+	r.embeddingDimension = embeddingDim
 
 	// Create vec0 virtual table with the discovered dimension
-	return createVectorTable()
+	return r.createVectorTable()
 }
 
 // QueryDueReviewCards counts cards due by the given time, scoped to existing topics.
 // Excludes cards already linked to pending/active review tasks to avoid double-counting.
-func QueryDueReviewCards(now int64) (int, error) {
+func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
 	var activeProfileID sql.NullString
-	if err := conn.QueryRow(`
+	if err := r.db.QueryRow(`
 		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
 	`).Scan(&activeProfileID); err != nil && err != sql.ErrNoRows {
 		return 0, fmt.Errorf("QueryDueReviewCards: reading active_profile_id: %w", err)
@@ -184,14 +174,14 @@ func QueryDueReviewCards(now int64) (int, error) {
 		args = append(args, activeProfileStr)
 	}
 
-	err := conn.QueryRow(query, args...).Scan(&count)
+	err := r.db.QueryRow(query, args...).Scan(&count)
 	return count, err
 }
 
 // GetDailyStudyMinutes returns the persisted global daily study budget.
-func GetDailyStudyMinutes() (int, error) {
+func (r *Repository) GetDailyStudyMinutes() (int, error) {
 	var minutes int
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT daily_study_minutes
 		FROM user_settings
 		WHERE id = 1
@@ -203,12 +193,12 @@ func GetDailyStudyMinutes() (int, error) {
 }
 
 // UpsertDailyStudyMinutes stores the global daily study budget.
-func UpsertDailyStudyMinutes(minutes int) error {
+func (r *Repository) UpsertDailyStudyMinutes(minutes int) error {
 	if minutes <= 0 {
 		return fmt.Errorf("daily study minutes must be positive")
 	}
 
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		INSERT INTO user_settings (id, daily_study_minutes)
 		VALUES (1, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -219,9 +209,9 @@ func UpsertDailyStudyMinutes(minutes int) error {
 }
 
 // GetRAGEnabled returns the status of RAG flag.
-func GetRAGEnabled() (bool, error) {
+func (r *Repository) GetRAGEnabled() (bool, error) {
 	var enabled bool
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT COALESCE(rag_enabled, 0)
 		FROM user_settings
 		WHERE id = 1
@@ -233,9 +223,9 @@ func GetRAGEnabled() (bool, error) {
 }
 
 // GetDefaultProfileID retrieves the oldest profile ID.
-func GetDefaultProfileID() (string, error) {
+func (r *Repository) GetDefaultProfileID() (string, error) {
 	var id string
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT id FROM study_profiles ORDER BY created_at ASC LIMIT 1
 	`).Scan(&id)
 	if err == sql.ErrNoRows {
@@ -245,10 +235,10 @@ func GetDefaultProfileID() (string, error) {
 }
 
 // GetUserSettings returns the full settings config.
-func GetUserSettings() (*models.UserSettings, error) {
+func (r *Repository) GetUserSettings() (*models.UserSettings, error) {
 	var s models.UserSettings
 	var activeProfileID sql.NullString
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0), COALESCE(rag_notebook_chapter, 1), COALESCE(rag_entire_notebook, 1), COALESCE(rag_queue_study, 1)
 		FROM user_settings
 		WHERE id = 1
@@ -272,12 +262,12 @@ func GetUserSettings() (*models.UserSettings, error) {
 
 	// Dynamic fallback for active profile ID
 	if s.ActiveProfileID == "" {
-		defaultID, err := GetDefaultProfileID()
+		defaultID, err := r.GetDefaultProfileID()
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve default profile: %w", err)
 		}
 		if defaultID != "" {
-			if _, err := conn.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID); err != nil {
+			if _, err := r.db.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID); err != nil {
 				return nil, fmt.Errorf("failed to persist active profile ID: %w", err)
 			}
 			s.ActiveProfileID = defaultID
@@ -285,21 +275,21 @@ func GetUserSettings() (*models.UserSettings, error) {
 	} else {
 		// Verify if the active profile still exists
 		var exists bool
-		if err := conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM study_profiles WHERE id = ?)`, s.ActiveProfileID).Scan(&exists); err != nil {
+		if err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM study_profiles WHERE id = ?)`, s.ActiveProfileID).Scan(&exists); err != nil {
 			return nil, fmt.Errorf("failed to check active profile existence: %w", err)
 		}
 		if !exists {
-			defaultID, err := GetDefaultProfileID()
+			defaultID, err := r.GetDefaultProfileID()
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve fallback default profile: %w", err)
 			}
 			if defaultID != "" {
-				if _, err := conn.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID); err != nil {
+				if _, err := r.db.Exec(`UPDATE user_settings SET active_profile_id = ? WHERE id = 1`, defaultID); err != nil {
 					return nil, fmt.Errorf("failed to persist fallback active profile ID: %w", err)
 				}
 				s.ActiveProfileID = defaultID
 			} else {
-				if _, err := conn.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE id = 1`); err != nil {
+				if _, err := r.db.Exec(`UPDATE user_settings SET active_profile_id = NULL WHERE id = 1`); err != nil {
 					return nil, fmt.Errorf("failed to clear inactive active profile ID: %w", err)
 				}
 				s.ActiveProfileID = ""
@@ -311,7 +301,7 @@ func GetUserSettings() (*models.UserSettings, error) {
 }
 
 // UpdateUserSettings updates the user settings.
-func UpdateUserSettings(s models.UserSettings) error {
+func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 	var activeProfileID interface{} = nil
 	if s.ActiveProfileID != "" {
 		activeProfileID = s.ActiveProfileID
@@ -320,7 +310,7 @@ func UpdateUserSettings(s models.UserSettings) error {
 	if theme == "" {
 		theme = "light-classic"
 	}
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled, rag_notebook_chapter, rag_entire_notebook, rag_queue_study)
 		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -339,8 +329,8 @@ func UpdateUserSettings(s models.UserSettings) error {
 	return err
 }
 
-func GetLLMSettings() (*models.LLMSettings, error) {
-	rows, err := conn.Query(`
+func (r *Repository) GetLLMSettings() (*models.LLMSettings, error) {
+	rows, err := r.db.Query(`
 		SELECT tier, provider, base_url, model, timeout_ms, api_key_source, COALESCE(has_api_key, 0)
 		FROM llm_settings
 		WHERE tier IN ('fast', 'heavy')
@@ -385,7 +375,7 @@ func GetLLMSettings() (*models.LLMSettings, error) {
 	return &settings, nil
 }
 
-func UpdateLLMSettings(settings models.LLMSettings) error {
+func (r *Repository) UpdateLLMSettings(settings models.LLMSettings) error {
 	fast := normalizeLLMTierSettings(settings.Fast)
 	fast.Tier = llmTierFast
 	heavy := normalizeLLMTierSettings(settings.Heavy)
@@ -399,7 +389,7 @@ func UpdateLLMSettings(settings models.LLMSettings) error {
 		heavy.HasAPIKey = fast.HasAPIKey
 	}
 
-	tx, err := conn.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -424,12 +414,12 @@ func UpdateLLMSettings(settings models.LLMSettings) error {
 	return tx.Commit()
 }
 
-func MarkLLMKeyStored(tier string, stored bool) error {
+func (r *Repository) MarkLLMKeyStored(tier string, stored bool) error {
 	tier = normalizeLLMTier(tier)
 	if tier == "" {
 		return fmt.Errorf("llm tier is required")
 	}
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		UPDATE llm_settings
 		SET has_api_key = ?, api_key_source = 'keyring', updated_at = CURRENT_TIMESTAMP
 		WHERE tier = ?
@@ -534,8 +524,8 @@ func sameLLMConfig(a, b models.LLMTierSettings) bool {
 }
 
 // GetProfiles retrieves all study profiles.
-func GetProfiles() ([]models.StudyProfile, error) {
-	rows, err := conn.Query(`
+func (r *Repository) GetProfiles() ([]models.StudyProfile, error) {
+	rows, err := r.db.Query(`
 		SELECT id, name, deadline_at, created_at
 		FROM study_profiles
 		ORDER BY created_at DESC
@@ -564,9 +554,9 @@ func GetProfiles() ([]models.StudyProfile, error) {
 }
 
 // GetProfileByID retrieves a specific profile by ID.
-func GetProfileByID(id string) (*models.StudyProfile, error) {
+func (r *Repository) GetProfileByID(id string) (*models.StudyProfile, error) {
 	var p models.StudyProfile
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT id, name, deadline_at, created_at
 		FROM study_profiles
 		WHERE id = ?
@@ -581,8 +571,8 @@ func GetProfileByID(id string) (*models.StudyProfile, error) {
 }
 
 // CreateProfile creates a new study profile.
-func CreateProfile(p models.StudyProfile) error {
-	_, err := conn.Exec(`
+func (r *Repository) CreateProfile(p models.StudyProfile) error {
+	_, err := r.db.Exec(`
 		INSERT INTO study_profiles (id, name, deadline_at)
 		VALUES (?, ?, ?)
 	`, p.ID, p.Name, p.DeadlineAt)
@@ -590,8 +580,8 @@ func CreateProfile(p models.StudyProfile) error {
 }
 
 // UpdateProfile updates an existing profile.
-func UpdateProfile(p models.StudyProfile) error {
-	_, err := conn.Exec(`
+func (r *Repository) UpdateProfile(p models.StudyProfile) error {
+	_, err := r.db.Exec(`
 		UPDATE study_profiles
 		SET name = ?, deadline_at = ?
 		WHERE id = ?
@@ -600,8 +590,8 @@ func UpdateProfile(p models.StudyProfile) error {
 }
 
 // DeleteProfile deletes a profile atomically.
-func DeleteProfile(id string) error {
-	tx, err := conn.Begin()
+func (r *Repository) DeleteProfile(id string) error {
+	tx, err := r.db.Begin()
 	if err != nil {
 		return fmt.Errorf("DeleteProfile: failed to begin transaction: %w", err)
 	}
@@ -619,386 +609,31 @@ func DeleteProfile(id string) error {
 	return tx.Commit()
 }
 
-// CreateFlashcards stores a new set of flashcards for one topic.
-// Used by: app_contract_test.go (test-only coverage, production code path utilizes GetOrCreateFlashcardsForTopic)
-func CreateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) error {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return fmt.Errorf("topic id is required")
-	}
-	if len(cards) == 0 {
-		return fmt.Errorf("at least one flashcard is required")
-	}
-	if len(states) == 0 {
-		return fmt.Errorf("flashcard states are required")
-	}
-
-	normalizedCards, err := normalizeValidateFlashcards(topicID, cards, states)
-	if err != nil {
-		return err
-	}
-
-	return createFlashcardsRepo(normalizedCards, states)
-}
-
-// CountFlashcardsForTopic returns how many flashcards exist for a topic.
-func CountFlashcardsForTopic(topicID string) (int, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return 0, fmt.Errorf("topic id is required")
-	}
-	return countFlashcardsForTopicRepo(topicID)
-}
-
-// GetFlashcardByID returns one flashcard and its scheduler state.
-func GetFlashcardByID(cardID string) (*models.Flashcard, *models.FlashcardState, error) {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return nil, nil, fmt.Errorf("flashcard id is required")
-	}
-	return getFlashcardByIDRepo(cardID)
-}
-
-func GetFlashcardByIDTx(tx *sql.Tx, cardID string) (*models.Flashcard, *models.FlashcardState, error) {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return nil, nil, fmt.Errorf("flashcard id is required")
-	}
-	return getFlashcardByIDRepoTx(tx, cardID)
-}
-
-// GetLastFlashcardReviewTime retrieves the last review time for a flashcard.
-func GetLastFlashcardReviewTime(cardID string) (int64, error) {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return 0, fmt.Errorf("flashcard id is required")
-	}
-	return getLastFlashcardReviewTimeRepo(cardID)
-}
-
-// GetLastFlashcardReviewTimeTx retrieves the last review time for a flashcard within a transaction.
-func GetLastFlashcardReviewTimeTx(tx *sql.Tx, cardID string) (int64, error) {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return 0, fmt.Errorf("flashcard id is required")
-	}
-	return getLastFlashcardReviewTimeRepoTx(tx, cardID)
-}
-
-// GetFlashcardStatesByIDs returns a map of flashcard states keyed by card ID for the given card IDs
-func GetFlashcardStatesByIDs(cardIDs []string) (map[string]models.FlashcardState, error) {
-	if len(cardIDs) == 0 {
-		return make(map[string]models.FlashcardState), nil
-	}
-
-	// Trim and validate card IDs
-	trimmedIDs := make([]string, 0, len(cardIDs))
-	for _, id := range cardIDs {
-		trimmedID := strings.TrimSpace(id)
-		if trimmedID != "" {
-			trimmedIDs = append(trimmedIDs, trimmedID)
-		}
-	}
-
-	if len(trimmedIDs) == 0 {
-		return make(map[string]models.FlashcardState), nil
-	}
-
-	return getFlashcardStatesByIDsRepo(trimmedIDs)
-}
-
-// UpdateFlashcardReview updates scheduling state after a review grade.
-func UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return fmt.Errorf("flashcard id is required")
-	}
-	if dueAt <= 0 {
-		return fmt.Errorf("due time is required")
-	}
-	return updateFlashcardReviewRepo(cardID, dueAt, expectedDueAt, expectedStateJSON, state, reviewLog)
-}
-
-func UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return fmt.Errorf("flashcard id is required")
-	}
-	if dueAt <= 0 {
-		return fmt.Errorf("due time is required")
-	}
-	return updateFlashcardReviewRepoTx(tx, cardID, dueAt, expectedDueAt, expectedStateJSON, state, reviewLog)
-}
-
-func GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
-	}
-	if now <= 0 {
-		return nil, fmt.Errorf("current time is required")
-	}
-	if limit <= 0 {
-		limit = maxReviewSessionCards
-	}
-	return getDueReviewCardsForNotebookRepo(notebookID, now, limit)
-}
-
-func GetNextDueReviewNotebook(now int64) (string, int, error) {
-	if now <= 0 {
-		return "", 0, fmt.Errorf("current time is required")
-	}
-	return getNextDueReviewNotebookRepo(now)
-}
-
-func CreateReviewSession(notebookID string) (*models.StudyQueueTask, bool, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, false, fmt.Errorf("notebook id is required")
-	}
-	return createReviewSessionRepo(notebookID, reviewSessionNow())
-}
-
-func GetReviewSession(taskID string) (*models.ReviewSession, error) {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return nil, fmt.Errorf("task id is required")
-	}
-	return getReviewSessionRepo(taskID)
-}
-
-func MarkReviewTaskCardReviewedTx(tx *sql.Tx, taskID, cardID string) error {
-	taskID = strings.TrimSpace(taskID)
-	cardID = strings.TrimSpace(cardID)
-	if taskID == "" || cardID == "" {
-		return fmt.Errorf("task id and card id are required")
-	}
-	return markReviewTaskCardReviewedTxRepo(tx, taskID, cardID)
-}
-
-func RemainingReviewTaskCardsTx(tx *sql.Tx, taskID string) (int, error) {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return 0, fmt.Errorf("task id is required")
-	}
-	return remainingReviewTaskCardsTxRepo(tx, taskID)
-}
-
-func CompleteReviewSession(taskID string) error {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return fmt.Errorf("task id is required")
-	}
-	return completeReviewSessionRepo(taskID)
-}
-
-// InsertFSRSReviewLog inserts one generic FSRS review event.
-func InsertFSRSReviewLog(reviewLog models.FSRSReviewLog) error {
-	reviewLog.ID = strings.TrimSpace(reviewLog.ID)
-	reviewLog.TopicID = strings.TrimSpace(reviewLog.TopicID)
-	reviewLog.ActivityType = strings.TrimSpace(reviewLog.ActivityType)
-	reviewLog.ReferenceID = strings.TrimSpace(reviewLog.ReferenceID)
-	reviewLog.StateBeforeJSON = strings.TrimSpace(reviewLog.StateBeforeJSON)
-	reviewLog.StateAfterJSON = strings.TrimSpace(reviewLog.StateAfterJSON)
-
-	if reviewLog.ID == "" {
-		return fmt.Errorf("review log id is required")
-	}
-	if reviewLog.TopicID == "" {
-		return fmt.Errorf("topic id is required")
-	}
-	if reviewLog.ActivityType == "" {
-		return fmt.Errorf("activity type is required")
-	}
-	if reviewLog.ReferenceID == "" {
-		return fmt.Errorf("reference id is required")
-	}
-	if reviewLog.ReviewedAt <= 0 {
-		return fmt.Errorf("reviewed at is required")
-	}
-	if reviewLog.Rating < 1 || reviewLog.Rating > 4 {
-		return fmt.Errorf("rating must be between 1 and 4")
-	}
-	if reviewLog.StateBeforeJSON == "" || reviewLog.StateAfterJSON == "" {
-		return fmt.Errorf("review state json values are required")
-	}
-	if reviewLog.ScheduledDays < 0 {
-		return fmt.Errorf("scheduled days must be non-negative")
-	}
-
-	return insertFSRSReviewLogRepo(reviewLog)
-}
-
-// GetOrCreateFlashcardsForTopic atomically fetches existing non-suspended flashcards or creates new ones.
-// If non-suspended flashcards already exist for the topic, they are returned and existing=true.
-// If the topic has no non-suspended flashcards, the provided cards and states are inserted transactionally,
-// and the inserted cards are returned with existing=false.
-// This prevents race conditions where multiple concurrent requests both see zero cards.
-func GetOrCreateFlashcardsForTopic(topicID string, cardsIfNotExist []models.Flashcard, statesIfNotExist map[string]models.FlashcardState) ([]models.Flashcard, bool, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return nil, false, fmt.Errorf("topic id is required")
-	}
-
-	if len(cardsIfNotExist) == 0 {
-		return nil, false, fmt.Errorf("at least one flashcard is required to create")
-	}
-	if len(statesIfNotExist) == 0 {
-		return nil, false, fmt.Errorf("flashcard states are required to create")
-	}
-
-	normalizedCards, err := normalizeValidateFlashcards(topicID, cardsIfNotExist, statesIfNotExist)
-	if err != nil {
-		return nil, false, err
-	}
-
-	return getOrCreateFlashcardsForTopicRepo(topicID, normalizedCards, statesIfNotExist)
-}
-
-func normalizeValidateFlashcards(topicID string, cards []models.Flashcard, states map[string]models.FlashcardState) ([]models.Flashcard, error) {
-	normalizedCards := make([]models.Flashcard, 0, len(cards))
-	seenIDs := make(map[string]bool)
-	seenTopicPrompts := make(map[string]bool)
-
-	for _, card := range cards {
-		card.ID = strings.TrimSpace(card.ID)
-		card.TopicID = strings.TrimSpace(card.TopicID)
-		if card.TopicID == "" {
-			card.TopicID = topicID
-		} else if card.TopicID != topicID {
-			return nil, fmt.Errorf("flashcard topic id must match topic id")
-		}
-		card.Prompt = strings.TrimSpace(card.Prompt)
-		card.Answer = strings.TrimSpace(card.Answer)
-		if card.ID == "" {
-			return nil, fmt.Errorf("flashcard id is required")
-		}
-		if card.Prompt == "" || card.Answer == "" {
-			return nil, fmt.Errorf("flashcard prompt and answer are required")
-		}
-		if _, ok := states[card.ID]; !ok {
-			return nil, fmt.Errorf("flashcard state is required for %s", card.ID)
-		}
-
-		// Check for duplicate IDs
-		if seenIDs[card.ID] {
-			return nil, fmt.Errorf("duplicate flashcard id found: %s", card.ID)
-		}
-		seenIDs[card.ID] = true
-
-		// Check for duplicate (topic_id, prompt) pairs
-		topicPromptKey := card.TopicID + "|" + card.Prompt
-		if seenTopicPrompts[topicPromptKey] {
-			return nil, fmt.Errorf("duplicate (topic_id, prompt) pair found: topic_id=%s, prompt=%s", card.TopicID, card.Prompt)
-		}
-		seenTopicPrompts[topicPromptKey] = true
-
-		normalizedCards = append(normalizedCards, card)
-	}
-
-	return normalizedCards, nil
-}
-
-// Vector Search and Storage Functions
-
 // createVectorTable creates the vec0 virtual table with the discovered embedding dimension.
-func createVectorTable() error {
-	if embeddingDimension <= 0 {
+func (r *Repository) createVectorTable() error {
+	if r.embeddingDimension <= 0 {
 		return fmt.Errorf("embedding dimension not initialized")
 	}
 
 	// Create vec0 virtual table for vector search
-	// Format: vec0(embedding float[dimension])
 	schema := fmt.Sprintf(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(
 			embedding float[%d]
 		);
-	`, embeddingDimension)
+	`, r.embeddingDimension)
 
-	_, err := conn.Exec(schema)
+	_, err := r.db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("failed to create vec0 table: %w", err)
 	}
 
-	utils.Infof("Created vec0 virtual table with embedding dimension %d", embeddingDimension)
+	utils.Infof("Created vec0 virtual table with embedding dimension %d", r.embeddingDimension)
 	return nil
 }
 
-// UpsertChunkVector stores or updates a chunk embedding vector.
-// It returns an error if validation fails or the vector cannot be persisted.
-func UpsertChunkVector(chunkID string, vector []float32) error {
-	chunkID = strings.TrimSpace(chunkID)
-	if chunkID == "" {
-		return fmt.Errorf("chunk id is required")
-	}
-	if len(vector) == 0 {
-		return fmt.Errorf("vector is required")
-	}
-	return upsertChunkVectorRepo(chunkID, vector)
-}
-
-// ChunkVectorBatchItem contains one vector persistence request.
-type ChunkVectorBatchItem struct {
-	ChunkID      string
-	Vector       []float32
-	EmbeddingRef string
-}
-
-// UpsertChunkVectorsBatch stores vectors and embedding refs in a single transaction.
-func UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error {
-	if len(items) == 0 {
-		return nil
-	}
-
-	repoItems := make([]chunkVectorBatchItemRepo, 0, len(items))
-	for _, item := range items {
-		item.ChunkID = strings.TrimSpace(item.ChunkID)
-		if item.ChunkID == "" {
-			return fmt.Errorf("chunk id is required for each batch item")
-		}
-		if len(item.Vector) == 0 {
-			return fmt.Errorf("vector is required for each batch item")
-		}
-		repoItems = append(repoItems, chunkVectorBatchItemRepo(item))
-	}
-
-	return upsertChunkVectorsBatchRepo(repoItems)
-}
-
-// SearchVectorsForTopic finds the top-k most similar vectors for a topic-scoped query.
-// When startPage and endPage are positive, search is context-locked to that page window.
-func SearchVectorsForTopic(topicID string, queryVector []float32, k int, startPage int, endPage int) ([]string, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return nil, fmt.Errorf("topic id is required")
-	}
-	if len(queryVector) == 0 {
-		return nil, fmt.Errorf("query vector is required")
-	}
-	if k <= 0 || k > maxRetrievalK {
-		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
-	}
-	return searchVectorsForTopicRepo(topicID, queryVector, k, startPage, endPage)
-}
-
-// SearchVectorsForNotebook finds the top-k most similar vectors for a notebook-scoped query.
-func SearchVectorsForNotebook(notebookID string, queryVector []float32, k int) ([]string, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
-	}
-	if len(queryVector) == 0 {
-		return nil, fmt.Errorf("query vector is required")
-	}
-	if k <= 0 || k > maxRetrievalK {
-		return nil, fmt.Errorf("k must be between 1 and %d", maxRetrievalK)
-	}
-	return searchVectorsForNotebookRepo(notebookID, queryVector, k)
-}
-
 // UpdateChunkEmbedding updates the embedding_ref (hash) for a chunk to track changes.
-func UpdateChunkEmbedding(chunkID string, hash string) error {
-	_, err := conn.Exec(`
+func (r *Repository) UpdateChunkEmbedding(chunkID string, hash string) error {
+	_, err := r.db.Exec(`
 		UPDATE chunks SET embedding_ref = ? WHERE id = ?
 	`, hash, chunkID)
 	return err
@@ -1011,12 +646,12 @@ type ChunkEmbeddingBatchItem struct {
 }
 
 // UpdateChunkEmbeddingsBatch updates embedding metadata for multiple chunks in a single transaction
-func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
+func (r *Repository) UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		stmt, err := tx.Prepare(`
 			UPDATE chunks SET embedding_ref = ? WHERE id = ?
 		`)
@@ -1049,8 +684,8 @@ func UpdateChunkEmbeddingsBatch(items []ChunkEmbeddingBatchItem) error {
 }
 
 // GetChunkEmbeddingRefsForTopic returns embedding_ref values for all chunks in a topic.
-func GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {
-	rows, err := conn.Query(`
+func (r *Repository) GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {
+	rows, err := r.db.Query(`
 		SELECT id, COALESCE(embedding_ref, '')
 		FROM chunks
 		WHERE topic_id = ?
@@ -1079,30 +714,4 @@ func GetChunkEmbeddingRefsForTopic(topicID string) (map[string]string, error) {
 	}
 
 	return refs, nil
-}
-
-// CreateWrittenQuestion stores one persisted written assessment prompt.
-func CreateWrittenQuestion(question models.WrittenQuestion) error {
-	question.ID = strings.TrimSpace(question.ID)
-	question.TopicID = strings.TrimSpace(question.TopicID)
-	question.Prompt = strings.TrimSpace(question.Prompt)
-	if question.ID == "" {
-		return fmt.Errorf("question id is required")
-	}
-	if question.TopicID == "" {
-		return fmt.Errorf("topic id is required")
-	}
-	if question.Prompt == "" {
-		return fmt.Errorf("prompt is required")
-	}
-	return createWrittenQuestionRepo(question)
-}
-
-// GetWrittenQuestionByID fetches one persisted written assessment prompt.
-func GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) {
-	questionID = strings.TrimSpace(questionID)
-	if questionID == "" {
-		return nil, fmt.Errorf("question id is required")
-	}
-	return getWrittenQuestionByIDRepo(questionID)
 }

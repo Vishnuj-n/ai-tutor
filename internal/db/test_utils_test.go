@@ -9,12 +9,12 @@ import (
 func assertCountEquals(t *testing.T, query string, arg interface{}, want int) {
 	t.Helper()
 
-	if conn == nil {
+	if testRepo == nil || testRepo.db == nil {
 		t.Fatalf("nil db connection")
 	}
 
 	var got int
-	if err := conn.QueryRow(query, arg).Scan(&got); err != nil {
+	if err := testRepo.db.QueryRow(query, arg).Scan(&got); err != nil {
 		t.Fatalf("query failed (%s): %v", sanitizeWhitespace(query), err)
 	}
 	if got != want {

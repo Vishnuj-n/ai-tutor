@@ -12,14 +12,27 @@ import (
 )
 
 
-func createWrittenQuestionRepo(question models.WrittenQuestion) error {
+func (r *Repository) CreateWrittenQuestion(question models.WrittenQuestion) error {
+	question.ID = strings.TrimSpace(question.ID)
+	question.TopicID = strings.TrimSpace(question.TopicID)
+	question.Prompt = strings.TrimSpace(question.Prompt)
+	if question.ID == "" {
+		return fmt.Errorf("question id is required")
+	}
+	if question.TopicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	if question.Prompt == "" {
+		return fmt.Errorf("prompt is required")
+	}
+
 	var sourceChunkID interface{}
 	if strings.TrimSpace(question.SourceChunkID) == "" {
 		sourceChunkID = nil
 	} else {
 		sourceChunkID = strings.TrimSpace(question.SourceChunkID)
 	}
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		INSERT INTO written_questions (
 			id, topic_id, prompt, source_chunk_id, source_heading, source_page_start, source_page_end,
 			llm_model, prompt_version, updated_at
@@ -29,9 +42,14 @@ func createWrittenQuestionRepo(question models.WrittenQuestion) error {
 	return err
 }
 
-func getWrittenQuestionByIDRepo(questionID string) (*models.WrittenQuestion, error) {
+func (r *Repository) GetWrittenQuestionByID(questionID string) (*models.WrittenQuestion, error) {
+	questionID = strings.TrimSpace(questionID)
+	if questionID == "" {
+		return nil, fmt.Errorf("question id is required")
+	}
+
 	var question models.WrittenQuestion
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT id, topic_id, prompt, COALESCE(source_chunk_id, ''), COALESCE(source_heading, ''), COALESCE(source_page_start, 0),
 			COALESCE(source_page_end, 0), COALESCE(llm_model, ''), COALESCE(prompt_version, '')
 		FROM written_questions
@@ -47,7 +65,7 @@ func getWrittenQuestionByIDRepo(questionID string) (*models.WrittenQuestion, err
 	return &question, nil
 }
 
-func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+func (r *Repository) saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 	if tx == nil {
 		return errors.New("transaction not initialized")
 	}
@@ -66,7 +84,7 @@ func saveWrittenAnswerRepoTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 }
 
 // SaveWrittenAnswerTx stores a scored written response within a transaction.
-func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
+func (r *Repository) SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 	answer.QuestionID = strings.TrimSpace(answer.QuestionID)
 	if answer.QuestionID == "" {
 		return fmt.Errorf("question id is required")
@@ -79,5 +97,5 @@ func SaveWrittenAnswerTx(tx *sql.Tx, answer models.WrittenAnswer) error {
 	if tx == nil {
 		return errors.New("transaction not initialized")
 	}
-	return saveWrittenAnswerRepoTx(tx, answer)
+	return r.saveWrittenAnswerRepoTx(tx, answer)
 }
