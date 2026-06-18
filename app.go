@@ -75,6 +75,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.ctx = ctx
 
+	// Initialize the structured logging pipeline first using the resolved app data directory
+	if appDir, err := runtime.ResolveAppDir(); err == nil {
+		_ = utils.InitMultiFileLogger(appDir)
+	}
+
 	boot, err := runtime.Bootstrap(ctx)
 	if err != nil {
 		a.aiInitError = err.Error()
@@ -94,6 +99,11 @@ func (a *App) startup(ctx context.Context) {
 	a.notebookUploadDir = boot.NotebookUploadDir
 	a.aiReady = boot.AiReady
 	a.aiInitError = boot.AiInitError
+}
+
+// shutdown is called when the Wails application is shutting down.
+func (a *App) shutdown(ctx context.Context) {
+	utils.CloseMultiFileLogger()
 }
 
 func (a *App) Greet(name string) string {
@@ -599,15 +609,36 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 	}
 
 	// Activate task (idempotent if already active)
-	if task, err := repo.GetTaskByID(taskID); err == nil {
-		utils.Warnf("[READER_INIT] InitializeReadingSession queue task before activate taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
+	qTask, qErr := repo.GetTaskByID(taskID)
+	if qErr != nil || qTask == nil {
+		var errDetail error
+		if qErr != nil {
+			errDetail = qErr
+		} else {
+			errDetail = fmt.Errorf("nil task loaded from database")
+		}
+		utils.ErrLogger.Printf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, errDetail)
+		utils.QueueLogger.Printf("InitializeReadingSession queue task pre-activate loading anomaly taskID=%s", taskID)
+
+		if err := repo.ActivateTask(taskID); err != nil {
+			utils.ErrLogger.Printf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
+			utils.QueueLogger.Printf("InitializeReadingSession queue task activation failed taskID=%s", taskID)
+		} else {
+			utils.QueueLogger.Printf("InitializeReadingSession queue task activated taskID=%s", taskID)
+		}
 	} else {
-		utils.Warnf("[READER_INIT] InitializeReadingSession queue task pre-activate load error taskID=%s err=%v", taskID, err)
-	}
-	if err := repo.ActivateTask(taskID); err != nil {
-		utils.Warnf("[READER_INIT] InitializeReadingSession activate result taskID=%s err=%v", taskID, err)
-	} else {
-		utils.Warnf("[READER_INIT] InitializeReadingSession activate result taskID=%s ok=true", taskID)
+		if qTask.Status == models.StudyTaskStatusPending {
+			if err := repo.ActivateTask(taskID); err != nil {
+				utils.ErrLogger.Printf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
+				utils.QueueLogger.Printf("InitializeReadingSession queue task activation failed taskID=%s", taskID)
+			} else {
+				utils.QueueLogger.Printf("InitializeReadingSession queue task activated taskID=%s", taskID)
+			}
+		} else if qTask.Status == models.StudyTaskStatusActive {
+			utils.QueueLogger.Printf("InitializeReadingSession idempotent resume operation: task already active taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, qTask.Status, qTask.TaskType, qTask.NotebookID, qTask.TopicID)
+		} else {
+			utils.QueueLogger.Printf("InitializeReadingSession task terminal status=%s taskID=%s", qTask.Status, taskID)
+		}
 	}
 
 	// Load reading task with all context
