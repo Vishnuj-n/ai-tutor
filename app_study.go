@@ -391,16 +391,17 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			utils.QueueLogger.Printf("InitializeReadingSession queue task activated taskID=%s", taskID)
 		}
 	} else {
-		if qTask.Status == models.StudyTaskStatusPending {
+		switch qTask.Status {
+		case models.StudyTaskStatusPending:
 			if err := repo.ActivateTask(taskID); err != nil {
 				utils.ErrLogger.Printf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
 				utils.QueueLogger.Printf("InitializeReadingSession queue task activation failed taskID=%s", taskID)
 			} else {
 				utils.QueueLogger.Printf("InitializeReadingSession queue task activated taskID=%s", taskID)
 			}
-		} else if qTask.Status == models.StudyTaskStatusActive {
+		case models.StudyTaskStatusActive:
 			utils.QueueLogger.Printf("InitializeReadingSession idempotent resume operation: task already active taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, qTask.Status, qTask.TaskType, qTask.NotebookID, qTask.TopicID)
-		} else {
+		default:
 			utils.QueueLogger.Printf("InitializeReadingSession task terminal status=%s taskID=%s", qTask.Status, taskID)
 		}
 	}
