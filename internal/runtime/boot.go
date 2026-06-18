@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
@@ -39,7 +40,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		AiReady: false,
 	}
 
-	_ = godotenv.Load()
+	loadEnv()
 	// If APP_ENV was not set by .env or the environment, default to "production".
 	// This prevents fresh dev/test environments from silently routing to an undefined
 	// storage path. "dev" must be explicitly opted into.
@@ -219,7 +220,16 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	return res, nil
 }
 
+var loadEnvOnce sync.Once
+
+func loadEnv() {
+	loadEnvOnce.Do(func() {
+		_ = godotenv.Load()
+	})
+}
+
 func ResolveAppDir() (string, error) {
+	loadEnv()
 	// Dev: keep data in the repo for convenience.
 	if os.Getenv("APP_ENV") == "dev" {
 		projectRoot, err := os.Getwd()

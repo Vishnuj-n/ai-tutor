@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"sync"
@@ -71,7 +72,11 @@ func (a *App) startup(ctx context.Context) {
 
 	// Initialize the structured logging pipeline first using the resolved app data directory
 	if appDir, err := runtime.ResolveAppDir(); err == nil {
-		_ = utils.InitMultiFileLogger(appDir)
+		if logErr := utils.InitMultiFileLogger(appDir); logErr != nil {
+			log.Printf("Failed to initialize multi-file logger: %v", logErr)
+		}
+	} else {
+		log.Printf("Failed to resolve app directory: %v", err)
 	}
 
 	boot, err := runtime.Bootstrap(ctx)
