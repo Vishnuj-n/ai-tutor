@@ -71,6 +71,10 @@ func isPathAllowed(path string) bool {
 	return false
 }
 
+func setExtensionPath(path string) {
+	// No-op for non-CGO builds
+}
+
 func loadExtension(db *sql.DB, extensionPath string) error {
 	cleanedPath := filepath.Clean(extensionPath)
 	if !isPathAllowed(cleanedPath) {

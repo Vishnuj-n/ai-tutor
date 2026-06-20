@@ -399,22 +399,24 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Success loading vec0 extension! Close old repo connection, set new repo.
-		_ = repo.Close()
-		a.repo = newRepo
-
 		// Init ONNX embedder using paths from AssetManager
 		emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
 		if err != nil {
+			_ = newRepo.Close()
 			emitRagSetupFailed(a, fmt.Sprintf("failed to load ONNX embedder: %v", err))
 			return
 		}
 
 		if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
 			_ = emb.Close()
+			_ = newRepo.Close()
 			emitRagSetupFailed(a, fmt.Sprintf("could not initialize prompt tokenizer: %v", err))
 			return
 		}
+
+		// Success loading vec0 extension! Close old repo connection, set new repo.
+		_ = repo.Close()
+		a.repo = newRepo
 
 		// Set dimensions
 		if err := newRepo.InitWithVectorDimension(emb.GetDimension()); err != nil {

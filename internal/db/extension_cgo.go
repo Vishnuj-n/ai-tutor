@@ -3,16 +3,52 @@
 package db
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
+
+var (
+	extensionMu   sync.RWMutex
+	extensionPath string
+)
+
+func init() {
+	sql.Register("sqlite3_tutor", &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			extensionMu.RLock()
+			path := extensionPath
+			extensionMu.RUnlock()
+
+			if path == "" {
+				return nil
+			}
+
+			entryPoints := []string{"sqlite3_vec_init", "sqlite3_extension_init", ""}
+			var lastErr error
+			for _, entry := range entryPoints {
+				if err := conn.LoadExtension(path, entry); err == nil {
+					return nil
+				} else {
+					lastErr = err
+				}
+			}
+			return fmt.Errorf("could not load extension from %s with known entry points: %w", path, lastErr)
+		},
+	})
+}
+
+func setExtensionPath(path string) {
+	extensionMu.Lock()
+	extensionPath = path
+	extensionMu.Unlock()
+}
 
 func isPathAllowed(path string) bool {
 	absPath, err := filepath.Abs(path)
@@ -74,40 +110,21 @@ func isPathAllowed(path string) bool {
 	return false
 }
 
-func loadExtension(db *sql.DB, extensionPath string) error {
-	cleanedPath := filepath.Clean(extensionPath)
+func loadExtension(db *sql.DB, path string) error {
+	cleanedPath := filepath.Clean(path)
 	if !isPathAllowed(cleanedPath) {
 		return fmt.Errorf("loading extension from unauthorized path is blocked: %s", cleanedPath)
 	}
 
-	sqlConn, err := db.Conn(context.Background())
-	if err != nil {
-		return err
+	setExtensionPath(cleanedPath)
+
+	// Trigger connection creation and extension load by querying vec_version()
+	var version string
+	if err := db.QueryRow("SELECT vec_version()").Scan(&version); err != nil {
+		setExtensionPath("")
+		return fmt.Errorf("extension load verification failed: %w", err)
 	}
-	defer func() {
-		_ = sqlConn.Close()
-	}()
 
-	return sqlConn.Raw(func(driverConn interface{}) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		if !ok {
-			return fmt.Errorf("unexpected sqlite driver connection type %T", driverConn)
-		}
-
-		entryPoints := []string{"sqlite3_vec_init", "sqlite3_extension_init", ""}
-		var lastErr error
-		for _, entry := range entryPoints {
-			if loadErr := sqliteConn.LoadExtension(cleanedPath, entry); loadErr == nil {
-				return nil
-			} else {
-				lastErr = loadErr
-			}
-		}
-
-		if lastErr == nil {
-			lastErr = fmt.Errorf("unknown extension load failure")
-		}
-		return fmt.Errorf("could not load extension with known entry points: %w", lastErr)
-	})
+	return nil
 }
 

@@ -129,14 +129,14 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 									utils.Warnf("%s", res.AiInitError)
 									_ = emb.Close()
 								} else {
-								// Reset any stuck INDEXING status back to PENDING for background indexing queue to pick up
-								if err := res.Repo.ResetIndexingStatus(); err != nil {
-									utils.Warnf("failed to reset notebook indexing statuses: %v", err)
-								}
-								res.AiReady = true
-								res.AiInitError = ""
-								res.Embedder = emb
-								embedder = emb
+									// Reset any stuck INDEXING status back to PENDING for background indexing queue to pick up
+									if err := res.Repo.ResetIndexingStatus(); err != nil {
+										utils.Warnf("failed to reset notebook indexing statuses: %v", err)
+									}
+									res.AiReady = true
+									res.AiInitError = ""
+									res.Embedder = emb
+									embedder = emb
 								}
 							}
 						}

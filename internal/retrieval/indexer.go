@@ -365,7 +365,7 @@ func (vi *VectorIndexer) IndexNotebook(notebookID string) error {
 	reindexed := len(vectorBatch) - len(failedChunks)
 	utils.Infof("Indexing complete for notebook %s: reindexed=%d, skipped=%d, failed=%d", notebookID, reindexed, skipped, len(failedChunks))
 	
-	if len(failedChunks) > 0 && batchStoreErr != nil {
+	if len(failedChunks) > 0 || batchStoreErr != nil {
 		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED")
 	} else {
 		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY")
