@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
-:root, [data-theme="light-classic"] {
+:root,
+[data-theme='light-classic'] {
   --background: #f9f9fb;
   --surface-container: #ebeef2;
   --surface-container-low: #f2f4f7;
@@ -15,7 +16,7 @@
   --muted-text: #64707d;
 }
 
-[data-theme="light-warm"] {
+[data-theme='light-warm'] {
   --background: #fdfaf6;
   --surface-container: #f3eae1;
   --surface-container-low: #faf3eb;
@@ -30,7 +31,7 @@
   --muted-text: #82715e;
 }
 
-[data-theme="dark-indigo"] {
+[data-theme='dark-indigo'] {
   --background: #0b0d16;
   --surface-container: #171a2b;
   --surface-container-low: #111320;
@@ -45,7 +46,7 @@
   --muted-text: #94a3b8;
 }
 
-[data-theme="dark-nord"] {
+[data-theme='dark-nord'] {
   --background: #2e3440;
   --surface-container: #3b4252;
   --surface-container-low: #343b48;
@@ -60,7 +61,7 @@
   --muted-text: #d8dee9;
 }
 
-[data-theme="dark-emerald"] {
+[data-theme='dark-emerald'] {
   --background: #0a120d;
   --surface-container: #152219;
   --surface-container-low: #0f1a13;

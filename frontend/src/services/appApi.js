@@ -158,8 +158,30 @@ export function getUserSettings() {
   return appBridge().GetUserSettings()
 }
 
-export function updateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled, ragNotebookChapter, ragEntireNotebook, ragQueueStudy) {
-  return appBridge().UpdateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled, ragNotebookChapter, ragEntireNotebook, ragQueueStudy)
+export function updateUserSettings(
+  minutes,
+  activeProfileID,
+  skipToReading,
+  syncURL,
+  apiToken,
+  theme,
+  ragEnabled,
+  ragNotebookChapter,
+  ragEntireNotebook,
+  ragQueueStudy
+) {
+  return appBridge().UpdateUserSettings(
+    minutes,
+    activeProfileID,
+    skipToReading,
+    syncURL,
+    apiToken,
+    theme,
+    ragEnabled,
+    ragNotebookChapter,
+    ragEntireNotebook,
+    ragQueueStudy
+  )
 }
 
 export function getLLMSettings() {

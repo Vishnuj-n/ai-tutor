@@ -1,13 +1,15 @@
 <template>
   <section class="page">
     <header class="topbar">
-
       <!-- Active Profile Dropdown Selector -->
       <div class="profile-selector-container">
         <label for="active-profile-select">Current Profile:</label>
         <select
-id="active-profile-select" v-model="userSettings.active_profile_id" class="topbar-select"
-          @change="changeActiveProfile($event)">
+          id="active-profile-select"
+          v-model="userSettings.active_profile_id"
+          class="topbar-select"
+          @change="changeActiveProfile($event)"
+        >
           <option value="">-- No Profile Selected --</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id">
             {{ p.name }}
@@ -22,8 +24,10 @@ id="active-profile-select" v-model="userSettings.active_profile_id" class="topba
         <span class="info-icon">⚡</span>
         <div class="info-text">
           <p class="info-title">"Skip to Reading" Escape Hatch Active</p>
-          <p class="info-subtitle">Review tasks have been pushed to the background so you can focus on reading new
-            chapters.</p>
+          <p class="info-subtitle">
+            Review tasks have been pushed to the background so you can focus on reading new
+            chapters.
+          </p>
         </div>
       </div>
     </article>
@@ -61,8 +65,10 @@ id="active-profile-select" v-model="userSettings.active_profile_id" class="topba
       <div class="header-actions">
         <!-- Escape Hatch Quick Toggle Button -->
         <button
-class="escape-hatch-toggle" :class="{ active: userSettings.skip_to_reading_active }"
-          @click="toggleEscapeHatch">
+          class="escape-hatch-toggle"
+          :class="{ active: userSettings.skip_to_reading_active }"
+          @click="toggleEscapeHatch"
+        >
           {{ userSettings.skip_to_reading_active ? 'Disable Escape Hatch' : 'Skip to Reading' }}
         </button>
 
@@ -95,8 +101,13 @@ class="escape-hatch-toggle" :class="{ active: userSettings.skip_to_reading_activ
           <div class="telemetry-grid">
             <div class="telemetry-item">
               <div class="telemetry-title-row">
-                <span class="telemetry-doc-title">Target Exam Deadline: {{ activeProfilePace.deadline }}</span>
-                <span class="telemetry-days-left" :class="{ warning: activeProfilePace.days_remaining <= 3 }">
+                <span class="telemetry-doc-title"
+                  >Target Exam Deadline: {{ activeProfilePace.deadline }}</span
+                >
+                <span
+                  class="telemetry-days-left"
+                  :class="{ warning: activeProfilePace.days_remaining <= 3 }"
+                >
                   ({{ formatDaysRemaining(activeProfilePace.days_remaining) }})
                 </span>
               </div>
@@ -106,12 +117,17 @@ class="escape-hatch-toggle" :class="{ active: userSettings.skip_to_reading_activ
                   <span class="metric-label">words / day</span>
                 </div>
                 <div class="telemetry-metric">
-                  <span class="metric-value">{{ activeProfilePace.sessions_per_day.toFixed(1) }}</span>
+                  <span class="metric-value">{{
+                    activeProfilePace.sessions_per_day.toFixed(1)
+                  }}</span>
                   <span class="metric-label">sessions / day</span>
                 </div>
                 <div class="telemetry-progress-info">
                   <div class="progress-details">
-                    <span>Remaining words: <strong>{{ activeProfilePace.remaining_words }}</strong></span>
+                    <span
+                      >Remaining words:
+                      <strong>{{ activeProfilePace.remaining_words }}</strong></span
+                    >
                   </div>
                 </div>
               </div>
@@ -133,16 +149,19 @@ class="escape-hatch-toggle" :class="{ active: userSettings.skip_to_reading_activ
               task.meta
                 ? task.meta
                 : task.start_page !== undefined &&
-                  task.start_page !== null &&
-                  task.end_page !== undefined &&
-                  task.end_page !== null
+                    task.start_page !== null &&
+                    task.end_page !== undefined &&
+                    task.end_page !== null
                   ? 'Pages ' + task.start_page + '-' + task.end_page
                   : 'Pages N/A'
             }}
           </p>
           <button
-type="button" class="primary-btn" :aria-label="'Start task ' + (task.title || task.id)"
-            @click="startTask(task)">
+            type="button"
+            class="primary-btn"
+            :aria-label="'Start task ' + (task.title || task.id)"
+            @click="startTask(task)"
+          >
             Start
           </button>
         </article>
@@ -169,7 +188,7 @@ import {
   getProfiles,
   getUserSettings,
   updateUserSettings,
-  getProfileDailyPace
+  getProfileDailyPace,
 } from '../services/appApi'
 
 const router = useRouter()
@@ -190,7 +209,7 @@ const userSettings = ref({
   cloud_sync_url: '',
   cloud_api_token: '',
   theme: '',
-  rag_enabled: false
+  rag_enabled: false,
 })
 const activeProfilePace = ref(null)
 const lastPersistedProfile = ref('')
@@ -201,11 +220,9 @@ const flashcardsJustCreated = computed(() => {
 })
 
 const activeProfileName = computed(() => {
-  const p = profiles.value.find(pr => pr.id === userSettings.value.active_profile_id)
+  const p = profiles.value.find((pr) => pr.id === userSettings.value.active_profile_id)
   return p ? p.name : 'Unknown'
 })
-
-
 
 onMounted(async () => {
   if (flashcardsJustCreated.value > 0) {
@@ -259,9 +276,7 @@ async function loadAgenda() {
     // Guard: only request pacing if the active_profile_id resolves to a known profile.
     // An orphaned ID (deleted profile still persisted in settings) would hit the backend
     // and return { error: "profile not found" }; we skip the call entirely instead.
-    const knownProfile = profiles.value.find(
-      (pr) => pr.id === userSettings.value.active_profile_id
-    )
+    const knownProfile = profiles.value.find((pr) => pr.id === userSettings.value.active_profile_id)
     if (userSettings.value.active_profile_id && knownProfile) {
       try {
         const pace = await getProfileDailyPace(userSettings.value.active_profile_id)
@@ -280,7 +295,6 @@ async function loadAgenda() {
     } else {
       activeProfilePace.value = null
     }
-
   } catch (err) {
     error.value = err.message || 'Failed to load tasks'
   } finally {
@@ -345,8 +359,6 @@ async function toggleEscapeHatch() {
   }
 }
 
-
-
 function formatDaysRemaining(days) {
   if (days === 0) return 'today!'
   if (days < 0) return 'passed'
@@ -396,7 +408,6 @@ function startTask(task) {
   align-items: center;
   gap: 12px;
 }
-
 
 .profile-selector-container {
   display: flex;
@@ -649,7 +660,9 @@ function startTask(task) {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  transition: transform 0.2s, border-color 0.2s;
+  transition:
+    transform 0.2s,
+    border-color 0.2s;
 }
 
 .task-card:hover {
@@ -707,8 +720,6 @@ function startTask(task) {
 .primary-btn:hover {
   opacity: 0.9;
 }
-
-
 
 .flashcard-success-banner {
   background: rgba(46, 204, 113, 0.1);
