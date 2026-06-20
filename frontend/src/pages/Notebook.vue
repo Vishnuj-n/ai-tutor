@@ -6,8 +6,8 @@
     </div>
 
     <!-- Errors Section -->
-    <div v-if="settingsError || notebooksError" class="error-container" style="margin-bottom: 20px;">
-      <div v-if="settingsError" class="error-message" style="margin-bottom: 10px;">
+    <div v-if="settingsError || notebooksError" class="error-container" style="margin-bottom: 20px">
+      <div v-if="settingsError" class="error-message" style="margin-bottom: 10px">
         Failed to load settings: {{ settingsError }}
       </div>
       <div v-if="notebooksError" class="error-message">
@@ -66,7 +66,11 @@
       <h2>Active Lane ({{ activeNotebooks.length }} / 4)</h2>
       <p class="section-hint">Your currently studying textbooks. Maximum 4 active at a time.</p>
       <div class="notebook-grid">
-        <div v-for="notebook in activeNotebooks" :key="notebook.id" class="notebook-card active-notebook-card">
+        <div
+          v-for="notebook in activeNotebooks"
+          :key="notebook.id"
+          class="notebook-card active-notebook-card"
+        >
           <button
             class="btn-edit-pen"
             title="Edit notebook and chapters"
@@ -84,14 +88,18 @@
             </div>
           </div>
 
-          <div v-if="notebook.topic_id" class="notebook-topic" style="display: flex; align-items: center; gap: 8px;">
+          <div
+            v-if="notebook.topic_id"
+            class="notebook-topic"
+            style="display: flex; align-items: center; gap: 8px"
+          >
             <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
             <RouterLink
               v-if="ragEnabled && ragNotebookChapter"
               :to="`/tutor?topic_id=${notebook.topic_id}&notebook_id=${notebook.id}`"
               class="tutor-link-btn"
               title="Ask Tutor (RAG)"
-              style="text-decoration: none; font-size: 13px;"
+              style="text-decoration: none; font-size: 13px"
             >
               ◎ Ask Tutor
             </RouterLink>
@@ -125,16 +133,26 @@
 
       <div v-if="loading" class="loading">Loading notebooks...</div>
 
-      <div v-if="!loading && dormantNotebooks.length === 0 && activeNotebooks.length === 0" class="empty-state">
+      <div
+        v-if="!loading && dormantNotebooks.length === 0 && activeNotebooks.length === 0"
+        class="empty-state"
+      >
         <p>No notebooks yet. Upload your first document above!</p>
       </div>
 
-      <div v-if="!loading && dormantNotebooks.length === 0 && activeNotebooks.length > 0" class="empty-state">
+      <div
+        v-if="!loading && dormantNotebooks.length === 0 && activeNotebooks.length > 0"
+        class="empty-state"
+      >
         <p>All textbooks are active. Add more books above!</p>
       </div>
 
       <div v-if="!loading && dormantNotebooks.length > 0" class="notebook-grid">
-        <div v-for="notebook in dormantNotebooks" :key="notebook.id" class="notebook-card dormant-notebook-card">
+        <div
+          v-for="notebook in dormantNotebooks"
+          :key="notebook.id"
+          class="notebook-card dormant-notebook-card"
+        >
           <button
             class="btn-edit-pen"
             title="Edit notebook and chapters"
@@ -153,14 +171,18 @@
             </div>
           </div>
 
-          <div v-if="notebook.topic_id" class="notebook-topic" style="display: flex; align-items: center; gap: 8px;">
+          <div
+            v-if="notebook.topic_id"
+            class="notebook-topic"
+            style="display: flex; align-items: center; gap: 8px"
+          >
             <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
             <RouterLink
               v-if="ragEnabled && ragNotebookChapter"
               :to="`/tutor?topic_id=${notebook.topic_id}&notebook_id=${notebook.id}`"
               class="tutor-link-btn"
               title="Ask Tutor (RAG)"
-              style="text-decoration: none; font-size: 13px;"
+              style="text-decoration: none; font-size: 13px"
             >
               ◎ Ask Tutor
             </RouterLink>
@@ -184,8 +206,8 @@
           <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
 
           <div class="notebook-actions">
-            <button 
-              class="btn-activate" 
+            <button
+              class="btn-activate"
               :disabled="activeNotebooks.length >= 4"
               @click="setStudyStatus(notebook.id, 'active')"
             >
@@ -374,7 +396,6 @@ const draftNotebookPriority = ref(5)
 const originalDraftTitle = ref('')
 const originalDraftPriority = ref(5)
 
-
 const draftPageCount = ref(1)
 const draftChapters = ref([])
 const originalDraftChapters = ref([])
@@ -395,14 +416,18 @@ const ragNotebookChapter = ref(true)
 const activeNotebooks = computed(() => {
   if (!Array.isArray(notebooks.value)) return []
   return notebooks.value.filter(
-    (nb) => nb.study_status === 'active' && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
+    (nb) =>
+      nb.study_status === 'active' &&
+      (!activeProfileID.value || nb.profile_id === activeProfileID.value)
   )
 })
 
 const dormantNotebooks = computed(() => {
   if (!Array.isArray(notebooks.value)) return []
   return notebooks.value.filter(
-    (nb) => (nb.study_status === 'dormant' || !nb.study_status) && (!activeProfileID.value || nb.profile_id === activeProfileID.value)
+    (nb) =>
+      (nb.study_status === 'dormant' || !nb.study_status) &&
+      (!activeProfileID.value || nb.profile_id === activeProfileID.value)
   )
 })
 
@@ -1676,7 +1701,9 @@ function formatDate(dateString) {
 
 .active-notebook-card {
   border-color: var(--primary);
-  box-shadow: 0 0 0 1px var(--primary), 0 4px 12px rgba(108, 92, 231, 0.15);
+  box-shadow:
+    0 0 0 1px var(--primary),
+    0 4px 12px rgba(108, 92, 231, 0.15);
 }
 
 .active-icon {

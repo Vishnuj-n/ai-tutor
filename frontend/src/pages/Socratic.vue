@@ -106,7 +106,7 @@ import {
   askSocratic,
   getAvailableTopics as fetchAvailableTopics,
   getNotebooks as fetchNotebooks,
-  getUserSettings
+  getUserSettings,
 } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
@@ -158,7 +158,12 @@ const selectionHint = computed(() => {
     return 'Select a notebook to start the Tutor session.'
   }
 
-  if (selectedNotebook.value && !selectedNotebook.value.topic_id && !selectedTopicID.value && !ragEntireNotebookEnabled.value) {
+  if (
+    selectedNotebook.value &&
+    !selectedNotebook.value.topic_id &&
+    !selectedTopicID.value &&
+    !ragEntireNotebookEnabled.value
+  ) {
     return 'Selected notebook has no linked topic yet. Choose a topic to run RAG.'
   }
 
@@ -199,7 +204,11 @@ async function loadTopics() {
     const list = Array.isArray(result) ? result : Array.isArray(result?.topics) ? result.topics : []
     availableTopics.value = list
 
-    if (!selectedTopicID.value && availableTopics.value.length > 0 && !ragEntireNotebookEnabled.value) {
+    if (
+      !selectedTopicID.value &&
+      availableTopics.value.length > 0 &&
+      !ragEntireNotebookEnabled.value
+    ) {
       selectedTopicID.value = availableTopics.value[0].id
     }
   } catch (err) {

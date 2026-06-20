@@ -50,7 +50,10 @@ export function useChat() {
 
     chatInput.value = ''
     chatError.value = ''
-    const userMsgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 9)
+    const userMsgId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Math.random().toString(36).substring(2, 9)
     chatMessages.value.push({ id: userMsgId, role: 'user', text: question })
     chatLoading.value = true
 
@@ -71,7 +74,10 @@ export function useChat() {
         return false
       }
 
-      const assistantMsgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 9)
+      const assistantMsgId =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : Math.random().toString(36).substring(2, 9)
       chatMessages.value.push({
         id: assistantMsgId,
         role: 'assistant',
