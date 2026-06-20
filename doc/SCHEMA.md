@@ -2,9 +2,9 @@
 
 ## Overview
 
-SQLite is the source of truth. The current schema is centered on the persistent `study_queue`, with content ingestion, quiz generation, FSRS retention, and user settings stored in a small set of explicit tables.
+SQLite is the source of truth. The current schema is centered on the persistent `study_queue`, with content ingestion, quiz generation, FSRS retention, profile management, and user/LLM settings stored in a set of explicit tables.
 
-This document matches the tables created in `internal/db/schema.go`.
+This document is generated from and must remain synchronized with `internal/db/schema.go`. Every `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statement in `InitSchema()` must have a corresponding documented entry below.
 
 ## Table Map
 
@@ -14,7 +14,7 @@ This document matches the tables created in `internal/db/schema.go`.
 | Content       | `notebooks`, `topics`, `chunks`, `notebook_topics`, `notebook_chunks`, `topic_progress` |
 | Assessment    | `quiz_attempts`, `reread_attempts`, `written_questions`, `written_user_answers`         |
 | Retention     | `fsrs_cards`, `fsrs_review_log`, `manual_flashcards`                                    |
-| Configuration | `user_settings`                                                                         |
+| Configuration | `user_settings`, `llm_settings`, `study_profiles`                                       |
 
 ## Queue Tables
 
@@ -25,8 +25,8 @@ Central task table for the application.
 | Field          | Type                                | Description                                                 |
 | -------------- | ----------------------------------- | ----------------------------------------------------------- |
 | `id`           | TEXT PRIMARY KEY                    | Unique task identifier                                      |
-| `notebook_id`  | TEXT NOT NULL                       | Parent notebook                                             |
-| `topic_id`     | TEXT                                | Optional task context                                       |
+| `notebook_id`  | TEXT NOT NULL                       | Parent notebook. FK → `notebooks(id)`                       |
+| `topic_id`     | TEXT                                | Optional task context. FK → `topics(id)`                    |
 | `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
 | `status`       | TEXT NOT NULL                       | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED`       |
 | `priority`     | INTEGER DEFAULT 0                   | Lower values sort first                                     |
@@ -36,6 +36,8 @@ Central task table for the application.
 | `payload_json` | TEXT                                | Optional task payload                                       |
 | `start_page`   | INTEGER                             | Reading start page                                          |
 | `end_page`     | INTEGER                             | Reading end page                                            |
+
+**Foreign keys:** `notebook_id` → `notebooks(id)`, `topic_id` → `topics(id)`.
 
 **Indexes**
 
@@ -50,9 +52,11 @@ Per-task reading cursor.
 
 | Field | Type | Description |
 |---|---|---|
-| `task_id` | TEXT PRIMARY KEY | Reference to `study_queue(id)` |
+| `task_id` | TEXT PRIMARY KEY | FK → `study_queue(id)` |
 | `current_page` | INTEGER DEFAULT 0 | Last visited page |
 | `last_accessed_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
+
+**Foreign keys:** `task_id` → `study_queue(id)`.
 
 ### `review_task_cards`
 
@@ -60,11 +64,17 @@ Links a flashcard review task to the cards selected for that session.
 
 | Field | Type | Description |
 |---|---|---|
-| `task_id` | TEXT NOT NULL | Reference to `study_queue(id)` |
-| `card_id` | TEXT NOT NULL | Reference to `fsrs_cards(id)` |
+| `task_id` | TEXT NOT NULL | FK → `study_queue(id)` ON DELETE CASCADE |
+| `card_id` | TEXT NOT NULL | FK → `fsrs_cards(id)` ON DELETE CASCADE |
 | `status` | TEXT NOT NULL DEFAULT 'pending' | Per-card session state |
 
 Primary key: `(task_id, card_id)`.
+
+**Indexes**
+
+```sql
+CREATE INDEX idx_review_task_cards_task_status ON review_task_cards(task_id, status);
+```
 
 ## Content Tables
 
@@ -78,14 +88,19 @@ Top-level container for uploaded study material.
 | `title` | TEXT NOT NULL | Notebook title |
 | `file_path` | TEXT NOT NULL | Local file path |
 | `file_type` | TEXT DEFAULT 'pdf' | File type |
-| `topic_id` | TEXT | Primary topic reference |
+| `topic_id` | TEXT | Primary topic reference. FK → `topics(id)` |
 | `priority` | INTEGER DEFAULT 5 | Queue bias for this notebook |
 | `status` | TEXT DEFAULT 'uploaded' | Notebook status |
 | `indexing_status` | TEXT DEFAULT 'PENDING' | Ingestion state |
 | `page_count` | INTEGER | Page count if known |
 | `chunk_count` | INTEGER DEFAULT 0 | Number of chunks created |
 | `syllabus_draft_json` | TEXT | Draft syllabus payload |
+| `exam_deadline` | TEXT | Exam date string for deadline tracking |
+| `profile_id` | TEXT | Owning study profile. FK → `study_profiles(id)` ON DELETE SET NULL |
+| `study_status` | TEXT DEFAULT 'dormant' | Lifecycle state (`dormant`, `active`, `completed`) |
 | `uploaded_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Upload time |
+
+**Foreign keys:** `topic_id` → `topics(id)`, `profile_id` → `study_profiles(id)` ON DELETE SET NULL.
 
 ### `topics`
 
@@ -102,6 +117,13 @@ Topic or section container.
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
+**Indexes**
+
+```sql
+CREATE INDEX idx_topics_status_updated_at ON topics(status, updated_at DESC);
+CREATE INDEX idx_topics_status_created_at ON topics(status, created_at DESC);
+```
+
 ### `chunks`
 
 Granular content chunks produced from the source document.
@@ -109,7 +131,7 @@ Granular content chunks produced from the source document.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Chunk identifier |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `topic_id` | TEXT NOT NULL | FK → `topics(id)` |
 | `chunk_text` | TEXT NOT NULL | Chunk content |
 | `page_num` | INTEGER DEFAULT 0 | Source page |
 | `token_count` | INTEGER DEFAULT 0 | Token count |
@@ -117,6 +139,8 @@ Granular content chunks produced from the source document.
 | `weakness_score` | REAL DEFAULT 0 | Weakness signal |
 | `embedding_ref` | TEXT | Reference used by retrieval code |
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+
+**Foreign keys:** `topic_id` → `topics(id)`.
 
 **Indexes**
 
@@ -130,8 +154,8 @@ Many-to-many link between notebooks and topics.
 
 | Field | Type | Description |
 |---|---|---|
-| `notebook_id` | TEXT NOT NULL | Reference to `notebooks(id)` |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `notebook_id` | TEXT NOT NULL | FK → `notebooks(id)` ON DELETE CASCADE |
+| `topic_id` | TEXT NOT NULL | FK → `topics(id)` ON DELETE CASCADE |
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Link creation time |
 
 Primary key: `(notebook_id, topic_id)`.
@@ -143,12 +167,18 @@ Many-to-many link between notebooks and chunks.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Link row identifier |
-| `notebook_id` | TEXT NOT NULL | Reference to `notebooks(id)` |
-| `chunk_id` | TEXT NOT NULL | Reference to `chunks(id)` |
+| `notebook_id` | TEXT NOT NULL | FK → `notebooks(id)` |
+| `chunk_id` | TEXT NOT NULL | FK → `chunks(id)` |
 | `page_num` | INTEGER DEFAULT 0 | Source page |
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Link creation time |
 
-Unique key: `(notebook_id, chunk_id)`.
+Unique constraint on `(notebook_id, chunk_id)` enforced by `idx_notebook_chunk_unique`.
+
+**Indexes**
+
+```sql
+CREATE UNIQUE INDEX idx_notebook_chunk_unique ON notebook_chunks(notebook_id, chunk_id);
+```
 
 ### `topic_progress`
 
@@ -156,11 +186,12 @@ Topic-level learning metadata.
 
 | Field | Type | Description |
 |---|---|---|
-| `topic_id` | TEXT PRIMARY KEY | Reference to `topics(id)` |
+| `topic_id` | TEXT PRIMARY KEY | FK → `topics(id)` |
 | `learned_at` | TIMESTAMP | When topic was marked learned |
 | `last_read_at` | TIMESTAMP | Last read time |
 | `mastery_score` | REAL DEFAULT 0 | Topic mastery score |
 | `review_enabled` | INTEGER DEFAULT 0 | Whether review is enabled |
+| `status` | TEXT DEFAULT 'active' | Topic progress lifecycle state |
 
 ## Assessment Tables
 
@@ -171,7 +202,7 @@ Rollup of a completed quiz task.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Attempt identifier |
-| `task_id` | TEXT NOT NULL | Reference to `study_queue(id)` |
+| `task_id` | TEXT NOT NULL | FK → `study_queue(id)` ON DELETE CASCADE |
 | `score` | INTEGER NOT NULL | Final score |
 | `passed` | INTEGER NOT NULL | Pass/fail flag |
 | `answers_json` | TEXT NOT NULL | Serialized answers |
@@ -179,15 +210,27 @@ Rollup of a completed quiz task.
 | `completed_at` | INTEGER NOT NULL | Completion timestamp |
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Record creation time |
 
+**Indexes**
+
+```sql
+CREATE INDEX idx_quiz_attempts_task_completed_at ON quiz_attempts(task_id, completed_at DESC);
+```
+
 ### `reread_attempts`
 
 Per-topic remediation counter.
 
 | Field | Type | Description |
 |---|---|---|
-| `topic_id` | TEXT PRIMARY KEY | Reference to `topics(id)` |
+| `topic_id` | TEXT PRIMARY KEY | FK → `topics(id)` ON DELETE CASCADE |
 | `attempt_count` | INTEGER NOT NULL DEFAULT 0 | Automatic reread count |
 | `last_attempt_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
+
+**Indexes**
+
+```sql
+CREATE INDEX idx_reread_attempts_last_attempt_at ON reread_attempts(last_attempt_at DESC);
+```
 
 ### `written_questions`
 
@@ -196,9 +239,9 @@ Written-response prompts.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Prompt identifier |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `topic_id` | TEXT NOT NULL | FK → `topics(id)` ON DELETE CASCADE |
 | `prompt` | TEXT NOT NULL | Written prompt |
-| `source_chunk_id` | TEXT | Optional source chunk |
+| `source_chunk_id` | TEXT | FK → `chunks(id)` ON DELETE SET NULL |
 | `source_heading` | TEXT | Source heading |
 | `source_page_start` | INTEGER DEFAULT 0 | Source start page |
 | `source_page_end` | INTEGER DEFAULT 0 | Source end page |
@@ -207,6 +250,12 @@ Written-response prompts.
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
+**Indexes**
+
+```sql
+CREATE INDEX idx_written_questions_topic_created_at ON written_questions(topic_id, created_at DESC);
+```
+
 ### `written_user_answers`
 
 Submitted written responses.
@@ -214,7 +263,7 @@ Submitted written responses.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Answer identifier |
-| `written_question_id` | TEXT NOT NULL | Reference to `written_questions(id)` |
+| `written_question_id` | TEXT NOT NULL | FK → `written_questions(id)` ON DELETE CASCADE |
 | `user_answer` | TEXT NOT NULL | Answer text |
 | `score` | INTEGER NOT NULL | Evaluation score |
 | `feedback` | TEXT | Feedback text |
@@ -230,8 +279,8 @@ Flashcards with FSRS state.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Card identifier |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
-| `source_chunk_id` | TEXT | Optional source chunk |
+| `topic_id` | TEXT NOT NULL | FK → `topics(id)` ON DELETE CASCADE |
+| `source_chunk_id` | TEXT | FK → `chunks(id)` ON DELETE SET NULL |
 | `prompt` | TEXT NOT NULL | Card front |
 | `answer` | TEXT NOT NULL | Card back |
 | `state_json` | TEXT | FSRS state payload |
@@ -245,8 +294,6 @@ Flashcards with FSRS state.
 ```sql
 CREATE UNIQUE INDEX idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt);
 CREATE INDEX idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at);
-CREATE INDEX idx_fsrs_due ON fsrs_cards(due_at);
-CREATE INDEX idx_fsrs_topic ON fsrs_cards(topic_id);
 ```
 
 ### `fsrs_review_log`
@@ -256,7 +303,7 @@ Immutable review log for flashcards.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Log identifier |
-| `topic_id` | TEXT NOT NULL | Reference to `topics(id)` |
+| `topic_id` | TEXT NOT NULL | FK → `topics(id)` ON DELETE CASCADE |
 | `activity_type` | TEXT NOT NULL | Review activity type |
 | `reference_id` | TEXT NOT NULL | Activity reference |
 | `reviewed_at` | INTEGER NOT NULL | Review timestamp |
@@ -280,7 +327,7 @@ User-created manual flashcards.
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Card identifier |
-| `notebook_id` | TEXT NOT NULL | Reference to `notebooks(id)` |
+| `notebook_id` | TEXT NOT NULL | FK → `notebooks(id)` ON DELETE CASCADE |
 | `prompt` | TEXT NOT NULL | Card front |
 | `answer` | TEXT NOT NULL | Card back |
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
@@ -291,7 +338,7 @@ User-created manual flashcards.
 CREATE INDEX idx_manual_flashcards_notebook_id ON manual_flashcards(notebook_id);
 ```
 
-## Configuration Table
+## Configuration Tables
 
 ### `user_settings`
 
@@ -301,15 +348,97 @@ Singleton table for global preferences.
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY CHECK (id = 1) | Singleton row key |
 | `daily_study_minutes` | INTEGER NOT NULL DEFAULT 90 | Daily study target |
+| `active_profile_id` | TEXT | Active study profile. FK → `study_profiles(id)` ON DELETE SET NULL |
+| `skip_to_reading_active` | BOOLEAN DEFAULT 0 | Skip dashboard to active reading |
+| `cloud_sync_url` | TEXT DEFAULT '' | Remote sync endpoint URL |
+| `cloud_api_token` | TEXT DEFAULT '' | Remote sync auth token |
+| `theme` | TEXT DEFAULT 'light-classic' | UI theme selector |
+| `rag_enabled` | BOOLEAN DEFAULT 0 | Master RAG toggle |
+| `rag_notebook_chapter` | BOOLEAN DEFAULT 1 | RAG over notebook chapters |
+| `rag_entire_notebook` | BOOLEAN DEFAULT 1 | RAG over entire notebook |
+| `rag_queue_study` | BOOLEAN DEFAULT 1 | RAG over queued study content |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
+
+**Foreign keys:** `active_profile_id` → `study_profiles(id)` ON DELETE SET NULL.
+
+**Bootstrap:** A single row `(id=1, daily_study_minutes=90)` is inserted on initial schema creation.
+
+### `llm_settings`
+
+LLM provider configuration per performance tier.
+
+| Field | Type | Description |
+|---|---|---|
+| `tier` | TEXT PRIMARY KEY CHECK (tier IN ('fast', 'heavy')) | Performance tier identifier |
+| `provider` | TEXT NOT NULL DEFAULT 'groq' | Provider name (e.g. `groq`, `openai`) |
+| `base_url` | TEXT NOT NULL DEFAULT '' | API base URL |
+| `model` | TEXT NOT NULL DEFAULT '' | Model identifier string |
+| `timeout_ms` | INTEGER NOT NULL DEFAULT 30000 | Request timeout in milliseconds |
+| `api_key_source` | TEXT NOT NULL DEFAULT 'keyring' | Key storage backend |
+| `has_api_key` | BOOLEAN DEFAULT 0 | Whether an API key has been configured |
+| `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
+
+**Bootstrap:** Two rows are inserted on initial schema creation:
+
+```
+('fast',  'groq', 'https://api.groq.com/openai', 'openai/gpt-oss-120b', 60000, 'keyring', 0)
+('heavy', 'groq', 'https://api.groq.com/openai', 'openai/gpt-oss-120b', 90000, 'keyring', 0)
+```
+
+### `study_profiles`
+
+Named study profiles with deadline tracking. Referenced by `user_settings.active_profile_id` and `notebooks.profile_id`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Profile identifier |
+| `name` | TEXT NOT NULL | Human-readable profile name |
+| `deadline_at` | INTEGER NOT NULL | Unix timestamp of target deadline |
+| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
+
+**Referenced by:** `user_settings.active_profile_id` (FK → `id` ON DELETE SET NULL), `notebooks.profile_id` (FK → `id` ON DELETE SET NULL).
 
 ## Key Relationships
 
-- `notebooks` can link to one or more `topics` through `notebook_topics`.
+### Foreign Key Graph
+
+| Source Table | Source Column(s) | Target Table | Cascade Behavior |
+|---|---|---|---|
+| `study_queue` | `notebook_id` | `notebooks(id)` | None |
+| `study_queue` | `topic_id` | `topics(id)` | None |
+| `reading_progress` | `task_id` | `study_queue(id)` | None |
+| `review_task_cards` | `task_id` | `study_queue(id)` | ON DELETE CASCADE |
+| `review_task_cards` | `card_id` | `fsrs_cards(id)` | ON DELETE CASCADE |
+| `chunks` | `topic_id` | `topics(id)` | None |
+| `topic_progress` | `topic_id` | `topics(id)` | None (implicit) |
+| `quiz_attempts` | `task_id` | `study_queue(id)` | ON DELETE CASCADE |
+| `reread_attempts` | `topic_id` | `topics(id)` | ON DELETE CASCADE |
+| `written_questions` | `topic_id` | `topics(id)` | ON DELETE CASCADE |
+| `written_questions` | `source_chunk_id` | `chunks(id)` | ON DELETE SET NULL |
+| `written_user_answers` | `written_question_id` | `written_questions(id)` | ON DELETE CASCADE |
+| `notebooks` | `topic_id` | `topics(id)` | None |
+| `notebooks` | `profile_id` | `study_profiles(id)` | ON DELETE SET NULL |
+| `notebook_topics` | `notebook_id` | `notebooks(id)` | ON DELETE CASCADE |
+| `notebook_topics` | `topic_id` | `topics(id)` | ON DELETE CASCADE |
+| `notebook_chunks` | `notebook_id` | `notebooks(id)` | None |
+| `notebook_chunks` | `chunk_id` | `chunks(id)` | None |
+| `fsrs_cards` | `topic_id` | `topics(id)` | ON DELETE CASCADE |
+| `fsrs_cards` | `source_chunk_id` | `chunks(id)` | ON DELETE SET NULL |
+| `fsrs_review_log` | `topic_id` | `topics(id)` | ON DELETE CASCADE |
+| `manual_flashcards` | `notebook_id` | `notebooks(id)` | ON DELETE CASCADE |
+| `user_settings` | `active_profile_id` | `study_profiles(id)` | ON DELETE SET NULL |
+
+### Semantic Relationships
+
+- `notebooks` link to `topics` through `notebook_topics` (M:N).
+- `notebooks` link to `chunks` through `notebook_chunks` (M:N).
 - `topics` own `chunks`, `written_questions`, `fsrs_cards`, and `fsrs_review_log` rows.
-- `written_questions` and `fsrs_cards` can reference `chunks` for source context.
-- `quiz_attempts` records the outcome of a `study_queue` quiz task.
+- `written_questions` and `fsrs_cards` can optionally reference a specific `chunk` for source context.
+- `quiz_attempts` records the outcome of a `study_queue` QUIZ task.
 - `review_task_cards` binds a `FLASHCARD_REVIEW` queue task to the exact cards reviewed in that session.
+- `topic_progress` stores per-topic learning metadata (mastery, last read, review toggle).
+- `study_profiles` own `notebooks` (via `profile_id`) and are selected as active profile in `user_settings`.
+- `llm_settings` is referenced by application code at runtime to configure model providers per tier.
 
 ## Legacy Terms Removed From The Current Schema
 
