@@ -78,7 +78,7 @@ func (q *VectorIndexQueue) Enqueue(notebookID string) {
 	default:
 		// Channel full, reset active state so it can be retried
 		delete(q.active, notebookID)
-		utils.Warnf("VectorIndexQueue queue channel is full; skipped enqueuing %s", notebookID)
+		utils.Warnf("VectorIndexQueue queue channel is full; skipped enqueuing %s. Please restart the app to retry indexing for this notebook.", notebookID)
 	}
 }
 

@@ -47,7 +47,20 @@ func (r *Repository) GetConnection() *sql.DB {
 // Init initializes the SQLite database and creates tables
 // vec0DllPath should be the absolute path to vec0.dll (sqlite-vec extension)
 func Init(dbPath, vec0DllPath string) (*Repository, error) {
-	dbConn, err := sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
+	driverName := "sqlite3"
+	if vec0DllPath != "" {
+		if _, err := os.Stat(vec0DllPath); err == nil {
+			absPath, err := filepath.Abs(vec0DllPath)
+			if err == nil {
+				setExtensionPath(absPath)
+				driverName = "sqlite3_tutor"
+			}
+		} else {
+			log.Printf("Warning: vec0.dll not found at %s", vec0DllPath)
+		}
+	}
+
+	dbConn, err := sql.Open(driverName, "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return nil, err
 	}
@@ -61,24 +74,24 @@ func Init(dbPath, vec0DllPath string) (*Repository, error) {
 		return nil, err
 	}
 
-	// Load sqlite-vec extension if available
-	if vec0DllPath != "" {
-		// Verify file exists before attempting to load
-		if _, err := os.Stat(vec0DllPath); err == nil {
-			// Use absolute path for the extension
-			absPath, err := filepath.Abs(vec0DllPath)
-			if err != nil {
-				absPath = vec0DllPath
+	// Verify extension load if custom driver was used
+	if driverName == "sqlite3_tutor" {
+		var version string
+		if err := dbConn.QueryRow("SELECT vec_version()").Scan(&version); err != nil {
+			log.Printf("Warning: could not load sqlite-vec extension from %s: %v. Falling back to non-vector DB initialization.", vec0DllPath, err)
+			setExtensionPath("")
+			_ = dbConn.Close()
+
+			// Fallback to standard sqlite3
+			var fbErr error
+			dbConn, fbErr = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
+			if fbErr != nil {
+				return nil, fbErr
 			}
-			// Use driver-level extension loading (SQL load_extension may be blocked as "not authorized").
-			if err := loadExtension(dbConn, absPath); err != nil {
-				log.Printf("Warning: could not load sqlite-vec extension from %s: %v", absPath, err)
-				// Non-fatal; continue without vec0 for backward compat
-			} else {
-				utils.Infof("Successfully loaded sqlite-vec extension from %s", absPath)
-			}
+			dbConn.SetMaxOpenConns(1)
+			dbConn.SetMaxIdleConns(1)
 		} else {
-			log.Printf("Warning: vec0.dll not found at %s", vec0DllPath)
+			utils.Infof("Successfully loaded sqlite-vec extension from %s (version: %s)", vec0DllPath, version)
 		}
 	}
 
