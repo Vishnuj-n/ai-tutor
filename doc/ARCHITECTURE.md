@@ -98,11 +98,13 @@ Sidebar sections:
 
 1. Dashboard
 2. Reader
-3. Quiz
-4. Flashcards
-5. Socratic Tutor
-6. Settings (bottom)
-7. Sync button (bottom)
+3. Notebooks
+4. Quiz
+5. Flashcards
+6. Examiner (WrittenAssessment)
+7. Tutor (Socratic)
+8. Settings (bottom)
+9. Sync (bottom)
 
 These pages can be opened either from a queue task or from a manual exploratory action; both paths should converge on the same initialization pipeline.
 
@@ -119,6 +121,9 @@ Enforces the guided flow and keeps AI contextual rather than conversational.
 - Quiz loads topic quiz sets and shows generation status
 - Flashcards run FSRS reviews and optional Explain
 - Settings stores provider config securely in local app config
+- Notebooks manage uploaded PDFs and their processing status
+- Examiner provides written assessments for long-term retention
+- Socratic Tutor enables conversational learning mode
 
 ## 4. Data Model
 
@@ -533,7 +538,7 @@ Skipped tasks are auditable and can resurface if needed. Do NOT silently mark sk
 
 ### What
 
-Minimal provider interface for OpenAI-compatible APIs. **All generation is synchronous.**
+Minimal provider interface for OpenAI-compatible APIs. **All generation is synchronous.** Dual-tier LLM system with Fast and Heavy models.
 
 ### Why
 
@@ -541,12 +546,23 @@ Minimal provider interface for OpenAI-compatible APIs. **All generation is synch
 - No async orchestration
 - No hidden goroutines
 - Deterministic MVP > premature optimization
+- Cost optimization via model tiering
 
 ### How
 
+**Provider presets:**
+- Groq (fast, free tier)
+- OpenAI (balanced)
+- OpenRouter (flexible)
+- Custom (user-configured)
+
+**Dual-tier LLM:**
+- **Fast**: Quick responses for RAG, explanations, simple tasks
+- **Heavy**: Complex reasoning, quiz generation, detailed analysis
+
 **Provider config fields:**
 - base_url
-- api_key
+- api_key (stored in OS keyring)
 - model
 - timeout_ms
 

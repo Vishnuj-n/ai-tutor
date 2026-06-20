@@ -12,7 +12,7 @@ It is not a chatbot, PDF viewer, or standalone flashcard app. It is a guided tut
 
 ### What
 
-- A guided learning workflow that always suggests the next best action
+- A guided learning workflow driven by a persistent SQLite study queue
 - Local storage for content, embeddings, progress, and scheduling state
 - Topic-scoped AI for explanations and quiz generation only
 
@@ -25,66 +25,83 @@ It is not a chatbot, PDF viewer, or standalone flashcard app. It is a guided tut
 ### How
 
 - Backend and desktop shell: Go + Wails
-- Frontend: Vue multi-page app with left sidebar navigation
+- Frontend: Vue 3 multi-page app with left sidebar navigation
 - Local data: SQLite + sqlite-vec embeddings
-- LLM layer: OpenAI-compatible API (stateless requests)
+- LLM layer: OpenAI-compatible API with dual-tier support (Fast + Heavy)
 
 ## Core Features
 
-- Dashboard:
-	- Today tasks (due reviews, new topics)
+- **Dashboard:**
+	- Today tasks (due reviews, new topics, generated quizzes)
 	- Progress summary
-- Reader:
-	- Structured content view (not raw PDF)
+	- Starvation protection (review-heavy queues surface reading tasks)
+- **Reader:**
+	- Structured content view with page locking
 	- Ask AI panel (primary placement)
-	- Mark as Learned action
-- Quiz:
+	- Trust-based reading completion (no surveillance)
+- **Quiz:**
 	- Topic-based quiz sets generated from learned content
-	- JSON-backed quiz payloads
-- Flashcards:
-	- FSRS actions: Again, Hard, Good, Easy
+	- Synchronous LLM generation with loading state
+	- Pass/fail evaluation with reread remediation
+- **Flashcards:**
+	- FSRS spaced repetition: Again, Hard, Good, Easy
+	- Queue-driven review sessions (one task per chunk)
 	- Explain action (secondary Ask AI placement)
-- Socratic Tutor:
+- **Socratic Tutor:**
 	- Guided questioning mode scoped to current topic
+	- 3-strike rescue pipeline for struggling topics
 	- Enter to send, Shift+Enter for new line
-- Settings:
-	- Base URL, API key, model, phase-2 cloud endpoint placeholder
-- Sync button:
-	- Manual trigger for future sync (timestamp + hash versioning)
+- **Examiner (Written Assessment):**
+	- Advanced assessment tasks for mastery verification
+	- Notebook selection and scoring
+- **Notebooks:**
+	- Bookshelf for managing uploaded textbooks
+	- Batch PDF upload with chapter extraction
+	- Per-notebook priority (1-10 scale)
+- **Settings:**
+	- Dual-tier LLM config (Fast + Heavy) with provider presets (Groq, OpenAI, OpenRouter, Custom)
+	- API key storage via OS keyring
+	- RAG toggles and configuration
+	- Theme selector (Light Classic, Warm Sepia, Deep Indigo Night, Nord Frost, Forest Emerald)
+	- Study profiles with deadlines
+	- Cloud sync (URL + token)
+- **Onboarding:**
+	- Multi-step first-run setup wizard
 
 ## Local-First and Offline Behavior
 
-Works offline:
+**Works offline:**
 
 - Reading
 - FSRS review
 - Scheduling
 - Local progress and content access
 
-Requires internet:
+**Requires internet:**
 
 - Ask AI
 - Quiz generation
 
-Failure rule:
+**Failure rule:**
 
 - If AI is unavailable, show clear error and do not simulate output
 
 ## Tech Stack
 
-- Go
-- Wails
-- Vue (multi-page)
-- SQLite
-- sqlite-vec
-- onnxruntime_go + ONNX INT8 embedding model
-- OpenAI-compatible LLM API
+- Go 1.26
+- Wails v2
+- Vue 3 (multi-page, hash-based routing)
+- SQLite + sqlite-vec (vec0 extension)
+- ONNX Runtime (local INT8 embedding model)
+- go-fsrs/v4 (FSRS spaced repetition algorithm)
+- OpenAI-compatible LLM API (dual-tier: Fast + Heavy)
+- go-keyring (OS keyring for API key storage)
 
 ## Quick Start
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 - Node.js 20+
 - Wails CLI
 - CGO-capable compiler toolchain
@@ -94,10 +111,14 @@ Failure rule:
 	- `onnxruntime.dll` (Windows) / `libonnxruntime.dylib` (macOS) / `libonnxruntime.so` (Linux)
 	- `vec0.dll` (Windows) / `vec0.dylib` (macOS) / `vec0.so` (Linux)
 
-Run dependency checks before development:
+Run dependency checks and asset download:
 
 ```bash
+# macOS / Linux
 ./sync-deps.sh
+
+# Windows
+./windows-sync-deps.ps1
 ```
 
 ### Development
@@ -116,7 +137,7 @@ wails build -tags sqlite_extension
 ## Local RAG Troubleshooting
 
 - `Ask AI unavailable` on startup:
-	- Run `./sync-deps.sh`
+	- Run `./sync-deps.sh` (or `./windows-sync-deps.ps1` on Windows)
 	- Confirm all required files exist under `asset/`
 - `no such module: vec0`:
 	- Ensure build includes `-tags sqlite_extension`
@@ -130,35 +151,17 @@ wails build -tags sqlite_extension
 ## Documentation
 
 - System design: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
-- User and interaction flow: [doc/APP_FLOW.md](doc/APP_FLOW.md)
-- Retrieval pipeline: [doc/RAG.md](doc/RAG.md)
-- Project structure: [doc/PROJECT_STRUCTURE.md](doc/PROJECT_STRUCTURE.md)
+- App flow and user interactions: [doc/APP_FLOW.md](doc/APP_FLOW.md)
+- Database schema: [doc/SCHEMA.md](doc/SCHEMA.md)
+- API contracts: [doc/DATA_API.md](doc/DATA_API.md)
+- Module responsibilities: [doc/AGENT_MAP.md](doc/AGENT_MAP.md)
+- Current sprint roadmap: [doc/SPRINT.md](doc/SPRINT.md)
+- RAG pipeline: [doc/RAG.md](doc/RAG.md)
+- UI/UX design: [doc/DESIGN.md](doc/DESIGN.md)
+- Platform support: [doc/PLATFORM_SUPPORT.md](doc/PLATFORM_SUPPORT.md)
 
 ## Constraints
 
 - Keep the system simple and implementation-ready
 - Avoid unnecessary abstraction and premature optimization
 - Do not use LangChain, agent orchestration, or chatbot-style memory
-
-
-## Sprint 14: FSRS Integration & Smart Scaling
-**Goal:** Tie generated assessments to memory algorithms and automate background generation.
-
-* **FSRS Hookup:** Connect the FSRS scoring algorithm to the quiz and Socratic examiner outputs. Track success/failure on individual generated questions.
-* **Density Scaling:** Replace hardcoded assessment counts. Pass the total chunk length to the FAST_LLM and instruct it to scale the number of flashcards and quiz questions to match the material density.
-* **Background Queue:** Implement a Go routine worker. Identify the next two reading tasks in the schedule. Pre-build the quizzes and flashcards for these upcoming sessions while the user reads the current text.
-
-## Sprint 15: Task Management & Dashboard Routing
-**Goal:** Finalize the user dashboard experience.
-
-* **Persistent Checklist:** Build a task checklist in the left sidebar. Allow users to tick off items to log completed work.
-* **State Routing:** Wire the dashboard buttons to control application state. Clicking a reading task mounts `Reader.vue`, loads the topic, and physically locks the context to the assigned pages.
-* **Completion State:** Clear the dashboard state when the user completes the daily queue.
-
-## Sprint 16: Concurrency & Tools Sidebar
-**Goal:** Optimize speed and add specific learning utilities.
-
-* **Concurrent Ingestion:** Rewrite the PDF indexing pipeline to use Go routines. Process chapter chunking and ONNX embedding concurrently.
-* **Acronym Generator:** Add an acronym tool to the sidebar. Pass the locked active page context to the FAST_LLM and request mnemonic devices. 
-* **Mindmap Generator:** Add a mindmap tool that reads the locked page context and outputs structured JSON for a frontend rendering library.
-* **Documentation Rewrite:** Update `/doc` files to document the dual-LLM routing, the context-locked schema, and the two-step vector retrieval.

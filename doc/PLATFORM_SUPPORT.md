@@ -16,7 +16,7 @@ Windows is the exclusive build target for the MVP phase. This constraint elimina
 
 ### Build Requirements
 
-- Go 1.21+ with CGO enabled (MSYS2/MinGW on Windows)
+- Go 1.26 with CGO enabled (MSYS2/MinGW on Windows)
 - MSVC or MinGW toolchain
 - PowerShell for dependency sync scripts
 

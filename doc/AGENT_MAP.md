@@ -19,7 +19,7 @@ Reader completes the reading task only. The backend generates and activates the 
 
 ## Queue Router (Thin Task Router)
 
-**File:** `internal/orchestrator/service.go`
+**File:** `internal/study/service.go`
 
 **Responsibility:** Route tasks between queue and modules. This is a lightweight query-and-route layer, not a flow engine.
 
@@ -58,7 +58,7 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 
 ## Reader Module
 
-**File:** `frontend/src/pages/Reader.vue` + `internal/reader/`
+**File:** `frontend/src/pages/Reader.vue` + `internal/study/reader_ai.go`
 
 **Responsibility:** Render PDF content for reading (execution surface only, Reading Layer)
 
@@ -100,7 +100,7 @@ func MarkBlockRead(blockID string, progress int) error
 
 ## Quiz Module
 
-**File:** `frontend/src/pages/Quiz.vue` + `internal/quiz/`
+**File:** `frontend/src/pages/Quiz.vue` + `internal/study/quiz_sync.go`
 
 **Responsibility:** Display and score quizzes (execution surface only, Reading Layer)
 
@@ -141,7 +141,7 @@ func SubmitQuiz(blockID string, answers []Answer) (*QuizResult, error)
 
 ## Flashcard Module
 
-**File:** `frontend/src/pages/Flashcards.vue` + `internal/flashcards/`
+**File:** `frontend/src/pages/Flashcards.vue` + `internal/study/flashcard.go`
 
 **Responsibility:** Render and rate flashcards (execution surface only, Retention Layer)
 
@@ -171,7 +171,7 @@ func RateCard(cardID string, rating Rating) error
 
 ## FSRS Service
 
-**File:** `internal/study/fsrs.go`
+**File:** `internal/scheduler/fsrs.go`
 
 **Responsibility:** Scheduling algorithm for long-term retention (Retention Layer)
 
@@ -203,7 +203,7 @@ func LogReview(cardID string, rating int) error
 
 ## Examiner Module
 
-**File:** `frontend/src/pages/Examiner.vue` + `internal/examiner/`
+**File:** `frontend/src/pages/WrittenAssessment.vue` + `internal/study/examiner.go`
 
 **Responsibility:** Written assessments (Retention Layer)
 
@@ -230,7 +230,7 @@ func SubmitAssessment(blockID string, answers []Answer) (*AssessmentResult, erro
 
 ## Ingestion Pipeline
 
-**File:** `internal/ingestion/` + `internal/chunking/`
+**File:** `internal/notebook/` (upload.go, ingestion.go, pdfcpu.go, syllabus.go)
 
 **Responsibility:** PDF → Chunks → Queue
 
@@ -287,7 +287,7 @@ func GetNextTask() (*Task, error)
 
 ## RAG / Ask AI Service
 
-**File:** `internal/rag/pipeline.go`
+**File:** `internal/retrieval/engine.go`
 
 **Responsibility:** Topic-scoped retrieval and answering
 
@@ -396,32 +396,51 @@ Generated Reader -> Quiz handoffs flow through the queue router only; they are n
 
 ```
 internal/
-  orchestrator/       # Thin task router (queue router)
-    service.go
-  reader/
-    handler.go       # Reader module backend
-  quiz/
-    handler.go       # Quiz module backend
-  flashcards/
-    handler.go       # Flashcard module backend
-  fsrs/
-    scheduler.go     # FSRS algorithm only
-  examiner/
-    handler.go       # Examiner module backend
-  ingestion/
-    pdf.go           # PDF extraction
-    chunking.go      # Sliding window
-  rag/
-    pipeline.go      # Retrieval and answering
-  db/
-    store.go         # All SQL operations
+  study/             # Study session logic
+    service.go       # Core study service
+    flashcard.go     # Flashcard review session
+    examiner.go      # Written assessment session
+    quiz_sync.go     # Synchronous quiz generation
+    reader_ai.go     # Reader AI interactions
+    socratic.go      # Socratic tutor session
+  scheduler/         # Scheduling algorithms
+    fsrs.go          # FSRS spaced repetition algorithm
+    service.go       # Scheduler service wrapper
+  notebook/          # Upload + ingestion
+    upload.go        # PDF upload handling
+    ingestion.go     # PDF processing pipeline
+    pdfcpu.go        # PDF text extraction
+    syllabus.go      # Chapter boundary detection
+  embeddings/        # Local embedding inference
+    onnx.go          # ONNX Runtime embedding model
+    text.go          # Text preprocessing
+  retrieval/         # RAG retrieval pipeline
+    engine.go        # Search and retrieval engine
+    indexer.go       # Index management
+    queue.go         # Queue-based retrieval
+  llm/               # LLM provider adapter
+    provider.go      # OpenAI-compatible client
+    keyring.go       # OS keyring for API keys
+  runtime/           # Application bootstrap
+    boot.go          # Startup initialization
+    asset_manager.go # Asset validation
+  models/            # Domain types
+    models.go        # Task, Block, Quiz types
+  db/                # Data persistence
+    store.go         # Database initialization
+    schema.go        # Table definitions
+    study_queue_repo.go # Queue CRUD operations
 
 frontend/src/pages/
   Dashboard.vue      # Task display
   Reader.vue         # Reading module
   Quiz.vue           # Quiz module
   Flashcards.vue     # Flashcard module
-  Examiner.vue       # Examiner module
+  WrittenAssessment.vue # Written assessment (Examiner)
+  Socratic.vue       # Socratic tutor
+  Notebook.vue       # Notebook management
+  Onboarding.vue     # First-time setup
+  Settings.vue       # Provider config
 ```
 
 ---

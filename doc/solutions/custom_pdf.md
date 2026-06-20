@@ -10,7 +10,7 @@ We replaced the basic iframe PDF viewer with a premium, custom-tailored `vue-pdf
 
 ### Frontend
 
-#### [Reader.vue](file:///c:/Users/vishn/PROJECT/ai-tutor/frontend/src/pages/Reader.vue)
+#### [Reader.vue](fai-tutor/frontend/src/pages/Reader.vue)
 - **Engine Upgrade**: Swapped `<iframe class="pdf-frame">` with `<vue-pdf-embed>` wrapped in a scrollable viewport `.pdf-viewport`.
 - **Seamless Scrolling**: Enabled continuous scrolling down all pages by default, omitting page limits in free browsing. In Task Flow, it automatically loads and bounds the page array using computed `renderedPages`.
 - **Scroll Tracking & Sync**: Configured an `IntersectionObserver` observing PDF pages. It updates the active reading page `reader.currentPage` dynamically as the user scrolls, keeping chat contexts in perfect sync.
@@ -26,13 +26,13 @@ We replaced the basic iframe PDF viewer with a premium, custom-tailored `vue-pdf
 ---
 
 # ITERATION 2
-We upgraded the custom PDF viewer in [Reader.vue](file:///C:/Users/vishn/PROJECT/ai-tutor/frontend/src/pages/Reader.vue) to incorporate four standardized view modes and dynamic multi-input scaling.
+We upgraded the custom PDF viewer in [Reader.vue](fai-tutor/frontend/src/pages/Reader.vue) to incorporate four standardized view modes and dynamic multi-input scaling.
 
 ## Changes Made
 
 ### Frontend
 
-#### [Reader.vue](file:///C:/Users/vishn/PROJECT/ai-tutor/frontend/src/pages/Reader.vue)
+#### [Reader.vue](fai-tutor/frontend/src/pages/Reader.vue)
 
 1. **State variables added**:
    - `zoomScale` (magnification multiplier, default `1.0`).
@@ -91,7 +91,7 @@ I have implemented four performance optimizations in the PDF reader to decrease 
 
 ### Frontend
 
-#### [Reader.vue](file:///c:/Users/vishn/PROJECT/ai-tutor/frontend/src/pages/Reader.vue)
+#### [Reader.vue](fai-tutor/frontend/src/pages/Reader.vue)
 
 1. **DOM Caching**:
    - Introduced a `pageElements` Map in the component setup.
