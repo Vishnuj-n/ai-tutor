@@ -7,37 +7,37 @@ All 21 functions identified as "Truly Dead Code" (having 0 callers in both produ
 We modified 10 source files to remove unused functions, unused package variables, and unused package imports:
 
 ### Assessment Repository
-- Removed `saveWrittenAnswerRepo` and `SaveWrittenAnswer` in [assessment_repo.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/assessment_repo.go).
+- Removed `saveWrittenAnswerRepo` and `SaveWrittenAnswer` in [assessment_repo.go](fai-tutor/internal/db/assessment_repo.go).
 
 ### Notebooks Repository
-- Removed `GetChunkTextByNotebookPageRange`, `GetNotebookPageCount`, and `AutoSwapCompletedNotebook` in [notebooks_repo.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/notebooks_repo.go).
+- Removed `GetChunkTextByNotebookPageRange`, `GetNotebookPageCount`, and `AutoSwapCompletedNotebook` in [notebooks_repo.go](fai-tutor/internal/db/notebooks_repo.go).
 
 ### Reader Repository
-- Removed `GetTopicContent` in [reader_repo.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/reader_repo.go).
+- Removed `GetTopicContent` in [reader_repo.go](fai-tutor/internal/db/reader_repo.go).
 
 ### Store & Review Sessions
-- Removed `GetExistingReviewTaskForNotebook`, `GetDueReviewCardCountsByNotebook`, and `GetChunkEmbeddingRef` in [store.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/store.go).
-- Removed `getDueReviewCardCountsByNotebookRepo` in [review_session_repo.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/review_session_repo.go).
+- Removed `GetExistingReviewTaskForNotebook`, `GetDueReviewCardCountsByNotebook`, and `GetChunkEmbeddingRef` in [store.go](fai-tutor/internal/db/store.go).
+- Removed `getDueReviewCardCountsByNotebookRepo` in [review_session_repo.go](fai-tutor/internal/db/review_session_repo.go).
 
 ### Study Queue Repository
-- Removed `saveQuizAttemptRepo` and `SaveQuizAttempt` in [study_queue_repo.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/study_queue_repo.go).
+- Removed `saveQuizAttemptRepo` and `SaveQuizAttempt` in [study_queue_repo.go](fai-tutor/internal/db/study_queue_repo.go).
 
 ### Topics Repository
-- Removed `GetTopicCurrentPageCursor`, `QueryActiveTopics`, `QueryLearningTopics`, `QueryUpcomingReadingTopics`, `CountLearnedTopics`, and `AppendQuestionsAndAdvanceCursor` in [topics_repo.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/topics_repo.go).
+- Removed `GetTopicCurrentPageCursor`, `QueryActiveTopics`, `QueryLearningTopics`, `QueryUpcomingReadingTopics`, `CountLearnedTopics`, and `AppendQuestionsAndAdvanceCursor` in [topics_repo.go](fai-tutor/internal/db/topics_repo.go).
 
 ### Embeddings
-- Removed `TokenizeSimple` and its helper regexp variable `nonWord` in [text.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/embeddings/text.go).
+- Removed `TokenizeSimple` and its helper regexp variable `nonWord` in [text.go](fai-tutor/internal/embeddings/text.go).
 - Pruned the unused `"regexp"` package import.
 
 ### Models
-- Removed `ReadingSessionResponse.Validate` in [models.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/models/models.go).
+- Removed `ReadingSessionResponse.Validate` in [models.go](fai-tutor/internal/models/models.go).
 - Pruned the unused `"fmt"` package import.
 
 ### Notebook Upload Options
-- Removed Option arguments `WithReadFileFunc` and `WithOpenPDFFunc` in [upload.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/notebook/upload.go).
+- Removed Option arguments `WithReadFileFunc` and `WithOpenPDFFunc` in [upload.go](fai-tutor/internal/notebook/upload.go).
 
 ### Utils Logging
-- Removed `Debugf`, `LogReviewSessionResume`, and `LogQueueOrdering` in [logging.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/utils/logging.go).
+- Removed `Debugf`, `LogReviewSessionResume`, and `LogQueueOrdering` in [logging.go](fai-tutor/internal/utils/logging.go).
 
 ---
 

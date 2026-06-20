@@ -4,7 +4,7 @@ All tasks from the implementation plan have been completed and verified.
 
 ## Changes Made
 
-### 1. [`internal/runtime/asset_manager.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/runtime/asset_manager.go) — Full rewrite
+### 1. [`internal/runtime/asset_manager.go`](fai-tutor/internal/runtime/asset_manager.go) — Full rewrite
 
 #### New version injection point
 ```go
@@ -38,7 +38,7 @@ Uses `getPlatformOnnxLibName()` and `getPlatformVecLibName()` instead of hardcod
 
 ---
 
-### 2. [`internal/runtime/boot.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/runtime/boot.go) — APP_ENV fallback
+### 2. [`internal/runtime/boot.go`](fai-tutor/internal/runtime/boot.go) — APP_ENV fallback
 
 ```go
 _ = godotenv.Load()
@@ -51,7 +51,7 @@ Fresh environments without a `.env` file no longer silently inherit an undefined
 
 ---
 
-### 3. [`windows-sync-deps.ps1`](file:///c:/Users/vishn/PROJECT/ai-tutor/windows-sync-deps.ps1) — Version-matched URL
+### 3. [`windows-sync-deps.ps1`](fai-tutor/windows-sync-deps.ps1) — Version-matched URL
 
 Reads an optional `VERSION` file from the project root (defaults to `v1.0.0`). Maps `v1.0.0` → `rag-assets.zip` (legacy) and any later version → `asset_windows.zip`:
 ```powershell
@@ -66,7 +66,7 @@ $downloadUrl = "https://github.com/Vishnuj-n/ai-tutor/releases/download/$release
 
 ---
 
-### 4. [`sync-deps.sh`](file:///c:/Users/vishn/PROJECT/ai-tutor/sync-deps.sh) — Platform-aware
+### 4. [`sync-deps.sh`](fai-tutor/sync-deps.sh) — Platform-aware
 
 Now detects `uname -s` (Darwin vs Linux) and:
 - Sets OS-specific cache dir (`~/Library/Caches` vs `~/.cache`)
@@ -108,18 +108,18 @@ All tasks outlined in the implementation plan have been completed and verified s
 ## Changes Made
 
 ### 1. SQLite Vector Extension Verification & CGO Fallback
-- **Implemented `IsVecExtensionLoaded()`:** Added a query-based check executing `SELECT vec_version()` inside [store.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/store.go) to verify if the extension was successfully loaded.
-- **Fixed `extension_nocgo.go` Compilation:** Added `"database/sql"` to the imports in [extension_nocgo.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/extension_nocgo.go) to avoid compilation failures when building under `!cgo` environments.
-- **Fallback Initialization:** Modified [boot.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/runtime/boot.go) to catch errors when trying to initialize the database with vectors. If loading fails or `IsVecExtensionLoaded()` returns false, it re-initializes without vector support using `db.Init(dbPath, "")`.
-- **Safe RAG Toggle:** Updated `InitializeRAG` in [app.go](file:///c:/Users/vishn/PROJECT/ai-tutor/app.go) to revert cleanly to a non-vector configuration if extension loading fails, preventing corrupt or half-configured database states.
+- **Implemented `IsVecExtensionLoaded()`:** Added a query-based check executing `SELECT vec_version()` inside [store.go](fai-tutor/internal/db/store.go) to verify if the extension was successfully loaded.
+- **Fixed `extension_nocgo.go` Compilation:** Added `"database/sql"` to the imports in [extension_nocgo.go](fai-tutor/internal/db/extension_nocgo.go) to avoid compilation failures when building under `!cgo` environments.
+- **Fallback Initialization:** Modified [boot.go](fai-tutor/internal/runtime/boot.go) to catch errors when trying to initialize the database with vectors. If loading fails or `IsVecExtensionLoaded()` returns false, it re-initializes without vector support using `db.Init(dbPath, "")`.
+- **Safe RAG Toggle:** Updated `InitializeRAG` in [app.go](fai-tutor/app.go) to revert cleanly to a non-vector configuration if extension loading fails, preventing corrupt or half-configured database states.
 
 ### 2. On-Demand Remote Downloader
-- **Pure Go HTTP Downloader:** Integrated Go's standard `"net/http"` and `"archive/zip"` in [asset_manager.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/runtime/asset_manager.go).
+- **Pure Go HTTP Downloader:** Integrated Go's standard `"net/http"` and `"archive/zip"` in [asset_manager.go](fai-tutor/internal/runtime/asset_manager.go).
 - **Graceful Download Stream:** If local `./asset/` files are not found, `AcquireAssets` downloads the release assets directly from GitHub, reporting progress safely.
 - **Atomic Defer Cleanup:** Downloads are stored in a temporary zip file (`rag-assets.tmp.zip`) and decompressed. The target `manifest.json` is only written upon zero-error completion to prevent partial or corrupted asset states from passing subsequent checks.
 
 ### 3. Sync Scripts Update
-- **PowerShell and Bash Fallbacks:** Updated [windows-sync-deps.ps1](file:///c:/Users/vishn/PROJECT/ai-tutor/windows-sync-deps.ps1) and [sync-deps.sh](file:///c:/Users/vishn/PROJECT/ai-tutor/sync-deps.sh) to check both AppData and local workspace paths.
+- **PowerShell and Bash Fallbacks:** Updated [windows-sync-deps.ps1](fai-tutor/windows-sync-deps.ps1) and [sync-deps.sh](fai-tutor/sync-deps.sh) to check both AppData and local workspace paths.
 - **Asset Mirroring:** If assets exist in the workspace, they are synced directly to the AppData folder. If they are missing entirely, the scripts attempt to download the release zip from GitHub, fall back cleanly on offline/404 scenarios, and copy downloaded assets back to the workspace for development coupling.
 
 ---

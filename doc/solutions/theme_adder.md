@@ -5,14 +5,14 @@ I have completed the implementation of the workspace theme switcher! Now, users 
 ## Changes Made
 
 ### 1. Database & Go Backend
-* **[schema.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/schema.go)**: Added column `theme TEXT DEFAULT 'light-classic'` in `CREATE TABLE user_settings` and wired a startup migration column checker.
-* **[models.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/models/models.go)**: Added `Theme` property to the `UserSettings` struct.
-* **[store.go](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/store.go)**: Expanded SQL queries in `GetUserSettings()` and `UpdateUserSettings()` to read and write the selected theme to the database.
-* **[app.go](file:///c:/Users/vishn/PROJECT/ai-tutor/app.go)**: Adjusted `GetUserSettings()` to return the theme, and `UpdateUserSettings()` signature to accept and save the theme preference.
+* **[schema.go](fai-tutor/internal/db/schema.go)**: Added column `theme TEXT DEFAULT 'light-classic'` in `CREATE TABLE user_settings` and wired a startup migration column checker.
+* **[models.go](fai-tutor/internal/models/models.go)**: Added `Theme` property to the `UserSettings` struct.
+* **[store.go](fai-tutor/internal/db/store.go)**: Expanded SQL queries in `GetUserSettings()` and `UpdateUserSettings()` to read and write the selected theme to the database.
+* **[app.go](fai-tutor/app.go)**: Adjusted `GetUserSettings()` to return the theme, and `UpdateUserSettings()` signature to accept and save the theme preference.
 
 ### 2. Styles & Wails Bridge
-* **[appApi.js](file:///c:/Users/vishn/PROJECT/ai-tutor/frontend/src/services/appApi.js)**: Forwarded the new `theme` parameter to Wails in the `updateUserSettings` API wrapper.
-* **[style.css](file:///c:/Users/vishn/PROJECT/ai-tutor/frontend/src/style.css)**: Defined CSS custom variable overrides for four premium styles:
+* **[appApi.js](fai-tutor/frontend/src/services/appApi.js)**: Forwarded the new `theme` parameter to Wails in the `updateUserSettings` API wrapper.
+* **[style.css](fai-tutor/frontend/src/style.css)**: Defined CSS custom variable overrides for four premium styles:
   * **Light Classic** (the default style)
   * **Warm Sepia** (comfort reading sepia mode)
   * **Deep Indigo** (dark theme with premium indigo overlays)
@@ -20,9 +20,9 @@ I have completed the implementation of the workspace theme switcher! Now, users 
   * **Forest Emerald** (deep moss-green dark mode)
 
 ### 3. Frontend Pages
-* **[App.vue](file:///c:/Users/vishn/PROJECT/ai-tutor/frontend/src/App.vue)**: Applied the saved user theme dynamically on app startup.
-* **[Onboarding.vue](file:///c:/Users/vishn/PROJECT/ai-tutor/frontend/src/pages/Onboarding.vue)**: Added a third onboarding step containing visual selector preview cards. Clicking a theme changes the workspace color in real-time, and completing the wizard persists the choice.
-* **[Settings.vue](file:///c:/Users/vishn/PROJECT/ai-tutor/frontend/src/pages/Settings.vue)**: Added the dropdown option selector in the General Settings panel. Changing the dropdown immediately updates the aesthetic in real-time before saving.
+* **[App.vue](fai-tutor/frontend/src/App.vue)**: Applied the saved user theme dynamically on app startup.
+* **[Onboarding.vue](fai-tutor/frontend/src/pages/Onboarding.vue)**: Added a third onboarding step containing visual selector preview cards. Clicking a theme changes the workspace color in real-time, and completing the wizard persists the choice.
+* **[Settings.vue](fai-tutor/frontend/src/pages/Settings.vue)**: Added the dropdown option selector in the General Settings panel. Changing the dropdown immediately updates the aesthetic in real-time before saving.
 
 ---
 

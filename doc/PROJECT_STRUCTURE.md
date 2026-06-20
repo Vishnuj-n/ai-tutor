@@ -6,53 +6,74 @@ Directory organization and package ownership. For architecture details, see `ARC
 
 ## Backend (Go + Wails)
 
-### Top-Level Files (Simplified)
+### Top-Level Files
 
 | File | Responsibility |
 |------|----------------|
 | `main.go` | Wails bootstrap only |
-| `app.go` | Wails-facing methods (~600-700 lines, acceptable) |
-| `notebook_endpoints.go` | Notebook API (~600-700 lines, acceptable) |
+| `app.go` | Wails-facing methods |
+| `notebook_endpoints.go` | Notebook API endpoints |
 
 ### Internal Packages
 
 ```
 internal/
-  orchestrator/       # Queue router (thin task router)
-    service.go
-  
-  db/                 # Data persistence
-    store.go          # All SQL operations
-    schema.go         # Table definitions
-  
-  models/             # Domain types
-    task.go           # TaskType, TaskStatus, Task
-    block.go          # Block, BlockType
-    quiz.go           # QuizSet, QuizResult
-  
-  ingestion/          # PDF → Chunks → Queue
-    pdf.go            # PDF extraction
-    chunking.go       # Sliding window (2500 words, 200 overlap)
-  
-  reader/             # Reading module backend
-    handler.go
-  
-  quiz/               # Quiz module backend
-    handler.go
-    generator.go      # Synchronous LLM quiz generation
-  
-  flashcards/         # Flashcard module backend
-    handler.go
-  
-  fsrs/               # FSRS scheduling algorithm only
-    scheduler.go      # CalculateNextReview, GetDueCards
-  
-  examiner/           # Examiner module backend
-    handler.go
-  
-  
-  llm/                # OpenAI-compatible client
-    provider.go       # Synchronous only
+  db/                 # Data persistence (24 files)
+    store.go          # Database initialization and connection
+    schema.go         # Table definitions and migrations
+    study_queue_repo.go # Queue CRUD operations
+    reader_repo.go    # Reader state queries
+    flashcard_repo.go # Flashcard card operations
+    topics_repo.go    # Topic/chunk queries
+    notebooks_repo.go # Notebook management
+    vector_repo.go    # Embedding vector storage
+    tx.go             # Transaction helpers
+    types.go          # Shared DB types
+
+  study/              # Study session logic (8 files)
+    service.go        # Core study service
+    flashcard.go      # Flashcard review session
+    examiner.go       # Written assessment session
+    quiz_sync.go      # Synchronous quiz generation
+    reader_ai.go      # Reader AI interactions
+    socratic.go       # Socratic tutor session
+    review_session.go # Review session management
+    sync.go           # Sync utilities
+
+  notebook/           # Upload + ingestion (5 files)
+    upload.go         # PDF upload handling
+    ingestion.go      # PDF processing pipeline
+    pdfcpu.go         # PDF text extraction
+    syllabus.go       # Chapter boundary detection
+
+  scheduler/          # Scheduling algorithms (4 files)
+    fsrs.go           # FSRS spaced repetition algorithm
+    service.go        # Scheduler service wrapper
+
+  embeddings/         # Local embedding inference (6 files)
+    onnx.go           # ONNX Runtime embedding model
+    text.go           # Text preprocessing
+    tokenizer_utils.go # Tokenizer utilities
+
+  retrieval/          # RAG retrieval pipeline (3 files)
+    engine.go         # Search and retrieval engine
+    indexer.go        # Index management
+    queue.go          # Queue-based retrieval
+
+  llm/                # LLM provider adapter (3 files)
+    provider.go       # OpenAI-compatible client
+    keyring.go        # OS keyring for API keys
+
+  runtime/            # Application bootstrap (2 files)
+    boot.go           # Startup initialization
+    asset_manager.go  # Asset validation and management
+
+  models/             # Domain types (1 file)
+    models.go         # Task, Block, Quiz types
+
+  utils/              # Shared utilities (2 files)
+    hash.go           # Hashing functions
+    logging.go        # Structured logging
 ```
 
 ### Package Ownership Rules
@@ -60,7 +81,7 @@ internal/
 | Rule | Rationale |
 |------|-----------|
 | One responsibility per package | Clear boundaries |
-| No cross-package orchestration | See `ARCHITECTURE.md` queue router pattern |
+| No cross-package orchestration | Queue controls progression |
 | State in SQLite, not code | Persistent queue architecture |
 | Handlers are thin | UI logic in frontend, backend in `internal/` |
 
@@ -71,37 +92,44 @@ internal/
 ```
 frontend/src/
   pages/
-    Dashboard.vue       # Shows pending tasks from queue
-    Reader.vue          # Reading module (stateless)
-    Quiz.vue            # Quiz module (stateless)
-    Flashcards.vue      # Flashcard module (stateless)
-    Examiner.vue        # Examiner module (stateless)
-    Settings.vue        # Configuration
-  
+    Dashboard.vue        # Shows pending tasks from queue
+    Reader.vue           # PDF reading module
+    Quiz.vue             # Quiz generation and scoring
+    Flashcards.vue       # Flashcard review with FSRS
+    WrittenAssessment.vue # Written assessment (Examiner)
+    Socratic.vue         # Socratic tutor chat
+    Notebook.vue         # Notebook management
+    Onboarding.vue       # First-time setup wizard
+    Settings.vue         # Provider config, themes, profiles
+
   components/
-    Sidebar.vue         # Navigation
-    TaskCard.vue        # Queue task display
-    LoadingSpinner.vue  # For synchronous LLM calls
-  
+    Sidebar.vue          # Navigation sidebar (7 items)
+    BaseButton.vue       # Reusable button component
+    ErrorMessage.vue     # Error display component
+    ReaderChat.vue       # Ask AI panel for Reader
+    StudyPageLayout.vue  # Shared study page layout
+
   services/
-    appApi.js           # Backend bridge
-    queueCoordinator.js # Queue API wrapper
-  
+    appApi.js            # Wails backend bridge
+    markdown.js          # Markdown rendering utilities
+
+  composables/           # Vue composables
+  config/                # App configuration
   router/
-    index.js            # Route definitions
+    index.js             # Route definitions
 ```
 
-### Module Contract
+### Sidebar Items (7)
 
-Each module receives:
-- `task_id`: Current task identifier
-- `block_id`: Content to render
-- `related_id`: Topic context
+1. Dashboard
+2. Reader
+3. Notebooks
+4. Quiz
+5. Flashcards
+6. Examiner (WrittenAssessment)
+7. Tutor (Socratic)
 
-Each module returns:
-- Completion signal with result
-- No routing decisions
-- No task scheduling
+Plus: Settings and Sync at bottom.
 
 ---
 

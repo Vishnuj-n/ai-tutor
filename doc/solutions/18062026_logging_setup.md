@@ -75,7 +75,7 @@ The build is running. While waiting, here's a summary of what was changed:
 
 ## Changes Made
 
-### 1. [`internal/utils/logging.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/utils/logging.go) — `log/slog` migration
+### 1. [`internal/utils/logging.go`](fai-tutor/internal/utils/logging.go) — `log/slog` migration
 
 | Before | After |
 |---|---|
@@ -87,7 +87,7 @@ The build is running. While waiting, here's a summary of what was changed:
 
 The log files are unchanged — `queue.log`, `rag_engine.log`, `system_errors.log` — only the format is now machine-parseable JSON instead of hand-crafted key=value strings.
 
-### 2. [`main.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/main.go) — `notebookHandler` simplification
+### 2. [`main.go`](fai-tutor/main.go) — `notebookHandler` simplification
 
 | Before | After |
 |---|---|
@@ -97,7 +97,7 @@ The log files are unchanged — `queue.log`, `rag_engine.log`, `system_errors.lo
 | `http.ServeFile(rw, req, filePath)` | `http.StripPrefix("/notebooks", http.FileServer(...)).ServeHTTP(rw, req)` |
 | Unused imports: `net/url`, `path/filepath`, `strings`, `os` | All removed |
 
-### 3. [`app_study.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/app_study.go) + [`internal/db/vector_repo.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/vector_repo.go) — call site fixes
+### 3. [`app_study.go`](fai-tutor/app_study.go) + [`internal/db/vector_repo.go`](fai-tutor/internal/db/vector_repo.go) — call site fixes
 
 Direct `.Printf` calls on the now-removed `ErrLogger` / the now `*slog.Logger`-typed `QueueLogger`/`RagLogger` are updated to use `utils.Errorf(...)` and `.Info(...)`/`.Warn(...)` with key-value pairs respectively.
 
@@ -127,4 +127,4 @@ Here's the final tally of what was deleted vs. what replaced it:
 - Dropped: `net/url`, `path/filepath`, `strings`, `os` imports; manual `PathUnescape`, `TrimPrefix`, `filepath.Base` traversal check, `os.Stat` directory guard
 - Gained: `http.StripPrefix("/notebooks", http.FileServer(http.Dir(...)))` — one line that does all of the above correctly and handles edge cases the manual version missed (e.g., double-slash normalization, `%2F`-encoded slashes)
 
-**Call sites fixed across 3 files** — [`app_study.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/app_study.go), [`internal/db/vector_repo.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/db/vector_repo.go), [`internal/retrieval/engine.go`](file:///c:/Users/vishn/PROJECT/ai-tutor/internal/retrieval/engine.go): 12 direct `.Printf` calls migrated to `.Info`/`.Warn` with structured key-value args.
+**Call sites fixed across 3 files** — [`app_study.go`](fai-tutor/app_study.go), [`internal/db/vector_repo.go`](fai-tutor/internal/db/vector_repo.go), [`internal/retrieval/engine.go`](fai-tutor/internal/retrieval/engine.go): 12 direct `.Printf` calls migrated to `.Info`/`.Warn` with structured key-value args.
