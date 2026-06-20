@@ -291,7 +291,7 @@ func (e *Engine) searchWithScope(
 			log.Printf("retrieval: query embedding failed, falling back to lexical: %v", embedErr)
 		}
 	} else {
-		utils.RagLogger.Printf("retrieval: %s: embedder is nil; semantic engine pointer was unallocated, falling back to lexical search", scopeName)
+		utils.RagLogger.Warn("retrieval: embedder is nil, falling back to lexical search", "scope", scopeName)
 	}
 
 	// If ONNX didn't produce results, use lexical fallback
