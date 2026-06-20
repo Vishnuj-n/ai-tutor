@@ -1015,6 +1015,9 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	if err := testRepo.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
+	if err := testRepo.UpdateNotebookIndexingStatus(notebookID, "READY"); err != nil {
+		t.Fatalf("UpdateNotebookIndexingStatus failed: %v", err)
+	}
 	if err := testRepo.CreateChunk(chunkID, topicID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}

@@ -10,7 +10,6 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
-	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -506,13 +505,8 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	_ = repo.UpdateNotebookStatus(notebookID, status)
 
 	ragEnabled, err := repo.GetRAGEnabled()
-	if err == nil && ragEnabled && a.embedder != nil {
-		go func() {
-			indexer := retrieval.NewVectorIndexer(a.repo, a.embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
-			if err := indexer.IndexAllTopics(); err != nil {
-				utils.Warnf("background vector indexing failed: %v", err)
-			}
-		}()
+	if err == nil && ragEnabled && a.indexQueue != nil {
+		a.indexQueue.Enqueue(notebookID)
 	}
 
 	return map[string]interface{}{

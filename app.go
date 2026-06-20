@@ -45,6 +45,7 @@ type App struct {
 	notebookUploadDir string
 	aiReady           bool
 	aiInitError       string
+	indexQueue        *retrieval.VectorIndexQueue
 }
 
 func NewApp() *App {
@@ -98,10 +99,27 @@ func (a *App) startup(ctx context.Context) {
 	a.notebookUploadDir = boot.NotebookUploadDir
 	a.aiReady = boot.AiReady
 	a.aiInitError = boot.AiInitError
+
+	if a.aiReady && a.embedder != nil {
+		a.indexQueue = retrieval.NewVectorIndexQueue(a.repo, a.embedder, ctx)
+		a.indexQueue.Start()
+
+		pendingIDs, err := a.repo.GetPendingNotebookIDs()
+		if err == nil {
+			for _, id := range pendingIDs {
+				a.indexQueue.Enqueue(id)
+			}
+		} else {
+			utils.Warnf("failed to retrieve pending notebooks for indexing queue: %v", err)
+		}
+	}
 }
 
 // shutdown is called when the Wails application is shutting down.
 func (a *App) shutdown(ctx context.Context) {
+	if a.indexQueue != nil {
+		a.indexQueue.Stop()
+	}
 	utils.CloseMultiFileLogger()
 }
 
@@ -150,10 +168,52 @@ func (a *App) GetAvailableTopics() []map[string]string {
 	return topics
 }
 
+// checkNotebookIndexingStatus checks if a notebook is currently indexing and returns a progress status map if it is not ready.
+func (a *App) checkNotebookIndexingStatus(notebookID, topicID string) (map[string]interface{}, bool) {
+	repo := a.repo
+	if repo == nil {
+		return nil, false
+	}
+
+	// Resolve notebook ID if not provided but topic ID is present
+	if notebookID == "" && topicID != "" {
+		if resolvedID, err := repo.GetNotebookIDByTopic(topicID); err == nil && resolvedID != "" {
+			notebookID = resolvedID
+		}
+	}
+
+	if notebookID == "" {
+		return nil, false
+	}
+
+	indexed, total, status, err := repo.GetNotebookIndexingProgress(notebookID)
+	if err != nil {
+		// If we can't get status, assume it's fine to avoid blocking the user
+		return nil, false
+	}
+
+	if status != "READY" {
+		progress := 0
+		if total > 0 {
+			progress = (indexed * 100) / total
+		}
+		return map[string]interface{}{
+			"status":   "indexing",
+			"progress": progress,
+			"error":    "AI features are disabled while this notebook is indexing.",
+		}, true
+	}
+
+	return nil, false
+}
+
 func (a *App) AskSocratic(notebookID string, topicID string, question string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if payload, isIndexing := a.checkNotebookIndexingStatus(notebookID, topicID); isIndexing {
+		return payload
 	}
 	a.aiMutex.Lock()
 	if !a.aiReady {
@@ -181,6 +241,9 @@ func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPa
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if payload, isIndexing := a.checkNotebookIndexingStatus(notebookID, topicID); isIndexing {
+		return payload
 	}
 	a.aiMutex.Lock()
 	if !a.aiReady {
@@ -316,23 +379,29 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			if fbErr != nil {
 				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v, and fallback non-vector initialization also failed: %v", err, fbErr))
 			} else {
+				_ = repo.Close()
 				a.repo = fbRepo
 				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
 			}
 			return
 		}
-		a.repo = newRepo
 
-		if !repo.IsVecExtensionLoaded() {
+		if !newRepo.IsVecExtensionLoaded() {
+			_ = newRepo.Close()
 			fbRepo, fbErr := db.Init(dbPath, "")
 			if fbErr != nil {
 				emitRagSetupFailed(a, fmt.Sprintf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary), and fallback non-vector initialization also failed: %v", fbErr))
 			} else {
+				_ = repo.Close()
 				a.repo = fbRepo
 				emitRagSetupFailed(a, "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
 			}
 			return
 		}
+
+		// Success loading vec0 extension! Close old repo connection, set new repo.
+		_ = repo.Close()
+		a.repo = newRepo
 
 		// Init ONNX embedder using paths from AssetManager
 		emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
@@ -348,7 +417,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		}
 
 		// Set dimensions
-		if err := repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
+		if err := newRepo.InitWithVectorDimension(emb.GetDimension()); err != nil {
 			utils.Warnf("could not initialize vector table: %v", err)
 		}
 
@@ -370,10 +439,10 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		}
 
 		// Save settings in DB to reflect RAG is enabled
-		settings, err := repo.GetUserSettings()
+		settings, err := newRepo.GetUserSettings()
 		if err == nil {
 			settings.RAGEnabled = true
-			_ = repo.UpdateUserSettings(*settings)
+			_ = newRepo.UpdateUserSettings(*settings)
 		}
 
 		// Emit indexing-in-progress event before starting vector indexing

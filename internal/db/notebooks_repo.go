@@ -887,3 +887,112 @@ func (r *Repository) GetProfileRemainingWords(profileID string) (int, error) {
 	}
 	return total, nil
 }
+
+// ResetIndexingStatus resets any notebooks with status 'INDEXING' back to 'PENDING'.
+func (r *Repository) ResetIndexingStatus() error {
+	_, err := r.db.Exec(`
+		UPDATE notebooks
+		SET indexing_status = 'PENDING'
+		WHERE indexing_status = 'INDEXING'
+	`)
+	return err
+}
+
+// GetPendingNotebookIDs returns IDs of all notebooks with indexing_status = 'PENDING'.
+func (r *Repository) GetPendingNotebookIDs() ([]string, error) {
+	rows, err := r.db.Query("SELECT id FROM notebooks WHERE indexing_status = 'PENDING'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetChunkEmbeddingRefsForNotebook returns embedding_ref values for all chunks in a notebook.
+func (r *Repository) GetChunkEmbeddingRefsForNotebook(notebookID string) (map[string]string, error) {
+	rows, err := r.db.Query(`
+		SELECT c.id, COALESCE(c.embedding_ref, '')
+		FROM chunks c
+		JOIN notebook_chunks nc ON nc.chunk_id = c.id
+		WHERE nc.notebook_id = ?
+	`, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	refs := make(map[string]string)
+	for rows.Next() {
+		var chunkID string
+		var hash string
+		if err := rows.Scan(&chunkID, &hash); err != nil {
+			return nil, err
+		}
+		refs[chunkID] = hash
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return refs, nil
+}
+
+// GetNotebookIndexingProgress returns the number of indexed chunks, total chunks, and indexing_status.
+func (r *Repository) GetNotebookIndexingProgress(notebookID string) (int, int, string, error) {
+	var indexingStatus string
+	err := r.db.QueryRow("SELECT COALESCE(indexing_status, 'PENDING') FROM notebooks WHERE id = ?", notebookID).Scan(&indexingStatus)
+	if err != nil {
+		return 0, 0, "", err
+	}
+
+	var indexedCount int
+	err = r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM notebook_chunks nc
+		JOIN chunks c ON nc.chunk_id = c.id
+		WHERE nc.notebook_id = ? AND c.embedding_ref IS NOT NULL AND c.embedding_ref != ''
+	`, notebookID).Scan(&indexedCount)
+	if err != nil {
+		return 0, 0, indexingStatus, err
+	}
+
+	var totalCount int
+	err = r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM notebook_chunks
+		WHERE notebook_id = ?
+	`, notebookID).Scan(&totalCount)
+	if err != nil {
+		return indexedCount, 0, indexingStatus, err
+	}
+
+	return indexedCount, totalCount, indexingStatus, nil
+}
+
+// GetNotebookIDByTopic returns a notebook ID linked to the given topic ID.
+func (r *Repository) GetNotebookIDByTopic(topicID string) (string, error) {
+	var notebookID string
+	// Check notebook_topics first
+	err := r.db.QueryRow(`
+		SELECT notebook_id FROM notebook_topics WHERE topic_id = ?
+		UNION
+		SELECT id FROM notebooks WHERE topic_id = ?
+		LIMIT 1
+	`, topicID, topicID).Scan(&notebookID)
+	if err != nil {
+		return "", err
+	}
+	return notebookID, nil
+}
