@@ -109,20 +109,21 @@
           v-else
           ref="pdfViewportRef"
           class="pdf-viewport"
+          tabindex="0"
           :data-view-mode="viewMode"
+          @keydown="handleViewportKeydown"
         >
           <div v-if="pdfLoadError" class="empty error">{{ pdfLoadError }}</div>
           <div
             v-else
             ref="pdfScalerRef"
             class="pdf-scaler"
-            :style="{ width: `${containerWidth * zoomScale}px`, margin: '0 auto' }"
+            :style="{ width: `${containerWidth}px`, transform: `scale(${zoomScale})`, transformOrigin: 'top left', margin: '0 auto' }"
           >
             <vue-pdf-embed
               ref="pdfRef"
               :source="reader.notebookUrl.value"
               :page="renderedPages"
-              :width="containerWidth * debouncedZoomScale"
               @rendered="handlePDFRendered"
               @loading-failed="handlePDFLoadFailed"
             />
@@ -136,12 +137,13 @@
           <button class="edge-btn zoom-btn" :disabled="zoomScale >= 2.5" title="Zoom in" @click="zoomIn">+</button>
           <div class="edge-sep"></div>
           <div class="theme-trigger-wrap">
-            <button class="edge-btn dots-btn" title="Change theme" @click="themeMenuOpen = !themeMenuOpen">···</button>
-            <div v-if="themeMenuOpen" class="theme-flyout">
+            <button class="edge-btn dots-btn" title="Change theme" :aria-expanded="themeMenuOpen" @click="themeMenuOpen = !themeMenuOpen">···</button>
+            <div v-if="themeMenuOpen" class="theme-flyout" role="menu">
               <button
                 v-for="mode in ['raw','light','dark','sync']"
                 :key="mode"
                 class="flyout-item"
+                role="menuitem"
                 :class="{ active: viewMode === mode }"
                 @click="viewMode = mode; themeMenuOpen = false"
               >{{ mode.charAt(0).toUpperCase() + mode.slice(1) }}</button>
@@ -169,6 +171,7 @@
         :rag-settings-error="ragSettingsError"
         @retry-settings="retryGetUserSettings"
       />
+      <div v-else-if="ragEnabled && !ragQueueStudy" class="chat-disabled">Chat is currently disabled in queue study mode.</div>
     </div>
   </section>
 </template>
@@ -220,28 +223,7 @@ const pageElements = new Map()
 
 // Custom PDF Viewer Zoom & View Modes
 const zoomScale = ref(1.0)
-const debouncedZoomScale = ref(1.0)
-let lastRenderTime = 0
-let renderTimeout = null
 let scrollTimeout = null
-const RENDER_THROTTLE_MS = 250 // rerender at most every 250ms during active gesture
-
-watch(zoomScale, (newVal) => {
-  const now = Date.now()
-  if (renderTimeout) {
-    clearTimeout(renderTimeout)
-  }
-  
-  if (now - lastRenderTime >= RENDER_THROTTLE_MS) {
-    debouncedZoomScale.value = newVal
-    lastRenderTime = now
-  } else {
-    renderTimeout = setTimeout(() => {
-      debouncedZoomScale.value = newVal
-      lastRenderTime = Date.now()
-    }, RENDER_THROTTLE_MS - (now - lastRenderTime))
-  }
-})
 
 const viewMode = ref('raw')
 const themeMenuOpen = ref(false)
@@ -337,64 +319,67 @@ watch(() => reader.notebookUrl.value, () => {
   pdfLoadError.value = ''
 })
 
+watch(routeTaskID, (newId) => {
+  if (newId) activeTaskID.value = newId
+})
+
 // ResizeObserver and Gesture Controller Setup
 let resizeObserver = null
-let startTouchDist = 0
-let startZoomScale = 1.0
-
-function handleTouchStart(e) {
-  if (e.touches.length === 2) {
-    const t1 = e.touches[0]
-    const t2 = e.touches[1]
-    startTouchDist = Math.sqrt(
-      Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
-    )
-    startZoomScale = zoomScale.value
-  }
-}
-
-function handleTouchMove(e) {
-  if (e.touches.length === 2 && startTouchDist > 0) {
-    // CRITICAL: Prevent browser-level pinch-to-zoom
-    e.preventDefault()
-
-    const t1 = e.touches[0]
-    const t2 = e.touches[1]
-    const currentTouchDist = Math.sqrt(
-      Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
-    )
-    const delta = currentTouchDist / startTouchDist
-    
-    if (delta > 1.05 || delta < 0.95) {
-      let newScale = startZoomScale * delta
-      newScale = Math.round(newScale * 100) / 100
-      zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
-    }
-  }
-}
-
-function handleTouchEnd(e) {
-  if (e.touches.length < 2) {
-    startTouchDist = 0
-  }
-}
-
-function handleWheel(e) {
-  if (e.ctrlKey) {
-    // CRITICAL: Prevent browser-level zoom
-    e.preventDefault()
-
-    const factor = 1 - e.deltaY * 0.005
-    let newScale = zoomScale.value * factor
-    newScale = Math.round(newScale * 100) / 100
-    zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
-  }
-}
 
 // Watch viewport ref to set up ResizeObserver and Event Listeners dynamically
 watch(pdfViewportRef, (el, oldEl, onCleanup) => {
   if (resizeObserver) {
     resizeObserver.disconnect()
+  }
+
+  let startTouchDist = 0
+  let startZoomScale = 1.0
+
+  function handleTouchStart(e) {
+    if (e.touches.length === 2) {
+      const t1 = e.touches[0]
+      const t2 = e.touches[1]
+      startTouchDist = Math.sqrt(
+        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
+      )
+      startZoomScale = zoomScale.value
+    }
+  }
+
+  function handleTouchMove(e) {
+    if (e.touches.length === 2 && startTouchDist > 0) {
+      e.preventDefault()
+
+      const t1 = e.touches[0]
+      const t2 = e.touches[1]
+      const currentTouchDist = Math.sqrt(
+        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
+      )
+      const delta = currentTouchDist / startTouchDist
+      
+      if (delta > 1.05 || delta < 0.95) {
+        let newScale = startZoomScale * delta
+        newScale = Math.round(newScale * 100) / 100
+        zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
+      }
+    }
+  }
+
+  function handleTouchEnd(e) {
+    if (e.touches.length < 2) {
+      startTouchDist = 0
+    }
+  }
+
+  function handleWheel(e) {
+    if (e.ctrlKey) {
+      e.preventDefault()
+
+      const factor = 1 - e.deltaY * 0.005
+      let newScale = zoomScale.value * factor
+      newScale = Math.round(newScale * 100) / 100
+      zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
+    }
   }
 
   if (el) {
@@ -407,7 +392,6 @@ watch(pdfViewportRef, (el, oldEl, onCleanup) => {
     })
     resizeObserver.observe(el)
 
-    // Bind touch & wheel listeners to the viewport element
     el.addEventListener('touchstart', handleTouchStart, { passive: true })
     el.addEventListener('touchmove', handleTouchMove, { passive: false })
     el.addEventListener('touchend', handleTouchEnd, { passive: true })
@@ -433,6 +417,16 @@ function zoomOut() {
   zoomScale.value = Math.max(0.5, Math.round((zoomScale.value - 0.1) * 100) / 100)
 }
 
+function handleViewportKeydown(e) {
+  if (e.ctrlKey && (e.key === '=' || e.key === '+')) {
+    e.preventDefault()
+    zoomIn()
+  } else if (e.ctrlKey && e.key === '-') {
+    e.preventDefault()
+    zoomOut()
+  }
+}
+
 onUnmounted(() => {
   if (pdfObserver) {
     pdfObserver.disconnect()
@@ -442,9 +436,6 @@ onUnmounted(() => {
   }
   if (resizeObserver) {
     resizeObserver.disconnect()
-  }
-  if (renderTimeout) {
-    clearTimeout(renderTimeout)
   }
   if (scrollTimeout) {
     clearTimeout(scrollTimeout)
@@ -597,7 +588,7 @@ async function completeSession() {
   completingSession.value = true
 
   try {
-    const taskIDForCompletion = activeTaskID.value || routeTaskID.value
+    const taskIDForCompletion = activeTaskID.value || routeTaskID.value || route.query.taskId || route.query.task_id
     console.warn('[COMPLETE_SESSION] pre-completeReading ids', {
       routeQueryTaskId: route.query.taskId,
       routeQueryTask_id: route.query.task_id,
@@ -1150,5 +1141,17 @@ button:disabled {
 .flyout-item.active {
   background: var(--primary);
   color: var(--on-primary);
+}
+
+.chat-disabled {
+  color: var(--muted-text);
+  background: var(--surface-container-low);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>
