@@ -381,28 +381,28 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 		} else {
 			errDetail = fmt.Errorf("nil task loaded from database")
 		}
-		utils.ErrLogger.Printf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, errDetail)
-		utils.QueueLogger.Printf("InitializeReadingSession queue task pre-activate loading anomaly taskID=%s", taskID)
+		utils.Errorf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, errDetail)
+		utils.QueueLogger.Info("queue task pre-activate loading anomaly", "taskID", taskID)
 
 		if err := repo.ActivateTask(taskID); err != nil {
-			utils.ErrLogger.Printf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
-			utils.QueueLogger.Printf("InitializeReadingSession queue task activation failed taskID=%s", taskID)
+			utils.Errorf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
+			utils.QueueLogger.Info("queue task activation failed", "taskID", taskID)
 		} else {
-			utils.QueueLogger.Printf("InitializeReadingSession queue task activated taskID=%s", taskID)
+			utils.QueueLogger.Info("queue task activated", "taskID", taskID)
 		}
 	} else {
 		switch qTask.Status {
 		case models.StudyTaskStatusPending:
 			if err := repo.ActivateTask(taskID); err != nil {
-				utils.ErrLogger.Printf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
-				utils.QueueLogger.Printf("InitializeReadingSession queue task activation failed taskID=%s", taskID)
+				utils.Errorf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
+				utils.QueueLogger.Info("queue task activation failed", "taskID", taskID)
 			} else {
-				utils.QueueLogger.Printf("InitializeReadingSession queue task activated taskID=%s", taskID)
+				utils.QueueLogger.Info("queue task activated", "taskID", taskID)
 			}
 		case models.StudyTaskStatusActive:
-			utils.QueueLogger.Printf("InitializeReadingSession idempotent resume operation: task already active taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, qTask.Status, qTask.TaskType, qTask.NotebookID, qTask.TopicID)
+			utils.QueueLogger.Info("idempotent resume: task already active", "taskID", taskID, "status", qTask.Status, "type", qTask.TaskType, "notebookID", qTask.NotebookID, "topicID", qTask.TopicID)
 		default:
-			utils.QueueLogger.Printf("InitializeReadingSession task terminal status=%s taskID=%s", qTask.Status, taskID)
+			utils.QueueLogger.Info("task terminal", "status", qTask.Status, "taskID", taskID)
 		}
 	}
 

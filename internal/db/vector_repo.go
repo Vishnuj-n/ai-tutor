@@ -173,9 +173,7 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 	}
 
 	if r.embeddingDimension <= 0 {
-		msg := fmt.Sprintf("warning: vector search skipped for topic %s because embedding dimension is not initialized", topicID)
-		utils.RagLogger.Printf("%s", msg)
-		utils.ErrLogger.Printf("%s", msg)
+		utils.RagLogger.Warn("vector search skipped: embedding dimension not initialized", "scope", "topic", "topicID", topicID)
 		return []string{}, nil
 	}
 
@@ -247,9 +245,7 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 	rows, err := r.db.Query(vectorSQL, vectorArgs...)
 	if err != nil {
 		if isVectorUnavailableError(err) {
-			msg := fmt.Sprintf("warning: vector search unavailable for topic %s, using lexical fallback: %v", topicID, err)
-			utils.RagLogger.Printf("%s", msg)
-			utils.ErrLogger.Printf("%s", msg)
+			utils.RagLogger.Warn("vector search unavailable, using lexical fallback", "scope", "topic", "topicID", topicID, "error", err)
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("vector search failed: %w", err)
@@ -290,9 +286,7 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 	}
 
 	if r.embeddingDimension <= 0 {
-		msg := fmt.Sprintf("warning: vector search skipped for notebook %s because embedding dimension is not initialized", notebookID)
-		utils.RagLogger.Printf("%s", msg)
-		utils.ErrLogger.Printf("%s", msg)
+		utils.RagLogger.Warn("vector search skipped: embedding dimension not initialized", "scope", "notebook", "notebookID", notebookID)
 		return []string{}, nil
 	}
 
@@ -350,9 +344,7 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 	`, string(allowedRowIDsJSON), queryVectorJSON, k)
 	if err != nil {
 		if isVectorUnavailableError(err) {
-			msg := fmt.Sprintf("warning: vector search unavailable for notebook %s, using lexical fallback: %v", notebookID, err)
-			utils.RagLogger.Printf("%s", msg)
-			utils.ErrLogger.Printf("%s", msg)
+			utils.RagLogger.Warn("vector search unavailable, using lexical fallback", "scope", "notebook", "notebookID", notebookID, "error", err)
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("vector search failed: %w", err)
