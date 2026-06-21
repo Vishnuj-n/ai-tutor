@@ -15,8 +15,8 @@ export function getAvailableTopics() {
   return appBridge().GetAvailableTopics()
 }
 
-export function askSocratic(topicID, question) {
-  return appBridge().AskSocratic(topicID, question)
+export function askSocratic(notebookID, topicID, question) {
+  return appBridge().AskSocratic(notebookID, topicID, question)
 }
 
 export function askReaderAI(
@@ -158,8 +158,30 @@ export function getUserSettings() {
   return appBridge().GetUserSettings()
 }
 
-export function updateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled) {
-  return appBridge().UpdateUserSettings(minutes, activeProfileID, skipToReading, syncURL, apiToken, theme, ragEnabled)
+export function updateUserSettings(
+  minutes,
+  activeProfileID,
+  skipToReading,
+  syncURL,
+  apiToken,
+  theme,
+  ragEnabled,
+  ragNotebookChapter,
+  ragEntireNotebook,
+  ragQueueStudy
+) {
+  return appBridge().UpdateUserSettings(
+    minutes,
+    activeProfileID,
+    skipToReading,
+    syncURL,
+    apiToken,
+    theme,
+    ragEnabled,
+    ragNotebookChapter,
+    ragEntireNotebook,
+    ragQueueStudy
+  )
 }
 
 export function getLLMSettings() {
@@ -220,4 +242,16 @@ export function triggerCloudSync() {
 
 export function getProfileDailyPace(profileID) {
   return appBridge().GetProfileDailyPace(profileID)
+}
+
+export function logFrontendEvent(level, component, event, details = '') {
+  try {
+    const bridge = window?.go?.main?.App
+    if (bridge && bridge.LogFrontendEvent) {
+      const detailsStr = typeof details === 'string' ? details : JSON.stringify(details)
+      bridge.LogFrontendEvent(level, component, event, detailsStr)
+    }
+  } catch (err) {
+    console.error('Failed to forward log to backend:', err)
+  }
 }

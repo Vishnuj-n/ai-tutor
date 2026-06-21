@@ -4,8 +4,8 @@
       <div class="brand">
         <div class="brand-mark">A</div>
         <div>
-          <p class="brand-title">The Academic Curator</p>
-          <p class="brand-subtitle">Digital Sanctuary</p>
+          <p class="brand-title">The Scholar OS</p>
+          <p class="brand-subtitle">Study Operating System</p>
         </div>
       </div>
 
@@ -18,7 +18,6 @@
     </div>
 
     <div class="bottom-actions">
-      <button class="focus-chip" type="button">Focus Mode</button>
       <button class="sync-link" type="button">Sync</button>
       <RouterLink to="/settings" class="menu-item bottom-item">Settings</RouterLink>
     </div>
@@ -33,7 +32,7 @@ const topItems = [
   { to: '/quiz', label: 'Quiz', icon: '◪' },
   { to: '/flashcards', label: 'Flashcards', icon: '◧' },
   { to: '/examiner', label: 'Examiner', icon: '✎' },
-  { to: '/tools', label: 'Tools', icon: '◩' },
+  { to: '/tutor', label: 'Tutor', icon: '◎' },
 ]
 </script>
 

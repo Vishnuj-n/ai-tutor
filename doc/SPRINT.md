@@ -8,7 +8,7 @@
 
 ## Active Roadmap (Production Proofing, RAG, & Rescue Pipeline)
 
-### Sprint 10: RAG Setup, Asset Management & Environment Verification
+### Sprint 10: RAG Setup, Asset Management & Environment Verification [DONE]
 **Goal:** Make RAG and assets production-proof, verifying architecture requirements dynamically.
 
 - [ ] **Task 10.1: Dynamic CGO & Vector Extension Verification**
@@ -16,8 +16,6 @@
   - If RAG is required by the user but DLLs or CGO dependencies are missing, show a clean error/fallback status instead of crashing.
 - [ ] **Task 10.2: Asset Downloader Script**
   - Write a reliable Go/shell/Powershell asset manager command/script to download raw embedding models/onnx DLLs on-demand if missing in `%LOCALAPPDATA%/ai-tutor/assets/`.
-- [ ] **Task 10.3: SQLite Schema Lock Down**
-  - Lock the SQLite schema structure to ensure migrations are backward-compatible and prevent modifications that can break existing databases in production.
 
 ---
 
@@ -55,6 +53,19 @@
 
 ---
 
+### SPRINT 13 User Asset Provisioning
+
+- Detect missing RAG assets
+- Download assets from GitHub Releases
+- Show progress UI
+- Verify hashes
+- Resume failed downloads
+- Allow manual asset location
+
+Refer doc/future_plan/cross_platform_asset_delivery.md
+
+- Added in onboarding and settings
+
 ## Archive / Historical Completed Sprints
 
 <details>
@@ -91,6 +102,7 @@ CREATE TABLE study_queue (
 - [x] Queue state query for Dashboard
 
 ---
+
 
 ### Sprint 2: Reading Flow & Page Locking [DONE]
 **Goal:** Implement deterministic reading tasks with page-range locking.

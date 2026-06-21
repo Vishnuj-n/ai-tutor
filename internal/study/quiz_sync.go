@@ -60,7 +60,7 @@ func (s *StudyService) GenerateQuizForPageRange(notebookID string, startPage, en
 		return map[string]interface{}{"error": fmt.Sprintf("invalid page range: start=%d end=%d", startPage, endPage)}
 	}
 
-	contextChunks, tokenCount, err := buildPageBoundedContext(notebookID, startPage, endPage)
+	contextChunks, tokenCount, err := s.buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -70,7 +70,7 @@ func (s *StudyService) GenerateQuizForPageRange(notebookID string, startPage, en
 
 	// Create synthetic topic for manual quiz
 	syntheticTopicID := fmt.Sprintf("quiz-manual-%s-p%d-%d", notebookID, startPage, endPage)
-	err = db.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: syntheticTopicID, Title: fmt.Sprintf("Quiz %s p%d-%d", notebookID, startPage, endPage)}})
+	err = s.repo.EnsureTopicsBatch([]db.TopicBatchItem{{TopicID: syntheticTopicID, Title: fmt.Sprintf("Quiz %s p%d-%d", notebookID, startPage, endPage)}})
 	if err != nil {
 		return map[string]interface{}{"error": fmt.Sprintf("failed to create synthetic topic: %s", err.Error())}
 	}
@@ -134,7 +134,7 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 
 	// If chunkTextByID is not provided, fall back to database lookup
 	if chunkTextByID == nil {
-		chunks, err := db.GetChunksForTopic(topicID)
+		chunks, err := s.repo.GetChunksForTopic(topicID)
 		if err != nil {
 			return models.QuizTaskPayload{}, fmt.Errorf("failed to load topic chunks: %w", err)
 		}
@@ -247,7 +247,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	if taskID == "" {
 		return models.QuizResult{}, fmt.Errorf("task ID is required")
 	}
-	task, err := db.GetTaskByID(taskID)
+	task, err := s.repo.GetTaskByID(taskID)
 	if err != nil {
 		return models.QuizResult{}, err
 	}
@@ -315,11 +315,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	completionStatus := models.StudyTaskStatusCompleted
 	var resultPayload []byte
 
-	conn := db.GetConnection()
-	if conn == nil {
-		return models.QuizResult{}, fmt.Errorf("database not initialized")
-	}
-	tx, err := conn.Begin()
+	tx, err := s.repo.Begin()
 	if err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to begin quiz transaction: %w", err)
 	}
@@ -338,12 +334,12 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	}
 	if passed {
 		if task.TopicID != "" {
-			if err := db.ResetRereadAttemptCountTx(tx, task.TopicID); err != nil {
+			if err := s.repo.ResetRereadAttemptCountTx(tx, task.TopicID); err != nil {
 				return models.QuizResult{}, fmt.Errorf("failed to reset reread attempts: %w", err)
 			}
 		}
 	} else if task.TopicID != "" {
-		rereadAttemptCount, err = db.IncrementRereadAttemptCountTx(tx, task.TopicID)
+		rereadAttemptCount, err = s.repo.IncrementRereadAttemptCountTx(tx, task.TopicID)
 		if err != nil {
 			return models.QuizResult{}, fmt.Errorf("failed to increment reread attempts: %w", err)
 		}
@@ -368,7 +364,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			completionStatus = models.StudyTaskStatusFailed
 
 			// Safety transaction: Delete FSRS cards to protect purity from rote clutter
-			if _, err := tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", task.TopicID); err != nil {
+			if err := s.repo.DeleteFSRSCardsByTopicIDTx(tx, task.TopicID); err != nil {
 				return models.QuizResult{}, fmt.Errorf("failed to delete FSRS cards: %w", err)
 			}
 
@@ -392,7 +388,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		}
 	}
 
-	if err := db.SaveQuizAttemptTx(tx, attempt); err != nil {
+	if err := s.repo.SaveQuizAttemptTx(tx, attempt); err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to save quiz attempt: %w", err)
 	}
 
@@ -406,7 +402,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		"max_reread_attempts":       maxAutomaticRereadAttempts,
 	})
 
-	if err := db.CompleteTaskTx(tx, task.ID, models.CompletionResult{
+	if err := s.repo.CompleteTaskTx(tx, task.ID, models.CompletionResult{
 		Status:    completionStatus,
 		Payload:   string(resultPayload),
 		FollowUps: followUps,

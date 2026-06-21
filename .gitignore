@@ -5,7 +5,6 @@ asset/model_int8.onnx
 asset/onnxruntime.dll
 asset/vec0.dll
 .env
-context.md
 .gocache/
 .gomodcache/
 # Wails generated bindings
@@ -22,6 +21,6 @@ uploads/
 .windsurf/
 graphify-out/*
 *.dll
-doc/NOTE.md
+doc/NOTES/
 .tmp
 .exe

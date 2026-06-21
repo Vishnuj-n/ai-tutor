@@ -9,7 +9,7 @@ import (
 )
 
 // CreateNotebook saves a notebook record to the database
-func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int) error {
+func (r *Repository) CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int) error {
 	var topicValue interface{}
 	if topicID != "" {
 		validatedTopicID, err := validateID(topicID, "topic id")
@@ -24,7 +24,7 @@ func CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int
 		return err
 	}
 
-	_, err = conn.Exec(`
+	_, err = r.db.Exec(`
 		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, status, indexing_status, page_count)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, validatedID, title, filePath, fileType, topicValue, "uploaded", "PENDING", pageCount)
@@ -58,8 +58,8 @@ func insertChunkRow(exec sqlExecer, topicID string, chunk NotebookChunkInput) er
 }
 
 // CreateChunk inserts a chunk row.
-func CreateChunk(id, topicID, text string, tokenCount int, pageNum int) error {
-	return insertChunkRow(conn, topicID, NotebookChunkInput{
+func (r *Repository) CreateChunk(id, topicID, text string, tokenCount int, pageNum int) error {
+	return insertChunkRow(r.db, topicID, NotebookChunkInput{
 		ID:         id,
 		Text:       text,
 		PageNum:    pageNum,
@@ -68,8 +68,8 @@ func CreateChunk(id, topicID, text string, tokenCount int, pageNum int) error {
 }
 
 // UpdateNotebookStatus updates the notebook ingestion status.
-func UpdateNotebookStatus(notebookID string, status string) error {
-	result, err := conn.Exec(`
+func (r *Repository) UpdateNotebookStatus(notebookID string, status string) error {
+	result, err := r.db.Exec(`
 		UPDATE notebooks
 		SET status = ?
 		WHERE id = ?
@@ -90,8 +90,8 @@ func UpdateNotebookStatus(notebookID string, status string) error {
 }
 
 // UpdateNotebookIndexingStatus updates the notebook semantic indexing status.
-func UpdateNotebookIndexingStatus(notebookID string, status string) error {
-	result, err := conn.Exec(`
+func (r *Repository) UpdateNotebookIndexingStatus(notebookID string, status string) error {
+	result, err := r.db.Exec(`
 		UPDATE notebooks
 		SET indexing_status = ?
 		WHERE id = ?
@@ -112,7 +112,7 @@ func UpdateNotebookIndexingStatus(notebookID string, status string) error {
 }
 
 // UpdateNotebookTopic updates the notebook topic link used by UI-level notebook metadata.
-func UpdateNotebookTopic(notebookID string, topicID string) error {
+func (r *Repository) UpdateNotebookTopic(notebookID string, topicID string) error {
 	validatedNotebookID, err := validateID(notebookID, "notebook id")
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func UpdateNotebookTopic(notebookID string, topicID string) error {
 
 	cleanedTopicID := strings.TrimSpace(topicID)
 	if cleanedTopicID == "" {
-		result, err := conn.Exec(`
+		result, err := r.db.Exec(`
 			UPDATE notebooks
 			SET topic_id = NULL
 			WHERE id = ?
@@ -145,7 +145,7 @@ func UpdateNotebookTopic(notebookID string, topicID string) error {
 		return err
 	}
 
-	result, err := conn.Exec(`
+	result, err := r.db.Exec(`
 		UPDATE notebooks
 		SET topic_id = ?
 		WHERE id = ?
@@ -166,7 +166,7 @@ func UpdateNotebookTopic(notebookID string, topicID string) error {
 }
 
 // UpdateNotebookTitle updates notebook display title.
-func UpdateNotebookTitle(notebookID string, title string) error {
+func (r *Repository) UpdateNotebookTitle(notebookID string, title string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	title = strings.TrimSpace(title)
 	if notebookID == "" {
@@ -176,7 +176,7 @@ func UpdateNotebookTitle(notebookID string, title string) error {
 		return fmt.Errorf("title is required")
 	}
 
-	result, err := conn.Exec(`
+	result, err := r.db.Exec(`
 		UPDATE notebooks
 		SET title = ?
 		WHERE id = ?
@@ -197,13 +197,13 @@ func UpdateNotebookTitle(notebookID string, title string) error {
 }
 
 // EnsureNotebookTopic links a topic to a notebook if not already linked.
-func EnsureNotebookTopic(notebookID, topicID string) error {
+func (r *Repository) EnsureNotebookTopic(notebookID, topicID string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	topicID = strings.TrimSpace(topicID)
 	if notebookID == "" || topicID == "" {
 		return fmt.Errorf("notebook id and topic id are required")
 	}
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		INSERT OR IGNORE INTO notebook_topics (notebook_id, topic_id)
 		VALUES (?, ?)
 	`, notebookID, topicID)
@@ -211,13 +211,13 @@ func EnsureNotebookTopic(notebookID, topicID string) error {
 }
 
 // LinkNotebookTopics associates a set of topics with a notebook by replacing any existing links.
-func LinkNotebookTopics(notebookID string, topicIDs []string) error {
+func (r *Repository) LinkNotebookTopics(notebookID string, topicIDs []string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		// Delete existing links for this notebook
 		if _, err := tx.Exec("DELETE FROM notebook_topics WHERE notebook_id = ?", notebookID); err != nil {
 			return err
@@ -241,7 +241,7 @@ func LinkNotebookTopics(notebookID string, topicIDs []string) error {
 }
 
 // IngestNotebookContentByTopic ingests notebook content into multiple topic buckets in one transaction.
-func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicIngestionGroup) error {
+func (r *Repository) IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicIngestionGroup) error {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
@@ -257,13 +257,56 @@ func IngestNotebookContentByTopic(notebookID string, groups []NotebookTopicInges
 		}
 		normalizedGroups = append(normalizedGroups, group)
 	}
-	return ingestNotebookContentByTopicRepo(notebookID, normalizedGroups)
+
+	return r.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`
+			UPDATE notebooks
+			SET status = ?, chunk_count = 0
+			WHERE id = ?
+		`, "processing", notebookID); err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID); err != nil {
+			return err
+		}
+
+		chunkPrefix := fmt.Sprintf("nbc_%s_%%", notebookID)
+
+		if _, err := tx.Exec("DELETE FROM chunks WHERE id LIKE ?", chunkPrefix); err != nil {
+			return err
+		}
+
+		totalChunks := 0
+		for _, group := range normalizedGroups {
+			for _, chunk := range group.Chunks {
+				if err := insertChunkRowRepo(tx, group.TopicID, chunk); err != nil {
+					return err
+				}
+
+				if err := linkNotebookChunkRowRepo(tx, notebookID, chunk); err != nil {
+					return err
+				}
+
+				totalChunks++
+			}
+		}
+
+		if _, err := tx.Exec(`
+			UPDATE notebooks
+			SET chunk_count = ?, status = ?, topic_id = ?
+			WHERE id = ?
+		`, totalChunks, "chunked", normalizedGroups[0].TopicID, notebookID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // GetNotebooks retrieves all notebooks, optionally filtered by topic and profile.
 // When profileID is empty, returns all notebooks (backward compatible).
 // When profileID is set, returns only notebooks belonging to that profile or unassigned notebooks.
-func GetNotebooks(topicID, profileID string) ([]models.Notebook, error) {
+func (r *Repository) GetNotebooks(topicID, profileID string) ([]models.Notebook, error) {
 	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant') FROM notebooks"
 	args := []interface{}{}
 	whereClause := ""
@@ -291,7 +334,7 @@ func GetNotebooks(topicID, profileID string) ([]models.Notebook, error) {
 	}
 	query += " ORDER BY uploaded_at DESC"
 
-	rows, err := conn.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -314,9 +357,9 @@ func GetNotebooks(topicID, profileID string) ([]models.Notebook, error) {
 }
 
 // GetNotebookByID retrieves a single notebook by ID
-func GetNotebookByID(notebookID string) (*models.Notebook, error) {
+func (r *Repository) GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant')
 		FROM notebooks
 		WHERE id = ?
@@ -332,13 +375,13 @@ func GetNotebookByID(notebookID string) (*models.Notebook, error) {
 }
 
 // LinkChunksToNotebook associates chunks with a notebook
-func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
+func (r *Repository) LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
 	validatedNotebookID, err := validateID(notebookID, "notebook id")
 	if err != nil {
 		return err
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		for _, chunkID := range chunkIDs {
 			validatedChunkID, err := validateID(chunkID, "chunk id")
 			if err != nil {
@@ -359,8 +402,8 @@ func LinkChunksToNotebook(notebookID string, chunkIDs []string) error {
 }
 
 // UpdateNotebookChunkCount updates the chunk count for a notebook
-func UpdateNotebookChunkCount(notebookID string, count int) error {
-	result, err := conn.Exec(`
+func (r *Repository) UpdateNotebookChunkCount(notebookID string, count int) error {
+	result, err := r.db.Exec(`
 		UPDATE notebooks
 		SET chunk_count = ?
 		WHERE id = ?
@@ -381,8 +424,8 @@ func UpdateNotebookChunkCount(notebookID string, count int) error {
 }
 
 // UpdateNotebookPriority updates the notebook priority
-func UpdateNotebookPriority(notebookID string, priority int) error {
-	result, err := conn.Exec(`
+func (r *Repository) UpdateNotebookPriority(notebookID string, priority int) error {
+	result, err := r.db.Exec(`
 		UPDATE notebooks
 		SET priority = ?
 		WHERE id = ?
@@ -403,14 +446,14 @@ func UpdateNotebookPriority(notebookID string, priority int) error {
 }
 
 // GetNotebookSyllabusDraft retrieves the persisted syllabus draft JSON for a notebook
-func GetNotebookSyllabusDraft(notebookID string) (string, error) {
+func (r *Repository) GetNotebookSyllabusDraft(notebookID string) (string, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return "", fmt.Errorf("notebook id is required")
 	}
 
 	var draftJSON sql.NullString
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT syllabus_draft_json
 		FROM notebooks
 		WHERE id = ?
@@ -431,13 +474,13 @@ func GetNotebookSyllabusDraft(notebookID string) (string, error) {
 }
 
 // UpdateNotebookSyllabusDraft persists the syllabus draft JSON for a notebook
-func UpdateNotebookSyllabusDraft(notebookID, draftJSON string) error {
+func (r *Repository) UpdateNotebookSyllabusDraft(notebookID, draftJSON string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
 	}
 
-	result, err := conn.Exec(`
+	result, err := r.db.Exec(`
 		UPDATE notebooks
 		SET syllabus_draft_json = ?
 		WHERE id = ?
@@ -458,151 +501,13 @@ func UpdateNotebookSyllabusDraft(notebookID, draftJSON string) error {
 }
 
 // DeleteNotebook removes a notebook and its chunk links
-func DeleteNotebook(notebookID string) error {
+func (r *Repository) DeleteNotebook(notebookID string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
 	}
-	return deleteNotebookRepo(notebookID)
-}
-
-// GetNotebookTopicTree returns notebooks with their discovered topics derived from linked chunks, optionally filtered by profile.
-func GetNotebookTopicTree(profileID string) ([]models.NotebookTopicTreeNode, error) {
-	query := `
-		SELECT
-			n.id,
-			n.title,
-			COALESCE(t.id, ''),
-			COALESCE(t.title, '')
-		FROM notebooks n
-		LEFT JOIN notebook_chunks nc ON nc.notebook_id = n.id
-		LEFT JOIN chunks c ON c.id = nc.chunk_id
-		LEFT JOIN topics t ON t.id = c.topic_id
-	`
-	var args []interface{}
-	if profileID != "" {
-		query += ` WHERE (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
-		args = append(args, profileID)
-	}
-	query += ` ORDER BY n.uploaded_at DESC, t.title ASC, t.id ASC `
-
-	rows, err := conn.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	tree := make([]models.NotebookTopicTreeNode, 0)
-	notebookIndex := make(map[string]int)
-	seenTopics := make(map[string]map[string]struct{})
-
-	for rows.Next() {
-		var notebookID string
-		var notebookTitle string
-		var topicID string
-		var topicTitle string
-
-		if err := rows.Scan(&notebookID, &notebookTitle, &topicID, &topicTitle); err != nil {
-			return nil, err
-		}
-
-		idx, exists := notebookIndex[notebookID]
-		if !exists {
-			tree = append(tree, models.NotebookTopicTreeNode{
-				NotebookID: notebookID,
-				Title:      notebookTitle,
-				Topics:     []models.NotebookTopicTreeTopic{},
-			})
-			idx = len(tree) - 1
-			notebookIndex[notebookID] = idx
-			seenTopics[notebookID] = make(map[string]struct{})
-		}
-
-		if topicID == "" || topicTitle == "" {
-			continue
-		}
-
-		if _, duplicate := seenTopics[notebookID][topicID]; duplicate {
-			continue
-		}
-
-		tree[idx].Topics = append(tree[idx].Topics, models.NotebookTopicTreeTopic{
-			TopicID: topicID,
-			Title:   topicTitle,
-		})
-		seenTopics[notebookID][topicID] = struct{}{}
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return tree, nil
-}
-
-func ingestNotebookContentByTopicRepo(notebookID string, groups []NotebookTopicIngestionGroup) error {
-	if notebookID == "" {
-		return fmt.Errorf("notebook id is required")
-	}
-	if len(groups) == 0 {
-		return fmt.Errorf("at least one topic group is required")
-	}
-
-	return withTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`
-			UPDATE notebooks
-			SET status = ?, chunk_count = 0
-			WHERE id = ?
-		`, "processing", notebookID); err != nil {
-			return err
-		}
-
-		if _, err := tx.Exec("DELETE FROM notebook_chunks WHERE notebook_id = ?", notebookID); err != nil {
-			return err
-		}
-
-		chunkPrefix := fmt.Sprintf("nbc_%s_%%", notebookID)
-
-		if _, err := tx.Exec("DELETE FROM chunks WHERE id LIKE ?", chunkPrefix); err != nil {
-			return err
-		}
-
-		totalChunks := 0
-		for _, group := range groups {
-			if group.TopicID == "" {
-				return fmt.Errorf("topic id is required for each ingestion group")
-			}
-
-			for _, chunk := range group.Chunks {
-				if err := insertChunkRowRepo(tx, group.TopicID, chunk); err != nil {
-					return err
-				}
-
-				if err := linkNotebookChunkRowRepo(tx, notebookID, chunk); err != nil {
-					return err
-				}
-
-				totalChunks++
-			}
-		}
-
-		if _, err := tx.Exec(`
-			UPDATE notebooks
-			SET chunk_count = ?, status = ?, topic_id = ?
-			WHERE id = ?
-		`, totalChunks, "chunked", groups[0].TopicID, notebookID); err != nil {
-			return err
-		}
-		return nil
-	})
-}
-
-func deleteNotebookRepo(notebookID string) error {
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		// Delete reading_progress for tasks associated with this notebook first
-		// (reading_progress references study_queue, which references notebooks)
 		if _, err := tx.Exec(`
 			DELETE FROM reading_progress
 			WHERE task_id IN (
@@ -622,7 +527,7 @@ func deleteNotebookRepo(notebookID string) error {
 			return err
 		}
 
-		// Delete study_queue entries for this notebook (foreign key to notebooks)
+		// Delete study_queue entries for this notebook
 		if _, err := tx.Exec(`
 			DELETE FROM study_queue WHERE notebook_id = ?
 		`, notebookID); err != nil {
@@ -678,14 +583,14 @@ func deleteNotebookRepo(notebookID string) error {
 			}
 		}
 
-		// Delete notebook_chunks entries (foreign key to notebooks)
+		// Delete notebook_chunks entries
 		if _, err := tx.Exec(`
 			DELETE FROM notebook_chunks WHERE notebook_id = ?
 		`, notebookID); err != nil {
 			return err
 		}
 
-		// Bulk delete chunks using IN clause for better performance
+		// Bulk delete chunks
 		if len(chunkIDs) > 0 {
 			placeholders := make([]string, len(chunkIDs))
 			args := make([]interface{}, len(chunkIDs))
@@ -754,6 +659,82 @@ func deleteNotebookRepo(notebookID string) error {
 	})
 }
 
+// GetNotebookTopicTree returns notebooks with their discovered topics derived from linked chunks, optionally filtered by profile.
+func (r *Repository) GetNotebookTopicTree(profileID string) ([]models.NotebookTopicTreeNode, error) {
+	query := `
+		SELECT
+			n.id,
+			n.title,
+			COALESCE(t.id, ''),
+			COALESCE(t.title, '')
+		FROM notebooks n
+		LEFT JOIN notebook_chunks nc ON nc.notebook_id = n.id
+		LEFT JOIN chunks c ON c.id = nc.chunk_id
+		LEFT JOIN topics t ON t.id = c.topic_id
+	`
+	var args []interface{}
+	if profileID != "" {
+		query += ` WHERE (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
+		args = append(args, profileID)
+	}
+	query += ` ORDER BY n.uploaded_at DESC, t.title ASC, t.id ASC `
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	tree := make([]models.NotebookTopicTreeNode, 0)
+	notebookIndex := make(map[string]int)
+	seenTopics := make(map[string]map[string]struct{})
+
+	for rows.Next() {
+		var notebookID string
+		var notebookTitle string
+		var topicID string
+		var topicTitle string
+
+		if err := rows.Scan(&notebookID, &notebookTitle, &topicID, &topicTitle); err != nil {
+			return nil, err
+		}
+
+		idx, exists := notebookIndex[notebookID]
+		if !exists {
+			tree = append(tree, models.NotebookTopicTreeNode{
+				NotebookID: notebookID,
+				Title:      notebookTitle,
+				Topics:     []models.NotebookTopicTreeTopic{},
+			})
+			idx = len(tree) - 1
+			notebookIndex[notebookID] = idx
+			seenTopics[notebookID] = make(map[string]struct{})
+		}
+
+		if topicID == "" || topicTitle == "" {
+			continue
+		}
+
+		if _, duplicate := seenTopics[notebookID][topicID]; duplicate {
+			continue
+		}
+
+		tree[idx].Topics = append(tree[idx].Topics, models.NotebookTopicTreeTopic{
+			TopicID: topicID,
+			Title:   topicTitle,
+		})
+		seenTopics[notebookID][topicID] = struct{}{}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return tree, nil
+}
+
 func insertChunkRowRepo(exec sqlExecer, topicID string, chunk NotebookChunkInput) error {
 	_, err := exec.Exec(`
 		INSERT INTO chunks (id, topic_id, chunk_text, page_num, token_count, importance_score, weakness_score)
@@ -774,7 +755,7 @@ func linkNotebookChunkRowRepo(exec sqlExecer, notebookID string, chunk NotebookC
 func doesTableExistTxRepo(tx *sql.Tx, tableName string) (bool, error) {
 	var count int
 	err := tx.QueryRow(`
-		SELECT COUNT(1)
+		SELECT count(1)
 		FROM sqlite_master
 		WHERE type = 'table' AND name = ?
 	`, tableName).Scan(&count)
@@ -785,7 +766,7 @@ func doesTableExistTxRepo(tx *sql.Tx, tableName string) (bool, error) {
 }
 
 // GetChunksWithContextByNotebookPageRange returns structured chunks for a notebook page range.
-func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, error) {
+func (r *Repository) GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPage int) ([]models.ChunkWithContext, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return nil, fmt.Errorf("notebook id is required")
@@ -794,7 +775,7 @@ func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPa
 		return nil, fmt.Errorf("invalid page range: start=%d end=%d", startPage, endPage)
 	}
 
-	rows, err := conn.Query(`
+	rows, err := r.db.Query(`
 		SELECT c.id, nc.page_num, c.chunk_text
 		FROM notebook_chunks nc
 		JOIN chunks c ON c.id = nc.chunk_id
@@ -822,7 +803,7 @@ func GetChunksWithContextByNotebookPageRange(notebookID string, startPage, endPa
 }
 
 // AssignNotebookToProfile sets the profile ID for a notebook.
-func AssignNotebookToProfile(notebookID string, profileID string) error {
+func (r *Repository) AssignNotebookToProfile(notebookID string, profileID string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
@@ -831,7 +812,7 @@ func AssignNotebookToProfile(notebookID string, profileID string) error {
 	if profileID != "" {
 		pID = profileID
 	}
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		UPDATE notebooks
 		SET profile_id = ?
 		WHERE id = ?
@@ -840,7 +821,7 @@ func AssignNotebookToProfile(notebookID string, profileID string) error {
 }
 
 // UpdateNotebookStudyStatus updates the study status of a notebook ('active', 'dormant', 'completed').
-func UpdateNotebookStudyStatus(notebookID string, studyStatus string) error {
+func (r *Repository) UpdateNotebookStudyStatus(notebookID string, studyStatus string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return fmt.Errorf("notebook id is required")
@@ -849,47 +830,42 @@ func UpdateNotebookStudyStatus(notebookID string, studyStatus string) error {
 		return fmt.Errorf("invalid study status: %s", studyStatus)
 	}
 
-	// If activating, we enforce the hard limit of 3-4 active notebooks per profile.
-	if studyStatus == "active" {
-		var profileID sql.NullString
-		err := conn.QueryRow(`SELECT profile_id FROM notebooks WHERE id = ?`, notebookID).Scan(&profileID)
-		if err != nil {
-			return err
-		}
-		if profileID.Valid && profileID.String != "" {
-			var activeCount int
-			err = conn.QueryRow(`
-				SELECT COUNT(*) FROM notebooks
-				WHERE profile_id = ? AND study_status = 'active'
-			`, profileID.String).Scan(&activeCount)
+	return r.withTx(func(tx *sql.Tx) error {
+		// If activating, we enforce the hard limit of 3-4 active notebooks per profile.
+		if studyStatus == "active" {
+			var profileID sql.NullString
+			err := tx.QueryRow(`SELECT profile_id FROM notebooks WHERE id = ?`, notebookID).Scan(&profileID)
 			if err != nil {
 				return err
 			}
-			if activeCount >= 4 {
-				return fmt.Errorf("profile already has the maximum limit of 4 active notebooks")
+			if profileID.Valid && profileID.String != "" {
+				var activeCount int
+				err = tx.QueryRow(`
+					SELECT COUNT(*) FROM notebooks
+					WHERE profile_id = ? AND study_status = 'active'
+				`, profileID.String).Scan(&activeCount)
+				if err != nil {
+					return err
+				}
+				if activeCount >= 4 {
+					return fmt.Errorf("profile already has the maximum limit of 4 active notebooks")
+				}
 			}
 		}
-	}
 
-	_, err := conn.Exec(`
-		UPDATE notebooks
-		SET study_status = ?
-		WHERE id = ?
-	`, studyStatus, notebookID)
-	return err
+		_, err := tx.Exec(`
+			UPDATE notebooks
+			SET study_status = ?
+			WHERE id = ?
+		`, studyStatus, notebookID)
+		return err
+	})
 }
 
 // GetProfileRemainingWords calculates the remaining unread words across all notebooks in a profile.
-// Notebooks with a NULL profile_id are treated as unowned and are included, matching the queue
-// scheduler's filter: (? = '' OR n.profile_id = ?).
-func GetProfileRemainingWords(profileID string) (int, error) {
-	// Single query instead of an N+1 loop — the previous implementation opened
-	// The previous implementation opened an outer rows cursor and then issued
-	// another query while that cursor was still alive. With SetMaxOpenConns(1)
-	// this is a guaranteed deadlock because the outer cursor holds the only
-	// connection.
+func (r *Repository) GetProfileRemainingWords(profileID string) (int, error) {
 	var total int
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT COALESCE(SUM(
 			CASE
 				WHEN COALESCE(t.current_page_cursor, 0) > 0 THEN
@@ -913,3 +889,131 @@ func GetProfileRemainingWords(profileID string) (int, error) {
 	}
 	return total, nil
 }
+
+// ResetIndexingStatus resets any notebooks with status 'INDEXING' back to 'PENDING'.
+func (r *Repository) ResetIndexingStatus() error {
+	_, err := r.db.Exec(`
+		UPDATE notebooks
+		SET indexing_status = 'PENDING'
+		WHERE indexing_status = 'INDEXING'
+	`)
+	return err
+}
+
+// GetPendingNotebookIDs returns IDs of all notebooks with indexing_status = 'PENDING'.
+func (r *Repository) GetPendingNotebookIDs() ([]string, error) {
+	rows, err := r.db.Query("SELECT id FROM notebooks WHERE indexing_status = 'PENDING'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetChunkEmbeddingRefsForNotebook returns embedding_ref values for all chunks in a notebook.
+func (r *Repository) GetChunkEmbeddingRefsForNotebook(notebookID string) (map[string]string, error) {
+	rows, err := r.db.Query(`
+		SELECT c.id, COALESCE(c.embedding_ref, '')
+		FROM chunks c
+		JOIN notebook_chunks nc ON nc.chunk_id = c.id
+		WHERE nc.notebook_id = ?
+	`, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	refs := make(map[string]string)
+	for rows.Next() {
+		var chunkID string
+		var hash string
+		if err := rows.Scan(&chunkID, &hash); err != nil {
+			return nil, err
+		}
+		refs[chunkID] = hash
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return refs, nil
+}
+
+// GetNotebookIndexingProgress returns the number of indexed chunks, total chunks, and indexing_status.
+func (r *Repository) GetNotebookIndexingProgress(notebookID string) (int, int, string, error) {
+	var indexingStatus string
+	err := r.db.QueryRow("SELECT COALESCE(indexing_status, 'PENDING') FROM notebooks WHERE id = ?", notebookID).Scan(&indexingStatus)
+	if err != nil {
+		return 0, 0, "", err
+	}
+
+	var indexedCount int
+	err = r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM notebook_chunks nc
+		JOIN chunks c ON nc.chunk_id = c.id
+		WHERE nc.notebook_id = ? AND c.embedding_ref IS NOT NULL AND c.embedding_ref != ''
+	`, notebookID).Scan(&indexedCount)
+	if err != nil {
+		return 0, 0, indexingStatus, err
+	}
+
+	var totalCount int
+	err = r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM notebook_chunks
+		WHERE notebook_id = ?
+	`, notebookID).Scan(&totalCount)
+	if err != nil {
+		return indexedCount, 0, indexingStatus, err
+	}
+
+	return indexedCount, totalCount, indexingStatus, nil
+}
+
+// GetNotebookIDByTopic returns a notebook ID linked to the given topic ID.
+func (r *Repository) GetNotebookIDByTopic(topicID string) (string, error) {
+	var notebookID string
+	// Check notebook_topics first. Wrap the UNION in a subquery and sort by notebook_id to guarantee deterministic ordering.
+	err := r.db.QueryRow(`
+		SELECT notebook_id FROM (
+			SELECT notebook_id FROM notebook_topics WHERE topic_id = ?
+			UNION
+			SELECT id AS notebook_id FROM notebooks WHERE topic_id = ?
+		)
+		ORDER BY notebook_id ASC
+		LIMIT 1
+	`, topicID, topicID).Scan(&notebookID)
+	if err != nil {
+		return "", err
+	}
+	return notebookID, nil
+}
+
+// CountActiveNotebooksForActiveProfile returns the count of active notebooks matching the profile ID or globally active if profile ID is empty.
+func (r *Repository) CountActiveNotebooksForActiveProfile(activeProfileID string) (int, error) {
+	var count int
+	if activeProfileID != "" {
+		err := r.db.QueryRow(`
+			SELECT COUNT(*) FROM notebooks 
+			WHERE study_status = 'active' 
+			  AND (profile_id = ? OR profile_id IS NULL OR profile_id = '')
+		`, activeProfileID).Scan(&count)
+		return count, err
+	}
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&count)
+	return count, err
+}
+

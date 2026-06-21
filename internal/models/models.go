@@ -537,6 +537,9 @@ type UserSettings struct {
 	CloudAPIToken       string `json:"cloud_api_token"`
 	Theme               string `json:"theme"`
 	RAGEnabled          bool   `json:"rag_enabled"`
+	RAGNotebookChapter  bool   `json:"rag_notebook_chapter"`
+	RAGEntireNotebook   bool   `json:"rag_entire_notebook"`
+	RAGQueueStudy       bool   `json:"rag_queue_study"`
 }
 
 // LLMTierSettings stores non-secret OpenAI-compatible provider config.

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"ai-tutor/internal/db"
 	"ai-tutor/internal/retrieval"
 )
 
@@ -93,12 +92,12 @@ func (s *StudyService) ExplainReaderSection(sectionID string, question string) m
 		return map[string]interface{}{"error": "section ID is required"}
 	}
 
-	section, err := db.GetChunkSection(sectionID)
+	section, err := s.repo.GetChunkSection(sectionID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to fetch reader section: " + err.Error()}
 	}
 
-	topicID, notebookID, startPage, endPage, err := resolveReaderSectionScope(sectionID)
+	topicID, notebookID, startPage, endPage, err := s.resolveReaderSectionScope(sectionID)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to resolve reader section scope: " + err.Error()}
 	}
@@ -140,7 +139,7 @@ func (s *StudyService) searchReaderScope(req ReaderAIRequest, scope ReaderRetrie
 		endPage := req.ChapterEndPage
 		if startPage <= 0 || endPage <= 0 {
 			var err error
-			startPage, endPage, err = db.GetTopicPageBounds(req.TopicID)
+			startPage, endPage, err = s.repo.GetTopicPageBounds(req.TopicID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve chapter bounds: %w", err)
 			}
@@ -204,9 +203,9 @@ func buildReaderContextBlocks(results []retrieval.SearchResult) ([]string, []str
 	return blocks, citations
 }
 
-func resolveReaderSectionScope(sectionID string) (string, string, int, int, error) {
+func (s *StudyService) resolveReaderSectionScope(sectionID string) (string, string, int, int, error) {
 	// Use repository helpers to avoid SQL in service layer.
-	topicID, err := db.GetTopicIDBySectionID(sectionID)
+	topicID, err := s.repo.GetTopicIDBySectionID(sectionID)
 	if err != nil {
 		return "", "", 0, 0, err
 	}
@@ -214,7 +213,7 @@ func resolveReaderSectionScope(sectionID string) (string, string, int, int, erro
 	// Fetch the first notebook that contains this topic. It's acceptable for
 	// there to be no notebook linked (sql.ErrNoRows) — callers treat empty
 	// notebookID as a non-fatal condition.
-	notebookID, err := db.GetFirstNotebookIDByTopicID(topicID)
+	notebookID, err := s.repo.GetFirstNotebookIDByTopicID(topicID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			notebookID = ""
@@ -223,9 +222,9 @@ func resolveReaderSectionScope(sectionID string) (string, string, int, int, erro
 		}
 	}
 
-	pageRanges, err := db.GetTopicHeadingPageRanges(topicID)
+	pageRanges, err := s.repo.GetTopicHeadingPageRanges(topicID)
 	if err != nil {
-		return topicID, notebookID, 0, 0, nil
+		return topicID, notebookID, 0, 0, err
 	}
 	pageRange, ok := pageRanges[sectionID]
 	if !ok {

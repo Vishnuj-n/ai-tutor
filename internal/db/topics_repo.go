@@ -11,7 +11,7 @@ import (
 )
 
 // EnsureTopic inserts a topic if it does not already exist.
-func EnsureTopic(topicID, title string) error {
+func (r *Repository) EnsureTopic(topicID, title string) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return fmt.Errorf("topic id is required")
@@ -20,7 +20,7 @@ func EnsureTopic(topicID, title string) error {
 		title = topicID
 	}
 
-	_, err := conn.Exec(`
+	_, err := r.db.Exec(`
 		INSERT INTO topics (id, title, status)
 		VALUES (?, ?, 'reading')
 		ON CONFLICT(id) DO UPDATE SET title = excluded.title
@@ -35,46 +35,55 @@ type TopicBatchItem struct {
 }
 
 // EnsureTopicsBatch creates or updates multiple topics in a single transaction
-func EnsureTopicsBatch(items []TopicBatchItem) error {
+func (r *Repository) EnsureTopicsBatch(items []TopicBatchItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	return withTx(func(tx *sql.Tx) error {
-		stmt, err := tx.Prepare(`
-			INSERT INTO topics (id, title, status)
-			VALUES (?, ?, 'reading')
-			ON CONFLICT(id) DO UPDATE SET title = excluded.title
-		`)
+	return r.withTx(func(tx *sql.Tx) error {
+		return r.EnsureTopicsBatchTx(tx, items)
+	})
+}
+
+// EnsureTopicsBatchTx creates or updates multiple topics within an existing transaction
+func (r *Repository) EnsureTopicsBatchTx(tx *sql.Tx, items []TopicBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO topics (id, title, status)
+		VALUES (?, ?, 'reading')
+		ON CONFLICT(id) DO UPDATE SET title = excluded.title
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = stmt.Close()
+	}()
+
+	for _, item := range items {
+		id := strings.TrimSpace(item.TopicID)
+		if id == "" {
+			return fmt.Errorf("topic id is required for all batch items")
+		}
+		title := item.Title
+		if title == "" {
+			title = id
+		}
+
+		_, err = stmt.Exec(id, title)
 		if err != nil {
 			return err
 		}
-		defer func() {
-			_ = stmt.Close()
-		}()
-
-		for _, item := range items {
-			id := strings.TrimSpace(item.TopicID)
-			if id == "" {
-				return fmt.Errorf("topic id is required for all batch items")
-			}
-			title := item.Title
-			if title == "" {
-				title = id
-			}
-
-			_, err = stmt.Exec(id, title)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // UpdateTopicPageBounds stores deterministic chapter bounds for a topic.
 // Initializes current_page_cursor to startPage if it is 0 (uninitialized).
-func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
+func (r *Repository) UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return fmt.Errorf("topic id is required")
@@ -89,7 +98,7 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		startPage, endPage = endPage, startPage
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		// Determine if cursor needs initialization and detect shrinkage
 		var previousStart int
 		var previousEnd int
@@ -142,7 +151,7 @@ func UpdateTopicPageBounds(topicID string, startPage, endPage int) error {
 		}
 
 		if shrunk {
-			if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
+			if err := r.deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
 				return err
 			}
 		}
@@ -158,12 +167,12 @@ type TopicPageBoundsBatchItem struct {
 }
 
 // UpdateTopicPageBoundsBatch updates page bounds for multiple topics in a single transaction
-func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
+func (r *Repository) UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		for _, item := range items {
 			topicID := strings.TrimSpace(item.TopicID)
 			if topicID == "" {
@@ -233,7 +242,7 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 			}
 
 			if shrunk {
-				if err := deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
+				if err := r.deleteAssessmentDataOutsideBoundsTx(tx, topicID, startPage, endPage); err != nil {
 					return err
 				}
 			}
@@ -242,7 +251,7 @@ func UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem) error {
 	})
 }
 
-func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage int, endPage int) error {
+func (r *Repository) deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage int, endPage int) error {
 
 	if _, err := tx.Exec(`
 		DELETE FROM fsrs_review_log
@@ -269,7 +278,7 @@ func deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage i
 }
 
 // GetTopicPageBounds returns persisted chapter bounds for a topic.
-func GetTopicPageBounds(topicID string) (int, int, error) {
+func (r *Repository) GetTopicPageBounds(topicID string) (int, int, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return 0, 0, fmt.Errorf("topic id is required")
@@ -277,7 +286,7 @@ func GetTopicPageBounds(topicID string) (int, int, error) {
 
 	var startPage int
 	var endPage int
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT COALESCE(start_page, 0), COALESCE(end_page, 0)
 		FROM topics
 		WHERE id = ?
@@ -299,13 +308,13 @@ type NotebookTopicInfo struct {
 
 // GetNotebookTopicsWithBounds returns topics linked to a notebook with their title and page bounds.
 // Topics are ordered by topic id which for autogenerated notebook topics encodes chapter index.
-func GetNotebookTopicsWithBounds(notebookID string) ([]NotebookTopicInfo, error) {
+func (r *Repository) GetNotebookTopicsWithBounds(notebookID string) ([]NotebookTopicInfo, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return nil, fmt.Errorf("notebook id is required")
 	}
 
-	rows, err := conn.Query(`
+	rows, err := r.db.Query(`
 		SELECT t.id, COALESCE(t.title, ''), COALESCE(t.start_page, 0), COALESCE(t.end_page, 0)
 		FROM notebook_topics nt
 		JOIN topics t ON t.id = nt.topic_id
@@ -335,8 +344,8 @@ func GetNotebookTopicsWithBounds(notebookID string) ([]NotebookTopicInfo, error)
 // QueryNextReadingTopic returns the next reading topic with deterministic page bounds and cursor.
 // Joins with notebooks table to ensure topics have a valid notebook source.
 // Orders by notebook priority (higher first) to respect notebook priority biasing.
-func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
-	settings, err := GetUserSettings()
+func (r *Repository) QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
+	settings, err := r.GetUserSettings()
 	if err != nil {
 		return models.ReadingTopicCursor{}, false, fmt.Errorf("QueryNextReadingTopic: getting user settings: %w", err)
 	}
@@ -369,7 +378,7 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 	}
 	query += ` ORDER BY COALESCE(n.priority, 5) DESC, t.updated_at ASC, t.created_at ASC LIMIT 1 `
 
-	err = conn.QueryRow(query, args...).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
+	err = r.db.QueryRow(query, args...).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
 	if err == sql.ErrNoRows {
 		return models.ReadingTopicCursor{}, false, nil
 	}
@@ -381,8 +390,8 @@ func QueryNextReadingTopic() (models.ReadingTopicCursor, bool, error) {
 }
 
 // GetAllTopicIDs returns all topic IDs currently in the database.
-func GetAllTopicIDs() ([]string, error) {
-	rows, err := conn.Query("SELECT id FROM topics ORDER BY id")
+func (r *Repository) GetAllTopicIDs() ([]string, error) {
+	rows, err := r.db.Query("SELECT id FROM topics ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -409,8 +418,8 @@ func GetAllTopicIDs() ([]string, error) {
 }
 
 // GetAllTopics returns all topics as id/title pairs.
-func GetAllTopics() ([]map[string]string, error) {
-	rows, err := conn.Query("SELECT id, title FROM topics ORDER BY title")
+func (r *Repository) GetAllTopics() ([]map[string]string, error) {
+	rows, err := r.db.Query("SELECT id, title FROM topics ORDER BY title")
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +450,7 @@ func GetAllTopics() ([]map[string]string, error) {
 }
 
 // UpdateTopicReadingCursor persists the current page cursor and optionally marks topic as learned.
-func UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) error {
+func (r *Repository) UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return fmt.Errorf("topic id is required")
@@ -455,7 +464,7 @@ func UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) erro
 		status = "learned"
 	}
 
-	result, err := conn.Exec(`
+	result, err := r.db.Exec(`
 		UPDATE topics
 		SET current_page_cursor = ?, status = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
@@ -476,13 +485,13 @@ func UpdateTopicReadingCursor(topicID string, cursor int, markLearned bool) erro
 }
 
 // DeleteTopic removes a topic and all associated data
-func DeleteTopic(topicID string) error {
+func (r *Repository) DeleteTopic(topicID string) error {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return fmt.Errorf("topic id is required")
 	}
 
-	return withTx(func(tx *sql.Tx) error {
+	return r.withTx(func(tx *sql.Tx) error {
 		// Delete dependent tables in order to respect foreign key constraints
 
 		// Delete notebook_chunks (via chunks)
@@ -522,3 +531,10 @@ func DeleteTopic(topicID string) error {
 		return nil
 	})
 }
+
+// DeleteFSRSCardsByTopicIDTx deletes FSRS cards for a given topic in a transaction.
+func (r *Repository) DeleteFSRSCardsByTopicIDTx(tx *sql.Tx, topicID string) error {
+	_, err := tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", topicID)
+	return err
+}
+

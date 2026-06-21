@@ -6,6 +6,7 @@ package retrieval
 
 import (
 	"container/list"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -16,7 +17,10 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
+
+var ErrInvalidNotebookContext = errors.New("invalid notebook context: notebook ID is required")
 
 // SearchResult is a single ranked chunk returned by SemanticSearch.
 type SearchResult struct {
@@ -39,6 +43,7 @@ const (
 // Engine performs semantic similarity search using ONNX embeddings + sqlite-vec
 // with a lexical TF-cosine fallback when ONNX is unavailable.
 type Engine struct {
+	repo     *db.Repository
 	embedder *embeddings.OnnxEmbedder
 	mu       sync.RWMutex
 	// tfCache stores pre-built TF vectors for the lexical fallback path.
@@ -53,8 +58,9 @@ type Engine struct {
 
 // NewEngine creates a retrieval engine.  embedder may be nil; the engine will
 // fall back to lexical cosine similarity in that case.
-func NewEngine(embedder *embeddings.OnnxEmbedder) *Engine {
+func NewEngine(repo *db.Repository, embedder *embeddings.OnnxEmbedder) *Engine {
 	return &Engine{
+		repo:         repo,
 		embedder:     embedder,
 		tfCache:      make(map[string]map[string]float64),
 		lruList:      list.New(),
@@ -105,13 +111,13 @@ func (e *Engine) SemanticSearch(topicID string, query string, topK int, startPag
 
 	loadChunks := func() ([]models.Chunk, error) {
 		if startPage > 0 && endPage > 0 {
-			return db.GetChunksForTopicPageRange(topicID, startPage, endPage)
+			return e.repo.GetChunksForTopicPageRange(topicID, startPage, endPage)
 		}
-		return db.GetChunksForTopic(topicID)
+		return e.repo.GetChunksForTopic(topicID)
 	}
 
 	vectorSearch := func(queryVec []float32, k int) ([]string, error) {
-		return db.SearchVectorsForTopic(topicID, queryVec, k, startPage, endPage)
+		return e.repo.SearchVectorsForTopic(topicID, queryVec, k, startPage, endPage)
 	}
 
 	return e.searchWithScope("vector search", query, topK, loadChunks, vectorSearch)
@@ -121,7 +127,7 @@ func (e *Engine) SemanticSearch(topicID string, query string, topK int, startPag
 func (e *Engine) SemanticSearchNotebook(notebookID string, topicID string, query string, topK int) ([]SearchResult, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
+		return nil, ErrInvalidNotebookContext
 	}
 	topicID = strings.TrimSpace(topicID)
 
@@ -131,7 +137,7 @@ func (e *Engine) SemanticSearchNotebook(notebookID string, topicID string, query
 		if scopedChunksLoaded {
 			return scopedChunksCache, nil
 		}
-		chunks, err := db.GetChunksForNotebook(notebookID)
+		chunks, err := e.repo.GetChunksForNotebook(notebookID)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +164,7 @@ func (e *Engine) SemanticSearchNotebook(notebookID string, topicID string, query
 
 	vectorSearch := func(queryVec []float32, k int) ([]string, error) {
 		if topicID == "" {
-			return db.SearchVectorsForNotebook(notebookID, queryVec, k)
+			return e.repo.SearchVectorsForNotebook(notebookID, queryVec, k)
 		}
 
 		scopedChunks, err := getScopedChunks()
@@ -181,7 +187,7 @@ func (e *Engine) SemanticSearchNotebook(notebookID string, topicID string, query
 		}
 
 		for {
-			chunkIDs, searchErr := db.SearchVectorsForNotebook(notebookID, queryVec, overfetchK)
+			chunkIDs, searchErr := e.repo.SearchVectorsForNotebook(notebookID, queryVec, overfetchK)
 			if searchErr != nil {
 				return nil, searchErr
 			}
@@ -284,6 +290,8 @@ func (e *Engine) searchWithScope(
 		} else {
 			log.Printf("retrieval: query embedding failed, falling back to lexical: %v", embedErr)
 		}
+	} else {
+		utils.RagLogger.Warn("retrieval: embedder is nil, falling back to lexical search", "scope", scopeName)
 	}
 
 	// If ONNX didn't produce results, use lexical fallback

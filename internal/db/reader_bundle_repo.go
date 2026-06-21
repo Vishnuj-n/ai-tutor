@@ -12,7 +12,7 @@ import (
 
 // GetReaderTopicBundle returns notebook metadata plus ordered sections with resolved page numbers.
 // If notebookID is provided, section page mapping is scoped to that notebook.
-func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopicBundle, error) {
+func (r *Repository) GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopicBundle, error) {
 	topicID = strings.TrimSpace(topicID)
 	selectedNotebookID := strings.TrimSpace(notebookID)
 	if topicID == "" {
@@ -26,7 +26,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 
 	var startPage int
 	var endPage int
-	if err := conn.QueryRow(`
+	if err := r.db.QueryRow(`
 		SELECT title, COALESCE(start_page, 0), COALESCE(end_page, 0)
 		FROM topics WHERE id = ?
 	`, topicID).Scan(&bundle.TopicTitle, &startPage, &endPage); err != nil {
@@ -43,7 +43,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 
 	var err error
 	if selectedNotebookID != "" {
-		err = conn.QueryRow(`
+		err = r.db.QueryRow(`
 			SELECT id, title, file_path, file_type, COALESCE(page_count, 0)
 			FROM notebooks n
 			WHERE n.id = ?
@@ -62,7 +62,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 			return nil, fmt.Errorf("selected notebook does not contain this topic")
 		}
 	} else {
-		err = conn.QueryRow(`
+		err = r.db.QueryRow(`
 			SELECT id, title, file_path, file_type, page_count
 			FROM (
 				SELECT
@@ -120,7 +120,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 
 	var rows *sql.Rows
 	if bundle.NotebookID != "" {
-		rows, err = conn.Query(`
+		rows, err = r.db.Query(`
 			SELECT
 				c.id,
 				'Page ' || CAST(COALESCE(nc.page_num, 0) AS TEXT),
@@ -133,7 +133,7 @@ func GetReaderTopicBundle(topicID string, notebookID string) (*models.ReaderTopi
 			ORDER BY nc.page_num ASC, c.id ASC
 		`, bundle.NotebookID, topicID)
 	} else {
-		rows, err = conn.Query(`
+		rows, err = r.db.Query(`
 			SELECT
 				c.id,
 				'Page ' || CAST(COALESCE(c.page_num, 0) AS TEXT),

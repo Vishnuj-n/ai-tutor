@@ -279,9 +279,13 @@ Left sidebar navigation with persistent sections:
 
 1. Dashboard (default landing)
 2. Reader
-3. Quiz
-4. Flashcards
-5. Settings (bottom)
+3. Notebooks
+4. Quiz
+5. Flashcards
+6. Examiner (WrittenAssessment)
+7. Tutor (Socratic)
+8. Settings (bottom)
+9. Sync (bottom)
 
 ### Why
 

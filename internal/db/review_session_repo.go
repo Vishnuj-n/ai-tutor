@@ -22,7 +22,7 @@ var (
 	ErrReviewSessionOpen     = errors.New("review session still has pending cards")
 )
 
-func fetchExistingReviewTask(q querier, notebookID string) (*models.StudyQueueTask, error) {
+func (r *Repository) fetchExistingReviewTask(q querier, notebookID string) (*models.StudyQueueTask, error) {
 	task := &models.StudyQueueTask{}
 	err := q.QueryRow(`
 		SELECT
@@ -51,9 +51,9 @@ func fetchExistingReviewTask(q querier, notebookID string) (*models.StudyQueueTa
 	return task, nil
 }
 
-func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
+func (r *Repository) GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
 	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan notebookID=%s now=%d limit=%d", notebookID, now, limit)
-	rows, err := conn.Query(`
+	rows, err := r.db.Query(`
 		SELECT
 			fc.id,
 			fc.topic_id,
@@ -111,10 +111,10 @@ func getDueReviewCardsForNotebookRepo(notebookID string, now int64, limit int) (
 	return cards, nil
 }
 
-func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
-	settings, err := GetUserSettings()
+func (r *Repository) GetNextDueReviewNotebook(now int64) (string, int, error) {
+	settings, err := r.GetUserSettings()
 	if err != nil {
-		return "", 0, fmt.Errorf("getNextDueReviewNotebookRepo: getting user settings: %w", err)
+		return "", 0, fmt.Errorf("getNextDueReviewNotebook: getting user settings: %w", err)
 	}
 	activeProfileStr := settings.ActiveProfileID
 
@@ -161,7 +161,7 @@ func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
 		LIMIT 1
 	`
 
-	err = conn.QueryRow(query, args...).Scan(&notebookID, &dueCount)
+	err = r.db.QueryRow(query, args...).Scan(&notebookID, &dueCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, nil
 	}
@@ -171,16 +171,17 @@ func getNextDueReviewNotebookRepo(now int64) (string, int, error) {
 	return notebookID, dueCount, nil
 }
 
-func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTask, bool, error) {
+func (r *Repository) CreateReviewSession(notebookID string) (*models.StudyQueueTask, bool, error) {
+	now := reviewSessionNow()
 	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation start notebookID=%s now=%d", notebookID, now)
-	if existing, err := fetchExistingReviewTask(conn, notebookID); err != nil {
+	if existing, err := r.fetchExistingReviewTask(r.db, notebookID); err != nil {
 		return nil, false, err
 	} else if existing != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation reused_existing notebookID=%s taskID=%s status=%s", notebookID, existing.ID, existing.Status)
 		return existing, true, nil
 	}
 
-	cards, err := getDueReviewCardsForNotebookRepo(notebookID, now, maxReviewSessionCards)
+	cards, err := r.GetDueReviewCardsForNotebook(notebookID, now, maxReviewSessionCards)
 	if err != nil {
 		return nil, false, err
 	}
@@ -192,8 +193,8 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 
 	var task *models.StudyQueueTask
 	var reused bool
-	err = withTx(func(tx *sql.Tx) error {
-		if existing, err := getExistingReviewTaskForNotebookTxRepo(tx, notebookID); err != nil {
+	err = r.withTx(func(tx *sql.Tx) error {
+		if existing, err := r.getExistingReviewTaskForNotebookTxRepo(tx, notebookID); err != nil {
 			return err
 		} else if existing != nil {
 			task = existing
@@ -263,16 +264,16 @@ func createReviewSessionRepo(notebookID string, now int64) (*models.StudyQueueTa
 
 	utils.LogReviewSession(task.ID, notebookID, strconv.Itoa(len(cards)), "session_created")
 	utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation committed taskID=%s notebookID=%s linkedCards=%d", task.ID, notebookID, len(cards))
-	createdTask, err := GetTaskByID(task.ID)
+	createdTask, err := r.GetTaskByID(task.ID)
 	return createdTask, false, err
 }
 
-func getExistingReviewTaskForNotebookTxRepo(tx *sql.Tx, notebookID string) (*models.StudyQueueTask, error) {
-	return fetchExistingReviewTask(tx, notebookID)
+func (r *Repository) getExistingReviewTaskForNotebookTxRepo(tx *sql.Tx, notebookID string) (*models.StudyQueueTask, error) {
+	return r.fetchExistingReviewTask(tx, notebookID)
 }
 
-func getReviewSessionRepo(taskID string) (*models.ReviewSession, error) {
-	task, err := GetTaskByID(taskID)
+func (r *Repository) GetReviewSession(taskID string) (*models.ReviewSession, error) {
+	task, err := r.GetTaskByID(taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +290,7 @@ func getReviewSessionRepo(taskID string) (*models.ReviewSession, error) {
 		_ = json.Unmarshal([]byte(payload), &session.Payload)
 	}
 
-	rows, err := conn.Query(`
+	rows, err := r.db.Query(`
 		SELECT
 			rtc.card_id,
 			rtc.status,
@@ -346,7 +347,7 @@ func getReviewSessionRepo(taskID string) (*models.ReviewSession, error) {
 	return session, nil
 }
 
-func markReviewTaskCardReviewedTxRepo(tx *sql.Tx, taskID, cardID string) error {
+func (r *Repository) MarkReviewTaskCardReviewedTx(tx *sql.Tx, taskID, cardID string) error {
 	res, err := tx.Exec(`
 		UPDATE review_task_cards
 		SET status = 'reviewed'
@@ -381,7 +382,7 @@ func markReviewTaskCardReviewedTxRepo(tx *sql.Tx, taskID, cardID string) error {
 	return fmt.Errorf("unexpected review task card state")
 }
 
-func remainingReviewTaskCardsTxRepo(tx *sql.Tx, taskID string) (int, error) {
+func (r *Repository) RemainingReviewTaskCardsTx(tx *sql.Tx, taskID string) (int, error) {
 	var remaining int
 	err := tx.QueryRow(`
 		SELECT COUNT(*)
@@ -391,9 +392,9 @@ func remainingReviewTaskCardsTxRepo(tx *sql.Tx, taskID string) (int, error) {
 	return remaining, err
 }
 
-func completeReviewSessionRepo(taskID string) error {
-	return withTx(func(tx *sql.Tx) error {
-		task, err := GetTaskByIDTx(tx, taskID)
+func (r *Repository) CompleteReviewSession(taskID string) error {
+	return r.withTx(func(tx *sql.Tx) error {
+		task, err := r.GetTaskByIDTx(tx, taskID)
 		if err != nil {
 			return err
 		}
@@ -404,7 +405,7 @@ func completeReviewSessionRepo(taskID string) error {
 			return ErrTaskNotActive
 		}
 
-		remaining, err := remainingReviewTaskCardsTxRepo(tx, taskID)
+		remaining, err := r.RemainingReviewTaskCardsTx(tx, taskID)
 		if err != nil {
 			return err
 		}
@@ -412,11 +413,9 @@ func completeReviewSessionRepo(taskID string) error {
 			return ErrReviewSessionOpen
 		}
 
-		if _, err := tx.Exec(`
-			UPDATE study_queue
-			SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND status = 'ACTIVE'
-		`, taskID); err != nil {
+		if err := r.CompleteTaskTx(tx, taskID, models.CompletionResult{
+			Status: models.StudyTaskStatusCompleted,
+		}); err != nil {
 			return err
 		}
 		utils.LogReviewSession(taskID, "", "0", "session_completed")
@@ -425,7 +424,7 @@ func completeReviewSessionRepo(taskID string) error {
 }
 
 // GetTaskByIDTx returns one queue task by ID within a transaction scope.
-func GetTaskByIDTx(tx *sql.Tx, taskID string) (*models.StudyQueueTask, error) {
+func (r *Repository) GetTaskByIDTx(tx *sql.Tx, taskID string) (*models.StudyQueueTask, error) {
 	task := &models.StudyQueueTask{}
 	err := tx.QueryRow(`
 		SELECT

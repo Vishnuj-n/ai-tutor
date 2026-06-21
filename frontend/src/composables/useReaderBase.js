@@ -30,6 +30,10 @@ export function useReaderBase(taskID) {
   const sections = ref([])
   const activeSection = ref(null)
 
+  // Normalized context handed to the reader after either init path settles.
+  // Shape: { pdfUrl, startPage, endPage, mode: 'task' | 'browse' }
+  const readerContext = ref(null)
+
   // Navigation bounds for task-flow sessions.
   const navigationMinPage = ref(0)
   const navigationMaxPage = ref(0)
@@ -70,14 +74,12 @@ export function useReaderBase(taskID) {
 
   const canGoPrev = computed(() => {
     if (!pdfVisible.value) return false
-    const effectiveMin = hasNavigationBounds.value ? navigationMinPage.value : 1
-    return currentPage.value > effectiveMin
+    return currentPage.value > 1
   })
 
   const canGoNext = computed(() => {
     if (!pdfVisible.value) return false
-    const effectiveMax = hasNavigationBounds.value ? navigationMaxPage.value : pageCount.value
-    return currentPage.value < effectiveMax
+    return currentPage.value < pageCount.value
   })
 
   const pdfSource = computed(() => {
@@ -177,7 +179,8 @@ export function useReaderBase(taskID) {
 
       // Treat missing/empty bundle as recoverable
       let bundle = null
-         if (result.bundle && typeof result.bundle === 'object') {        bundle = {
+      if (result.bundle && typeof result.bundle === 'object') {
+        bundle = {
           ...result.bundle,
           sections: Array.isArray(result.bundle.sections) ? result.bundle.sections : [],
         }
@@ -217,6 +220,13 @@ export function useReaderBase(taskID) {
       topicEndPage.value = Number(bundle?.topic_end_page ?? 0)
       sections.value = bundle?.sections || []
       activeSection.value = sections.value[0] || null
+
+      readerContext.value = {
+        pdfUrl:    notebookUrl.value,
+        startPage: currentPage.value,
+        endPage:   navigationMaxPage.value || 0,
+        mode:      'task',
+      }
 
       return {
         task,
@@ -267,6 +277,14 @@ export function useReaderBase(taskID) {
       // Set page to topic start page (browse mode - no task navigation bounds)
       const topicStart = Number(result?.topic_start_page) || 1
       currentPage.value = topicStart
+
+      readerContext.value = {
+        pdfUrl:    notebookUrl.value,
+        startPage: currentPage.value,
+        endPage:   0,
+        mode:      'browse',
+      }
+
       return true
     } catch (err) {
       globalError.value = err?.message || 'Failed to load reader data'
@@ -274,6 +292,10 @@ export function useReaderBase(taskID) {
     } finally {
       loadingBundle.value = false
     }
+  }
+
+  function updateCurrentPage(page) {
+    currentPage.value = clampPage(page, pageCount.value)
   }
 
   function goPrev() {
@@ -296,9 +318,7 @@ export function useReaderBase(taskID) {
     activeSection.value = section
     const page = Number(section?.page_num)
     if (Number.isFinite(page) && page > 0) {
-      const effectiveMin = hasNavigationBounds.value ? navigationMinPage.value : 1
-      const effectiveMax = hasNavigationBounds.value ? navigationMaxPage.value : pageCount.value
-      currentPage.value = Math.min(Math.max(effectiveMin, page), effectiveMax)
+      currentPage.value = Math.min(Math.max(1, page), pageCount.value)
     }
   }
 
@@ -318,6 +338,7 @@ export function useReaderBase(taskID) {
     loadingTree,
     loadingBundle,
     globalError,
+    readerContext,
     topicTitle,
     notebookUrl,
     fileType,
@@ -346,6 +367,7 @@ export function useReaderBase(taskID) {
     loadNotebookTree,
     initializeSession,
     loadBundle,
+    updateCurrentPage,
     goPrev,
     goNext,
     selectSection,

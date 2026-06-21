@@ -67,51 +67,135 @@
       <p>{{ reader.globalError.value }}</p>
       <div class="error-actions">
         <button class="secondary" @click="router.push('/dashboard')">Back to Dashboard</button>
-        <button class="primary" @click="window.location.reload()">Retry</button>
+        <button class="primary" @click="reloadPage()">Retry</button>
       </div>
     </article>
 
     <div v-else class="layout" :class="{ collapsed: chat.chatCollapsed.value }">
       <article class="panel stage">
         <div class="stage-head">
-          <h2>Document Stage</h2>
-          <div class="pager">
-            <button class="secondary" :disabled="!reader.canGoPrev.value" @click="goPrev">
-              Prev
-            </button>
-            <span>Page {{ reader.currentPage.value }} / {{ reader.pageCount.value }}</span>
-            <button class="secondary" :disabled="!reader.canGoNext.value" @click="goNext">
-              Next
-            </button>
+          <div class="stage-head-left">
+            <span class="page-indicator"
+              >Page {{ reader.currentPage.value }} / {{ reader.pageCount.value }}</span
+            >
             <button
               v-if="isTaskFlow"
               class="primary"
-              :disabled="
-                !activeTaskID || reader.loadingBundle.value || completingSession
-              "
+              :disabled="!resolvedTaskID || reader.loadingBundle.value || completingSession"
               @click="completeSession"
             >
               {{ completingSession ? 'Completing Session...' : 'Complete Session' }}
             </button>
           </div>
+          <div v-if="isTaskFlow && reader.hasNavigationBounds.value" class="stage-head-right">
+            <span class="reading-window-info">
+              Reading Window: Pages {{ reader.navigationMinPage.value }}-{{
+                reader.navigationMaxPage.value
+              }}
+            </span>
+          </div>
         </div>
-        <p v-if="isTaskFlow && reader.hasNavigationBounds.value" class="lock-meta">
-          Reading Window: Pages {{ reader.navigationMinPage.value }}-{{
-            reader.navigationMaxPage.value
-          }}
-        </p>
 
         <div v-if="reader.loadingBundle.value" class="empty">Loading document...</div>
         <div v-else-if="!reader.pdfVisible.value" class="empty">
           PDF not available for selected notebook/topic.
         </div>
-        <div v-else class="pdf-wrap">
-          <iframe
-            :key="iframeKey"
-            class="pdf-frame"
-            :src="reader.pdfSource.value"
-            title="Notebook PDF"
-          ></iframe>
+        <div
+          v-else
+          ref="pdfViewportRef"
+          class="pdf-viewport"
+          tabindex="0"
+          :data-view-mode="viewMode"
+          :style="{
+            opacity:
+              (scrollState.status !== 'initializing' && scrollState.status !== 'loading') ||
+              pdfLoadError
+                ? 1
+                : 0,
+            transition: 'opacity 0.2s ease',
+          }"
+          @keydown="handleViewportKeydown"
+        >
+          <div v-if="pdfLoadError" class="empty error">{{ pdfLoadError }}</div>
+          <div
+            v-else
+            ref="pdfScalerRef"
+            class="pdf-scaler"
+            :style="{ width: `${Math.round(BASE_PAGE_WIDTH * zoomScale)}px`, margin: '0 auto' }"
+          >
+            <div
+              v-for="pageNum in visiblePages"
+              :key="pageNum"
+              :data-page="pageNum"
+              class="pdf-page-wrapper"
+            >
+              <vue-pdf-embed
+                :source="reader.notebookUrl.value"
+                :page="pageNum"
+                :text-layer="false"
+                :annotation-layer="false"
+                @rendered="() => onPageRendered(pageNum)"
+                @loading-failed="handlePDFLoadFailed"
+                @rendering-failed="handlePDFLoadFailed"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Dev-only Scroll Debug Overlay -->
+        <pre v-if="isDev" class="debug-overlay">
+Scroll Status:  {{ scrollState.status }}
+Target Page:    {{ scrollState.targetPage }}
+Visible Page:   {{ currentVisiblePage }}
+Virtual Center: {{ virtualWindowCenter }}
+Programmatic:   {{ isProgrammaticScroll }}
+        </pre>
+
+        <!-- Right-edge PDF Controls -->
+        <div
+          v-if="reader.pdfVisible.value && !reader.loadingBundle.value && !pdfLoadError"
+          class="pdf-edge-controls"
+        >
+          <button
+            class="edge-btn zoom-btn"
+            :disabled="zoomScale <= 0.5"
+            title="Zoom out"
+            @click="zoomOut"
+          >
+            −
+          </button>
+          <span class="edge-zoom-val">{{ Math.round(zoomScale * 100) }}%</span>
+          <button
+            class="edge-btn zoom-btn"
+            :disabled="zoomScale >= 2.5"
+            title="Zoom in"
+            @click="zoomIn"
+          >
+            +
+          </button>
+          <div class="edge-sep"></div>
+          <div class="theme-trigger-wrap">
+            <button
+              class="edge-btn dots-btn"
+              title="Change theme"
+              :aria-expanded="themeMenuOpen"
+              @click="themeMenuOpen = !themeMenuOpen"
+            >
+              ···
+            </button>
+            <div v-if="themeMenuOpen" class="theme-flyout" role="menu">
+              <button
+                v-for="mode in ['raw', 'light', 'dark', 'sync']"
+                :key="mode"
+                class="flyout-item"
+                role="menuitem"
+                :class="{ active: viewMode === mode }"
+                @click="setViewMode(mode)"
+              >
+                {{ mode.charAt(0).toUpperCase() + mode.slice(1) }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <p v-if="isTaskFlow && completionMessage" class="completion-message">
@@ -120,100 +204,41 @@
         <p v-if="isTaskFlow && completionError" class="error">{{ completionError }}</p>
       </article>
 
-      <aside class="panel chat" :class="{ closed: chat.chatCollapsed.value, 'rag-off': !ragEnabled }">
-        <div class="chat-head">
-          <h2>AI Chat</h2>
-          <button class="ghost" @click="chat.toggleChat">
-            {{ chat.chatCollapsed.value ? 'Expand' : 'Collapse' }}
-          </button>
-        </div>
-
-        <div v-if="!chat.chatCollapsed.value && !ragSettingsLoaded" class="rag-disabled-overlay">
-          <h3>Loading settings...</h3>
-        </div>
-        <div v-else-if="!chat.chatCollapsed.value && ragSettingsError" class="rag-disabled-overlay">
-          <div class="lock-icon">⚠️</div>
-          <h3>Settings Error</h3>
-          <p>{{ ragSettingsError }}</p>
-          <button class="primary" @click="retryGetUserSettings">Retry</button>
-        </div>
-        <template v-else-if="!chat.chatCollapsed.value && ragEnabled">
-          <p class="chat-context">
-            Using topic <strong>{{ reader.selectedTopicTitle.value || 'None' }}</strong>
-            <span v-if="reader.selectedNotebookTitle.value"
-              >from {{ reader.selectedNotebookTitle.value }}</span
-            >
-          </p>
-
-          <div class="scope-bar">
-            <div class="scope-main">
-              <span class="scope-label">Retrieval Scope</span>
-              <select v-model="chat.chatScope.value" class="scope-select">
-                <option value="entire_notebook">Entire Notebook</option>
-                <option value="current_chapter">Current Chapter</option>
-                <option value="current_page">Current Page</option>
-              </select>
-            </div>
-            <p class="scope-helper">Broader scopes search more of your notebook.</p>
-          </div>
-
-          <div ref="chat.messagesPane" class="messages">
-            <article
-              v-for="(msg, idx) in chat.chatMessages.value"
-              :key="idx"
-              class="msg"
-              :class="msg.role"
-            >
-              <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
-              <p v-if="msg.role === 'user'">{{ msg.text }}</p>
-              <div v-else class="markdown-body" v-html="chat.renderMarkdown(msg.text)"></div>
-            </article>
-          </div>
-
-          <article v-if="chat.chatError.value" class="error">{{ chat.chatError.value }}</article>
-
-          <label class="field">
-            <span>Ask AI</span>
-            <textarea
-              v-model="chat.chatInput.value"
-              :disabled="chat.chatLoading.value || !reader.selectedTopicID.value"
-              placeholder="Ask about what you’re reading right now..."
-            ></textarea>
-          </label>
-
-          <button
-            class="primary"
-            :disabled="
-              chat.chatLoading.value ||
-              !chat.chatInput.value.trim() ||
-              !reader.selectedTopicID.value
-            "
-            @click="sendChat"
-          >
-            {{ chat.chatLoading.value ? 'Thinking...' : 'Send' }}
-          </button>
-        </template>
-        
-        <div v-if="!chat.chatCollapsed.value && ragSettingsLoaded && !ragEnabled" class="rag-disabled-overlay">
-          <div class="lock-icon">🔒</div>
-          <h3>Local AI Retrieval Offline</h3>
-          <p>Local semantic search and Q&A is currently disabled to save memory and CPU.</p>
-          <router-link to="/settings" class="enable-rag-btn">Enable in Settings</router-link>
-        </div>
-      </aside>
+      <ReaderChat
+        v-if="ragEnabled && ragQueueStudy"
+        :selected-topic-i-d="reader.selectedTopicID.value"
+        :selected-topic-title="reader.selectedTopicTitle.value"
+        :selected-notebook-i-d="reader.selectedNotebookID.value"
+        :selected-notebook-title="reader.selectedNotebookTitle.value"
+        :current-page="reader.currentPage.value"
+        :topic-start-page="reader.topicStartPage.value"
+        :topic-end-page="reader.topicEndPage.value"
+        :rag-enabled="ragEnabled"
+        :rag-settings-loaded="ragSettingsLoaded"
+        :rag-settings-error="ragSettingsError"
+        @retry-settings="retryGetUserSettings"
+      />
+      <div v-else-if="ragEnabled && !ragQueueStudy" class="chat-disabled">
+        Chat is currently disabled in queue study mode.
+      </div>
     </div>
   </section>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { completeReading, getUserSettings } from '../services/appApi'
+import { completeReading, getUserSettings, logFrontendEvent } from '../services/appApi'
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
+import ReaderChat from '../components/ReaderChat.vue'
+import VuePdfEmbed from 'vue-pdf-embed'
+import 'vue-pdf-embed/dist/styles/annotationLayer.css'
+import 'vue-pdf-embed/dist/styles/textLayer.css'
 
 const route = useRoute()
 const router = useRouter()
+const isDev = import.meta.env.DEV
 
 // Get task ID from route (task flow only - manual flow deprecated)
 const routeTaskID = computed(() => {
@@ -224,117 +249,494 @@ const routeTaskID = computed(() => {
 // Initialize composables
 const reader = useReaderBase(routeTaskID)
 const chat = useChat()
+provide('chat', chat)
 
 // Local state for completion
 const completingSession = ref(false)
 const completionMessage = ref('')
 const completionError = ref('')
-const iframeKey = ref(0)
-const activeTaskID = ref('')
+const sessionTask = ref(null)
 const ragEnabled = ref(false)
+const ragQueueStudy = ref(true)
 const ragSettingsLoaded = ref(false)
 const ragSettingsError = ref(null)
 
-const isTaskFlow = computed(() => !!routeTaskID.value)
+const resolvedTaskID = computed(() => {
+  return (
+    sessionTask.value?.task_id ||
+    sessionTask.value?.id ||
+    routeTaskID.value ||
+    route.query.taskId ||
+    route.query.task_id ||
+    ''
+  )
+})
+
+watch(resolvedTaskID, (next, prev) => {
+  console.warn('[READER_STATE] resolvedTaskID changed', { previous: prev, next })
+})
+
+// Custom PDF Viewer Refs
+const pdfViewportRef = ref(null)
+const pdfScalerRef = ref(null)
+const pdfLoadError = ref('')
+
+// Custom PDF Viewer Zoom & View Modes
+const BASE_PAGE_WIDTH = 800
+const zoomScale = ref(1.0)
+
+// scrollState status transitions are managed by setScrollStatus to include safety timeout fallbacks.
+const scrollState = ref({
+  status: 'initializing', // 'initializing' | 'loading' | 'scrolling' | 'ready'
+  targetPage: null,
+})
+let scrollTimeoutId = null
+
+// Decouple visible page tracking from virtualization window center
+const currentVisiblePage = ref(1)
+const virtualWindowCenter = ref(1)
+
+// isProgrammaticScroll: true while a programmatic scrollIntoView is in flight.
+// The scroll handler ignores events while this is set to prevent cascade.
+let isProgrammaticScroll = false
+let scrollDebounceId = null
+let programmaticScrollTimeoutId = null
+
+function logScroll(event, data = {}) {
+  const payload = {
+    status: scrollState.value.status,
+    target: scrollState.value.targetPage,
+    visible: currentVisiblePage.value,
+    virtualCenter: virtualWindowCenter.value,
+    isProgrammatic: isProgrammaticScroll,
+    ...data
+  }
+  console.log(`[SCROLL:${event}]`, payload)
+  logFrontendEvent('info', 'ReaderScroll', event, payload)
+}
+
+function scrollToPage(page) {
+  const wrapper = pdfViewportRef.value?.querySelector(`[data-page="${page}"]`)
+  if (wrapper) {
+    logScroll('scrollToPage_start', { page })
+    isProgrammaticScroll = true
+    wrapper.scrollIntoView({ behavior: 'auto', block: 'start' })
+    if (programmaticScrollTimeoutId) {
+      clearTimeout(programmaticScrollTimeoutId)
+    }
+    programmaticScrollTimeoutId = setTimeout(() => {
+      isProgrammaticScroll = false
+      programmaticScrollTimeoutId = null
+      logScroll('scrollToPage_completed', { page })
+    }, 300)
+    return true
+  }
+  return false
+}
+
+function setScrollStatus(status, targetPage = null) {
+  logScroll('setScrollStatus', { transitioningTo: status, transitionTarget: targetPage })
+  scrollState.value.status = status
+  scrollState.value.targetPage = targetPage
+
+  if (targetPage !== null) {
+    virtualWindowCenter.value = targetPage
+    currentVisiblePage.value = targetPage
+  }
+
+  if (scrollTimeoutId) {
+    clearTimeout(scrollTimeoutId)
+    scrollTimeoutId = null
+  }
+
+  // Safety fallback to prevent getting stuck in 'loading' or 'scrolling'.
+  // Extended to 10s to handle slow PDF renders. Attempts a scroll before clearing.
+  if (status === 'loading' || status === 'scrolling') {
+    scrollTimeoutId = setTimeout(() => {
+      const stuckTarget = scrollState.value.targetPage
+      logScroll('safetyTimeoutFired', { stuckTarget, stuckStatus: scrollState.value.status })
+      if (stuckTarget) {
+        scrollToPage(stuckTarget)
+      }
+      scrollState.value.status = 'ready'
+      scrollState.value.targetPage = null
+    }, 10000)
+  }
+}
+
+const viewMode = ref('raw')
+const themeMenuOpen = ref(false)
+const containerWidth = ref(800)
+
+const VISIBLE_BUFFER = 5
+const BUFFER_SHIFT_THRESHOLD = 3
+
+// Synchronize programmatic changes of reader.currentPage back to our refs
+watch(
+  () => reader.currentPage.value,
+  (newVal) => {
+    logScroll('watchCurrentPage_triggered', { newVal })
+    if (scrollState.value.status !== 'ready') {
+      return
+    }
+    if (newVal !== currentVisiblePage.value) {
+      logScroll('watchCurrentPage_programmatic_change', { from: currentVisiblePage.value, to: newVal })
+      setScrollStatus('scrolling', newVal)
+
+      // Attempt scroll immediately in case the page wrapper is already rendered
+      nextTick(() => {
+        const scrolled = scrollToPage(newVal)
+        if (scrolled && checkAllPrecedingAndTargetRendered(newVal)) {
+          logScroll('watchCurrentPage_synchronous_scroll', { page: newVal })
+          setTimeout(() => {
+            setScrollStatus('ready')
+            logScroll('watchCurrentPage_scroll_done')
+          }, 150)
+        } else {
+          logScroll('watchCurrentPage_wait_render', { page: newVal })
+        }
+      })
+    }
+  }
+)
+
+function setViewMode(mode) {
+  viewMode.value = mode
+  themeMenuOpen.value = false
+}
+
+const isTaskFlow = computed(() => {
+  // Once context is settled, read mode from the context object.
+  // Fall back to route query during the initialization window (context not yet set).
+  const settled = reader.readerContext.value
+  if (settled) return settled.mode === 'task'
+  return !!routeTaskID.value
+})
 
 // Trust-based completion: user decides when reading is complete.
 // Page navigation is for UI only and does not gate completion.
 
-// Initialize on mount
-onMounted(async () => {
+const visiblePages = computed(() => {
+  const target = scrollState.value.targetPage ?? virtualWindowCenter.value
+  const total = reader.pageCount.value
+  if (!total || !target) return []
+  const start = Math.max(1, target - VISIBLE_BUFFER)
+  const end = Math.min(total, target + VISIBLE_BUFFER)
+  const pages = []
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
+})
+
+function checkAllPrecedingAndTargetRendered(targetPage) {
+  const targetPageWrapper = pdfViewportRef.value?.querySelector(`[data-page="${targetPage}"]`)
+  const targetRendered = !!(targetPageWrapper && targetPageWrapper.querySelector('canvas'))
+  if (!targetRendered) return false
+
+  return visiblePages.value
+    .filter((p) => p < targetPage)
+    .every((p) => {
+      const wrapper = pdfViewportRef.value?.querySelector(`[data-page="${p}"]`)
+      return !!(wrapper && wrapper.querySelector('canvas'))
+    })
+}
+
+function onPageRendered(pageNum) {
+  logScroll('onPageRendered', { pageNum })
+  if (scrollState.value.status === 'loading' || scrollState.value.status === 'scrolling') {
+    const targetPage = scrollState.value.targetPage || reader.currentPage.value
+    
+    // Scroll dynamically when any page <= targetPage in the visible range renders,
+    // to compensate for preceding page heights changing.
+    if (visiblePages.value.includes(pageNum) && pageNum <= targetPage) {
+      scrollToPage(targetPage)
+    }
+
+    if (checkAllPrecedingAndTargetRendered(targetPage)) {
+      scrollToPage(targetPage)
+      setTimeout(() => {
+        setScrollStatus('ready')
+        logScroll('onPageRendered_scroll_complete', { targetPage })
+      }, 150)
+    }
+  }
+}
+
+// ─── RAG settings ────────────────────────────────────────────────────────────
+
+async function loadRagSettings() {
   ragSettingsLoaded.value = false
   ragSettingsError.value = null
   try {
     const settings = await getUserSettings()
-    if (settings && settings.rag_enabled !== undefined) {
-      ragEnabled.value = settings.rag_enabled
-    }
-    ragSettingsLoaded.value = true
+    ragEnabled.value = settings?.rag_enabled ?? false
+    ragQueueStudy.value = settings?.rag_queue_study ?? true
   } catch (err) {
     console.error('Failed to load settings in Reader:', err)
     ragSettingsError.value = err?.message || 'Failed to load settings'
+  } finally {
     ragSettingsLoaded.value = true
-  }
-
-  console.log('[Reader] Mounted. route.query:', JSON.stringify(route.query))
-  console.log('[Reader] routeTaskID:', routeTaskID.value)
-
-  if (!routeTaskID.value) {
-    // Browse mode: load notebook tree for manual selection
-    console.log('[Reader] Browse mode - loading notebook tree')
-    await reader.loadNotebookTree()
-    return
-  }
-
-  // Task flow: extract query params properly
-  const query = {
-    notebookId: route.query.notebookId || route.query.notebook_id,
-    topicId: route.query.topicId || route.query.topic_id,
-    startPage: parseInt(route.query.startPage || route.query.start_page) || 0,
-    endPage: parseInt(route.query.endPage || route.query.end_page) || 0,
-  }
-  console.log('[Reader] Task flow - extracted query:', JSON.stringify(query))
-  console.warn('[Reader] Task flow - pre-init state', {
-    routeTaskID: routeTaskID.value,
-    fullPath: route.fullPath,
-    query,
-    isTaskFlow: isTaskFlow.value,
-  })
-
-  const init = await reader.initializeSession(query)
-  console.log('[Reader] initializeSession result:', init)
-  console.warn('[READER_INIT_CLIENT] initializeSession payload ids', {
-    routeQueryTaskId: route.query.taskId,
-    routeQueryTask_id: route.query.task_id,
-    canonicalTaskIDFromInit: init?.task?.task_id || init?.task?.id || null,
-  })
-  activeTaskID.value = init?.task?.task_id || init?.task?.id || routeTaskID.value
-  console.warn('[READER_INIT_CLIENT] activeTaskID assigned', {
-    assignedActiveTaskID: activeTaskID.value,
-    routeTaskID: routeTaskID.value,
-  })
-  console.log('[Reader] After init - reader state:', {
-    navigationMinPage: reader.navigationMinPage.value,
-    navigationMaxPage: reader.navigationMaxPage.value,
-    currentPage: reader.currentPage.value,
-    hasNavigationBounds: reader.hasNavigationBounds.value,
-    navigationState: reader.navigationState.value,
-  })
-  if (init) {
-    iframeKey.value++
-  }
-})
-
-watch(activeTaskID, (next, prev) => {
-  console.warn('[READER_STATE] activeTaskID changed', { previous: prev, next })
-})
-
-// Navigation methods
-function goPrev() {
-  if (reader.goPrev()) {
-    iframeKey.value++
   }
 }
 
-function goNext() {
-  if (reader.goNext()) {
-    iframeKey.value++
+// ─── Entry-path resolvers ─────────────────────────────────────────────────────
+
+async function resolveTaskContext(taskQuery) {
+  logScroll('resolveTaskContext_start', { taskQuery })
+  setScrollStatus('loading')
+  const init = await reader.initializeSession(taskQuery)
+  logScroll('resolveTaskContext_initialized', { success: !!init, page: reader.currentPage.value })
+  if (init) {
+    sessionTask.value = init.task
+    const targetPage = reader.currentPage.value
+    setScrollStatus('loading', targetPage)
+    logScroll('resolveTaskContext_start_scroll', { targetPage })
+    await nextTick()
+    const scrolled = scrollToPage(targetPage)
+    if (scrolled && checkAllPrecedingAndTargetRendered(targetPage)) {
+      logScroll('resolveTaskContext_immediate_scroll_success', { targetPage })
+      setTimeout(() => setScrollStatus('ready'), 150)
+    }
+  } else {
+    setScrollStatus('ready')
   }
+}
+
+async function resolveBrowseContext() {
+  console.log('[Reader] Browse mode — resolveBrowseContext')
+  await reader.loadNotebookTree()
+  setScrollStatus('ready')
+}
+
+// ─── Mounted ──────────────────────────────────────────────────────────────────
+
+// Initialize on mount
+onMounted(async () => {
+  await loadRagSettings()
+
+  logFrontendEvent('info', 'ReaderInit', 'mounted', { query: route.query, routeTaskID: routeTaskID.value })
+
+  if (routeTaskID.value) {
+    const taskQuery = {
+      notebookId: route.query.notebookId || route.query.notebook_id,
+      topicId: route.query.topicId || route.query.topic_id,
+      startPage: parseInt(route.query.startPage || route.query.start_page) || 0,
+      endPage: parseInt(route.query.endPage || route.query.end_page) || 0,
+    }
+    await resolveTaskContext(taskQuery)
+  } else {
+    await resolveBrowseContext()
+  }
+})
+
+watch(
+  () => reader.notebookUrl.value,
+  async (newUrl) => {
+    logScroll('watchNotebookUrl_triggered', { newUrl, page: reader.currentPage.value })
+    pdfLoadError.value = ''
+    if (scrollState.value.status !== 'initializing') {
+      const targetPage = reader.currentPage.value
+      setScrollStatus('loading', targetPage)
+      // Immediately attempt scroll for cached PDFs where @rendered never re-fires
+      await nextTick()
+      const scrolled = scrollToPage(targetPage)
+      if (scrolled && checkAllPrecedingAndTargetRendered(targetPage)) {
+        logScroll('watchNotebookUrl_immediate_scroll_success', { targetPage })
+        setTimeout(() => {
+          setScrollStatus('ready')
+        }, 150)
+      } else {
+        logScroll('watchNotebookUrl_wait_render', { targetPage })
+      }
+    }
+  }
+)
+
+function reloadPage() {
+  window.location.reload()
+}
+
+// ResizeObserver and Gesture Controller Setup
+let resizeObserver = null
+
+// Watch viewport ref to set up ResizeObserver and Event Listeners dynamically
+watch(pdfViewportRef, (el, oldEl, onCleanup) => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+
+  let startTouchDist = 0
+  let startZoomScale = 1.0
+
+  function handleTouchStart(e) {
+    if (e.touches.length === 2) {
+      const t1 = e.touches[0]
+      const t2 = e.touches[1]
+      startTouchDist = Math.sqrt(
+        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
+      )
+      startZoomScale = zoomScale.value
+    }
+  }
+
+  function handleTouchMove(e) {
+    if (e.touches.length === 2 && startTouchDist > 0) {
+      e.preventDefault()
+
+      const t1 = e.touches[0]
+      const t2 = e.touches[1]
+      const currentTouchDist = Math.sqrt(
+        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
+      )
+      const delta = currentTouchDist / startTouchDist
+
+      if (delta > 1.05 || delta < 0.95) {
+        let newScale = startZoomScale * delta
+        newScale = Math.round(newScale * 100) / 100
+        zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
+      }
+    }
+  }
+
+  function handleTouchEnd(e) {
+    if (e.touches.length < 2) {
+      startTouchDist = 0
+    }
+  }
+
+  function handleWheel(e) {
+    if (e.ctrlKey) {
+      e.preventDefault()
+
+      const factor = 1 - e.deltaY * 0.005
+      let newScale = zoomScale.value * factor
+      newScale = Math.round(newScale * 100) / 100
+      zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
+    }
+  }
+
+  if (el) {
+    containerWidth.value = el.clientWidth || 800
+
+    let initialFitDone = false
+    resizeObserver = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        containerWidth.value = entry.contentRect.width
+        if (!initialFitDone && containerWidth.value > 0) {
+          if (containerWidth.value < 800) {
+            zoomScale.value = Math.max(0.5, Math.round((containerWidth.value / 800) * 100) / 100)
+          }
+          initialFitDone = true
+        }
+      }
+    })
+    resizeObserver.observe(el)
+
+    el.addEventListener('touchstart', handleTouchStart, { passive: true })
+    el.addEventListener('touchmove', handleTouchMove, { passive: false })
+    el.addEventListener('touchend', handleTouchEnd, { passive: true })
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    el.addEventListener('scroll', handleViewportScroll, { passive: true })
+
+    onCleanup(() => {
+      if (resizeObserver) {
+        resizeObserver.disconnect()
+        resizeObserver = null
+      }
+      el.removeEventListener('touchstart', handleTouchStart)
+      el.removeEventListener('touchmove', handleTouchMove)
+      el.removeEventListener('touchend', handleTouchEnd)
+      el.removeEventListener('wheel', handleWheel)
+      el.removeEventListener('scroll', handleViewportScroll)
+    })
+  }
+})
+
+function zoomIn() {
+  zoomScale.value = Math.min(2.5, Math.round((zoomScale.value + 0.1) * 100) / 100)
+}
+
+function zoomOut() {
+  zoomScale.value = Math.max(0.5, Math.round((zoomScale.value - 0.1) * 100) / 100)
+}
+
+function handleViewportKeydown(e) {
+  if (e.ctrlKey && (e.key === '=' || e.key === '+')) {
+    e.preventDefault()
+    zoomIn()
+  } else if (e.ctrlKey && e.key === '-') {
+    e.preventDefault()
+    zoomOut()
+  }
+}
+
+onUnmounted(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+  if (scrollDebounceId) clearTimeout(scrollDebounceId)
+  if (programmaticScrollTimeoutId) clearTimeout(programmaticScrollTimeoutId)
+})
+
+// ─── Scroll-based page tracking ───────────────────────────────────────────────
+// Replaces IntersectionObserver. Reads geometry directly on scroll — no
+// observer rebuild cycles, no feedback loops, no cascade.
+
+function getVisiblePageFromScroll() {
+  const viewport = pdfViewportRef.value
+  if (!viewport) return null
+  const viewTop = viewport.scrollTop
+  const viewBottom = viewTop + viewport.clientHeight
+  const wrappers = viewport.querySelectorAll('.pdf-page-wrapper')
+  let bestPage = null
+  let bestOverlap = 0
+  for (const el of wrappers) {
+    const elTop = el.offsetTop
+    const elBottom = elTop + el.offsetHeight
+    const overlap = Math.min(viewBottom, elBottom) - Math.max(viewTop, elTop)
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap
+      bestPage = parseInt(el.dataset.page)
+    }
+  }
+  return bestPage
+}
+
+function handleViewportScroll() {
+  if (isProgrammaticScroll) return
+  if (scrollState.value.status !== 'ready') return
+  if (scrollDebounceId) clearTimeout(scrollDebounceId)
+  scrollDebounceId = setTimeout(() => {
+    const page = getVisiblePageFromScroll()
+    if (!page) return
+    if (page !== currentVisiblePage.value) {
+      currentVisiblePage.value = page
+      reader.updateCurrentPage(page)
+    }
+    // Shift virtual window center only when approaching the buffer edge
+    const diff = page - virtualWindowCenter.value
+    if (
+      diff + VISIBLE_BUFFER <= BUFFER_SHIFT_THRESHOLD ||
+      VISIBLE_BUFFER - diff <= BUFFER_SHIFT_THRESHOLD
+    ) {
+      virtualWindowCenter.value = page
+    }
+  }, 80)
+}
+
+function handlePDFLoadFailed(err) {
+  console.error('[Reader] PDF loading failed:', err)
+  const errMsg = typeof err === 'string'
+    ? err
+    : err?.message || (err && JSON.stringify(err)) || 'Failed to load PDF document.'
+  pdfLoadError.value = errMsg
+  logFrontendEvent('error', 'ReaderPDF', 'pdf_load_failed', { error: errMsg })
+  setScrollStatus('ready')
 }
 
 async function retryGetUserSettings() {
-  ragSettingsLoaded.value = false
-  ragSettingsError.value = null
-  try {
-    const settings = await getUserSettings()
-    if (settings && settings.rag_enabled !== undefined) {
-      ragEnabled.value = settings.rag_enabled
-    }
-    ragSettingsLoaded.value = true
-  } catch (err) {
-    ragSettingsError.value = err?.message || 'Failed to load settings'
-    ragSettingsLoaded.value = true
-  }
+  await loadRagSettings()
 }
 
 function onNotebookChange() {
@@ -344,19 +746,19 @@ function onNotebookChange() {
 }
 
 async function completeSession() {
-  if (completingSession.value || reader.loadingBundle.value || !activeTaskID.value) return
+  if (completingSession.value || reader.loadingBundle.value || !resolvedTaskID.value) return
 
   completionError.value = ''
   completionMessage.value = ''
   completingSession.value = true
 
   try {
-    const taskIDForCompletion = activeTaskID.value || routeTaskID.value
+    const taskIDForCompletion = resolvedTaskID.value
     console.warn('[COMPLETE_SESSION] pre-completeReading ids', {
       routeQueryTaskId: route.query.taskId,
       routeQueryTask_id: route.query.task_id,
       routeTaskIDComputed: routeTaskID.value,
-      activeTaskID: activeTaskID.value,
+      resolvedTaskID: resolvedTaskID.value,
       actualArg: taskIDForCompletion,
     })
     const done = await completeReading(taskIDForCompletion)
@@ -379,17 +781,6 @@ async function completeSession() {
   } finally {
     completingSession.value = false
   }
-}
-
-// Chat wrapper
-async function sendChat() {
-  await chat.sendMessage({
-    topicID: reader.selectedTopicID.value,
-    notebookID: reader.selectedNotebookID.value,
-    currentPage: reader.currentPage.value,
-    chapterStartPage: reader.topicStartPage.value,
-    chapterEndPage: reader.topicEndPage.value,
-  })
 }
 </script>
 
@@ -488,16 +879,8 @@ h3 {
 .stage {
   display: grid;
   gap: 10px;
-}
-
-.lock-meta {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted-text);
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
+  position: relative;
+  min-width: 0;
 }
 
 .stage-head {
@@ -507,7 +890,7 @@ h3 {
   gap: 10px;
 }
 
-.pager {
+.stage-head-left {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -515,20 +898,90 @@ h3 {
   color: var(--muted-text);
 }
 
-.pdf-wrap {
-  border: 1px solid var(--surface-container-low);
-  border-radius: 10px;
-  overflow: hidden;
-  min-height: 480px;
-  background: #f5f6f8;
+.stage-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted-text);
 }
 
-.pdf-frame {
-  width: 100%;
-  min-height: 640px;
-  border: 0;
+.reading-window-info {
+  white-space: nowrap;
+}
+
+.page-indicator {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pdf-page-wrapper {
   display: block;
-  background: #fff;
+  margin: 0 auto;
+  margin-bottom: 20px;
+}
+
+.pdf-viewport {
+  width: 100%;
+  height: calc(100vh - 160px);
+  overflow-y: auto;
+  /* ponytail: native browser layout width scaling & overflow-x centers small pages and enables horizontal scroll when zoomed */
+  overflow-x: auto;
+  background: var(--background);
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 10px;
+}
+
+.pdf-viewport :deep(.vue-pdf-embed) {
+  display: block;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  border: none !important;
+  width: 100% !important;
+}
+
+.pdf-viewport :deep(.vue-pdf-embed__page) {
+  display: block;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  margin-bottom: 20px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+  content-visibility: auto;
+  contain-intrinsic-size: 800px 1100px;
+  width: 100% !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-radius: 4px;
+}
+
+.pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  width: 100% !important;
+  height: auto !important;
+  display: block !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+  max-width: none !important;
+  will-change: filter;
+}
+
+/* Theme filters */
+[data-theme='light-warm'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: sepia(0.4) contrast(1.05) brightness(0.95);
+}
+
+[data-theme='dark-indigo'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: invert(0.9) hue-rotate(190deg) brightness(0.9) contrast(1.1);
+}
+
+[data-theme='dark-nord'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: invert(0.9) hue-rotate(160deg) saturate(0.8) brightness(0.9) contrast(1.1);
+}
+
+[data-theme='dark-emerald'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
+  filter: invert(0.9) hue-rotate(90deg) saturate(0.7) brightness(0.9) contrast(1.1);
 }
 
 .completion-message {
@@ -573,166 +1026,6 @@ h3 {
 .section-page {
   font-size: 12px;
   color: var(--muted-text);
-}
-
-.chat {
-  display: grid;
-  gap: 10px;
-  align-content: start;
-}
-
-.chat.closed {
-  padding: 10px 8px;
-  gap: 0;
-}
-
-.chat.closed .chat-head {
-  flex-direction: column;
-}
-
-.chat.closed h2 {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  transform: rotate(180deg);
-  font-size: 14px;
-  word-break: break-word;
-}
-
-.chat.closed .chat-head button.ghost {
-  width: 100%;
-  padding: 8px 4px;
-  font-size: 11px;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.chat-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.chat-context {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted-text);
-}
-
-.scope-bar {
-  display: grid;
-  gap: 6px;
-  padding: 10px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-container-low) 86%, transparent);
-}
-
-.scope-main {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.scope-helper {
-  margin: 0;
-  font-size: 11px;
-  color: var(--muted-text);
-  line-height: 1.3;
-}
-
-.scope-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted-text);
-}
-
-.scope-select {
-  width: auto;
-  min-width: 160px;
-  padding: 8px 10px;
-  font-size: 13px;
-  border-radius: 10px;
-}
-
-.messages {
-  max-height: 320px;
-  overflow: auto;
-  display: grid;
-  gap: 8px;
-  padding-right: 3px;
-}
-
-.msg {
-  border-radius: 10px;
-  padding: 9px 10px;
-  display: grid;
-  gap: 4px;
-}
-
-.msg.user {
-  background: color-mix(in srgb, var(--primary) 14%, var(--surface-container-lowest));
-}
-
-.msg.assistant {
-  background: var(--surface-container-low);
-}
-
-.msg .role {
-  margin: 0;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted-text);
-  font-weight: 700;
-}
-
-.msg p {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.markdown-body {
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.markdown-body :first-child {
-  margin-top: 0;
-}
-
-.markdown-body :last-child {
-  margin-bottom: 0;
-}
-
-.markdown-body p,
-.markdown-body ul,
-.markdown-body ol,
-.markdown-body pre,
-.markdown-body blockquote {
-  margin: 0 0 8px;
-}
-
-.markdown-body code {
-  background: var(--surface-container-low);
-  border-radius: 6px;
-  padding: 1px 5px;
-  font-size: 12px;
-}
-
-.markdown-body pre {
-  background: var(--surface-container-low);
-  border-radius: 8px;
-  padding: 8px;
-  overflow-x: auto;
-}
-
-.markdown-body pre code {
-  background: transparent;
-  padding: 0;
 }
 
 .field {
@@ -866,55 +1159,203 @@ button:disabled {
   }
 }
 
-/* RAG Disabled styles in Reader */
-.panel.chat.rag-off {
-  background: color-mix(in srgb, var(--surface-container-low) 90%, #000000);
-  opacity: 0.85;
+/* Custom View Mode Overrides */
+.pdf-viewport[data-view-mode='raw'] :deep(.vue-pdf-embed__page canvas) {
+  filter: none !important;
 }
 
-.rag-disabled-overlay {
+.pdf-viewport[data-view-mode='raw'] {
+  background: #ffffff !important;
+}
+
+.pdf-viewport[data-view-mode='light'] :deep(.vue-pdf-embed__page canvas) {
+  filter: sepia(0.5) contrast(1.1) brightness(0.95) !important;
+}
+
+.pdf-viewport[data-view-mode='light'] {
+  background: #f8f1e3 !important;
+}
+
+.pdf-viewport[data-view-mode='dark'] :deep(.vue-pdf-embed__page canvas) {
+  filter: invert(1) hue-rotate(180deg) !important;
+}
+
+.pdf-viewport[data-view-mode='dark'] {
+  background: #121214 !important;
+}
+
+.pdf-viewport[data-view-mode='sync'] {
+  background: var(--background) !important;
+}
+
+/* Right-edge PDF Controls */
+.pdf-edge-controls {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--surface-bright) 72%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  padding: 10px 8px;
+  border-radius: 20px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.1);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 22%, transparent);
+  z-index: 10;
+  transition: opacity 0.25s ease;
+}
+
+.edge-btn {
+  background: transparent;
+  color: var(--on-surface);
+  border: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 40px 20px;
-  text-align: center;
-  height: calc(100% - 60px);
-}
-
-.rag-disabled-overlay .lock-icon {
-  font-size: 32px;
-  margin-bottom: 16px;
-  opacity: 0.7;
-}
-
-.rag-disabled-overlay h3 {
-  font-size: 16px;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    transform 0.12s ease;
+  padding: 0;
+  font-size: 15px;
   font-weight: 700;
-  margin-bottom: 12px;
+  line-height: 1;
+}
+
+.edge-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-container-low) 70%, transparent);
+  transform: scale(1.08);
+}
+
+.edge-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.edge-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.dots-btn {
+  font-size: 18px;
+  letter-spacing: 1px;
+  color: var(--muted-text);
+}
+
+.dots-btn:hover {
   color: var(--on-surface);
 }
 
-.rag-disabled-overlay p {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--on-surface-variant);
-  margin-bottom: 24px;
+.edge-zoom-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-text);
+  min-width: 30px;
+  text-align: center;
+  user-select: none;
 }
 
-.enable-rag-btn {
-  display: inline-block;
-  padding: 8px 16px;
+.edge-sep {
+  width: 18px;
+  height: 1px;
+  background: color-mix(in srgb, var(--outline-variant) 35%, transparent);
+  margin: 2px 0;
+}
+
+/* Theme flyout */
+.theme-trigger-wrap {
+  position: relative;
+}
+
+.theme-flyout {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: color-mix(in srgb, var(--surface-bright) 90%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 25%, transparent);
+  border-radius: 14px;
+  padding: 8px 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.13);
+  z-index: 20;
+  min-width: 80px;
+  animation: flyout-in 0.18s ease;
+}
+
+@keyframes flyout-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+  }
+}
+
+.flyout-item {
+  background: transparent;
+  color: var(--muted-text);
+  border: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  width: 100%;
+}
+
+.flyout-item:hover {
+  background: color-mix(in srgb, var(--surface-container-low) 60%, transparent);
+  color: var(--on-surface);
+}
+
+.flyout-item.active {
   background: var(--primary);
   color: var(--on-primary);
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  text-decoration: none;
-  transition: background 0.2s ease;
 }
 
-.enable-rag-btn:hover {
-  background: color-mix(in srgb, var(--primary) 85%, #000000);
+.chat-disabled {
+  color: var(--muted-text);
+  background: var(--surface-container-low);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.debug-overlay {
+  position: absolute;
+  top: 40px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #00ff00;
+  padding: 10px;
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  z-index: 100;
+  pointer-events: none;
+  margin: 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(0, 255, 0, 0.3);
 }
 </style>

@@ -1,9 +1,6 @@
 package study
 
 import (
-	"ai-tutor/internal/db"
-	"ai-tutor/internal/models"
-	"ai-tutor/internal/utils"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,11 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"ai-tutor/internal/db"
+	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 type SyncPayload struct {
-	UserToken string               `json:"user_token"`
-	Notebooks []models.Notebook    `json:"notebooks"`
+	UserToken string                 `json:"user_token"`
+	Notebooks []models.Notebook      `json:"notebooks"`
 	Logs      []models.FSRSReviewLog `json:"logs"`
 }
 
@@ -30,24 +31,24 @@ type AssignedNotebook struct {
 	DownloadURL string `json:"download_url"`
 }
 
-func StartCloudSyncLoop() {
+func StartCloudSyncLoop(repo *db.Repository) {
 	ticker := time.NewTicker(15 * time.Minute)
 	go func() {
 		utils.Warnf("[SYNC] Background cloud sync worker started.")
 		// Run initial sync on launch
-		if err := TriggerCloudSync(); err != nil {
+		if err := TriggerCloudSync(repo); err != nil {
 			utils.Warnf("[SYNC] Initial launch sync warning: %v", err)
 		}
 		for range ticker.C {
-			if err := TriggerCloudSync(); err != nil {
+			if err := TriggerCloudSync(repo); err != nil {
 				utils.Warnf("[SYNC] Periodic sync warning: %v", err)
 			}
 		}
 	}()
 }
 
-func TriggerCloudSync() error {
-	settings, err := db.GetUserSettings()
+func TriggerCloudSync(repo *db.Repository) error {
+	settings, err := repo.GetUserSettings()
 	if err != nil {
 		return err
 	}
@@ -58,31 +59,16 @@ func TriggerCloudSync() error {
 	utils.Warnf("[SYNC] Running cloud sync to: %s", settings.CloudSyncURL)
 
 	// Gather notebooks and logs from DB (all notebooks for sync)
-	notebooks, err := db.GetNotebooks("", "")
+	notebooks, err := repo.GetNotebooks("", "")
 	if err != nil {
 		return fmt.Errorf("failed to fetch notebooks: %w", err)
 	}
 
 	// For simplicity, fetch recent review logs (e.g., last 100)
-	var logs []models.FSRSReviewLog
-	rows, err := db.GetConnection().Query(`
-		SELECT id, topic_id, activity_type, reference_id, reviewed_at, rating, scheduled_days, state_before_json, state_after_json
-		FROM fsrs_review_log
-		ORDER BY reviewed_at DESC
-		LIMIT 100
-	`)
-	if err == nil {
-		for rows.Next() {
-			var log models.FSRSReviewLog
-			if err := rows.Scan(&log.ID, &log.TopicID, &log.ActivityType, &log.ReferenceID, &log.ReviewedAt, &log.Rating, &log.ScheduledDays, &log.StateBeforeJSON, &log.StateAfterJSON); err == nil {
-				logs = append(logs, log)
-			}
-		}
-		// Explicitly close before the HTTP POST so the single SQLite connection
-		// is returned to the pool immediately. A deferred close would hold the
-		// connection open for the full HTTP timeout, blocking any concurrent DB
-		// call (e.g. GetUserSettings from the frontend on startup).
-		rows.Close()
+	logs, err := repo.GetRecentReviewLogs(100)
+	if err != nil {
+		utils.Warnf("[SYNC] failed to fetch recent review logs: %v", err)
+		return err
 	}
 
 	payload := SyncPayload{
@@ -110,7 +96,7 @@ func TriggerCloudSync() error {
 	if err != nil {
 		return fmt.Errorf("network error during sync: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -127,7 +113,7 @@ func TriggerCloudSync() error {
 		utils.Warnf("[SYNC] Found %d new teacher assignments", len(syncResp.NewNotebooks))
 		for _, assigned := range syncResp.NewNotebooks {
 			go func(nb AssignedNotebook) {
-				if err := downloadAndRegisterNotebook(nb); err != nil {
+				if err := downloadAndRegisterNotebook(repo, nb); err != nil {
 					utils.Warnf("[SYNC] Failed to download assigned notebook %s: %v", nb.Title, err)
 				}
 			}(assigned)
@@ -138,8 +124,7 @@ func TriggerCloudSync() error {
 	return nil
 }
 
-
-func downloadAndRegisterNotebook(nb AssignedNotebook) error {
+func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error {
 	// 1. Create a local path for the downloaded PDF
 	baseDir := os.Getenv("APPDATA")
 	if baseDir == "" {
@@ -165,7 +150,7 @@ func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download server returned status %d", resp.StatusCode)
@@ -175,7 +160,7 @@ func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	const maxDownloadBytes = 100 << 20 // 100 MiB
 	if resp.ContentLength > maxDownloadBytes {
@@ -191,7 +176,7 @@ func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 
 	// 3. Register in SQLite
 	// Note: We register with status 'uploaded' and indexer will process it normally.
-	err = db.CreateNotebook(nb.ID, nb.Title, localPath, "pdf", "", 0)
+	err = repo.CreateNotebook(nb.ID, nb.Title, localPath, "pdf", "", 0)
 	if err != nil {
 		return fmt.Errorf("failed to insert notebook to database: %w", err)
 	}
@@ -199,4 +184,3 @@ func downloadAndRegisterNotebook(nb AssignedNotebook) error {
 	utils.Warnf("[SYNC] Automatically registered newly assigned notebook: %s", nb.Title)
 	return nil
 }
-
