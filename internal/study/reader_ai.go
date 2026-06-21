@@ -224,7 +224,7 @@ func (s *StudyService) resolveReaderSectionScope(sectionID string) (string, stri
 
 	pageRanges, err := s.repo.GetTopicHeadingPageRanges(topicID)
 	if err != nil {
-		return topicID, notebookID, 0, 0, nil
+		return topicID, notebookID, 0, 0, err
 	}
 	pageRange, ok := pageRanges[sectionID]
 	if !ok {

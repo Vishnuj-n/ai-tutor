@@ -11,6 +11,7 @@ import (
 var (
 	queueLogFile *os.File
 	ragLogFile   *os.File
+	errLogFile   *os.File
 
 	// QueueLogger writes structured queue lifecycle events to queue.log.
 	QueueLogger *slog.Logger
@@ -42,9 +43,15 @@ func InitMultiFileLogger(appDataDir string) error {
 	// Close existing files if any are open (for safety in multi-call or testing environments).
 	if queueLogFile != nil {
 		_ = queueLogFile.Close()
+		queueLogFile = nil
 	}
 	if ragLogFile != nil {
 		_ = ragLogFile.Close()
+		ragLogFile = nil
+	}
+	if errLogFile != nil {
+		_ = errLogFile.Close()
+		errLogFile = nil
 	}
 
 	var err error
@@ -60,12 +67,14 @@ func InitMultiFileLogger(appDataDir string) error {
 		return fmt.Errorf("failed to open rag engine log file: %w", err)
 	}
 
-	errLogFile, openErr := os.OpenFile(filepath.Join(logDir, "system_errors.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	var openErr error
+	errLogFile, openErr = os.OpenFile(filepath.Join(logDir, "system_errors.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if openErr != nil {
 		_ = queueLogFile.Close()
 		_ = ragLogFile.Close()
 		queueLogFile = nil
 		ragLogFile = nil
+		errLogFile = nil
 		return fmt.Errorf("failed to open system errors log file: %w", openErr)
 	}
 
@@ -90,6 +99,11 @@ func CloseMultiFileLogger() {
 		_ = ragLogFile.Sync()
 		_ = ragLogFile.Close()
 		ragLogFile = nil
+	}
+	if errLogFile != nil {
+		_ = errLogFile.Sync()
+		_ = errLogFile.Close()
+		errLogFile = nil
 	}
 
 	// Revert to stdout/stderr fallback loggers on close to avoid nil dereference.

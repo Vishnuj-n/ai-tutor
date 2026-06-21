@@ -186,6 +186,7 @@ onMounted(async () => {
     }
   } catch (err) {
     console.error('Failed to load user settings in Tutor:', err)
+    globalError.value = `Failed to load settings: ${err.message}`
   }
 
   await Promise.all([loadTopics(), loadNotebooks()])

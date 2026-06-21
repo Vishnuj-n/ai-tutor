@@ -758,6 +758,24 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 	}
 }
 
+func TestGetReviewSessionNoDueCards(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := testRepo.CreateNotebook("no-due-nb", "No Due Notebook", "/tmp/no-due.pdf", "pdf", "", 15); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	sessionResp := app.GetReviewSession(models.ReviewTaskDailyID, "no-due-nb")
+	errVal, hasErr := sessionResp["error"]
+	if !hasErr {
+		t.Fatalf("expected error response when there are no due cards, got: %#v", sessionResp)
+	}
+	expectedErr := "No due cards found for review materialization"
+	if errVal != expectedErr {
+		t.Fatalf("expected error %q, got %q", expectedErr, errVal)
+	}
+}
+
 // ============================================================================
 // WRITTEN ANSWER TESTS
 // ============================================================================
