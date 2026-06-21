@@ -202,8 +202,7 @@ func (a *App) checkNotebookIndexingStatus(notebookID, topicID string) (map[strin
 
 	indexed, total, status, err := repo.GetNotebookIndexingProgress(notebookID)
 	if err != nil {
-		// If we can't get status, assume it's fine to avoid blocking the user
-		return nil, false
+		return map[string]interface{}{"error": "failed to check notebook indexing progress: " + err.Error()}, true
 	}
 
 	if status != "READY" {
