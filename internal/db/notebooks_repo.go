@@ -830,34 +830,36 @@ func (r *Repository) UpdateNotebookStudyStatus(notebookID string, studyStatus st
 		return fmt.Errorf("invalid study status: %s", studyStatus)
 	}
 
-	// If activating, we enforce the hard limit of 3-4 active notebooks per profile.
-	if studyStatus == "active" {
-		var profileID sql.NullString
-		err := r.db.QueryRow(`SELECT profile_id FROM notebooks WHERE id = ?`, notebookID).Scan(&profileID)
-		if err != nil {
-			return err
-		}
-		if profileID.Valid && profileID.String != "" {
-			var activeCount int
-			err = r.db.QueryRow(`
-				SELECT COUNT(*) FROM notebooks
-				WHERE profile_id = ? AND study_status = 'active'
-			`, profileID.String).Scan(&activeCount)
+	return r.withTx(func(tx *sql.Tx) error {
+		// If activating, we enforce the hard limit of 3-4 active notebooks per profile.
+		if studyStatus == "active" {
+			var profileID sql.NullString
+			err := tx.QueryRow(`SELECT profile_id FROM notebooks WHERE id = ?`, notebookID).Scan(&profileID)
 			if err != nil {
 				return err
 			}
-			if activeCount >= 4 {
-				return fmt.Errorf("profile already has the maximum limit of 4 active notebooks")
+			if profileID.Valid && profileID.String != "" {
+				var activeCount int
+				err = tx.QueryRow(`
+					SELECT COUNT(*) FROM notebooks
+					WHERE profile_id = ? AND study_status = 'active'
+				`, profileID.String).Scan(&activeCount)
+				if err != nil {
+					return err
+				}
+				if activeCount >= 4 {
+					return fmt.Errorf("profile already has the maximum limit of 4 active notebooks")
+				}
 			}
 		}
-	}
 
-	_, err := r.db.Exec(`
-		UPDATE notebooks
-		SET study_status = ?
-		WHERE id = ?
-	`, studyStatus, notebookID)
-	return err
+		_, err := tx.Exec(`
+			UPDATE notebooks
+			SET study_status = ?
+			WHERE id = ?
+		`, studyStatus, notebookID)
+		return err
+	})
 }
 
 // GetProfileRemainingWords calculates the remaining unread words across all notebooks in a profile.

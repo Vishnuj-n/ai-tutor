@@ -13,6 +13,12 @@ import (
 
 
 func (r *Repository) CreateWrittenQuestion(question models.WrittenQuestion) error {
+	return r.withTx(func(tx *sql.Tx) error {
+		return r.CreateWrittenQuestionTx(tx, question)
+	})
+}
+
+func (r *Repository) CreateWrittenQuestionTx(tx *sql.Tx, question models.WrittenQuestion) error {
 	question.ID = strings.TrimSpace(question.ID)
 	question.TopicID = strings.TrimSpace(question.TopicID)
 	question.Prompt = strings.TrimSpace(question.Prompt)
@@ -32,7 +38,7 @@ func (r *Repository) CreateWrittenQuestion(question models.WrittenQuestion) erro
 	} else {
 		sourceChunkID = strings.TrimSpace(question.SourceChunkID)
 	}
-	_, err := r.db.Exec(`
+	_, err := tx.Exec(`
 		INSERT INTO written_questions (
 			id, topic_id, prompt, source_chunk_id, source_heading, source_page_start, source_page_end,
 			llm_model, prompt_version, updated_at
