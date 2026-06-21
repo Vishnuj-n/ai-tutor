@@ -41,35 +41,44 @@ func (r *Repository) EnsureTopicsBatch(items []TopicBatchItem) error {
 	}
 
 	return r.withTx(func(tx *sql.Tx) error {
-		stmt, err := tx.Prepare(`
-			INSERT INTO topics (id, title, status)
-			VALUES (?, ?, 'reading')
-			ON CONFLICT(id) DO UPDATE SET title = excluded.title
-		`)
+		return r.EnsureTopicsBatchTx(tx, items)
+	})
+}
+
+// EnsureTopicsBatchTx creates or updates multiple topics within an existing transaction
+func (r *Repository) EnsureTopicsBatchTx(tx *sql.Tx, items []TopicBatchItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO topics (id, title, status)
+		VALUES (?, ?, 'reading')
+		ON CONFLICT(id) DO UPDATE SET title = excluded.title
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = stmt.Close()
+	}()
+
+	for _, item := range items {
+		id := strings.TrimSpace(item.TopicID)
+		if id == "" {
+			return fmt.Errorf("topic id is required for all batch items")
+		}
+		title := item.Title
+		if title == "" {
+			title = id
+		}
+
+		_, err = stmt.Exec(id, title)
 		if err != nil {
 			return err
 		}
-		defer func() {
-			_ = stmt.Close()
-		}()
-
-		for _, item := range items {
-			id := strings.TrimSpace(item.TopicID)
-			if id == "" {
-				return fmt.Errorf("topic id is required for all batch items")
-			}
-			title := item.Title
-			if title == "" {
-				title = id
-			}
-
-			_, err = stmt.Exec(id, title)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // UpdateTopicPageBounds stores deterministic chapter bounds for a topic.

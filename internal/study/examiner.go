@@ -53,9 +53,20 @@ func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, e
 		return map[string]interface{}{"error": "exam prompt generation returned empty question"}
 	}
 
+	tx, err := s.repo.Begin()
+	if err != nil {
+		return map[string]interface{}{"error": "failed to start database transaction: " + err.Error()}
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	syntheticTopicID := fmt.Sprintf("comprehensive-%s-p%d-%d", notebookID, startPage, endPage)
 
-	if err := s.repo.EnsureTopicsBatch([]db.TopicBatchItem{{
+	if err := s.repo.EnsureTopicsBatchTx(tx, []db.TopicBatchItem{{
 		TopicID: syntheticTopicID,
 		Title:   fmt.Sprintf("Comprehensive %s p%d-%d", notebookID, startPage, endPage),
 	}}); err != nil {
@@ -72,9 +83,14 @@ func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, e
 		LLMModel:        providerModelName(llm),
 		PromptVersion:   "comprehensive-exam-v1",
 	}
-	if err := s.repo.CreateWrittenQuestion(question); err != nil {
+	if err := s.repo.CreateWrittenQuestionTx(tx, question); err != nil {
 		return map[string]interface{}{"error": "failed to persist comprehensive exam question: " + err.Error()}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return map[string]interface{}{"error": "failed to commit database transaction: " + err.Error()}
+	}
+	committed = true
 
 	return map[string]interface{}{
 		"questionID":        question.ID,
