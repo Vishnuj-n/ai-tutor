@@ -999,3 +999,19 @@ func (r *Repository) GetNotebookIDByTopic(topicID string) (string, error) {
 	}
 	return notebookID, nil
 }
+
+// CountActiveNotebooksForActiveProfile returns the count of active notebooks matching the profile ID or globally active if profile ID is empty.
+func (r *Repository) CountActiveNotebooksForActiveProfile(activeProfileID string) (int, error) {
+	var count int
+	if activeProfileID != "" {
+		err := r.db.QueryRow(`
+			SELECT COUNT(*) FROM notebooks 
+			WHERE study_status = 'active' 
+			  AND (profile_id = ? OR profile_id IS NULL OR profile_id = '')
+		`, activeProfileID).Scan(&count)
+		return count, err
+	}
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&count)
+	return count, err
+}
+

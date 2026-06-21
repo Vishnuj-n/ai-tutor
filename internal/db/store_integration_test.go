@@ -1022,3 +1022,80 @@ func TestGetTotalChunkTokensFallsBackWhenTokenCountMissing(t *testing.T) {
 		t.Fatalf("expected page-range token total 2, got %d", rangeTotal)
 	}
 }
+
+func TestCountActiveNotebooksForActiveProfile(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	// Clean up any pre-existing notebooks
+	if _, err := testRepo.db.Exec("DELETE FROM notebooks"); err != nil {
+		t.Fatalf("failed to clean up notebooks: %v", err)
+	}
+
+	// Create a test profile
+	profileID := "prof-test-1"
+	if _, err := testRepo.db.Exec("INSERT INTO study_profiles (id, name, created_at) VALUES (?, ?, 0)", profileID, "Test Profile"); err != nil {
+		t.Fatalf("failed to insert study profile: %v", err)
+	}
+
+	// Insert some notebooks with various study statuses and profiles
+	// Notebook 1: active, matching profile
+	if _, err := testRepo.db.Exec(`
+		INSERT INTO notebooks (id, title, file_path, file_type, status, study_status, profile_id, page_count)
+		VALUES ('nb-1', 'Active Notebook 1', '/tmp/1.txt', 'txt', 'uploaded', 'active', ?, 1)
+	`, profileID); err != nil {
+		t.Fatalf("failed to insert notebook 1: %v", err)
+	}
+
+	// Notebook 2: active, profile IS NULL
+	if _, err := testRepo.db.Exec(`
+		INSERT INTO notebooks (id, title, file_path, file_type, status, study_status, profile_id, page_count)
+		VALUES ('nb-2', 'Active Notebook 2', '/tmp/2.txt', 'txt', 'uploaded', 'active', NULL, 1)
+	`); err != nil {
+		t.Fatalf("failed to insert notebook 2: %v", err)
+	}
+
+	// Notebook 3: active, profile is empty string
+	if _, err := testRepo.db.Exec(`
+		INSERT INTO notebooks (id, title, file_path, file_type, status, study_status, profile_id, page_count)
+		VALUES ('nb-3', 'Active Notebook 3', '/tmp/3.txt', 'txt', 'uploaded', 'active', '', 1)
+	`); err != nil {
+		t.Fatalf("failed to insert notebook 3: %v", err)
+	}
+
+	// Notebook 4: inactive (archived), matching profile
+	if _, err := testRepo.db.Exec(`
+		INSERT INTO notebooks (id, title, file_path, file_type, status, study_status, profile_id, page_count)
+		VALUES ('nb-4', 'Inactive Notebook', '/tmp/4.txt', 'txt', 'uploaded', 'archived', ?, 1)
+	`, profileID); err != nil {
+		t.Fatalf("failed to insert notebook 4: %v", err)
+	}
+
+	// Notebook 5: active, different profile
+	if _, err := testRepo.db.Exec(`
+		INSERT INTO notebooks (id, title, file_path, file_type, status, study_status, profile_id, page_count)
+		VALUES ('nb-5', 'Other Profile Notebook', '/tmp/5.txt', 'txt', 'uploaded', 'active', 'prof-other', 1)
+	`); err != nil {
+		t.Fatalf("failed to insert notebook 5: %v", err)
+	}
+
+	// Test 1: Count active notebooks for profileID "prof-test-1"
+	// Should match nb-1 (matching profile), nb-2 (NULL profile), nb-3 (empty profile). Total = 3.
+	count, err := testRepo.CountActiveNotebooksForActiveProfile(profileID)
+	if err != nil {
+		t.Fatalf("CountActiveNotebooksForActiveProfile failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected count 3, got %d", count)
+	}
+
+	// Test 2: Count active notebooks for empty profile ID ""
+	// Should match nb-1, nb-2, nb-3, nb-5. Total = 4.
+	countEmpty, err := testRepo.CountActiveNotebooksForActiveProfile("")
+	if err != nil {
+		t.Fatalf("CountActiveNotebooksForActiveProfile empty failed: %v", err)
+	}
+	if countEmpty != 4 {
+		t.Errorf("expected count 4, got %d", countEmpty)
+	}
+}
+

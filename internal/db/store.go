@@ -39,9 +39,45 @@ func (r *Repository) Close() error {
 	return err
 }
 
-// GetConnection returns the underlying database connection for transaction management.
-func (r *Repository) GetConnection() *sql.DB {
-	return r.db
+// Begin starts a new transaction on the database.
+func (r *Repository) Begin() (*sql.Tx, error) {
+	return r.db.Begin()
+}
+
+// GetActiveProfileID retrieves the active profile ID from settings.
+func (r *Repository) GetActiveProfileID() (string, error) {
+	var activeProfileID sql.NullString
+	err := r.db.QueryRow(`SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1`).Scan(&activeProfileID)
+	if err != nil {
+		return "", err
+	}
+	return activeProfileID.String, nil
+}
+
+// GetActiveNotebookCount retrieves the count of active notebooks, optionally filtered by profile ID.
+func (r *Repository) GetActiveNotebookCount(profileID string) (int, error) {
+	var count int
+	var err error
+	if profileID != "" {
+		err = r.db.QueryRow(`
+			SELECT COUNT(*) FROM notebooks 
+			WHERE study_status = 'active' 
+			  AND (profile_id = ? OR profile_id IS NULL OR profile_id = '')
+		`, profileID).Scan(&count)
+	} else {
+		err = r.db.QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&count)
+	}
+	return count, err
+}
+
+// ExecForTest executes a query directly on the underlying database. ONLY for test usage.
+func (r *Repository) ExecForTest(query string, args ...interface{}) (sql.Result, error) {
+	return r.db.Exec(query, args...)
+}
+
+// QueryRowForTest runs a QueryRow directly on the underlying database. ONLY for test usage.
+func (r *Repository) QueryRowForTest(query string, args ...interface{}) *sql.Row {
+	return r.db.QueryRow(query, args...)
 }
 
 // Init initializes the SQLite database and creates tables
