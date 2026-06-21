@@ -1020,3 +1020,16 @@ func (r *Repository) SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRec
 	`, attempt.ID, attempt.TaskID, attempt.Score, boolToInt(attempt.Passed), attempt.AnswersJSON, attempt.Feedback, attempt.CompletedAt)
 	return err
 }
+
+// GetReadingProgressPage retrieves the current page progress for a task.
+func (r *Repository) GetReadingProgressPage(taskID string) (int, error) {
+	var currentPage int
+	err := r.db.QueryRow(`
+		SELECT COALESCE(current_page, 0) FROM reading_progress WHERE task_id = ?
+	`, taskID).Scan(&currentPage)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return currentPage, err
+}
+
