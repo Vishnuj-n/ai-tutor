@@ -98,6 +98,7 @@ func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToRead
 	if !ragEnabled {
 		if err := a.reloadRetrievalEngine(); err != nil {
 			utils.Errorf("reloadRetrievalEngine after RAG disable: %v", err)
+			return map[string]interface{}{"error": "failed to reload retrieval engine: " + err.Error()}
 		}
 	}
 
@@ -165,7 +166,6 @@ func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interfac
 	if settings.UseSameForHeavy {
 		settings.Heavy = settings.Fast
 		settings.Heavy.Tier = "heavy"
-		settings.Heavy.TimeoutMs = 90000
 	} else {
 		settings.Heavy.Tier = "heavy"
 		if settings.Heavy.TimeoutMs <= 0 {
