@@ -243,3 +243,15 @@ export function triggerCloudSync() {
 export function getProfileDailyPace(profileID) {
   return appBridge().GetProfileDailyPace(profileID)
 }
+
+export function logFrontendEvent(level, component, event, details = '') {
+  try {
+    const bridge = window?.go?.main?.App
+    if (bridge && bridge.LogFrontendEvent) {
+      const detailsStr = typeof details === 'string' ? details : JSON.stringify(details)
+      bridge.LogFrontendEvent(level, component, event, detailsStr)
+    }
+  } catch (err) {
+    console.error('Failed to forward log to backend:', err)
+  }
+}

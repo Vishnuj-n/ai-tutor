@@ -142,6 +142,15 @@
           </div>
         </div>
 
+        <!-- Dev-only Scroll Debug Overlay -->
+        <pre v-if="isDev" class="debug-overlay">
+Scroll Status:  {{ scrollState.status }}
+Target Page:    {{ scrollState.targetPage }}
+Visible Page:   {{ currentVisiblePage }}
+Virtual Center: {{ virtualWindowCenter }}
+Programmatic:   {{ isProgrammaticScroll }}
+        </pre>
+
         <!-- Right-edge PDF Controls -->
         <div
           v-if="reader.pdfVisible.value && !reader.loadingBundle.value && !pdfLoadError"
@@ -219,7 +228,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { completeReading, getUserSettings } from '../services/appApi'
+import { completeReading, getUserSettings, logFrontendEvent } from '../services/appApi'
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
 import ReaderChat from '../components/ReaderChat.vue'
@@ -229,6 +238,7 @@ import 'vue-pdf-embed/dist/styles/textLayer.css'
 
 const route = useRoute()
 const router = useRouter()
+const isDev = import.meta.env.DEV
 
 // Get task ID from route (task flow only - manual flow deprecated)
 const routeTaskID = computed(() => {
@@ -282,28 +292,50 @@ const scrollState = ref({
 })
 let scrollTimeoutId = null
 
+// Decouple visible page tracking from virtualization window center
+const currentVisiblePage = ref(1)
+const virtualWindowCenter = ref(1)
+
 // isProgrammaticScroll: true while a programmatic scrollIntoView is in flight.
 // The scroll handler ignores events while this is set to prevent cascade.
 let isProgrammaticScroll = false
 let scrollDebounceId = null
+let programmaticScrollTimeoutId = null
+
+function logScroll(event, data = {}) {
+  const payload = {
+    status: scrollState.value.status,
+    target: scrollState.value.targetPage,
+    visible: currentVisiblePage.value,
+    virtualCenter: virtualWindowCenter.value,
+    isProgrammatic: isProgrammaticScroll,
+    ...data
+  }
+  console.log(`[SCROLL:${event}]`, payload)
+  logFrontendEvent('info', 'ReaderScroll', event, payload)
+}
 
 function scrollToPage(page) {
   const wrapper = pdfViewportRef.value?.querySelector(`[data-page="${page}"]`)
   if (wrapper) {
-    console.log(`[DEBUG][scrollToPage] Scrolling to page ${page}`)
+    logScroll('scrollToPage_start', { page })
     isProgrammaticScroll = true
     wrapper.scrollIntoView({ behavior: 'auto', block: 'start' })
-    // Clear the flag after the scroll event has fired and settled (two rAF + 300ms is safe)
-    setTimeout(() => { isProgrammaticScroll = false }, 300)
+    if (programmaticScrollTimeoutId) {
+      clearTimeout(programmaticScrollTimeoutId)
+    }
+    programmaticScrollTimeoutId = setTimeout(() => {
+      isProgrammaticScroll = false
+      programmaticScrollTimeoutId = null
+      logScroll('scrollToPage_completed', { page })
+    }, 300)
     return true
   }
   return false
 }
 
 function setScrollStatus(status, targetPage = null) {
-  console.log(
-    `[DEBUG][scrollState] Transitioning to status=${status}, targetPage=${targetPage}. Current: status=${scrollState.value.status}, targetPage=${scrollState.value.targetPage}`
-  )
+  logScroll('setScrollStatus', { transitioningTo: status, transitionTarget: targetPage })
   scrollState.value.status = status
   scrollState.value.targetPage = targetPage
 
@@ -322,9 +354,7 @@ function setScrollStatus(status, targetPage = null) {
   if (status === 'loading' || status === 'scrolling') {
     scrollTimeoutId = setTimeout(() => {
       const stuckTarget = scrollState.value.targetPage
-      console.warn(
-        `[DEBUG][scrollState] Safety timeout fired! stuckTarget=${stuckTarget}, status=${scrollState.value.status}`
-      )
+      logScroll('safetyTimeoutFired', { stuckTarget, stuckStatus: scrollState.value.status })
       if (stuckTarget) {
         scrollToPage(stuckTarget)
       }
@@ -338,10 +368,6 @@ const viewMode = ref('raw')
 const themeMenuOpen = ref(false)
 const containerWidth = ref(800)
 
-// Decouple visible page tracking from virtualization window center
-const currentVisiblePage = ref(1)
-const virtualWindowCenter = ref(1)
-
 const VISIBLE_BUFFER = 5
 const BUFFER_SHIFT_THRESHOLD = 3
 
@@ -349,32 +375,25 @@ const BUFFER_SHIFT_THRESHOLD = 3
 watch(
   () => reader.currentPage.value,
   (newVal) => {
-    console.log(
-      `[DEBUG][watch currentPage] newVal=${newVal}, status=${scrollState.value.status}, targetPage=${scrollState.value.targetPage}`
-    )
+    logScroll('watchCurrentPage_triggered', { newVal })
     if (scrollState.value.status !== 'ready') {
       return
     }
     if (newVal !== currentVisiblePage.value) {
-      console.log(
-        `[DEBUG][watch currentPage] Programmatic page change detected: ${currentVisiblePage.value} -> ${newVal}`
-      )
+      logScroll('watchCurrentPage_programmatic_change', { from: currentVisiblePage.value, to: newVal })
       setScrollStatus('scrolling', newVal)
 
       // Attempt scroll immediately in case the page wrapper is already rendered
       nextTick(() => {
-        if (scrollToPage(newVal)) {
-          console.log(
-            `[DEBUG][watch currentPage] Scroll wrapper found synchronously for page ${newVal}. Scrolling.`
-          )
+        const scrolled = scrollToPage(newVal)
+        if (scrolled && checkAllPrecedingAndTargetRendered(newVal)) {
+          logScroll('watchCurrentPage_synchronous_scroll', { page: newVal })
           setTimeout(() => {
             setScrollStatus('ready')
-            console.log(`[DEBUG][watch currentPage] Programmatic scroll complete. Status: ready`)
+            logScroll('watchCurrentPage_scroll_done')
           }, 150)
         } else {
-          console.log(
-            `[DEBUG][watch currentPage] Scroll wrapper not found synchronously for page ${newVal}. Will defer to onPageRendered.`
-          )
+          logScroll('watchCurrentPage_wait_render', { page: newVal })
         }
       })
     }
@@ -408,26 +427,36 @@ const visiblePages = computed(() => {
   return pages
 })
 
+function checkAllPrecedingAndTargetRendered(targetPage) {
+  const targetPageWrapper = pdfViewportRef.value?.querySelector(`[data-page="${targetPage}"]`)
+  const targetRendered = !!(targetPageWrapper && targetPageWrapper.querySelector('canvas'))
+  if (!targetRendered) return false
+
+  return visiblePages.value
+    .filter((p) => p < targetPage)
+    .every((p) => {
+      const wrapper = pdfViewportRef.value?.querySelector(`[data-page="${p}"]`)
+      return !!(wrapper && wrapper.querySelector('canvas'))
+    })
+}
+
 function onPageRendered(pageNum) {
-  console.log(
-    `[DEBUG][onPageRendered] pageNum=${pageNum}, status=${scrollState.value.status}, targetPage=${scrollState.value.targetPage}, currentPage=${reader.currentPage.value}`
-  )
+  logScroll('onPageRendered', { pageNum })
   if (scrollState.value.status === 'loading' || scrollState.value.status === 'scrolling') {
     const targetPage = scrollState.value.targetPage || reader.currentPage.value
-    if (pageNum === targetPage) {
-      const scrolled = scrollToPage(targetPage)
-      if (scrolled) {
-        setTimeout(() => {
-          setScrollStatus('ready')
-          console.log(
-            `[DEBUG][onPageRendered] Target page ${targetPage} scroll complete. Status: ready.`
-          )
-        }, 150)
-      } else {
-        console.warn(
-          `[DEBUG][onPageRendered] Page wrapper for targetPage ${targetPage} was not found in viewport!`
-        )
-      }
+    
+    // Scroll dynamically when any page <= targetPage in the visible range renders,
+    // to compensate for preceding page heights changing.
+    if (visiblePages.value.includes(pageNum) && pageNum <= targetPage) {
+      scrollToPage(targetPage)
+    }
+
+    if (checkAllPrecedingAndTargetRendered(targetPage)) {
+      scrollToPage(targetPage)
+      setTimeout(() => {
+        setScrollStatus('ready')
+        logScroll('onPageRendered_scroll_complete', { targetPage })
+      }, 150)
     }
   }
 }
@@ -452,35 +481,24 @@ async function loadRagSettings() {
 // ─── Entry-path resolvers ─────────────────────────────────────────────────────
 
 async function resolveTaskContext(taskQuery) {
-  console.log('[Reader] Task mode — resolveTaskContext', JSON.stringify(taskQuery))
+  logScroll('resolveTaskContext_start', { taskQuery })
   setScrollStatus('loading')
   const init = await reader.initializeSession(taskQuery)
-  console.log(
-    `[DEBUG][resolveTaskContext] initializeSession finished. success=${!!init}, currentPage=${reader.currentPage.value}`
-  )
+  logScroll('resolveTaskContext_initialized', { success: !!init, page: reader.currentPage.value })
   if (init) {
     sessionTask.value = init.task
     const targetPage = reader.currentPage.value
     setScrollStatus('loading', targetPage)
-    console.log(`[DEBUG][resolveTaskContext] Starting scroll to page=${targetPage}`)
+    logScroll('resolveTaskContext_start_scroll', { targetPage })
     await nextTick()
     const scrolled = scrollToPage(targetPage)
-    if (scrolled) {
-      console.log(`[DEBUG][resolveTaskContext] Immediate scroll succeeded for page ${targetPage}`)
+    if (scrolled && checkAllPrecedingAndTargetRendered(targetPage)) {
+      logScroll('resolveTaskContext_immediate_scroll_success', { targetPage })
       setTimeout(() => setScrollStatus('ready'), 150)
     }
   } else {
     setScrollStatus('ready')
   }
-  console.log('[Reader] initializeSession result:', init)
-  console.warn('[READER_INIT_CLIENT] resolvedTaskID computed is', resolvedTaskID.value)
-  console.log('[Reader] After init - reader state:', {
-    navigationMinPage: reader.navigationMinPage.value,
-    navigationMaxPage: reader.navigationMaxPage.value,
-    currentPage: reader.currentPage.value,
-    hasNavigationBounds: reader.hasNavigationBounds.value,
-    navigationState: reader.navigationState.value,
-  })
 }
 
 async function resolveBrowseContext() {
@@ -495,8 +513,7 @@ async function resolveBrowseContext() {
 onMounted(async () => {
   await loadRagSettings()
 
-  console.log('[Reader] Mounted. route.query:', JSON.stringify(route.query))
-  console.log('[Reader] routeTaskID:', routeTaskID.value)
+  logFrontendEvent('info', 'ReaderInit', 'mounted', { query: route.query, routeTaskID: routeTaskID.value })
 
   if (routeTaskID.value) {
     const taskQuery = {
@@ -505,11 +522,6 @@ onMounted(async () => {
       startPage: parseInt(route.query.startPage || route.query.start_page) || 0,
       endPage: parseInt(route.query.endPage || route.query.end_page) || 0,
     }
-    console.warn('[Reader] Task flow - pre-init state', {
-      routeTaskID: routeTaskID.value,
-      fullPath: route.fullPath,
-      taskQuery,
-    })
     await resolveTaskContext(taskQuery)
   } else {
     await resolveBrowseContext()
@@ -519,9 +531,7 @@ onMounted(async () => {
 watch(
   () => reader.notebookUrl.value,
   async (newUrl) => {
-    console.log(
-      `[DEBUG][watch notebookUrl] newUrl=${newUrl}, currentPage=${reader.currentPage.value}`
-    )
+    logScroll('watchNotebookUrl_triggered', { newUrl, page: reader.currentPage.value })
     pdfLoadError.value = ''
     if (scrollState.value.status !== 'initializing') {
       const targetPage = reader.currentPage.value
@@ -529,13 +539,13 @@ watch(
       // Immediately attempt scroll for cached PDFs where @rendered never re-fires
       await nextTick()
       const scrolled = scrollToPage(targetPage)
-      if (scrolled) {
-        console.log(`[DEBUG][watch notebookUrl] Immediate scroll succeeded for page ${targetPage} (cached PDF)`)
+      if (scrolled && checkAllPrecedingAndTargetRendered(targetPage)) {
+        logScroll('watchNotebookUrl_immediate_scroll_success', { targetPage })
         setTimeout(() => {
           setScrollStatus('ready')
         }, 150)
       } else {
-        console.log(`[DEBUG][watch notebookUrl] Page ${targetPage} not in DOM yet — waiting for onPageRendered`)
+        logScroll('watchNotebookUrl_wait_render', { targetPage })
       }
     }
   }
@@ -666,6 +676,7 @@ onUnmounted(() => {
     resizeObserver = null
   }
   if (scrollDebounceId) clearTimeout(scrollDebounceId)
+  if (programmaticScrollTimeoutId) clearTimeout(programmaticScrollTimeoutId)
 })
 
 // ─── Scroll-based page tracking ───────────────────────────────────────────────
@@ -716,7 +727,11 @@ function handleViewportScroll() {
 
 function handlePDFLoadFailed(err) {
   console.error('[Reader] PDF loading failed:', err)
-  pdfLoadError.value = err?.message || 'Failed to load PDF document.'
+  const errMsg = typeof err === 'string'
+    ? err
+    : err?.message || (err && JSON.stringify(err)) || 'Failed to load PDF document.'
+  pdfLoadError.value = errMsg
+  logFrontendEvent('error', 'ReaderPDF', 'pdf_load_failed', { error: errMsg })
   setScrollStatus('ready')
 }
 
@@ -1324,5 +1339,23 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.debug-overlay {
+  position: absolute;
+  top: 40px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #00ff00;
+  padding: 10px;
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  z-index: 100;
+  pointer-events: none;
+  margin: 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(0, 255, 0, 0.3);
 }
 </style>

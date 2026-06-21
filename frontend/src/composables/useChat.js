@@ -1,5 +1,5 @@
 import { ref, nextTick } from 'vue'
-import { askReaderAI } from '../services/appApi'
+import { askReaderAI, logFrontendEvent } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 /**
@@ -22,6 +22,7 @@ export function useChat() {
    */
   function toggleChat() {
     chatCollapsed.value = !chatCollapsed.value
+    logFrontendEvent('info', 'ReaderChat', 'chat_toggled', { collapsed: chatCollapsed.value })
   }
 
   /**
@@ -48,6 +49,14 @@ export function useChat() {
       return false
     }
 
+    logFrontendEvent('info', 'ReaderChat', 'send_message_start', {
+      scope: chatScope.value,
+      topicID: context.topicID,
+      notebookID: context.notebookID,
+      currentPage: context.currentPage,
+      questionLength: question.length
+    })
+
     chatInput.value = ''
     chatError.value = ''
     const userMsgId =
@@ -71,6 +80,10 @@ export function useChat() {
       if (result?.error) {
         chatError.value = result.error
         chatLoading.value = false
+        logFrontendEvent('error', 'ReaderChat', 'send_message_api_error', {
+          error: result.error,
+          topicID: context.topicID
+        })
         return false
       }
 
@@ -84,6 +97,11 @@ export function useChat() {
         text: result?.answer || 'No answer returned.',
       })
 
+      logFrontendEvent('info', 'ReaderChat', 'send_message_success', {
+        topicID: context.topicID,
+        answerLength: (result?.answer || '').length
+      })
+
       // Auto-scroll to bottom
       await nextTick()
       if (messagesPane.value) {
@@ -92,7 +110,12 @@ export function useChat() {
 
       return true
     } catch (err) {
-      chatError.value = err?.message || 'Failed to send message'
+      const errMsg = err?.message || String(err)
+      chatError.value = errMsg
+      logFrontendEvent('error', 'ReaderChat', 'send_message_exception', {
+        error: errMsg,
+        topicID: context?.topicID
+      })
       return false
     } finally {
       chatLoading.value = false
