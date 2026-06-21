@@ -413,11 +413,9 @@ func (r *Repository) CompleteReviewSession(taskID string) error {
 			return ErrReviewSessionOpen
 		}
 
-		if _, err := tx.Exec(`
-			UPDATE study_queue
-			SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND status = 'ACTIVE'
-		`, taskID); err != nil {
+		if err := r.CompleteTaskTx(tx, taskID, models.CompletionResult{
+			Status: models.StudyTaskStatusCompleted,
+		}); err != nil {
 			return err
 		}
 		utils.LogReviewSession(taskID, "", "0", "session_completed")
