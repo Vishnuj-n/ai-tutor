@@ -56,6 +56,7 @@
           v-model="chat.chatInput.value"
           :disabled="chat.chatLoading.value || !selectedTopicID"
           placeholder="Ask about what you’re reading right now..."
+          @keydown.enter="handleEnterKey"
         ></textarea>
       </label>
 
@@ -167,6 +168,14 @@ async function sendChat() {
     chapterStartPage: props.topicStartPage,
     chapterEndPage: props.topicEndPage,
   })
+}
+
+function handleEnterKey(event) {
+  if (event.shiftKey) return
+  event.preventDefault()
+  if (!chat.chatLoading.value && chat.chatInput.value.trim() && props.selectedTopicID) {
+    sendChat()
+  }
 }
 </script>
 
