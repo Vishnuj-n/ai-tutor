@@ -47,51 +47,63 @@ func (r *Repository) GetConnection() *sql.DB {
 // Init initializes the SQLite database and creates tables
 // vec0DllPath should be the absolute path to vec0.dll (sqlite-vec extension)
 func Init(dbPath, vec0DllPath string) (*Repository, error) {
+	utils.RagLogger.Info("db.Init: initializing database pool", "dbPath", dbPath, "vec0DllPath", vec0DllPath)
 	driverName := "sqlite3"
 	if vec0DllPath != "" {
 		if _, err := os.Stat(vec0DllPath); err == nil {
 			absPath, err := filepath.Abs(vec0DllPath)
 			if err == nil {
+				utils.RagLogger.Info("db.Init: vec0 file verified, preparing sqlite3_tutor driver", "absPath", absPath)
 				setExtensionPath(absPath)
 				driverName = "sqlite3_tutor"
+			} else {
+				utils.RagLogger.Warn("db.Init: failed to resolve absolute path for vec0 file", "path", vec0DllPath, "error", err)
 			}
 		} else {
-			log.Printf("Warning: vec0.dll not found at %s", vec0DllPath)
+			utils.RagLogger.Warn("db.Init: vec0 file not found at path", "path", vec0DllPath, "error", err)
 		}
 	}
 
+	utils.RagLogger.Info("db.Init: opening SQL connection pool", "driverName", driverName)
 	dbConn, err := sql.Open(driverName, "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
+		utils.RagLogger.Error("db.Init: failed to open SQL connection pool", "driverName", driverName, "error", err)
 		return nil, err
 	}
 	dbConn.SetMaxOpenConns(1)
 	dbConn.SetMaxIdleConns(1)
 
+	utils.RagLogger.Info("db.Init: pinging database connection")
 	if err := dbConn.Ping(); err != nil {
+		utils.RagLogger.Error("db.Init: database connection ping failed", "error", err)
 		if closeErr := dbConn.Close(); closeErr != nil {
-			log.Printf("Warning: failed to close database connection after ping error: %v", closeErr)
+			utils.RagLogger.Warn("db.Init: failed to close database connection after ping error", "error", closeErr)
 		}
 		return nil, err
 	}
+	utils.RagLogger.Info("db.Init: database connection ping succeeded")
 
 	// Verify extension load if custom driver was used
 	if driverName == "sqlite3_tutor" {
 		var version string
+		utils.RagLogger.Info("db.Init: verifying extension load by running SELECT vec_version()")
 		if err := dbConn.QueryRow("SELECT vec_version()").Scan(&version); err != nil {
-			log.Printf("Warning: could not load sqlite-vec extension from %s: %v. Falling back to non-vector DB initialization.", vec0DllPath, err)
+			utils.RagLogger.Warn("db.Init: vector verification failed, falling back to standard sqlite3", "error", err, "path", vec0DllPath)
 			setExtensionPath("")
 			_ = dbConn.Close()
 
 			// Fallback to standard sqlite3
 			var fbErr error
+			utils.RagLogger.Info("db.Init: opening fallback standard sqlite3 connection pool")
 			dbConn, fbErr = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=5000")
 			if fbErr != nil {
+				utils.RagLogger.Error("db.Init: standard sqlite3 fallback connection pool failed to open", "error", fbErr)
 				return nil, fbErr
 			}
 			dbConn.SetMaxOpenConns(1)
 			dbConn.SetMaxIdleConns(1)
 		} else {
-			utils.Infof("Successfully loaded sqlite-vec extension from %s (version: %s)", vec0DllPath, version)
+			utils.RagLogger.Info("db.Init: successfully verified sqlite-vec extension", "path", vec0DllPath, "version", version)
 		}
 	}
 

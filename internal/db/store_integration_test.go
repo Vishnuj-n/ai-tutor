@@ -129,7 +129,7 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 func TestSearchVectorsForTopicScopesResultsByTopicID(t *testing.T) {
 	initDBForTest(t, true, 3)
 	if !distanceFunctionAvailable(t) {
-		t.Skip("sqlite-vec distance() function is unavailable in this runtime")
+		t.Skip("sqlite-vec vec_distance_cosine() function is unavailable in this runtime")
 	}
 
 	topicA := "topic-scope-a"
@@ -221,7 +221,7 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 	initDBForTest(t, true, 3)
 
 	if !distanceFunctionAvailable(t) {
-		t.Skip("sqlite-vec distance() function is unavailable in this runtime")
+		t.Skip("sqlite-vec vec_distance_cosine() function is unavailable in this runtime")
 	}
 
 	topicA := "topic-window-a"
@@ -234,12 +234,12 @@ func TestSearchVectorsForTopicFiltersByPageWindow(t *testing.T) {
 	}
 
 	chunkA := "chunk-window-a"
-	if err := testRepo.CreateChunk(chunkA, topicA, "topic a chunk", 3, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkA, topicA, "topic a chunk", 1, 3); err != nil {
 		t.Fatalf("CreateChunk chunkA failed: %v", err)
 	}
 
 	chunkB := "chunk-window-b"
-	if err := testRepo.CreateChunk(chunkB, topicB, "topic b chunk", 8, 2); err != nil {
+	if err := testRepo.CreateChunk(chunkB, topicB, "topic b chunk", 2, 8); err != nil {
 		t.Fatalf("CreateChunk chunkB failed: %v", err)
 	}
 
@@ -323,7 +323,7 @@ func distanceFunctionAvailable(t *testing.T) bool {
 	t.Helper()
 
 	var distance float64
-	err := testRepo.db.QueryRow(`SELECT distance(?, ?)`, "[1,0,0]", "[1,0,0]").Scan(&distance)
+	err := testRepo.db.QueryRow(`SELECT vec_distance_cosine(?, ?)`, "[1,0,0]", "[1,0,0]").Scan(&distance)
 	if err != nil {
 		return false
 	}
@@ -475,7 +475,7 @@ func TestUpdateTopicReadingCursorMarksLearnedAtEnd(t *testing.T) {
 func TestContextLockedVectorRetrievalP95Under50ms(t *testing.T) {
 	initDBForTest(t, true, 3)
 	if !distanceFunctionAvailable(t) {
-		t.Skip("sqlite-vec distance() function is unavailable in this runtime")
+		t.Skip("sqlite-vec vec_distance_cosine() function is unavailable in this runtime")
 	}
 
 	topicID := "perf-vector-topic"

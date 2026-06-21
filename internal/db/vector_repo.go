@@ -162,6 +162,7 @@ func (r *Repository) UpsertChunkVectorsBatch(items []ChunkVectorBatchItem) error
 // When startPage and endPage are positive, search is context-locked to that page window.
 func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32, k int, startPage int, endPage int) ([]string, error) {
 	topicID = strings.TrimSpace(topicID)
+	utils.RagLogger.Info("vector_repo: SearchVectorsForTopic requested", "topicID", topicID, "k", k, "startPage", startPage, "endPage", endPage, "embeddingDimension", r.embeddingDimension, "queryVectorLen", len(queryVector))
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
 	}
@@ -173,11 +174,12 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 	}
 
 	if r.embeddingDimension <= 0 {
-		utils.RagLogger.Warn("vector search skipped: embedding dimension not initialized", "scope", "topic", "topicID", topicID)
+		utils.RagLogger.Warn("vector_repo: SearchVectorsForTopic skipped, embedding dimension not initialized", "topicID", topicID)
 		return []string{}, nil
 	}
 
 	if len(queryVector) != int(r.embeddingDimension) {
+		utils.RagLogger.Error("vector_repo: SearchVectorsForTopic dimension mismatch", "got", len(queryVector), "expected", r.embeddingDimension)
 		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), r.embeddingDimension)
 	}
 
@@ -225,6 +227,7 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 		return nil, err
 	}
 	if len(allowedRowIDs) == 0 {
+		utils.RagLogger.Info("vector_repo: SearchVectorsForTopic: no chunks found matching filter", "topicID", topicID, "filterByPage", filterByPage, "startPage", startPage, "endPage", endPage)
 		return []string{}, nil
 	}
 	allowedRowIDsJSON, err := json.Marshal(allowedRowIDs)
@@ -238,16 +241,18 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 		SELECT rowid
 		FROM chunk_vectors
 		WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
-		ORDER BY distance(embedding, ?) ASC
+		ORDER BY vec_distance_cosine(embedding, ?) ASC
 		LIMIT ?
 	`
 
+	utils.RagLogger.Info("vector_repo: executing SearchVectorsForTopic vector query", "topicID", topicID, "allowedRowIDsCount", len(allowedRowIDs))
 	rows, err := r.db.Query(vectorSQL, vectorArgs...)
 	if err != nil {
 		if isVectorUnavailableError(err) {
 			utils.RagLogger.Warn("vector search unavailable, using lexical fallback", "scope", "topic", "topicID", topicID, "error", err)
 			return []string{}, nil
 		}
+		utils.RagLogger.Error("vector_repo: SearchVectorsForTopic query execution failed", "topicID", topicID, "error", err)
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
 	defer func() {
@@ -269,12 +274,14 @@ func (r *Repository) SearchVectorsForTopic(topicID string, queryVector []float32
 		return nil, err
 	}
 
+	utils.RagLogger.Info("vector_repo: SearchVectorsForTopic completed successfully", "topicID", topicID, "resultsCount", len(chunkIDs))
 	return chunkIDs, nil
 }
 
 // SearchVectorsForNotebook finds the top-k most similar vectors for a notebook-scoped query.
 func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []float32, k int) ([]string, error) {
 	notebookID = strings.TrimSpace(notebookID)
+	utils.RagLogger.Info("vector_repo: SearchVectorsForNotebook requested", "notebookID", notebookID, "k", k, "embeddingDimension", r.embeddingDimension, "queryVectorLen", len(queryVector))
 	if notebookID == "" {
 		return nil, fmt.Errorf("notebook id is required")
 	}
@@ -286,11 +293,12 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 	}
 
 	if r.embeddingDimension <= 0 {
-		utils.RagLogger.Warn("vector search skipped: embedding dimension not initialized", "scope", "notebook", "notebookID", notebookID)
+		utils.RagLogger.Warn("vector_repo: SearchVectorsForNotebook skipped, embedding dimension not initialized", "notebookID", notebookID)
 		return []string{}, nil
 	}
 
 	if len(queryVector) != int(r.embeddingDimension) {
+		utils.RagLogger.Error("vector_repo: SearchVectorsForNotebook dimension mismatch", "got", len(queryVector), "expected", r.embeddingDimension)
 		return nil, fmt.Errorf("query vector dimension mismatch: got %d, expected %d", len(queryVector), r.embeddingDimension)
 	}
 
@@ -327,6 +335,7 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 		return nil, err
 	}
 	if len(allowedRowIDs) == 0 {
+		utils.RagLogger.Info("vector_repo: SearchVectorsForNotebook: no chunks found matching filter", "notebookID", notebookID)
 		return []string{}, nil
 	}
 
@@ -335,11 +344,12 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 		return nil, fmt.Errorf("failed to encode allowed row ids: %w", err)
 	}
 
+	utils.RagLogger.Info("vector_repo: executing SearchVectorsForNotebook vector query", "notebookID", notebookID, "allowedRowIDsCount", len(allowedRowIDs))
 	rows, err := r.db.Query(`
 		SELECT rowid
 		FROM chunk_vectors
 		WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
-		ORDER BY distance(embedding, ?) ASC
+		ORDER BY vec_distance_cosine(embedding, ?) ASC
 		LIMIT ?
 	`, string(allowedRowIDsJSON), queryVectorJSON, k)
 	if err != nil {
@@ -347,6 +357,7 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 			utils.RagLogger.Warn("vector search unavailable, using lexical fallback", "scope", "notebook", "notebookID", notebookID, "error", err)
 			return []string{}, nil
 		}
+		utils.RagLogger.Error("vector_repo: SearchVectorsForNotebook query execution failed", "notebookID", notebookID, "error", err)
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
 	defer func() {
@@ -368,6 +379,7 @@ func (r *Repository) SearchVectorsForNotebook(notebookID string, queryVector []f
 		return nil, err
 	}
 
+	utils.RagLogger.Info("vector_repo: SearchVectorsForNotebook completed successfully", "notebookID", notebookID, "resultsCount", len(chunkIDs))
 	return chunkIDs, nil
 }
 
@@ -412,6 +424,8 @@ func isVectorUnavailableError(err error) bool {
 	case strings.Contains(errText, "no such table: chunk_vectors"):
 		return true
 	case strings.Contains(errText, "no such function: distance"):
+		return true
+	case strings.Contains(errText, "no such function: vec_distance_cosine"):
 		return true
 	default:
 		return false
