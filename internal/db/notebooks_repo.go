@@ -984,11 +984,14 @@ func (r *Repository) GetNotebookIndexingProgress(notebookID string) (int, int, s
 // GetNotebookIDByTopic returns a notebook ID linked to the given topic ID.
 func (r *Repository) GetNotebookIDByTopic(topicID string) (string, error) {
 	var notebookID string
-	// Check notebook_topics first
+	// Check notebook_topics first. Wrap the UNION in a subquery and sort by notebook_id to guarantee deterministic ordering.
 	err := r.db.QueryRow(`
-		SELECT notebook_id FROM notebook_topics WHERE topic_id = ?
-		UNION
-		SELECT id FROM notebooks WHERE topic_id = ?
+		SELECT notebook_id FROM (
+			SELECT notebook_id FROM notebook_topics WHERE topic_id = ?
+			UNION
+			SELECT id AS notebook_id FROM notebooks WHERE topic_id = ?
+		)
+		ORDER BY notebook_id ASC
 		LIMIT 1
 	`, topicID, topicID).Scan(&notebookID)
 	if err != nil {

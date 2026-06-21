@@ -743,6 +743,9 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 		if err != nil {
 			return map[string]interface{}{"error": "Failed to materialize review session: " + err.Error()}
 		}
+		if task == nil {
+			return map[string]interface{}{"error": "No due cards found for review materialization"}
+		}
 		utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materialized notebookID=%s taskID=%s reused=%t", notebookID, task.ID, reused)
 		taskID = task.ID
 	}

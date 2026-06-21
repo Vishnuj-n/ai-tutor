@@ -247,6 +247,7 @@ func (a *App) reloadLLMProviders() error {
 	a.heavyLLMProvider = heavyProvider
 	engine := a.retrievalEngine
 	a.studyService = study.NewStudyService(study.Config{
+		Repo:             a.repo,
 		FastLLMProvider:  fastProvider,
 		HeavyLLMProvider: heavyProvider,
 		RetrievalEngine:  engine,

@@ -170,6 +170,7 @@ func (r *Repository) GetChunkSection(chunkID string) (map[string]string, error) 
 	}
 
 	res := map[string]string{}
+	res["id"] = chunkID
 	if notebookID.Valid {
 		res["notebook_id"] = notebookID.String
 	}

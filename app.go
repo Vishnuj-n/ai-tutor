@@ -521,6 +521,7 @@ func (a *App) reloadRetrievalEngine() error {
 
 	// Recreate study service to bind the new engine; update both under lock.
 	newSvc := study.NewStudyService(study.Config{
+		Repo:             a.repo,
 		FastLLMProvider:  a.fastLLMProvider,
 		HeavyLLMProvider: a.heavyLLMProvider,
 		RetrievalEngine:  engine,

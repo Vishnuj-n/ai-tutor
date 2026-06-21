@@ -48,6 +48,9 @@ type StudyService struct {
 
 // NewStudyService constructs a StudyService from injected dependencies.
 func NewStudyService(cfg Config) *StudyService {
+	if cfg.Repo == nil {
+		panic("study service: repository is required")
+	}
 	return &StudyService{
 		repo:             cfg.Repo,
 		fastLLMProvider:  cfg.FastLLMProvider,
