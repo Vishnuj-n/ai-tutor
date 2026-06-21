@@ -72,7 +72,7 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 
 	err = s.repo.EnsureNotebookTopic(notebookID, topicID)
 	if err != nil {
-		utils.Warnf("[FLASHCARD_PIPELINE] failed to link topic to notebook topicID=%s notebookID=%s err=%v", topicID, notebookID, err)
+		return nil, nil, false, "", fmt.Errorf("failed to link topic to notebook: %w", err)
 	}
 
 	states := make(map[string]models.FlashcardState, len(cards))
