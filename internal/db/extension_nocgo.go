@@ -9,11 +9,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"ai-tutor/internal/utils"
 )
 
 func isPathAllowed(path string) bool {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
+		utils.RagLogger.Warn("sqlite3_tutor (nocgo): path allowed check failed to resolve absolute path", "path", path, "error", err)
 		return false
 	}
 
@@ -22,14 +25,17 @@ func isPathAllowed(path string) bool {
 	switch runtime.GOOS {
 	case "windows":
 		if baseName != "vec0.dll" {
+			utils.RagLogger.Warn("sqlite3_tutor (nocgo): path allowed check failed baseName validation for windows", "baseName", baseName)
 			return false
 		}
 	case "darwin":
 		if baseName != "vec0.dylib" {
+			utils.RagLogger.Warn("sqlite3_tutor (nocgo): path allowed check failed baseName validation for darwin", "baseName", baseName)
 			return false
 		}
 	default:
 		if baseName != "vec0.so" {
+			utils.RagLogger.Warn("sqlite3_tutor (nocgo): path allowed check failed baseName validation for linux/other", "baseName", baseName)
 			return false
 		}
 	}
@@ -64,22 +70,27 @@ func isPathAllowed(path string) bool {
 		}
 		// If Rel does not start with ".." and is not ".", it's inside the allowed directory
 		if !strings.HasPrefix(rel, "..") && rel != "." {
+			utils.RagLogger.Info("sqlite3_tutor (nocgo): path allowed check passed", "path", path, "absPath", absPath, "matchedDir", absDir)
 			return true
 		}
 	}
 
+	utils.RagLogger.Warn("sqlite3_tutor (nocgo): path allowed check failed, absPath does not reside inside any allowed directory", "absPath", absPath, "allowedDirs", allowedDirs)
 	return false
 }
 
 func setExtensionPath(path string) {
-	// No-op for non-CGO builds
+	utils.RagLogger.Warn("sqlite3_tutor (nocgo): setExtensionPath is a no-op since CGO is disabled", "path", path)
 }
 
 func loadExtension(db *sql.DB, extensionPath string) error {
 	cleanedPath := filepath.Clean(extensionPath)
+	utils.RagLogger.Warn("sqlite3_tutor (nocgo): loadExtension triggered in non-CGO build", "path", extensionPath, "cleanedPath", cleanedPath)
 	if !isPathAllowed(cleanedPath) {
+		utils.RagLogger.Error("sqlite3_tutor (nocgo): loading extension from unauthorized path blocked", "path", cleanedPath)
 		return fmt.Errorf("loading extension from unauthorized path is blocked: %s", cleanedPath)
 	}
+	utils.RagLogger.Error("sqlite3_tutor (nocgo): loading extension failed: CGO_ENABLED=1 is required")
 	return fmt.Errorf("sqlite-vec extension loading requires CGO_ENABLED=1")
 }
 

@@ -127,6 +127,20 @@ func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
 
+// LogFrontendEvent accepts a structured log event from the frontend and writes it to the queue logger.
+func (a *App) LogFrontendEvent(level string, component string, event string, details string) {
+	switch strings.ToLower(level) {
+	case "debug":
+		utils.QueueLogger.Debug("frontend_event", "component", component, "event", event, "details", details)
+	case "warn":
+		utils.QueueLogger.Warn("frontend_event", "component", component, "event", event, "details", details)
+	case "error":
+		utils.QueueLogger.Error("frontend_event", "component", component, "event", event, "details", details)
+	default:
+		utils.QueueLogger.Info("frontend_event", "component", component, "event", event, "details", details)
+	}
+}
+
 func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
