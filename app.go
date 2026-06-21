@@ -31,6 +31,7 @@ type llmProviderInterface interface {
 type App struct {
 	ctx               context.Context
 	repo              *db.Repository
+	repoMutex         sync.RWMutex
 	readyChan         chan struct{}
 	// aiMutex guards aiReady, aiInitError, embedder, retrievalEngine, and studyService
 	// which are written by the InitializeRAG goroutine and read by handler methods.
@@ -62,6 +63,8 @@ func (a *App) waitForReady() {
 
 func (a *App) getRepo() *db.Repository {
 	a.waitForReady()
+	a.repoMutex.RLock()
+	defer a.repoMutex.RUnlock()
 	return a.repo
 }
 
@@ -87,8 +90,11 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 
-	// Direct, thin structural assignment handoff
+	// Direct, thin structural assignment handoff under lock
+	a.repoMutex.Lock()
 	a.repo = boot.Repo
+	a.repoMutex.Unlock()
+
 	a.embedder = boot.Embedder
 	a.retrievalEngine = boot.RetrievalEngine
 	a.fastLLMProvider = boot.FastLLMProvider
@@ -101,10 +107,10 @@ func (a *App) startup(ctx context.Context) {
 	a.aiInitError = boot.AiInitError
 
 	if a.aiReady && a.embedder != nil {
-		a.indexQueue = retrieval.NewVectorIndexQueue(a.repo, a.embedder, ctx)
+		a.indexQueue = retrieval.NewVectorIndexQueue(boot.Repo, a.embedder, ctx)
 		a.indexQueue.Start()
 
-		pendingIDs, err := a.repo.GetPendingNotebookIDs()
+		pendingIDs, err := boot.Repo.GetPendingNotebookIDs()
 		if err == nil {
 			for _, id := range pendingIDs {
 				a.indexQueue.Enqueue(id)
@@ -184,7 +190,7 @@ func (a *App) GetAvailableTopics() []map[string]string {
 
 // checkNotebookIndexingStatus checks if a notebook is currently indexing and returns a progress status map if it is not ready.
 func (a *App) checkNotebookIndexingStatus(notebookID, topicID string) (map[string]interface{}, bool) {
-	repo := a.repo
+	repo := a.getRepo()
 	if repo == nil {
 		return nil, false
 	}
@@ -392,8 +398,10 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			if fbErr != nil {
 				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v, and fallback non-vector initialization also failed: %v", err, fbErr))
 			} else {
+				a.repoMutex.Lock()
 				_ = repo.Close()
 				a.repo = fbRepo
+				a.repoMutex.Unlock()
 				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
 			}
 			return
@@ -405,8 +413,10 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			if fbErr != nil {
 				emitRagSetupFailed(a, fmt.Sprintf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary), and fallback non-vector initialization also failed: %v", fbErr))
 			} else {
+				a.repoMutex.Lock()
 				_ = repo.Close()
 				a.repo = fbRepo
+				a.repoMutex.Unlock()
 				emitRagSetupFailed(a, "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
 			}
 			return
@@ -427,9 +437,11 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Success loading vec0 extension! Close old repo connection, set new repo.
+		// Success loading vec0 extension! Close old repo connection, set new repo under lock.
+		a.repoMutex.Lock()
 		_ = repo.Close()
 		a.repo = newRepo
+		a.repoMutex.Unlock()
 
 		// Set dimensions
 		if err := newRepo.InitWithVectorDimension(emb.GetDimension()); err != nil {
@@ -469,7 +481,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		})
 
 		// Index all existing topics; emit ready only after success
-		indexer := retrieval.NewVectorIndexer(a.repo, emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
+		indexer := retrieval.NewVectorIndexer(newRepo, emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
 		if err := indexer.IndexAllTopics(); err != nil {
 			utils.Errorf("vector indexing failed after RAG enable: %v", err)
 			a.aiMutex.Lock()
@@ -503,12 +515,17 @@ func (a *App) reloadRetrievalEngine() error {
 	emb := a.embedder
 	a.aiMutex.Unlock()
 
-	engine := retrieval.NewEngine(a.repo, emb)
-	topicIDs, err := a.repo.GetAllTopicIDs()
+	repo := a.getRepo()
+	if repo == nil {
+		return fmt.Errorf("reloadRetrievalEngine: repository not initialized")
+	}
+
+	engine := retrieval.NewEngine(repo, emb)
+	topicIDs, err := repo.GetAllTopicIDs()
 	if err != nil {
 		return fmt.Errorf("reloadRetrievalEngine: GetAllTopicIDs: %w", err)
 	}
-	chunksByTopic, err := a.repo.GetChunksForTopics(topicIDs)
+	chunksByTopic, err := repo.GetChunksForTopics(topicIDs)
 	if err != nil {
 		return fmt.Errorf("reloadRetrievalEngine: GetChunksForTopics: %w", err)
 	}
@@ -520,7 +537,7 @@ func (a *App) reloadRetrievalEngine() error {
 
 	// Recreate study service to bind the new engine; update both under lock.
 	newSvc := study.NewStudyService(study.Config{
-		Repo:             a.repo,
+		Repo:             repo,
 		FastLLMProvider:  a.fastLLMProvider,
 		HeavyLLMProvider: a.heavyLLMProvider,
 		RetrievalEngine:  engine,

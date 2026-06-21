@@ -75,6 +75,10 @@ func (a *App) UploadNotebookFromPath(filePath string) map[string]interface{} {
 }
 
 func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if uploadResult == nil {
 		return map[string]interface{}{
 			"error": "upload failed",
@@ -91,7 +95,7 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	}
 
 	// Create notebook record as unlinked; Sprint 11 uses a draft/confirm ingestion flow.
-	err = a.repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount)
+	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{
@@ -103,7 +107,7 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	// notebooks uploaded while a profile is active belong to that profile automatically.
 	// Only auto-assigns when an explicit ActiveProfileID is set (no fallback to oldest profile).
 	if profileID := a.resolveExplicitActiveProfileID(); profileID != "" {
-		if err := a.repo.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
+		if err := repo.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
 			_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 			return map[string]interface{}{
 				"error": fmt.Sprintf("failed to assign notebook to profile: %v", err),
@@ -112,7 +116,7 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	}
 
 	status := "uploaded"
-	_ = a.repo.UpdateNotebookStatus(uploadResult.ID, status)
+	_ = repo.UpdateNotebookStatus(uploadResult.ID, status)
 
 	return map[string]interface{}{
 		"id":            uploadResult.ID,
@@ -131,7 +135,11 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 // resolveExplicitActiveProfileID returns the active profile ID from user settings
 // only when an explicit active profile has been set — no fallback to oldest profile.
 func (a *App) resolveExplicitActiveProfileID() string {
-	s, err := a.repo.GetUserSettings()
+	repo := a.getRepo()
+	if repo == nil {
+		return ""
+	}
+	s, err := repo.GetUserSettings()
 	if err == nil && s != nil && s.ActiveProfileID != "" {
 		return s.ActiveProfileID
 	}

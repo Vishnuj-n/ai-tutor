@@ -110,7 +110,7 @@ func (s *StudyService) RecordCardReview(taskID, cardID string, rating int) (int,
 		return 0, fmt.Errorf("rating must be between 1 and 4")
 	}
 
-	tx, err := s.repo.GetConnection().Begin()
+	tx, err := s.repo.Begin()
 	if err != nil {
 		return 0, err
 	}

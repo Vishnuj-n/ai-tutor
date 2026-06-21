@@ -315,11 +315,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	completionStatus := models.StudyTaskStatusCompleted
 	var resultPayload []byte
 
-	conn := s.repo.GetConnection()
-	if conn == nil {
-		return models.QuizResult{}, fmt.Errorf("database not initialized")
-	}
-	tx, err := conn.Begin()
+	tx, err := s.repo.Begin()
 	if err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to begin quiz transaction: %w", err)
 	}
@@ -368,7 +364,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			completionStatus = models.StudyTaskStatusFailed
 
 			// Safety transaction: Delete FSRS cards to protect purity from rote clutter
-			if _, err := tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", task.TopicID); err != nil {
+			if err := s.repo.DeleteFSRSCardsByTopicIDTx(tx, task.TopicID); err != nil {
 				return models.QuizResult{}, fmt.Errorf("failed to delete FSRS cards: %w", err)
 			}
 
