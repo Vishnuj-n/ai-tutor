@@ -336,10 +336,8 @@ func (vi *VectorIndexer) IndexNotebook(notebookID string) error {
 	}
 
 	// Batch store vectors
-	var batchStoreErr error
 	if err := vi.repo.UpsertChunkVectorsBatch(vectorBatch); err != nil {
 		utils.Warnf("failed to batch store vectors for notebook %s: %v", notebookID, err)
-		batchStoreErr = err
 		// Fall back to individual operations on batch failure
 		for _, item := range vectorBatch {
 			if err := vi.repo.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
@@ -352,7 +350,6 @@ func (vi *VectorIndexer) IndexNotebook(notebookID string) error {
 	// Batch update embedding metadata
 	if err := vi.repo.UpdateChunkEmbeddingsBatch(embeddingBatch); err != nil {
 		utils.Warnf("failed to batch update embedding metadata for notebook %s: %v", notebookID, err)
-		batchStoreErr = err
 		// Fall back to individual operations on batch failure
 		for _, item := range embeddingBatch {
 			if err := vi.repo.UpdateChunkEmbedding(item.ChunkID, item.Hash); err != nil {
@@ -365,7 +362,7 @@ func (vi *VectorIndexer) IndexNotebook(notebookID string) error {
 	reindexed := len(vectorBatch) - len(failedChunks)
 	utils.Infof("Indexing complete for notebook %s: reindexed=%d, skipped=%d, failed=%d", notebookID, reindexed, skipped, len(failedChunks))
 	
-	if len(failedChunks) > 0 || batchStoreErr != nil {
+	if len(failedChunks) > 0 {
 		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED")
 	} else {
 		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY")

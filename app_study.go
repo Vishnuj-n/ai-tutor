@@ -387,6 +387,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 		if err := repo.ActivateTask(taskID); err != nil {
 			utils.Errorf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
 			utils.QueueLogger.Info("queue task activation failed", "taskID", taskID)
+			return map[string]interface{}{"error": "failed to activate task: " + err.Error()}
 		} else {
 			utils.QueueLogger.Info("queue task activated", "taskID", taskID)
 		}
@@ -396,6 +397,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			if err := repo.ActivateTask(taskID); err != nil {
 				utils.Errorf("InitializeReadingSession activation failed: taskID=%s err=%v", taskID, err)
 				utils.QueueLogger.Info("queue task activation failed", "taskID", taskID)
+				return map[string]interface{}{"error": "failed to activate task: " + err.Error()}
 			} else {
 				utils.QueueLogger.Info("queue task activated", "taskID", taskID)
 			}
