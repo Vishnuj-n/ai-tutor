@@ -10,7 +10,6 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/notebook"
-	"ai-tutor/internal/retrieval"
 	"ai-tutor/internal/utils"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -33,6 +32,10 @@ type ingestionProgressPayload struct {
 
 // UploadNotebook handles file upload and creates notebook record
 func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.notebookService == nil {
 		return map[string]interface{}{
 			"error": "notebook service not initialized",
@@ -51,6 +54,10 @@ func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interf
 
 // UploadNotebookFromPath stores a local file selected from desktop without bridge byte-array transfer.
 func (a *App) UploadNotebookFromPath(filePath string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.notebookService == nil {
 		return map[string]interface{}{
 			"error": "notebook service not initialized",
@@ -68,6 +75,10 @@ func (a *App) UploadNotebookFromPath(filePath string) map[string]interface{} {
 }
 
 func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if uploadResult == nil {
 		return map[string]interface{}{
 			"error": "upload failed",
@@ -84,7 +95,7 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	}
 
 	// Create notebook record as unlinked; Sprint 11 uses a draft/confirm ingestion flow.
-	err = db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount)
+	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{
@@ -95,8 +106,8 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	// Auto-assign the notebook to the active profile, mirroring Chrome-style profile isolation:
 	// notebooks uploaded while a profile is active belong to that profile automatically.
 	// Only auto-assigns when an explicit ActiveProfileID is set (no fallback to oldest profile).
-	if profileID := resolveExplicitActiveProfileID(); profileID != "" {
-		if err := db.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
+	if profileID := a.resolveExplicitActiveProfileID(); profileID != "" {
+		if err := repo.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
 			_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 			return map[string]interface{}{
 				"error": fmt.Sprintf("failed to assign notebook to profile: %v", err),
@@ -105,7 +116,7 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	}
 
 	status := "uploaded"
-	_ = db.UpdateNotebookStatus(uploadResult.ID, status)
+	_ = repo.UpdateNotebookStatus(uploadResult.ID, status)
 
 	return map[string]interface{}{
 		"id":            uploadResult.ID,
@@ -123,8 +134,12 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 
 // resolveExplicitActiveProfileID returns the active profile ID from user settings
 // only when an explicit active profile has been set — no fallback to oldest profile.
-func resolveExplicitActiveProfileID() string {
-	s, err := db.GetUserSettings()
+func (a *App) resolveExplicitActiveProfileID() string {
+	repo := a.getRepo()
+	if repo == nil {
+		return ""
+	}
+	s, err := repo.GetUserSettings()
 	if err == nil && s != nil && s.ActiveProfileID != "" {
 		return s.ActiveProfileID
 	}
@@ -135,6 +150,10 @@ func resolveExplicitActiveProfileID() string {
 // If regenerate=false and a draft exists in DB, returns the persisted draft without re-running extraction/LLM.
 // If regenerate=true or no draft exists, runs extraction/LLM and persists the result.
 func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return map[string]interface{}{"error": "notebook id is required"}
@@ -143,7 +162,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		return map[string]interface{}{"error": "notebook service not initialized"}
 	}
 
-	nb, err := db.GetNotebookByID(notebookID)
+	nb, err := repo.GetNotebookByID(notebookID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -153,7 +172,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 
 	// Try to load persisted draft if not regenerating
 	if !regenerate {
-		draftJSON, err := db.GetNotebookSyllabusDraft(notebookID)
+		draftJSON, err := repo.GetNotebookSyllabusDraft(notebookID)
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}
 		}
@@ -180,10 +199,10 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	_ = db.UpdateNotebookStatus(notebookID, "analyzing")
+	_ = repo.UpdateNotebookStatus(notebookID, "analyzing")
 	result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
 	if err != nil {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		_ = repo.UpdateNotebookStatus(notebookID, "failed")
 		return map[string]interface{}{"error": err.Error()}
 	}
 
@@ -209,10 +228,10 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 	}
 	draftJSON, err := json.Marshal(draftToPersist)
 	if err == nil {
-		_ = db.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
+		_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
 	}
 
-	_ = db.UpdateNotebookStatus(notebookID, "draft_ready")
+	_ = repo.UpdateNotebookStatus(notebookID, "draft_ready")
 	return map[string]interface{}{
 		"notebook_id":   notebookID,
 		"page_count":    doc.PageCount,
@@ -224,6 +243,10 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 
 // ConfirmNotebookSyllabus commits notebook ingestion from user-confirmed chapter bounds.
 func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.SyllabusChapterDraft) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return map[string]interface{}{"error": "notebook id is required"}
@@ -232,7 +255,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		return map[string]interface{}{"error": "notebook service not initialized"}
 	}
 
-	nb, err := db.GetNotebookByID(notebookID)
+	nb, err := repo.GetNotebookByID(notebookID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -248,7 +271,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	}
 
 	// Attempt to fetch existing topics/bounds for this notebook to decide path
-	existingTopics, etErr := db.GetNotebookTopicsWithBounds(notebookID)
+	existingTopics, etErr := repo.GetNotebookTopicsWithBounds(notebookID)
 	existingTopicIDs := make(map[string]struct{}, len(existingTopics))
 	for _, et := range existingTopics {
 		existingTopicIDs[et.TopicID] = struct{}{}
@@ -299,13 +322,13 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 				topicIDs = append(topicIDs, et.TopicID)
 			}
 
-			if err := db.EnsureTopicsBatch(topicItems); err != nil {
-				_ = db.UpdateNotebookStatus(notebookID, "failed")
+			if err := repo.EnsureTopicsBatch(topicItems); err != nil {
+				_ = repo.UpdateNotebookStatus(notebookID, "failed")
 				return map[string]interface{}{"error": "failed to update topics: " + err.Error()}
 			}
 
 			if len(topicIDs) > 0 {
-				_ = db.UpdateNotebookTopic(notebookID, topicIDs[0])
+				_ = repo.UpdateNotebookTopic(notebookID, topicIDs[0])
 			}
 
 			// Return without running extraction/ingestion or embedding updates
@@ -380,19 +403,19 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	}
 
 	// Batch create/update topics
-	if err := db.EnsureTopicsBatch(topicItems); err != nil {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
+	if err := repo.EnsureTopicsBatch(topicItems); err != nil {
+		_ = repo.UpdateNotebookStatus(notebookID, "failed")
 		return map[string]interface{}{"error": "failed to create topics: " + err.Error()}
 	}
 
 	// Batch update page bounds
-	if err := db.UpdateTopicPageBoundsBatch(boundsItems); err != nil {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
+	if err := repo.UpdateTopicPageBoundsBatch(boundsItems); err != nil {
+		_ = repo.UpdateNotebookStatus(notebookID, "failed")
 		// Cleanup only topics provably created in this request; skip cleanup if existing-topic lookup failed.
 		if etErr == nil {
 			for _, item := range topicItems {
 				if _, existed := existingTopicIDs[item.TopicID]; !existed {
-					_ = db.DeleteTopic(item.TopicID)
+					_ = repo.DeleteTopic(item.TopicID)
 				}
 			}
 		}
@@ -400,7 +423,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	}
 
 	if len(topicIDs) > 0 {
-		_ = db.UpdateNotebookTopic(notebookID, topicIDs[0])
+		_ = repo.UpdateNotebookTopic(notebookID, topicIDs[0])
 	}
 
 	// Track which topic IDs were newly created for cleanup
@@ -415,10 +438,10 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	groups, allChunks := notebook.BuildTopicGroupsFromChapters(notebookID, doc, topicIDs, normalized)
 	if len(groups) == 0 || len(allChunks) == 0 {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
+		_ = repo.UpdateNotebookStatus(notebookID, "failed")
 		// Cleanup: delete only newly created topic rows to avoid orphaned records
 		for topicID := range newlyCreatedTopicIDs {
-			_ = db.DeleteTopic(topicID)
+			_ = repo.DeleteTopic(topicID)
 		}
 		return map[string]interface{}{"error": "confirmed chapters produced no chunks"}
 	}
@@ -435,11 +458,11 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		Percent:    20,
 	})
 
-	if err := db.IngestNotebookContentByTopic(notebookID, groups); err != nil {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
+	if err := repo.IngestNotebookContentByTopic(notebookID, groups); err != nil {
+		_ = repo.UpdateNotebookStatus(notebookID, "failed")
 		// Cleanup: delete only newly created topic rows to avoid orphaned records
 		for topicID := range newlyCreatedTopicIDs {
-			_ = db.DeleteTopic(topicID)
+			_ = repo.DeleteTopic(topicID)
 		}
 		emitIngestionProgress(a, ingestionProgressPayload{
 			NotebookID: notebookID,
@@ -454,11 +477,11 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	}
 
 	// Link new topics to notebook in database
-	if err := db.LinkNotebookTopics(notebookID, topicIDs); err != nil {
-		_ = db.UpdateNotebookStatus(notebookID, "failed")
+	if err := repo.LinkNotebookTopics(notebookID, topicIDs); err != nil {
+		_ = repo.UpdateNotebookStatus(notebookID, "failed")
 		// Cleanup: delete newly created topic rows (cascades to chunks, cards, etc.) to avoid orphaned records
 		for topicID := range newlyCreatedTopicIDs {
-			_ = db.DeleteTopic(topicID)
+			_ = repo.DeleteTopic(topicID)
 		}
 		return map[string]interface{}{"error": "failed to link notebook topics: " + err.Error()}
 	}
@@ -471,7 +494,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		}
 		for _, et := range existingTopics {
 			if !newTopicIDsMap[et.TopicID] {
-				_ = db.DeleteTopic(et.TopicID)
+				_ = repo.DeleteTopic(et.TopicID)
 			}
 		}
 	}
@@ -487,17 +510,11 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		Percent:    100,
 	})
 
-	_ = db.UpdateNotebookStatus(notebookID, status)
+	_ = repo.UpdateNotebookStatus(notebookID, status)
 
-	// Trigger background indexing if RAG is enabled and embedder is active
-	ragEnabled, err := db.GetRAGEnabled()
-	if err == nil && ragEnabled && a.embedder != nil {
-		go func() {
-			indexer := retrieval.NewVectorIndexer(a.embedder, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
-			if err := indexer.IndexAllTopics(); err != nil {
-				utils.Warnf("background vector indexing failed: %v", err)
-			}
-		}()
+	ragEnabled, err := repo.GetRAGEnabled()
+	if err == nil && ragEnabled && a.indexQueue != nil {
+		a.indexQueue.Enqueue(notebookID)
 	}
 
 	return map[string]interface{}{
@@ -514,7 +531,11 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 // When profileID is empty, returns all notebooks (backward compatible).
 // When profileID is set, returns only notebooks belonging to that profile or unassigned notebooks.
 func (a *App) GetNotebooks(topicID, profileID string) []map[string]interface{} {
-	notebooks, err := db.GetNotebooks(topicID, profileID)
+	repo := a.getRepo()
+	if repo == nil {
+		return []map[string]interface{}{{"error": "database repository not initialized"}}
+	}
+	notebooks, err := repo.GetNotebooks(topicID, profileID)
 	if err != nil {
 		return []map[string]interface{}{
 			{"error": err.Error()},
@@ -545,8 +566,12 @@ func (a *App) GetNotebooks(topicID, profileID string) []map[string]interface{} {
 
 // GetNotebookTopicTree returns notebook-scoped topic options for hierarchical selectors.
 func (a *App) GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
-	profileID := resolveExplicitActiveProfileID()
-	tree, err := db.GetNotebookTopicTree(profileID)
+	repo := a.getRepo()
+	if repo == nil {
+		return nil, fmt.Errorf("database repository not initialized")
+	}
+	profileID := a.resolveExplicitActiveProfileID()
+	tree, err := repo.GetNotebookTopicTree(profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -563,6 +588,10 @@ func emitIngestionProgress(a *App, payload ingestionProgressPayload) {
 
 // UpdateNotebookTitle updates notebook metadata for user edits before re-ingestion.
 func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	notebookID = strings.TrimSpace(notebookID)
 	title = strings.TrimSpace(title)
 	if notebookID == "" {
@@ -572,7 +601,7 @@ func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]in
 		return map[string]interface{}{"error": "title is required"}
 	}
 
-	if err := db.UpdateNotebookTitle(notebookID, title); err != nil {
+	if err := repo.UpdateNotebookTitle(notebookID, title); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
@@ -581,6 +610,10 @@ func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]in
 
 // UpdateNotebookPriority updates the notebook priority level (1-10).
 func (a *App) UpdateNotebookPriority(notebookID string, priority int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
 		return map[string]interface{}{"error": "notebook id is required"}
@@ -593,7 +626,7 @@ func (a *App) UpdateNotebookPriority(notebookID string, priority int) map[string
 		priority = 10
 	}
 
-	if err := db.UpdateNotebookPriority(notebookID, priority); err != nil {
+	if err := repo.UpdateNotebookPriority(notebookID, priority); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
@@ -602,6 +635,10 @@ func (a *App) UpdateNotebookPriority(notebookID string, priority int) map[string
 
 // DeleteNotebook removes a notebook and its associated file
 func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	if a.notebookService == nil {
 		return map[string]interface{}{
 			"error": "notebook service not initialized",
@@ -609,7 +646,7 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 	}
 
 	// Get notebook to retrieve file path
-	nb, err := db.GetNotebookByID(notebookID)
+	nb, err := repo.GetNotebookByID(notebookID)
 	if err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
@@ -622,15 +659,15 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 		}
 	}
 
-	// Delete file from disk
-	if err := a.notebookService.DeleteFile(nb.FilePath); err != nil {
+	// Delete database record
+	if err := repo.DeleteNotebook(notebookID); err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}
 	}
 
-	// Delete database record
-	if err := db.DeleteNotebook(notebookID); err != nil {
+	// Delete file from disk
+	if err := a.notebookService.DeleteFile(nb.FilePath); err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}
@@ -643,12 +680,16 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 
 // GetProfileDailyPace calculates and returns the daily study pace to meet the profile deadline.
 func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
 	profileID = strings.TrimSpace(profileID)
 	if profileID == "" {
 		return map[string]interface{}{"error": "profile id is required"}
 	}
 
-	p, err := db.GetProfileByID(profileID)
+	p, err := repo.GetProfileByID(profileID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -656,7 +697,7 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 		return map[string]interface{}{"error": "profile not found"}
 	}
 
-	remainingWords, err := db.GetProfileRemainingWords(profileID)
+	remainingWords, err := repo.GetProfileRemainingWords(profileID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}

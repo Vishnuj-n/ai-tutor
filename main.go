@@ -3,10 +3,6 @@ package main
 import (
 	"embed"
 	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -31,6 +27,7 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
+		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
 			app,
 		},
@@ -43,36 +40,20 @@ func main() {
 
 func notebookHandler(app *App) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if app == nil || app.notebookUploadDir == "" {
+			http.Error(rw, "notebook directory unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Serve only GET requests under /notebooks/.
+		// http.FileServer handles path cleaning, URL unescaping, and directory
+		// traversal prevention automatically; no manual path manipulation needed.
 		if req.Method != http.MethodGet {
 			rw.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		if !strings.HasPrefix(req.URL.Path, "/notebooks/") {
-			http.NotFound(rw, req)
-			return
-		}
-
-		if app == nil || strings.TrimSpace(app.notebookUploadDir) == "" {
-			http.Error(rw, "notebook directory unavailable", http.StatusServiceUnavailable)
-			return
-		}
-
-		escapedName := strings.TrimPrefix(req.URL.Path, "/notebooks/")
-		fileName, err := url.PathUnescape(escapedName)
-		// Explicitly reject path traversal attempts: empty, current dir, parent dir, or multi-component paths
-		if err != nil || fileName == "" || fileName == "." || fileName == ".." || filepath.Base(fileName) != fileName {
-			http.NotFound(rw, req)
-			return
-		}
-
-		filePath := filepath.Join(app.notebookUploadDir, fileName)
-		info, err := os.Stat(filePath)
-		if err != nil || info.IsDir() {
-			http.NotFound(rw, req)
-			return
-		}
-
-		http.ServeFile(rw, req, filePath)
+		fs := http.FileServer(http.Dir(app.notebookUploadDir))
+		http.StripPrefix("/notebooks", fs).ServeHTTP(rw, req)
 	})
 }

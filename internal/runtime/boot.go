@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
@@ -20,6 +21,7 @@ import (
 
 // BootResult holds the initialized states and services for the application.
 type BootResult struct {
+	Repo              *db.Repository
 	Embedder          *embeddings.OnnxEmbedder
 	RetrievalEngine   *retrieval.Engine
 	FastLLMProvider   *llm.Provider
@@ -38,7 +40,13 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		AiReady: false,
 	}
 
-	_ = godotenv.Load()
+	loadEnv()
+	// If APP_ENV was not set by .env or the environment, default to "production".
+	// This prevents fresh dev/test environments from silently routing to an undefined
+	// storage path. "dev" must be explicitly opted into.
+	if os.Getenv("APP_ENV") == "" {
+		_ = os.Setenv("APP_ENV", "production")
+	}
 
 	dbPath, err := ResolveDBPath()
 	if err != nil {
@@ -48,15 +56,17 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	}
 
 	// 1. Initialize DB without loading vec0 extension first (so we can query settings safely)
-	if err := db.Init(dbPath, ""); err != nil {
+	repo, err := db.Init(dbPath, "")
+	if err != nil {
 		res.AiInitError = err.Error()
 		utils.Errorf("initializing database: %v", err)
 		return nil, err
 	}
+	res.Repo = repo
 	utils.Infof("Database initialized at %s (extension pre-load phase)", dbPath)
 
 	// Check if RAG is enabled in database
-	ragEnabled, err := db.GetRAGEnabled()
+	ragEnabled, err := res.Repo.GetRAGEnabled()
 	if err != nil {
 		utils.Warnf("failed to get RAGEnabled status: %v. Defaulting to false.", err)
 		ragEnabled = false
@@ -80,36 +90,54 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 					utils.Warnf("%s", res.AiInitError)
 				} else {
 					// Re-initialize DB, this time with the staged vec0.dll
-					if err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
-						res.AiInitError = fmt.Sprintf("failed to reload DB with vector extension: %v", err)
-						utils.Errorf("%s", res.AiInitError)
-						return nil, err
+					var loadErr error
+					if newRepo, err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
+						loadErr = fmt.Errorf("failed to reload DB with vector extension: %w", err)
+					} else if !newRepo.IsVecExtensionLoaded() {
+						loadErr = fmt.Errorf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
+						_ = newRepo.Close()
+					} else {
+						// Success, close the old one and swap
+						_ = res.Repo.Close()
+						res.Repo = newRepo
 					}
 
-					// Init ONNX embedder using paths from AssetManager
-					emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
-					if err != nil {
-						res.AiInitError = fmt.Sprintf("failed to load ONNX embedder: %v", err)
-						utils.Warnf("%s", res.AiInitError)
+					if loadErr != nil {
+						res.AiInitError = loadErr.Error()
+						utils.Errorf("%s. Falling back to non-vector DB initialization.", res.AiInitError)
+						// Fallback: reload DB without extension so startup doesn't fail
+						fbRepo, fbErr := db.Init(dbPath, "")
+						if fbErr != nil {
+							return nil, fmt.Errorf("failed to reload DB even without vector extension: %w", fbErr)
+						}
+						_ = res.Repo.Close()
+						res.Repo = fbRepo
 					} else {
-						if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
-							res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
+						// Init ONNX embedder using paths from AssetManager
+						emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+						if err != nil {
+							res.AiInitError = fmt.Sprintf("failed to load ONNX embedder: %v", err)
 							utils.Warnf("%s", res.AiInitError)
-							_ = emb.Close()
 						} else {
-							res.AiReady = true
-							res.AiInitError = ""
-							res.Embedder = emb
-							embedder = emb
-							if err := db.InitWithVectorDimension(emb.GetDimension()); err != nil {
-								utils.Warnf("could not initialize vector table: %v", err)
+							if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
+								res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
+								utils.Warnf("%s", res.AiInitError)
+								_ = emb.Close()
 							} else {
-								indexer := retrieval.NewVectorIndexer(emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, ctx)
-								go func() {
-									if err := indexer.IndexAllTopics(); err != nil {
-										utils.Warnf("vector indexing failed: %v", err)
+								if err := res.Repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
+									res.AiInitError = fmt.Sprintf("could not initialize vector table: %v", err)
+									utils.Warnf("%s", res.AiInitError)
+									_ = emb.Close()
+								} else {
+									// Reset any stuck INDEXING status back to PENDING for background indexing queue to pick up
+									if err := res.Repo.ResetIndexingStatus(); err != nil {
+										utils.Warnf("failed to reset notebook indexing statuses: %v", err)
 									}
-								}()
+									res.AiReady = true
+									res.AiInitError = ""
+									res.Embedder = emb
+									embedder = emb
+								}
 							}
 						}
 					}
@@ -120,19 +148,19 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		utils.Infof("RAG is disabled in user settings. Skipping asset validation and local AI initialization.")
 	}
 
-	study.StartCloudSyncLoop()
+	study.StartCloudSyncLoop(res.Repo)
 
-	res.Scheduler = scheduler.New()
+	res.Scheduler = scheduler.New(res.Repo)
 
 	// Init shared retrieval engine (embedder may be nil, which triggers lexical fallback)
-	res.RetrievalEngine = retrieval.NewEngine(embedder)
+	res.RetrievalEngine = retrieval.NewEngine(res.Repo, embedder)
 
-	topicIDs, err := db.GetAllTopicIDs()
+	topicIDs, err := res.Repo.GetAllTopicIDs()
 	if err != nil {
 		utils.Warnf("could not list topics for lexical fallback: %v", err)
 		topicIDs = []string{}
 	}
-	chunksByTopic, err := db.GetChunksForTopics(topicIDs)
+	chunksByTopic, err := res.Repo.GetChunksForTopics(topicIDs)
 	if err != nil {
 		utils.Warnf("could not batch-load chunks: %v", err)
 	} else {
@@ -143,7 +171,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 		}
 	}
 
-	llmSettings, err := db.GetLLMSettings()
+	llmSettings, err := res.Repo.GetLLMSettings()
 	if err != nil {
 		utils.Warnf("failed to load LLM settings: %v. Falling back to environment config.", err)
 		llmSettings = nil
@@ -172,6 +200,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	res.HeavyLLMProvider = heavyLLMProvider
 
 	res.StudyService = study.NewStudyService(study.Config{
+		Repo:             res.Repo,
 		FastLLMProvider:  fastLLMProvider,
 		HeavyLLMProvider: heavyLLMProvider,
 		RetrievalEngine:  res.RetrievalEngine,
@@ -189,7 +218,16 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	return res, nil
 }
 
+var loadEnvOnce sync.Once
+
+func loadEnv() {
+	loadEnvOnce.Do(func() {
+		_ = godotenv.Load()
+	})
+}
+
 func ResolveAppDir() (string, error) {
+	loadEnv()
 	// Dev: keep data in the repo for convenience.
 	if os.Getenv("APP_ENV") == "dev" {
 		projectRoot, err := os.Getwd()

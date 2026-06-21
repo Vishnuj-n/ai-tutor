@@ -14,12 +14,12 @@ func TestUpdateFlashcardReviewTransactionalSave(t *testing.T) {
 
 	cardID := "card-review-save"
 	topicID := "topic-review-save"
-	if err := EnsureTopic(topicID, "Review Save Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Review Save Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
 	initialState := models.FlashcardState{}
-	if err := CreateFlashcards(topicID, []models.Flashcard{{
+	if err := testRepo.CreateFlashcards(topicID, []models.Flashcard{{
 		ID:        cardID,
 		TopicID:   topicID,
 		Prompt:    "Q",
@@ -53,11 +53,11 @@ func TestUpdateFlashcardReviewTransactionalSave(t *testing.T) {
 		StateAfterJSON:  string(afterJSON),
 	}
 
-	if err := UpdateFlashcardReview(cardID, 200+3*86400, 100, string(beforeJSON), nextState, logRow); err != nil {
+	if err := testRepo.UpdateFlashcardReview(cardID, 200+3*86400, 100, string(beforeJSON), nextState, logRow); err != nil {
 		t.Fatalf("UpdateFlashcardReview failed: %v", err)
 	}
 
-	card, state, err := GetFlashcardByID(cardID)
+	card, state, err := testRepo.GetFlashcardByID(cardID)
 	if err != nil {
 		t.Fatalf("GetFlashcardByID failed: %v", err)
 	}
@@ -76,12 +76,12 @@ func TestUpdateFlashcardReviewRollsBackCardOnLogInsertFailure(t *testing.T) {
 
 	cardID := "card-review-rollback"
 	topicID := "topic-review-rollback"
-	if err := EnsureTopic(topicID, "Rollback Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Rollback Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
 	originalState := models.FlashcardState{}
-	if err := CreateFlashcards(topicID, []models.Flashcard{{
+	if err := testRepo.CreateFlashcards(topicID, []models.Flashcard{{
 		ID:        cardID,
 		TopicID:   topicID,
 		Prompt:    "Q",
@@ -92,7 +92,7 @@ func TestUpdateFlashcardReviewRollsBackCardOnLogInsertFailure(t *testing.T) {
 		t.Fatalf("CreateFlashcards failed: %v", err)
 	}
 
-	if _, err := conn.Exec(`
+	if _, err := testRepo.db.Exec(`
 		INSERT INTO fsrs_review_log (
 			id, topic_id, activity_type, reference_id, reviewed_at, rating,
 			scheduled_days, state_before_json, state_after_json
@@ -103,7 +103,7 @@ func TestUpdateFlashcardReviewRollsBackCardOnLogInsertFailure(t *testing.T) {
 
 	nextState := models.FlashcardState{Stability: 1, Difficulty: 5, ScheduledDays: 2, Reps: 1, StateCode: 2}
 	origJSON, _ := json.Marshal(originalState)
-	err := UpdateFlashcardReview(cardID, 999, 10, string(origJSON), nextState, models.FSRSReviewLog{
+	err := testRepo.UpdateFlashcardReview(cardID, 999, 10, string(origJSON), nextState, models.FSRSReviewLog{
 		ID:              "duplicate-log",
 		TopicID:         topicID,
 		ActivityType:    "flashcard",
@@ -118,7 +118,7 @@ func TestUpdateFlashcardReviewRollsBackCardOnLogInsertFailure(t *testing.T) {
 		t.Fatalf("expected duplicate log insert to fail")
 	}
 
-	card, state, getErr := GetFlashcardByID(cardID)
+	card, state, getErr := testRepo.GetFlashcardByID(cardID)
 	if getErr != nil {
 		t.Fatalf("GetFlashcardByID failed: %v", getErr)
 	}
@@ -134,11 +134,11 @@ func TestQueryDueReviewCardsIgnoresSuspendedCards(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	topicID := "topic-suspend"
-	if err := EnsureTopic(topicID, "Suspend Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Suspend Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
-	err := CreateFlashcards(topicID, []models.Flashcard{
+	err := testRepo.CreateFlashcards(topicID, []models.Flashcard{
 		{ID: "active-due", TopicID: topicID, Prompt: "Q1", Answer: "A1", DueAt: 100, Suspended: false},
 		{ID: "suspended-due", TopicID: topicID, Prompt: "Q2", Answer: "A2", DueAt: 50, Suspended: true},
 	}, map[string]models.FlashcardState{
@@ -149,7 +149,7 @@ func TestQueryDueReviewCardsIgnoresSuspendedCards(t *testing.T) {
 		t.Fatalf("CreateFlashcards failed: %v", err)
 	}
 
-	count, err := QueryDueReviewCards(200)
+	count, err := testRepo.QueryDueReviewCards(200)
 	if err != nil {
 		t.Fatalf("QueryDueReviewCards failed: %v", err)
 	}
@@ -163,15 +163,15 @@ func TestQueryDueReviewCardsIgnoresOrphanedCards(t *testing.T) {
 
 	topicID := "topic-orphan-check"
 	orphanTopicID := "topic-orphan-deleted"
-	if err := EnsureTopic(topicID, "Active Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Active Topic"); err != nil {
 		t.Fatalf("EnsureTopic active failed: %v", err)
 	}
-	if err := EnsureTopic(orphanTopicID, "Orphan Topic"); err != nil {
+	if err := testRepo.EnsureTopic(orphanTopicID, "Orphan Topic"); err != nil {
 		t.Fatalf("EnsureTopic orphan failed: %v", err)
 	}
 
 	// Create flashcards for both topics, both due
-	err := CreateFlashcards(topicID, []models.Flashcard{
+	err := testRepo.CreateFlashcards(topicID, []models.Flashcard{
 		{ID: "active-card", TopicID: topicID, Prompt: "Q1", Answer: "A1", DueAt: 100, Suspended: false},
 	}, map[string]models.FlashcardState{
 		"active-card": {},
@@ -180,7 +180,7 @@ func TestQueryDueReviewCardsIgnoresOrphanedCards(t *testing.T) {
 		t.Fatalf("CreateFlashcards active failed: %v", err)
 	}
 
-	err = CreateFlashcards(orphanTopicID, []models.Flashcard{
+	err = testRepo.CreateFlashcards(orphanTopicID, []models.Flashcard{
 		{ID: "orphan-card", TopicID: orphanTopicID, Prompt: "Q2", Answer: "A2", DueAt: 50, Suspended: false},
 	}, map[string]models.FlashcardState{
 		"orphan-card": {},
@@ -190,7 +190,7 @@ func TestQueryDueReviewCardsIgnoresOrphanedCards(t *testing.T) {
 	}
 
 	// Verify both cards are due before deletion
-	countBefore, err := QueryDueReviewCards(200)
+	countBefore, err := testRepo.QueryDueReviewCards(200)
 	if err != nil {
 		t.Fatalf("QueryDueReviewCards before failed: %v", err)
 	}
@@ -199,12 +199,12 @@ func TestQueryDueReviewCardsIgnoresOrphanedCards(t *testing.T) {
 	}
 
 	// Delete the orphan topic
-	if _, err := conn.Exec(`DELETE FROM topics WHERE id = ?`, orphanTopicID); err != nil {
+	if _, err := testRepo.db.Exec(`DELETE FROM topics WHERE id = ?`, orphanTopicID); err != nil {
 		t.Fatalf("failed to delete orphan topic: %v", err)
 	}
 
 	// Verify orphaned card is no longer counted
-	countAfter, err := QueryDueReviewCards(200)
+	countAfter, err := testRepo.QueryDueReviewCards(200)
 	if err != nil {
 		t.Fatalf("QueryDueReviewCards after failed: %v", err)
 	}
@@ -216,26 +216,26 @@ func TestQueryDueReviewCardsIgnoresOrphanedCards(t *testing.T) {
 func TestGetNextDueReviewNotebookUsesPriorityAndLegacyTopicLink(t *testing.T) {
 	initDBForTest(t, false, 0)
 
-	if err := EnsureTopic("topic-low", "Low Priority Topic"); err != nil {
+	if err := testRepo.EnsureTopic("topic-low", "Low Priority Topic"); err != nil {
 		t.Fatalf("EnsureTopic low failed: %v", err)
 	}
-	if err := EnsureTopic("topic-high", "High Priority Topic"); err != nil {
+	if err := testRepo.EnsureTopic("topic-high", "High Priority Topic"); err != nil {
 		t.Fatalf("EnsureTopic high failed: %v", err)
 	}
-	if err := CreateNotebook("nb-low", "Low", "/tmp/low.pdf", "pdf", "topic-low", 10); err != nil {
+	if err := testRepo.CreateNotebook("nb-low", "Low", "/tmp/low.pdf", "pdf", "topic-low", 10); err != nil {
 		t.Fatalf("CreateNotebook low failed: %v", err)
 	}
-	if err := CreateNotebook("nb-high", "High", "/tmp/high.pdf", "pdf", "", 10); err != nil {
+	if err := testRepo.CreateNotebook("nb-high", "High", "/tmp/high.pdf", "pdf", "", 10); err != nil {
 		t.Fatalf("CreateNotebook high failed: %v", err)
 	}
-	if _, err := conn.Exec(`UPDATE notebooks SET priority = 9 WHERE id = 'nb-high'`); err != nil {
+	if _, err := testRepo.db.Exec(`UPDATE notebooks SET priority = 9 WHERE id = 'nb-high'`); err != nil {
 		t.Fatalf("update notebook priority failed: %v", err)
 	}
-	if _, err := conn.Exec(`INSERT INTO notebook_topics (notebook_id, topic_id) VALUES ('nb-high', 'topic-high')`); err != nil {
+	if _, err := testRepo.db.Exec(`INSERT INTO notebook_topics (notebook_id, topic_id) VALUES ('nb-high', 'topic-high')`); err != nil {
 		t.Fatalf("link high topic failed: %v", err)
 	}
 
-	if err := CreateFlashcards("topic-low", []models.Flashcard{
+	if err := testRepo.CreateFlashcards("topic-low", []models.Flashcard{
 		{ID: "low-1", TopicID: "topic-low", Prompt: "Q1", Answer: "A1", DueAt: 100},
 		{ID: "low-2", TopicID: "topic-low", Prompt: "Q2", Answer: "A2", DueAt: 100},
 	}, map[string]models.FlashcardState{
@@ -244,7 +244,7 @@ func TestGetNextDueReviewNotebookUsesPriorityAndLegacyTopicLink(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateFlashcards low failed: %v", err)
 	}
-	if err := CreateFlashcards("topic-high", []models.Flashcard{
+	if err := testRepo.CreateFlashcards("topic-high", []models.Flashcard{
 		{ID: "high-1", TopicID: "topic-high", Prompt: "Q3", Answer: "A3", DueAt: 100},
 		{ID: "high-2", TopicID: "topic-high", Prompt: "Q4", Answer: "A4", DueAt: 100},
 	}, map[string]models.FlashcardState{
@@ -254,7 +254,7 @@ func TestGetNextDueReviewNotebookUsesPriorityAndLegacyTopicLink(t *testing.T) {
 		t.Fatalf("CreateFlashcards high failed: %v", err)
 	}
 
-	notebookID, dueCount, err := GetNextDueReviewNotebook(200)
+	notebookID, dueCount, err := testRepo.GetNextDueReviewNotebook(200)
 	if err != nil {
 		t.Fatalf("GetNextDueReviewNotebook failed: %v", err)
 	}

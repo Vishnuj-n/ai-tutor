@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -9,7 +10,7 @@ import (
 )
 
 // GetChunksForTopicPageRange retrieves chunks for a topic within a page range.
-func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]models.Chunk, error) {
+func (r *Repository) GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]models.Chunk, error) {
 	query := `
 		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
@@ -24,17 +25,13 @@ func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]model
 	}
 
 	if startPage > 0 && endPage > 0 {
-		if startPage > endPage {
-			startPage, endPage = endPage, startPage
-		}
-		query += " AND page_num >= ? AND page_num <= ?"
+		query += " AND page_num BETWEEN ? AND ?"
 		args = append(args, startPage, endPage)
 	}
 
-	// Always include deterministic ordering
 	query += " ORDER BY page_num ASC, id ASC"
 
-	rows, err := conn.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -45,33 +42,24 @@ func GetChunksForTopicPageRange(topicID string, startPage, endPage int) ([]model
 	var chunks []models.Chunk
 	for rows.Next() {
 		var chunk models.Chunk
-		if err := rows.Scan(
-			&chunk.ID,
-			&chunk.TopicID,
-			&chunk.Text,
-			&chunk.ImportanceScore,
-			&chunk.WeaknessScore,
-			&chunk.PageNum,
-		); err != nil {
+		if err := rows.Scan(&chunk.ID, &chunk.TopicID, &chunk.Text, &chunk.ImportanceScore, &chunk.WeaknessScore, &chunk.PageNum); err != nil {
 			return nil, err
 		}
 		chunks = append(chunks, chunk)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
 	return chunks, nil
 }
 
-// GetChunksForTopic retrieves all chunks for a topic.
-func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
-	rows, err := conn.Query(`
+// GetChunksForTopic retrieves all chunks associated with a topic.
+func (r *Repository) GetChunksForTopic(topicID string) ([]models.Chunk, error) {
+	rows, err := r.db.Query(`
 		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
 		WHERE topic_id = ?
-		ORDER BY id
+		ORDER BY page_num ASC, id ASC
 	`, topicID)
 	if err != nil {
 		return nil, err
@@ -83,39 +71,25 @@ func GetChunksForTopic(topicID string) ([]models.Chunk, error) {
 	var chunks []models.Chunk
 	for rows.Next() {
 		var chunk models.Chunk
-		if err := rows.Scan(
-			&chunk.ID,
-			&chunk.TopicID,
-			&chunk.Text,
-			&chunk.ImportanceScore,
-			&chunk.WeaknessScore,
-			&chunk.PageNum,
-		); err != nil {
+		if err := rows.Scan(&chunk.ID, &chunk.TopicID, &chunk.Text, &chunk.ImportanceScore, &chunk.WeaknessScore, &chunk.PageNum); err != nil {
 			return nil, err
 		}
 		chunks = append(chunks, chunk)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
 	return chunks, nil
 }
 
-// GetChunksForNotebook retrieves all chunks linked to one notebook.
-func GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
-	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return nil, fmt.Errorf("notebook id is required")
-	}
-
-	rows, err := conn.Query(`
-		SELECT c.id, c.topic_id, c.chunk_text, c.importance_score, c.weakness_score, c.page_num
-		FROM notebook_chunks nc
-		JOIN chunks c ON c.id = nc.chunk_id
+// GetChunksForNotebook retrieves all chunks associated with a notebook.
+func (r *Repository) GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
+	rows, err := r.db.Query(`
+		SELECT c.id, c.topic_id, c.chunk_text, c.importance_score, c.weakness_score, nc.page_num
+		FROM chunks c
+		JOIN notebook_chunks nc ON nc.chunk_id = c.id
 		WHERE nc.notebook_id = ?
-		ORDER BY c.page_num ASC, c.id ASC
+		ORDER BY nc.page_num ASC, c.id ASC
 	`, notebookID)
 	if err != nil {
 		return nil, err
@@ -127,47 +101,38 @@ func GetChunksForNotebook(notebookID string) ([]models.Chunk, error) {
 	var chunks []models.Chunk
 	for rows.Next() {
 		var chunk models.Chunk
-		if err := rows.Scan(
-			&chunk.ID,
-			&chunk.TopicID,
-			&chunk.Text,
-			&chunk.ImportanceScore,
-			&chunk.WeaknessScore,
-			&chunk.PageNum,
-		); err != nil {
+		if err := rows.Scan(&chunk.ID, &chunk.TopicID, &chunk.Text, &chunk.ImportanceScore, &chunk.WeaknessScore, &chunk.PageNum); err != nil {
 			return nil, err
 		}
 		chunks = append(chunks, chunk)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
 	return chunks, nil
 }
 
-// GetChunksForTopics retrieves chunks for multiple topics in a single batch query
-func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
+// GetChunksForTopics batches chunk loading for multiple topics.
+func (r *Repository) GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 	if len(topicIDs) == 0 {
 		return make(map[string][]models.Chunk), nil
 	}
 
-	// Build IN clause placeholders
 	placeholders := make([]string, len(topicIDs))
 	args := make([]interface{}, len(topicIDs))
-	for i, topicID := range topicIDs {
+	for i, id := range topicIDs {
 		placeholders[i] = "?"
-		args[i] = topicID
+		args[i] = id
 	}
 
 	query := fmt.Sprintf(`
 		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
 		FROM chunks
 		WHERE topic_id IN (%s)
+		ORDER BY page_num ASC, id ASC
 	`, strings.Join(placeholders, ","))
 
-	rows, err := conn.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -175,58 +140,50 @@ func GetChunksForTopics(topicIDs []string) (map[string][]models.Chunk, error) {
 		_ = rows.Close()
 	}()
 
-	// Group chunks by topic_id
-	result := make(map[string][]models.Chunk)
+	chunksByTopic := make(map[string][]models.Chunk)
 	for rows.Next() {
 		var chunk models.Chunk
-		if err := rows.Scan(
-			&chunk.ID,
-			&chunk.TopicID,
-			&chunk.Text,
-			&chunk.ImportanceScore,
-			&chunk.WeaknessScore,
-			&chunk.PageNum,
-		); err != nil {
+		if err := rows.Scan(&chunk.ID, &chunk.TopicID, &chunk.Text, &chunk.ImportanceScore, &chunk.WeaknessScore, &chunk.PageNum); err != nil {
 			return nil, err
 		}
-		result[chunk.TopicID] = append(result[chunk.TopicID], chunk)
+		chunksByTopic[chunk.TopicID] = append(chunksByTopic[chunk.TopicID], chunk)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
-	return result, nil
+	return chunksByTopic, nil
 }
 
-// GetChunkSection retrieves a chunk section by ID
-func GetChunkSection(chunkID string) (map[string]string, error) {
-	var id, text string
-	var pageNum int
-	err := conn.QueryRow(`
-		SELECT id, chunk_text, page_num
-		FROM chunks
-		WHERE id = ?
-	`, chunkID).Scan(&id, &text, &pageNum)
+// GetChunkSection returns notebook metadata plus ordered sections with resolved page numbers.
+func (r *Repository) GetChunkSection(chunkID string) (map[string]string, error) {
+	var notebookID sql.NullString
+	var pageNum sql.NullInt64
+
+	err := r.db.QueryRow(`
+		SELECT nc.notebook_id, nc.page_num
+		FROM notebook_chunks nc
+		WHERE nc.chunk_id = ?
+		LIMIT 1
+	`, chunkID).Scan(&notebookID, &pageNum)
 	if err != nil {
 		return nil, err
 	}
 
-	return map[string]string{
-		"id":      id,
-		"heading": fmt.Sprintf("Page %d", pageNum),
-		"content": text,
-	}, nil
+	res := map[string]string{}
+	res["id"] = chunkID
+	if notebookID.Valid {
+		res["notebook_id"] = notebookID.String
+	}
+	if pageNum.Valid {
+		res["page_num"] = fmt.Sprintf("%d", pageNum.Int64)
+	}
+	return res, nil
 }
 
-// GetTopicIDBySectionID returns topic_id for a given chunk id.
-func GetTopicIDBySectionID(chunkID string) (string, error) {
-	chunkID = strings.TrimSpace(chunkID)
-	if chunkID == "" {
-		return "", fmt.Errorf("invalid empty chunkID")
-	}
+// GetTopicIDBySectionID returns the topic ID associated with a chunk ID.
+func (r *Repository) GetTopicIDBySectionID(chunkID string) (string, error) {
 	var topicID string
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT topic_id
 		FROM chunks
 		WHERE id = ?
@@ -239,13 +196,13 @@ func GetTopicIDBySectionID(chunkID string) (string, error) {
 
 // GetFirstNotebookIDByTopicID returns the earliest notebook_id linked to a topic.
 // If no notebook is linked, returns sql.ErrNoRows.
-func GetFirstNotebookIDByTopicID(topicID string) (string, error) {
+func (r *Repository) GetFirstNotebookIDByTopicID(topicID string) (string, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return "", fmt.Errorf("invalid empty topicID")
 	}
 	var notebookID string
-	err := conn.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT notebook_id
 		FROM notebook_topics
 		WHERE topic_id = ?
@@ -260,20 +217,20 @@ func GetFirstNotebookIDByTopicID(topicID string) (string, error) {
 
 // GetTotalChunkTokens returns estimated total tokens for one topic.
 // It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
-func GetTotalChunkTokens(topicID string) (int, error) {
-	return getTotalChunkTokens(topicID, 0, 0)
+func (r *Repository) GetTotalChunkTokens(topicID string) (int, error) {
+	return r.getTotalChunkTokens(topicID, 0, 0)
 }
 
 // GetTotalChunkTokensForPageRange returns estimated total tokens for one topic/page window.
 // It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
-func GetTotalChunkTokensForPageRange(topicID string, startPage int, endPage int) (int, error) {
-	return getTotalChunkTokens(topicID, startPage, endPage)
+func (r *Repository) GetTotalChunkTokensForPageRange(topicID string, startPage int, endPage int) (int, error) {
+	return r.getTotalChunkTokens(topicID, startPage, endPage)
 }
 
 // GetTokensPerPageMap returns a map of page number to total tokens for that page within a page range.
 // It prefers stored token_count values and falls back to len(chunk_text)/4 when token_count is zero or missing.
 // This uses a single GROUP BY query to avoid N+1 query problems when scanning multiple pages.
-func GetTokensPerPageMap(topicID string, startPage int, endPage int) (map[int]int, error) {
+func (r *Repository) GetTokensPerPageMap(topicID string, startPage int, endPage int) (map[int]int, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
@@ -293,7 +250,7 @@ func GetTokensPerPageMap(topicID string, startPage int, endPage int) (map[int]in
 		ORDER BY page_num
 	`
 
-	rows, err := conn.Query(query, topicID, startPage, endPage)
+	rows, err := r.db.Query(query, topicID, startPage, endPage)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +293,7 @@ func GetTokensPerPageMap(topicID string, startPage int, endPage int) (map[int]in
 	return result, nil
 }
 
-func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error) {
+func (r *Repository) getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return 0, fmt.Errorf("topic id is required")
@@ -369,7 +326,7 @@ func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error
 		args = append(args, startPage, endPage)
 	}
 
-	rows, err := conn.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -411,7 +368,7 @@ func getTotalChunkTokens(topicID string, startPage int, endPage int) (int, error
 }
 
 // GetChunkTextsForTopicPageRange returns chunk_text rows ordered by chunk id for one topic/page window.
-func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
+func (r *Repository) GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) ([]string, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return nil, fmt.Errorf("topic id is required")
@@ -423,7 +380,7 @@ func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) 
 		startPage, endPage = endPage, startPage
 	}
 
-	rows, err := conn.Query(`
+	rows, err := r.db.Query(`
 		SELECT chunk_text
 		FROM chunks
 		WHERE topic_id = ?
@@ -454,8 +411,8 @@ func GetChunkTextsForTopicPageRange(topicID string, startPage int, endPage int) 
 }
 
 // GetTopicHeadingPageRanges returns resolved page bounds per chunk ID for a topic.
-func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
-	if conn == nil {
+func (r *Repository) GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
+	if r.db == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
 	topicID = strings.TrimSpace(topicID)
@@ -463,7 +420,7 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 		return nil, fmt.Errorf("topic id is required")
 	}
 
-	rows, err := conn.Query(`
+	rows, err := r.db.Query(`
 		SELECT id, COALESCE(page_num, 0)
 		FROM chunks
 		WHERE topic_id = ?
@@ -493,4 +450,32 @@ func GetTopicHeadingPageRanges(topicID string) (map[string][2]int, error) {
 	}
 
 	return result, nil
+}
+
+// GetAllChunks retrieves all chunks in the system.
+func (r *Repository) GetAllChunks() ([]models.Chunk, error) {
+	rows, err := r.db.Query(`
+		SELECT id, topic_id, chunk_text, importance_score, weakness_score, page_num
+		FROM chunks
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chunks []models.Chunk
+	for rows.Next() {
+		var chunk models.Chunk
+		if err := rows.Scan(&chunk.ID, &chunk.TopicID, &chunk.Text, &chunk.ImportanceScore, &chunk.WeaknessScore, &chunk.PageNum); err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, chunk)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return chunks, nil
 }

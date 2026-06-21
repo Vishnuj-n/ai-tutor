@@ -23,10 +23,10 @@ import (
 
 func mustInsertActiveQuizTask(t *testing.T, notebookID, topicID, taskID string, passingScore int) {
 	t.Helper()
-	if err := db.EnsureTopic(topicID, topicID+"-title"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, topicID+"-title"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := db.CreateNotebook(notebookID, notebookID+"-name", "/tmp/"+notebookID+".pdf", "pdf", topicID, 12); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, notebookID+"-name", "/tmp/"+notebookID+".pdf", "pdf", topicID, 12); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func mustInsertActiveQuizTask(t *testing.T, notebookID, topicID, taskID string, 
 		t.Fatalf("marshal quiz payload failed: %v", err)
 	}
 
-	if err := db.InsertStudyTask(models.StudyQueueTask{
+	if err := testRepo.InsertStudyTask(models.StudyQueueTask{
 		ID:          taskID,
 		NotebookID:  notebookID,
 		TopicID:     topicID,
@@ -95,16 +95,12 @@ func TestSubmitQuizAttemptFailedQuizInsertsRereadAndReturnsCountMetadata(t *test
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
-	var rereadCount int
-	if err := db.GetConnection().QueryRow(`
-		SELECT COUNT(*)
-		FROM study_queue
-		WHERE id = ? AND task_type = 'REREAD' AND status = 'PENDING'
-	`, result.RereadTaskID).Scan(&rereadCount); err != nil {
+	rereadTask, err := testRepo.GetTaskByID(result.RereadTaskID)
+	if err != nil {
 		t.Fatalf("query reread follow-up failed: %v", err)
 	}
-	if rereadCount != 1 {
-		t.Fatalf("expected one pending reread follow-up, got %d", rereadCount)
+	if rereadTask.TaskType != "REREAD" || rereadTask.Status != "PENDING" {
+		t.Fatalf("expected pending reread follow-up, got type=%s status=%s", rereadTask.TaskType, rereadTask.Status)
 	}
 }
 
@@ -113,24 +109,24 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	mustInsertActiveQuizTask(t, "nb-quiz-max", "topic-quiz-max", "task-quiz-max", 100)
 
 	// Insert dummy FSRS card for the topic to verify it is deleted during safety transaction
-	if _, err := db.GetConnection().Exec(`
+	if _, err := testRepo.ExecForTest(`
 		INSERT INTO fsrs_cards (id, topic_id, prompt, answer)
 		VALUES ('dummy-card-1', 'topic-quiz-max', 'Prompt 1', 'Answer 1')
 	`); err != nil {
 		t.Fatalf("failed to insert dummy FSRS card: %v", err)
 	}
 
-	tx, err := db.GetConnection().Begin()
+	tx, err := testRepo.Begin()
 	if err != nil {
 		t.Fatalf("begin tx failed: %v", err)
 	}
-	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
+	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
 		t.Fatalf("seed attempt 1 failed: %v", err)
 	}
-	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
+	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
 		t.Fatalf("seed attempt 2 failed: %v", err)
 	}
-	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
+	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
 		t.Fatalf("seed attempt 3 failed: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -159,12 +155,8 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
-	var pendingRereads int
-	if err := db.GetConnection().QueryRow(`
-		SELECT COUNT(*)
-		FROM study_queue
-		WHERE topic_id = 'topic-quiz-max' AND task_type = 'REREAD' AND status = 'PENDING'
-	`).Scan(&pendingRereads); err != nil {
+	pendingRereads, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-max", "REREAD", "PENDING")
+	if err != nil {
 		t.Fatalf("query pending rereads failed: %v", err)
 	}
 	if pendingRereads != 0 {
@@ -172,32 +164,26 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	}
 
 	// Verify dummy FSRS card was deleted
-	var cardCount int
-	if err := db.GetConnection().QueryRow(`
-		SELECT COUNT(*) FROM fsrs_cards WHERE id = 'dummy-card-1'
-	`).Scan(&cardCount); err != nil {
+	cardExists, err := testRepo.FlashcardExistsByID("dummy-card-1")
+	if err != nil {
 		t.Fatalf("query FSRS cards count failed: %v", err)
 	}
-	if cardCount != 0 {
-		t.Fatalf("expected FSRS cards to be deleted on max reread failure, but found %d", cardCount)
+	if cardExists {
+		t.Fatalf("expected FSRS cards to be deleted on max reread failure, but found")
 	}
 
 	// Verify quiz task status is FAILED
-	var taskStatus string
-	if err := db.GetConnection().QueryRow(`
-		SELECT status FROM study_queue WHERE id = 'task-quiz-max'
-	`).Scan(&taskStatus); err != nil {
+	failedTask, err := testRepo.GetTaskByID("task-quiz-max")
+	if err != nil {
 		t.Fatalf("query task status failed: %v", err)
 	}
-	if taskStatus != string(models.StudyTaskStatusFailed) {
-		t.Fatalf("expected quiz task status to be FAILED, got %q", taskStatus)
+	if failedTask.Status != models.StudyTaskStatusFailed {
+		t.Fatalf("expected quiz task status to be FAILED, got %q", failedTask.Status)
 	}
 
 	// Verify EXAMINER task with status PENDING is created
-	var examinerCount int
-	if err := db.GetConnection().QueryRow(`
-		SELECT COUNT(*) FROM study_queue WHERE topic_id = 'topic-quiz-max' AND task_type = 'EXAMINER' AND status = 'PENDING'
-	`).Scan(&examinerCount); err != nil {
+	examinerCount, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-max", "EXAMINER", "PENDING")
+	if err != nil {
 		t.Fatalf("query EXAMINER task count failed: %v", err)
 	}
 	if examinerCount != 1 {
@@ -225,12 +211,8 @@ func TestSubmitQuizAttemptRepeatedSubmissionReturnsErrTaskNotActiveAndNoDuplicat
 		t.Fatalf("expected ErrTaskNotActive on repeated submit, got %#v", got)
 	}
 
-	var pendingRereads int
-	if err := db.GetConnection().QueryRow(`
-		SELECT COUNT(*)
-		FROM study_queue
-		WHERE topic_id = 'topic-quiz-repeat' AND task_type = 'REREAD' AND status = 'PENDING'
-	`).Scan(&pendingRereads); err != nil {
+	pendingRereads, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-repeat", "REREAD", "PENDING")
+	if err != nil {
 		t.Fatalf("query pending rereads failed: %v", err)
 	}
 	if pendingRereads != 1 {
@@ -242,14 +224,14 @@ func TestSubmitQuizAttemptPassResetsAttemptsAndFutureFailureStartsAtOne(t *testi
 	app := newTestApp(t)
 
 	mustInsertActiveQuizTask(t, "nb-quiz-pass-reset", "topic-quiz-pass-reset", "task-quiz-pass", 100)
-	tx, err := db.GetConnection().Begin()
+	tx, err := testRepo.Begin()
 	if err != nil {
 		t.Fatalf("begin seed tx failed: %v", err)
 	}
-	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-pass-reset"); err != nil {
+	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-pass-reset"); err != nil {
 		t.Fatalf("seed attempt 1 failed: %v", err)
 	}
-	if _, err := db.IncrementRereadAttemptCountTx(tx, "topic-quiz-pass-reset"); err != nil {
+	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-pass-reset"); err != nil {
 		t.Fatalf("seed attempt 2 failed: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -264,7 +246,7 @@ func TestSubmitQuizAttemptPassResetsAttemptsAndFutureFailureStartsAtOne(t *testi
 		t.Fatalf("expected pass submit success, got error: %v", passResp["error"])
 	}
 
-	count, err := db.GetRereadAttemptCount("topic-quiz-pass-reset")
+	count, err := testRepo.GetRereadAttemptCount("topic-quiz-pass-reset")
 	if err != nil {
 		t.Fatalf("GetRereadAttemptCount after pass failed: %v", err)
 	}
@@ -293,18 +275,23 @@ func TestSubmitQuizAttemptPassResetsAttemptsAndFutureFailureStartsAtOne(t *testi
 	}
 }
 
+var testRepo *db.Repository
+
 func initTestDB(t *testing.T) {
 	t.Helper()
 	tempDB := filepath.Join(t.TempDir(), "ai-tutor-test.db")
-	if err := db.Init(tempDB, ""); err != nil {
+	repo, err := db.Init(tempDB, "")
+	if err != nil {
 		t.Fatalf("failed to init test db: %v", err)
 	}
+	testRepo = repo
 	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
+		if err := testRepo.Close(); err != nil {
 			t.Fatalf("failed to close test db: %v", err)
 		}
+		testRepo = nil
 	})
-	if err := db.SeedDemoDataForTests(); err != nil {
+	if err := testRepo.SeedDemoDataForTests(); err != nil {
 		t.Fatalf("failed to seed test data: %v", err)
 	}
 }
@@ -312,13 +299,16 @@ func initTestDB(t *testing.T) {
 func initCleanTestDB(t *testing.T) {
 	t.Helper()
 	tempDB := filepath.Join(t.TempDir(), "ai-tutor-test.db")
-	if err := db.Init(tempDB, ""); err != nil {
+	repo, err := db.Init(tempDB, "")
+	if err != nil {
 		t.Fatalf("failed to init clean test db: %v", err)
 	}
+	testRepo = repo
 	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
+		if err := testRepo.Close(); err != nil {
 			t.Fatalf("failed to close clean test db: %v", err)
 		}
+		testRepo = nil
 	})
 }
 
@@ -393,9 +383,10 @@ func newTestApp(t *testing.T) *App {
 
 	app := &App{
 		ctx:               context.Background(),
+		repo:              testRepo,
 		fastLLMProvider:   provider,
 		heavyLLMProvider:  provider,
-		scheduler:         scheduler.New(),
+		scheduler:         scheduler.New(testRepo),
 		notebookService:   notebook.NewService(uploadDir),
 		notebookUploadDir: uploadDir,
 		aiReady:           true,
@@ -403,28 +394,29 @@ func newTestApp(t *testing.T) *App {
 	}
 
 	// Initialize retrieval engine (required by study service)
-	topicIDs, err := db.GetAllTopicIDs()
+	topicIDs, err := testRepo.GetAllTopicIDs()
 	if err != nil {
 		t.Fatalf("failed to list topic IDs: %v", err)
 	}
 	for _, topicID := range topicIDs {
-		chunks, chunksErr := db.GetChunksForTopic(topicID)
+		chunks, chunksErr := testRepo.GetChunksForTopic(topicID)
 		if chunksErr != nil {
 			t.Fatalf("failed to get chunks for topic %s: %v", topicID, chunksErr)
 		}
 		for _, chunk := range chunks {
 			if app.retrievalEngine == nil {
-				app.retrievalEngine = retrieval.NewEngine(nil)
+				app.retrievalEngine = retrieval.NewEngine(testRepo, nil)
 			}
 			app.retrievalEngine.AddChunk(chunk)
 		}
 	}
 	if app.retrievalEngine == nil {
-		app.retrievalEngine = retrieval.NewEngine(nil)
+		app.retrievalEngine = retrieval.NewEngine(testRepo, nil)
 	}
 
 	// Initialize study service with all required dependencies
 	app.studyService = study.NewStudyService(study.Config{
+		Repo:             testRepo,
 		FastLLMProvider:  provider,
 		HeavyLLMProvider: provider,
 		RetrievalEngine:  app.retrievalEngine,
@@ -457,7 +449,7 @@ func newTestApp(t *testing.T) *App {
 
 func TestGetAvailableTopicsFromDB(t *testing.T) {
 	initTestDB(t)
-	app := &App{}
+	app := &App{repo: testRepo}
 
 	topics := app.GetAvailableTopics()
 	if len(topics) == 0 {
@@ -483,7 +475,7 @@ func TestGetAvailableTopicsFromDB(t *testing.T) {
 
 func TestGetNotebookTopicTreeEmptyReturnsArray(t *testing.T) {
 	initCleanTestDB(t)
-	app := &App{}
+	app := &App{repo: testRepo}
 
 	tree, err := app.GetNotebookTopicTree()
 	if err != nil {
@@ -499,14 +491,14 @@ func TestGetNotebookTopicTreeEmptyReturnsArray(t *testing.T) {
 
 func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 	initCleanTestDB(t)
-	app := &App{}
+	app := &App{repo: testRepo}
 
 	notebookA := "nb-tree-a"
 	notebookB := "nb-tree-b"
-	if err := db.CreateNotebook(notebookA, "Physics", "/tmp/physics.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookA, "Physics", "/tmp/physics.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook notebookA failed: %v", err)
 	}
-	if err := db.CreateNotebook(notebookB, "History", "/tmp/history.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookB, "History", "/tmp/history.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook notebookB failed: %v", err)
 	}
 
@@ -518,7 +510,7 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 		{id: "topic-newton", title: "Newton's Laws"},
 		{id: "topic-renaissance", title: "The Renaissance"},
 	} {
-		if err := db.EnsureTopic(topic.id, topic.title); err != nil {
+		if err := testRepo.EnsureTopic(topic.id, topic.title); err != nil {
 			t.Fatalf("EnsureTopic %s failed: %v", topic.id, err)
 		}
 	}
@@ -526,20 +518,20 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 	chunkThermo := "chunk-thermo"
 	chunkNewton := "chunk-newton"
 	chunkRenaissance := "chunk-renaissance"
-	if err := db.CreateChunk(chunkThermo, "topic-thermo", "thermo chunk", 2, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkThermo, "topic-thermo", "thermo chunk", 2, 1); err != nil {
 		t.Fatalf("CreateChunk thermo failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkNewton, "topic-newton", "newton chunk", 2, 2); err != nil {
+	if err := testRepo.CreateChunk(chunkNewton, "topic-newton", "newton chunk", 2, 2); err != nil {
 		t.Fatalf("CreateChunk newton failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkRenaissance, "topic-renaissance", "renaissance chunk", 2, 3); err != nil {
+	if err := testRepo.CreateChunk(chunkRenaissance, "topic-renaissance", "renaissance chunk", 2, 3); err != nil {
 		t.Fatalf("CreateChunk renaissance failed: %v", err)
 	}
 
-	if err := db.LinkChunksToNotebook(notebookA, []string{chunkThermo, chunkNewton}); err != nil {
+	if err := testRepo.LinkChunksToNotebook(notebookA, []string{chunkThermo, chunkNewton}); err != nil {
 		t.Fatalf("LinkChunksToNotebook notebookA failed: %v", err)
 	}
-	if err := db.LinkChunksToNotebook(notebookB, []string{chunkRenaissance}); err != nil {
+	if err := testRepo.LinkChunksToNotebook(notebookB, []string{chunkRenaissance}); err != nil {
 		t.Fatalf("LinkChunksToNotebook notebookB failed: %v", err)
 	}
 
@@ -586,7 +578,7 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 
 func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	app := newTestApp(t)
-	expectedCount, err := db.GetTotalChunkTokens("os-scheduling")
+	expectedCount, err := testRepo.GetTotalChunkTokens("os-scheduling")
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokens failed: %v", err)
 	}
@@ -605,7 +597,7 @@ func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 		t.Fatalf("expected %d flashcards, got %d", want, len(cards))
 	}
 
-	count, err := db.CountFlashcardsForTopic("os-scheduling")
+	count, err := testRepo.CountFlashcardsForTopic("os-scheduling")
 	if err != nil {
 		t.Fatalf("CountFlashcardsForTopic failed: %v", err)
 	}
@@ -616,7 +608,7 @@ func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 
 func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) {
 	app := newTestApp(t)
-	totalTokens, err := db.GetTotalChunkTokens("os-scheduling")
+	totalTokens, err := testRepo.GetTotalChunkTokens("os-scheduling")
 	if err != nil {
 		t.Fatalf("GetTotalChunkTokens failed: %v", err)
 	}
@@ -635,7 +627,7 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 		t.Fatalf("expected existing=true on second generation, got %#v", second["existing"])
 	}
 
-	count, err := db.CountFlashcardsForTopic("os-scheduling")
+	count, err := testRepo.CountFlashcardsForTopic("os-scheduling")
 	if err != nil {
 		t.Fatalf("CountFlashcardsForTopic failed: %v", err)
 	}
@@ -647,19 +639,16 @@ func TestGenerateFlashcardsReturnsExistingCardsWithoutDuplication(t *testing.T) 
 func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing.T) {
 	app := newTestApp(t)
 
-	if err := db.EnsureTopic("queue-review-topic", "Queue Review Topic"); err != nil {
+	if err := testRepo.EnsureTopic("queue-review-topic", "Queue Review Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := db.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", 15); err != nil {
+	if err := testRepo.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", 15); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if _, err := db.GetConnection().Exec(`
-		INSERT INTO notebook_topics (notebook_id, topic_id)
-		VALUES ('queue-review-nb', 'queue-review-topic')
-	`); err != nil {
+	if err := testRepo.LinkNotebookTopics("queue-review-nb", []string{"queue-review-topic"}); err != nil {
 		t.Fatalf("link notebook_topics failed: %v", err)
 	}
-	if err := db.CreateFlashcards("queue-review-topic", []models.Flashcard{
+	if err := testRepo.CreateFlashcards("queue-review-topic", []models.Flashcard{
 		{ID: "queue-card-1", TopicID: "queue-review-topic", Prompt: "Q1", Answer: "A1", DueAt: 1},
 		{ID: "queue-card-2", TopicID: "queue-review-topic", Prompt: "Q2", Answer: "A2", DueAt: 2},
 	}, map[string]models.FlashcardState{
@@ -739,12 +728,30 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 		t.Fatalf("CompleteReviewSession failed: %v", completeResp["error"])
 	}
 
-	task, err := db.GetTaskByID(taskID)
+	task, err := testRepo.GetTaskByID(taskID)
 	if err != nil {
 		t.Fatalf("GetTaskByID failed: %v", err)
 	}
 	if task.Status != models.StudyTaskStatusCompleted {
 		t.Fatalf("expected review task completed, got %s", task.Status)
+	}
+}
+
+func TestGetReviewSessionNoDueCards(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := testRepo.CreateNotebook("no-due-nb", "No Due Notebook", "/tmp/no-due.pdf", "pdf", "", 15); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	sessionResp := app.GetReviewSession(models.ReviewTaskDailyID, "no-due-nb")
+	errVal, hasErr := sessionResp["error"]
+	if !hasErr {
+		t.Fatalf("expected error response when there are no due cards, got: %#v", sessionResp)
+	}
+	expectedErr := "No due cards found for review materialization"
+	if errVal != expectedErr {
+		t.Fatalf("expected error %q, got %q", expectedErr, errVal)
 	}
 }
 
@@ -770,18 +777,18 @@ func TestScoreShortAnswerLoadsPersistedPromptAndSavesResponse(t *testing.T) {
 		answer: `{"score":8,"feedback":"Strong answer with a small omission."}`,
 	}
 	app.fastLLMProvider = mockProvider
-	// Rebuild study service with mock provider
 	app.studyService = study.NewStudyService(study.Config{
+		Repo:             testRepo,
 		FastLLMProvider:  mockProvider,
 		HeavyLLMProvider: mockProvider,
 		RetrievalEngine:  app.retrievalEngine,
 	})
 
 	topicID := "written-score-topic"
-	if err := db.EnsureTopic(topicID, "Written Score Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Written Score Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := db.CreateWrittenQuestion(models.WrittenQuestion{
+	if err := testRepo.CreateWrittenQuestion(models.WrittenQuestion{
 		ID:              "written-q-1",
 		TopicID:         topicID,
 		Prompt:          "Explain why round robin improves fairness.",
@@ -892,24 +899,24 @@ func extractFirstChunkID(prompt string) string {
 // Contract tests for GetReaderTopicBundle
 func TestGetReaderTopicBundle_Success(t *testing.T) {
 	initTestDB(t)
-	app := &App{}
+	app := &App{repo: testRepo}
 
 	notebookID := "test-notebook-reader"
-	if err := db.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
 	topicID := "test-topic-reader"
-	if err := db.EnsureTopic(topicID, "Test Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Test Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
 
 	chunkID := "chunk-reader"
-	if err := db.CreateChunk(chunkID, topicID, "chunk content", 2, 1); err != nil {
+	if err := testRepo.CreateChunk(chunkID, topicID, "chunk content", 2, 1); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}
 
-	if err := db.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
+	if err := testRepo.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
 		t.Fatalf("LinkChunksToNotebook failed: %v", err)
 	}
 
@@ -974,10 +981,10 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 
 func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
 	initTestDB(t)
-	app := &App{}
+	app := &App{repo: testRepo}
 
 	notebookID := "test-notebook-invalid"
-	if err := db.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -996,19 +1003,22 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	topicID := "reader-ai-topic"
 	chunkID := "reader-ai-chunk"
 
-	if err := db.EnsureTopic(topicID, "Reader AI Topic"); err != nil {
+	if err := testRepo.EnsureTopic(topicID, "Reader AI Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := db.UpdateTopicPageBounds(topicID, 2, 4); err != nil {
+	if err := testRepo.UpdateTopicPageBounds(topicID, 2, 4); err != nil {
 		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
 	}
-	if err := db.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if err := db.CreateChunk(chunkID, topicID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
+	if err := testRepo.UpdateNotebookIndexingStatus(notebookID, "READY"); err != nil {
+		t.Fatalf("UpdateNotebookIndexingStatus failed: %v", err)
+	}
+	if err := testRepo.CreateChunk(chunkID, topicID, "Round robin stays fair by rotating time slices.", 10, 3); err != nil {
 		t.Fatalf("CreateChunk failed: %v", err)
 	}
-	if err := db.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
+	if err := testRepo.LinkChunksToNotebook(notebookID, []string{chunkID}); err != nil {
 		t.Fatalf("LinkChunksToNotebook failed: %v", err)
 	}
 	app.retrievalEngine.AddChunk(models.Chunk{
@@ -1051,7 +1061,7 @@ func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 	initTestDB(t)
 	uploadDir := t.TempDir()
 	service := notebook.NewService(uploadDir)
-	app := &App{notebookService: service}
+	app := &App{repo: testRepo, notebookService: service}
 
 	uploadResult, err := service.SaveUploadedFile([]byte("Alpha beta gamma"), "draft.txt")
 	if err != nil {
@@ -1063,7 +1073,7 @@ func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 		t.Fatalf("ExtractDocument failed: %v", err)
 	}
 
-	if err := db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+	if err := testRepo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1081,7 +1091,7 @@ func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 	}
 
 	// Verify draft is persisted to DB
-	draftJSON, err := db.GetNotebookSyllabusDraft(uploadResult.ID)
+	draftJSON, err := testRepo.GetNotebookSyllabusDraft(uploadResult.ID)
 	if err != nil {
 		t.Fatalf("GetNotebookSyllabusDraft failed: %v", err)
 	}
@@ -1117,7 +1127,7 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 	initTestDB(t)
 	uploadDir := t.TempDir()
 	service := notebook.NewService(uploadDir)
-	app := &App{notebookService: service}
+	app := &App{repo: testRepo, notebookService: service}
 
 	uploadResult, err := service.SaveUploadedFile([]byte("# Intro\n\nAlpha beta gamma\n\n## Details\n\nDelta epsilon zeta"), "confirm.md")
 	if err != nil {
@@ -1129,7 +1139,7 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 		t.Fatalf("ExtractDocument failed: %v", err)
 	}
 
-	if err := db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+	if err := testRepo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1147,7 +1157,7 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 		t.Fatalf("expected topic ids, got %#v", resp["topic_ids"])
 	}
 
-	startPage, endPage, err := db.GetTopicPageBounds(topicIDs[0])
+	startPage, endPage, err := testRepo.GetTopicPageBounds(topicIDs[0])
 	if err != nil {
 		t.Fatalf("GetTopicPageBounds failed: %v", err)
 	}
@@ -1155,7 +1165,7 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 		t.Fatalf("unexpected persisted bounds: got [%d,%d] want [1,%d]", startPage, endPage, doc.PageCount)
 	}
 
-	bundle, err := db.GetReaderTopicBundle(topicIDs[0], uploadResult.ID)
+	bundle, err := testRepo.GetReaderTopicBundle(topicIDs[0], uploadResult.ID)
 	if err != nil {
 		t.Fatalf("GetReaderTopicBundle failed: %v", err)
 	}
@@ -1210,7 +1220,7 @@ func TestConfirmNotebookSyllabus_TitleOnlyUpdatesTopicsAndSkipsExtraction(t *tes
 		t.Fatalf("expected chunks unchanged, got %d want %d", afterChunks, beforeChunks)
 	}
 
-	topics, err := db.GetNotebookTopicsWithBounds(uploadResult.ID)
+	topics, err := testRepo.GetNotebookTopicsWithBounds(uploadResult.ID)
 	if err != nil {
 		t.Fatalf("GetNotebookTopicsWithBounds failed: %v", err)
 	}
@@ -1246,7 +1256,7 @@ func TestConfirmNotebookSyllabus_BoundaryChangeFallsBackToFullReingest(t *testin
 	if !ok || len(topicIDs) != 1 {
 		t.Fatalf("expected one topic id after merged bounds, got %#v", resp["topic_ids"])
 	}
-	startPage, endPage, err := db.GetTopicPageBounds(topicIDs[0])
+	startPage, endPage, err := testRepo.GetTopicPageBounds(topicIDs[0])
 	if err != nil {
 		t.Fatalf("GetTopicPageBounds failed: %v", err)
 	}
@@ -1274,7 +1284,7 @@ func TestConfirmNotebookSyllabus_MixedTitleAndBoundaryChangeFullReingests(t *tes
 	if !ok || len(topicIDs) != 1 {
 		t.Fatalf("expected one topic id after mixed change, got %#v", resp["topic_ids"])
 	}
-	topics, err := db.GetNotebookTopicsWithBounds(uploadResult.ID)
+	topics, err := testRepo.GetNotebookTopicsWithBounds(uploadResult.ID)
 	if err != nil {
 		t.Fatalf("GetNotebookTopicsWithBounds failed: %v", err)
 	}
@@ -1300,7 +1310,7 @@ func setupConfirmedChunkedNotebook(t *testing.T, fileName string) (*App, noteboo
 	initTestDB(t)
 	uploadDir := t.TempDir()
 	service := notebook.NewService(uploadDir)
-	app := &App{notebookService: service}
+	app := &App{repo: testRepo, notebookService: service}
 
 	content := []byte("# Intro\n\nAlpha beta gamma\n\n## Details\n\nDelta epsilon zeta")
 	uploadResult, err := service.SaveUploadedFile(content, fileName)
@@ -1314,7 +1324,7 @@ func setupConfirmedChunkedNotebook(t *testing.T, fileName string) (*App, noteboo
 	if doc.PageCount != 2 {
 		t.Fatalf("expected two-page markdown fixture, got %d", doc.PageCount)
 	}
-	if err := db.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+	if err := testRepo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1338,7 +1348,7 @@ func setupConfirmedChunkedNotebook(t *testing.T, fileName string) (*App, noteboo
 
 func mustNotebookChunkCount(t *testing.T, notebookID string) int {
 	t.Helper()
-	chunks, err := db.GetChunksForNotebook(notebookID)
+	chunks, err := testRepo.GetChunksForNotebook(notebookID)
 	if err != nil {
 		t.Fatalf("GetChunksForNotebook failed: %v", err)
 	}
@@ -1354,7 +1364,7 @@ func TestActivateTask_TransitionsPendingToActive(t *testing.T) {
 	app := newTestApp(t)
 
 	notebookID := "activate-test-nb"
-	if err := db.CreateNotebook(notebookID, "Activate Test Notebook", "/tmp/activate.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Activate Test Notebook", "/tmp/activate.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1365,7 +1375,7 @@ func TestActivateTask_TransitionsPendingToActive(t *testing.T) {
 		Status:     models.StudyTaskStatusPending,
 		Priority:   1,
 	}
-	if err := db.InsertStudyTask(task); err != nil {
+	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
@@ -1376,7 +1386,7 @@ func TestActivateTask_TransitionsPendingToActive(t *testing.T) {
 	}
 
 	// Verify task is no longer in pending queue
-	_, err := db.GetNextTask(notebookID)
+	_, err := testRepo.GetNextTask(notebookID)
 	if err != db.ErrNoPendingTasks {
 		t.Fatalf("expected no pending tasks after activation, got: %v", err)
 	}
@@ -1387,7 +1397,7 @@ func TestActivateTask_RejectsNonPendingTask(t *testing.T) {
 	app := newTestApp(t)
 
 	notebookID := "activate-reject-nb"
-	if err := db.CreateNotebook(notebookID, "Activate Reject Notebook", "/tmp/activate-reject.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Activate Reject Notebook", "/tmp/activate-reject.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1398,7 +1408,7 @@ func TestActivateTask_RejectsNonPendingTask(t *testing.T) {
 		Status:     models.StudyTaskStatusActive, // Already active
 		Priority:   1,
 	}
-	if err := db.InsertStudyTask(task); err != nil {
+	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
@@ -1413,7 +1423,7 @@ func TestCompleteTask_MarksActiveAsCompleted(t *testing.T) {
 	app := newTestApp(t)
 
 	notebookID := "complete-test-nb"
-	if err := db.CreateNotebook(notebookID, "Complete Test Notebook", "/tmp/complete.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Complete Test Notebook", "/tmp/complete.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1424,7 +1434,7 @@ func TestCompleteTask_MarksActiveAsCompleted(t *testing.T) {
 		Status:     models.StudyTaskStatusActive,
 		Priority:   1,
 	}
-	if err := db.InsertStudyTask(task); err != nil {
+	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
@@ -1438,7 +1448,7 @@ func TestCompleteTask_MarksActiveAsCompleted(t *testing.T) {
 	}
 
 	// Verify task is now COMPLETED (should not appear in pending queue)
-	_, err := db.GetNextTask(notebookID)
+	_, err := testRepo.GetNextTask(notebookID)
 	if err != db.ErrNoPendingTasks {
 		t.Fatalf("expected no pending tasks after completion, got: %v", err)
 	}
@@ -1449,7 +1459,7 @@ func TestCompleteTask_InsertsFollowUpTasks(t *testing.T) {
 	app := newTestApp(t)
 
 	notebookID := "followup-test-nb"
-	if err := db.CreateNotebook(notebookID, "Followup Test Notebook", "/tmp/followup.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Followup Test Notebook", "/tmp/followup.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1460,7 +1470,7 @@ func TestCompleteTask_InsertsFollowUpTasks(t *testing.T) {
 		Status:     models.StudyTaskStatusActive,
 		Priority:   1,
 	}
-	if err := db.InsertStudyTask(task); err != nil {
+	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
@@ -1483,7 +1493,7 @@ func TestCompleteTask_InsertsFollowUpTasks(t *testing.T) {
 	}
 
 	// Verify follow-up task was inserted
-	nextTask, err := db.GetNextTask(notebookID)
+	nextTask, err := testRepo.GetNextTask(notebookID)
 	if err != nil {
 		t.Fatalf("expected follow-up task in queue, got error: %v", err)
 	}
@@ -1497,7 +1507,7 @@ func TestSkipTask_MarksTaskAsSkipped(t *testing.T) {
 	app := newTestApp(t)
 
 	notebookID := "skip-test-nb"
-	if err := db.CreateNotebook(notebookID, "Skip Test Notebook", "/tmp/skip.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Skip Test Notebook", "/tmp/skip.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1508,7 +1518,7 @@ func TestSkipTask_MarksTaskAsSkipped(t *testing.T) {
 		Status:     models.StudyTaskStatusPending,
 		Priority:   1,
 	}
-	if err := db.InsertStudyTask(task); err != nil {
+	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
@@ -1518,7 +1528,7 @@ func TestSkipTask_MarksTaskAsSkipped(t *testing.T) {
 	}
 
 	// Verify task is no longer in pending queue
-	_, err := db.GetNextTask(notebookID)
+	_, err := testRepo.GetNextTask(notebookID)
 	if err != db.ErrNoPendingTasks {
 		t.Fatalf("expected no pending tasks after skip, got: %v", err)
 	}
@@ -1533,7 +1543,7 @@ func TestOrdering_TaskTypePriority(t *testing.T) {
 	initTestDB(t)
 
 	notebookID := "ordering-type-nb"
-	if err := db.CreateNotebook(notebookID, "Ordering Type Notebook", "/tmp/ordering-type.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Ordering Type Notebook", "/tmp/ordering-type.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1547,13 +1557,13 @@ func TestOrdering_TaskTypePriority(t *testing.T) {
 	}
 
 	for _, task := range tasks {
-		if err := db.InsertStudyTask(task); err != nil {
+		if err := testRepo.InsertStudyTask(task); err != nil {
 			t.Fatalf("InsertStudyTask failed: %v", err)
 		}
 	}
 
 	// Verify FLASHCARD_REVIEW is returned first
-	nextTask, err := db.GetNextTask(notebookID)
+	nextTask, err := testRepo.GetNextTask(notebookID)
 	if err != nil {
 		t.Fatalf("GetNextTask failed: %v", err)
 	}
@@ -1562,15 +1572,15 @@ func TestOrdering_TaskTypePriority(t *testing.T) {
 	}
 
 	// Activate and complete to get next task
-	if err := db.ActivateTask("task-1"); err != nil {
+	if err := testRepo.ActivateTask("task-1"); err != nil {
 		t.Fatalf("ActivateTask failed: %v", err)
 	}
-	if err := db.CompleteTask("task-1", models.CompletionResult{Status: models.StudyTaskStatusCompleted}); err != nil {
+	if err := testRepo.CompleteTask("task-1", models.CompletionResult{Status: models.StudyTaskStatusCompleted}); err != nil {
 		t.Fatalf("CompleteTask failed: %v", err)
 	}
 
 	// Verify REREAD is second
-	nextTask, err = db.GetNextTask(notebookID)
+	nextTask, err = testRepo.GetNextTask(notebookID)
 	if err != nil {
 		t.Fatalf("GetNextTask failed: %v", err)
 	}
@@ -1591,7 +1601,7 @@ func TestOrdering_TaskPriority(t *testing.T) {
 	initTestDB(t)
 
 	notebookID := "ordering-priority-nb"
-	if err := db.CreateNotebook(notebookID, "Ordering Priority Notebook", "/tmp/ordering-priority.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Ordering Priority Notebook", "/tmp/ordering-priority.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1599,15 +1609,15 @@ func TestOrdering_TaskPriority(t *testing.T) {
 	taskHighPriority := models.StudyQueueTask{ID: "task-high-priority", NotebookID: notebookID, TaskType: models.StudyTaskTypeQuiz, Status: models.StudyTaskStatusPending, Priority: 1}
 	taskLowPriority := models.StudyQueueTask{ID: "task-low-priority", NotebookID: notebookID, TaskType: models.StudyTaskTypeQuiz, Status: models.StudyTaskStatusPending, Priority: 10}
 
-	if err := db.InsertStudyTask(taskLowPriority); err != nil {
+	if err := testRepo.InsertStudyTask(taskLowPriority); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
-	if err := db.InsertStudyTask(taskHighPriority); err != nil {
+	if err := testRepo.InsertStudyTask(taskHighPriority); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
 	// Verify high priority task (lower number) is returned first
-	nextTask, err := db.GetNextTask(notebookID)
+	nextTask, err := testRepo.GetNextTask(notebookID)
 	if err != nil {
 		t.Fatalf("GetNextTask failed: %v", err)
 	}
@@ -1621,7 +1631,7 @@ func TestOrdering_FIFOFallback(t *testing.T) {
 	initTestDB(t)
 
 	notebookID := "ordering-fifo-nb"
-	if err := db.CreateNotebook(notebookID, "FIFO Notebook", "/tmp/fifo.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "FIFO Notebook", "/tmp/fifo.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1630,18 +1640,18 @@ func TestOrdering_FIFOFallback(t *testing.T) {
 	task2 := models.StudyQueueTask{ID: "task-fifo-2", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 5}
 	task3 := models.StudyQueueTask{ID: "task-fifo-3", NotebookID: notebookID, TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusPending, Priority: 5}
 
-	if err := db.InsertStudyTask(task1); err != nil {
+	if err := testRepo.InsertStudyTask(task1); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
-	if err := db.InsertStudyTask(task2); err != nil {
+	if err := testRepo.InsertStudyTask(task2); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
-	if err := db.InsertStudyTask(task3); err != nil {
+	if err := testRepo.InsertStudyTask(task3); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
 	// Verify FIFO order (first inserted is first returned)
-	nextTask, err := db.GetNextTask(notebookID)
+	nextTask, err := testRepo.GetNextTask(notebookID)
 	if err != nil {
 		t.Fatalf("GetNextTask failed: %v", err)
 	}
@@ -1656,7 +1666,7 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 	initTestDB(t)
 
 	notebookID := "anti-starvation-nb"
-	if err := db.CreateNotebook(notebookID, "Anti Starvation Notebook", "/tmp/anti-starvation.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Anti Starvation Notebook", "/tmp/anti-starvation.txt", "txt", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -1668,7 +1678,7 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 	}
 
 	for _, task := range tasks {
-		if err := db.InsertStudyTask(task); err != nil {
+		if err := testRepo.InsertStudyTask(task); err != nil {
 			t.Fatalf("InsertStudyTask failed: %v", err)
 		}
 	}
@@ -1676,7 +1686,7 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 	// Query multiple times to verify deterministic ordering (same result each time)
 	var firstTaskID string
 	for i := 0; i < 3; i++ {
-		nextTask, err := db.GetNextTask(notebookID)
+		nextTask, err := testRepo.GetNextTask(notebookID)
 		if err != nil {
 			t.Fatalf("GetNextTask failed on iteration %d: %v", i, err)
 		}

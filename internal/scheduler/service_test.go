@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
-	svc := New(
+	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }), // 10 cards * 0.5m = 5 min review
 		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
@@ -64,7 +64,7 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 }
 
 func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
-	svc := New(
+	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
@@ -108,7 +108,7 @@ func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 }
 
 func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
-	svc := New(
+	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
 		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
@@ -148,7 +148,7 @@ func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
 }
 
 func TestBuildTodayPlanNoReadingTopic(t *testing.T) {
-	svc := New(
+	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 20, nil }), // 20 cards * 0.5 = 10 mins
 		WithQueryDailyStudyMinutes(func() (int, error) { return 30, nil }),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {

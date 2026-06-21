@@ -68,7 +68,7 @@ func TestSplitPageIntoSemanticChunks(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SplitPageIntoSemanticChunks(tc.text, tc.target)
+			got := SplitPageIntoChunks(tc.text, tc.target)
 			if len(got) != tc.wantCount {
 				t.Fatalf("unexpected chunk count: got=%d want=%d chunks=%#v", len(got), tc.wantCount, got)
 			}

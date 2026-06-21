@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+var testRepo *Repository
+
 func initDBForTest(t *testing.T, withVec bool, dim int32) {
 	t.Helper()
 
@@ -15,17 +17,20 @@ func initDBForTest(t *testing.T, withVec bool, dim int32) {
 		vecPath = vecAssetPath(t)
 	}
 
-	if err := Init(dbPath, vecPath); err != nil {
+	repo, err := Init(dbPath, vecPath)
+	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
+	testRepo = repo
 	t.Cleanup(func() {
-		if err := Close(); err != nil {
+		if err := testRepo.Close(); err != nil {
 			t.Fatalf("Close failed: %v", err)
 		}
+		testRepo = nil
 	})
 
 	if withVec && dim > 0 {
-		if err := InitWithVectorDimension(dim); err != nil {
+		if err := testRepo.InitWithVectorDimension(dim); err != nil {
 			t.Skipf("skipping vec0-backed test, InitWithVectorDimension failed: %v", err)
 		}
 	}

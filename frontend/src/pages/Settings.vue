@@ -24,7 +24,7 @@
     <div v-if="activeTab === 'settings'" class="tab-content">
       <article class="panel form-grid">
         <h2>Study Budget & Routine</h2>
-        
+
         <div class="form-group">
           <label for="daily-minutes">Daily study goal (minutes)</label>
           <input
@@ -36,7 +36,9 @@
             step="5"
             :disabled="loading || saving"
           />
-          <p class="hint">Adjusts FSRS review capacities and reading goals to match your daily schedule.</p>
+          <p class="hint">
+            Adjusts FSRS review capacities and reading goals to match your daily schedule.
+          </p>
         </div>
 
         <div class="form-group check-group">
@@ -49,7 +51,10 @@
             <span class="checkmark"></span>
             <div class="check-label">
               <strong>Enable "Skip to Reading" (Escape Hatch)</strong>
-              <p class="hint">Temporarily deprioritizes review backlogs, letting you read new material first. FSRS records remain safe.</p>
+              <p class="hint">
+                Temporarily deprioritizes review backlogs, letting you read new material first. FSRS
+                records remain safe.
+              </p>
             </div>
           </label>
         </div>
@@ -65,15 +70,82 @@
             <span class="checkmark"></span>
             <div class="check-label">
               <strong>Enable Local AI Retrieval (RAG)</strong>
-              <p class="hint">Preloads local ONNX embeddings for context-rich Q&A. Unticking unloads RAG from memory instantly.</p>
+              <p class="hint">
+                Preloads local ONNX embeddings for context-rich Q&A. Unticking unloads RAG from
+                memory instantly.
+              </p>
             </div>
           </label>
+        </div>
+
+        <div
+          v-if="settings.rag_enabled"
+          class="rag-sub-settings"
+          style="
+            margin-left: 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 24px;
+          "
+        >
+          <div class="form-group check-group" style="margin-bottom: 0">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.rag_notebook_chapter"
+                type="checkbox"
+                :disabled="loading || saving"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable Tutor from Notebook Chapters</strong>
+                <p class="hint">
+                  Allows accessing Socratic RAG directly from notebook chapter details.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div class="form-group check-group" style="margin-bottom: 0">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.rag_entire_notebook"
+                type="checkbox"
+                :disabled="loading || saving"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable RAG for Entire Book</strong>
+                <p class="hint">
+                  Allows general queries scoped to the selected notebook in the Tutor interface.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div class="form-group check-group" style="margin-bottom: 0">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.rag_queue_study"
+                type="checkbox"
+                :disabled="loading || saving"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable Tutor in Queue Study Sessions</strong>
+                <p class="hint">Shows an optional Tutor panel inside active reading tasks.</p>
+              </div>
+            </label>
+          </div>
         </div>
 
         <hr class="divider" />
 
         <h2>AI Provider</h2>
-        <p class="hint">Provider settings are saved in SQLite. API keys are saved in the OS credential manager through the backend.</p>
+        <p class="hint">
+          Provider settings are saved in SQLite. API keys are saved in the OS credential manager
+          through the backend.
+        </p>
 
         <div class="form-group">
           <label for="settings-llm-provider">Provider</label>
@@ -92,28 +164,57 @@
 
         <div class="form-group">
           <label for="settings-llm-base-url">Base URL</label>
-          <input id="settings-llm-base-url" v-model="llmSettings.fast.base_url" type="url" :disabled="loading || savingLLM" />
+          <input
+            id="settings-llm-base-url"
+            v-model="llmSettings.fast.base_url"
+            type="url"
+            :disabled="loading || savingLLM"
+          />
         </div>
 
         <div class="form-group">
           <label for="settings-llm-model">Fast Model</label>
-          <input id="settings-llm-model" v-model="llmSettings.fast.model" type="text" :disabled="loading || savingLLM" />
+          <input
+            id="settings-llm-model"
+            v-model="llmSettings.fast.model"
+            type="text"
+            :disabled="loading || savingLLM"
+          />
           <p class="hint">Used for quizzes, flashcards, short scoring, and small reader help.</p>
         </div>
 
         <div class="form-group">
           <label for="settings-llm-key">Fast API Key</label>
-          <input id="settings-llm-key" v-model="llmFastKey" type="password" placeholder="Leave blank to keep existing key" :disabled="loading || savingLLM" />
-          <p class="hint">{{ llmSettings.fast.has_api_key ? 'A fast-tier key is stored.' : 'No fast-tier key stored yet.' }}</p>
+          <input
+            id="settings-llm-key"
+            v-model="llmFastKey"
+            type="password"
+            placeholder="Leave blank to keep existing key"
+            :disabled="loading || savingLLM"
+          />
+          <p class="hint">
+            {{
+              llmSettings.fast.has_api_key
+                ? 'A fast-tier key is stored.'
+                : 'No fast-tier key stored yet.'
+            }}
+          </p>
         </div>
 
         <div class="form-group check-group">
           <label class="checkbox-container">
-            <input v-model="llmSettings.use_same_for_heavy" type="checkbox" :disabled="loading || savingLLM" />
+            <input
+              v-model="llmSettings.use_same_for_heavy"
+              type="checkbox"
+              :disabled="loading || savingLLM"
+            />
             <span class="checkmark"></span>
             <div class="check-label">
               <strong>Use same provider and model for heavy AI tasks</strong>
-              <p class="hint">Heavy tasks include syllabus drafting, Socratic responses, and large-context generation.</p>
+              <p class="hint">
+                Heavy tasks include syllabus drafting, Socratic responses, and large-context
+                generation.
+              </p>
             </div>
           </label>
         </div>
@@ -135,24 +236,56 @@
           </div>
           <div class="form-group">
             <label for="settings-heavy-base-url">Heavy Base URL</label>
-            <input id="settings-heavy-base-url" v-model="llmSettings.heavy.base_url" type="url" :disabled="loading || savingLLM" />
+            <input
+              id="settings-heavy-base-url"
+              v-model="llmSettings.heavy.base_url"
+              type="url"
+              :disabled="loading || savingLLM"
+            />
           </div>
           <div class="form-group">
             <label for="settings-heavy-model">Heavy Model</label>
-            <input id="settings-heavy-model" v-model="llmSettings.heavy.model" type="text" :disabled="loading || savingLLM" />
+            <input
+              id="settings-heavy-model"
+              v-model="llmSettings.heavy.model"
+              type="text"
+              :disabled="loading || savingLLM"
+            />
           </div>
           <div class="form-group">
             <label for="settings-heavy-key">Heavy API Key</label>
-            <input id="settings-heavy-key" v-model="llmHeavyKey" type="password" placeholder="Leave blank to keep existing key" :disabled="loading || savingLLM" />
-            <p class="hint">{{ llmSettings.heavy.has_api_key ? 'A heavy-tier key is stored.' : 'No heavy-tier key stored yet.' }}</p>
+            <input
+              id="settings-heavy-key"
+              v-model="llmHeavyKey"
+              type="password"
+              placeholder="Leave blank to keep existing key"
+              :disabled="loading || savingLLM"
+            />
+            <p class="hint">
+              {{
+                llmSettings.heavy.has_api_key
+                  ? 'A heavy-tier key is stored.'
+                  : 'No heavy-tier key stored yet.'
+              }}
+            </p>
           </div>
         </div>
 
         <div class="button-row">
-<button type="button" class="save-btn" :disabled="loading || savingLLM || presetLoading" @click="saveLLMProviderSettings">
+          <button
+            type="button"
+            class="save-btn"
+            :disabled="loading || savingLLM || presetLoading"
+            @click="saveLLMProviderSettings"
+          >
             {{ savingLLM ? 'Saving AI Provider...' : 'Save AI Provider' }}
           </button>
-          <button type="button" class="sync-btn" :disabled="loading || savingLLM" @click="removeLLMKeys">
+          <button
+            type="button"
+            class="sync-btn"
+            :disabled="loading || savingLLM"
+            @click="removeLLMKeys"
+          >
             Remove Stored Keys
           </button>
         </div>
@@ -162,18 +295,16 @@
         <h2>Workspace Aesthetics</h2>
         <div class="form-group">
           <label for="theme-select">Aesthetic Theme</label>
-          <select
-            id="theme-select"
-            v-model="settings.theme"
-            :disabled="loading || saving"
-          >
+          <select id="theme-select" v-model="settings.theme" :disabled="loading || saving">
             <option value="light-classic">Light Classic</option>
             <option value="light-warm">Warm Sepia (Reader)</option>
             <option value="dark-indigo">Deep Indigo Night (Dark Mode)</option>
             <option value="dark-nord">Nord Frost (Cool Dark Mode)</option>
             <option value="dark-emerald">Forest Emerald</option>
           </select>
-          <p class="hint">Select a visual theme. Changing themes alters the colors of your study desk instantly.</p>
+          <p class="hint">
+            Select a visual theme. Changing themes alters the colors of your study desk instantly.
+          </p>
         </div>
 
         <hr class="divider" />
@@ -203,10 +334,15 @@
         </div>
 
         <div class="button-row">
-          <button type="button" class="save-btn" :disabled="loading || saving" @click="saveUserSettings">
+          <button
+            type="button"
+            class="save-btn"
+            :disabled="loading || saving"
+            @click="saveUserSettings"
+          >
             {{ saving ? 'Saving Settings...' : 'Save Settings' }}
           </button>
-          
+
           <button
             v-if="settings.cloud_sync_url"
             type="button"
@@ -246,7 +382,9 @@
             >
               <div class="profile-info">
                 <h3>{{ profile.name }}</h3>
-                <p class="deadline">Deadline: <strong>{{ formatUnixDate(profile.deadline_at) }}</strong></p>
+                <p class="deadline">
+                  Deadline: <strong>{{ formatUnixDate(profile.deadline_at) }}</strong>
+                </p>
               </div>
               <div class="profile-actions">
                 <button
@@ -257,7 +395,7 @@
                   Select Active
                 </button>
                 <span v-else class="active-badge">Active</span>
-                
+
                 <button class="edit-btn" @click="openEditModal(profile)">Edit</button>
                 <button class="delete-btn" @click="handleDeleteProfile(profile.id)">Delete</button>
               </div>
@@ -268,7 +406,9 @@
         <!-- Textbook Assignments -->
         <article class="panel textbooks-panel">
           <h2>Textbook Assignments</h2>
-          <p class="description">Assign uploaded textbooks to study profiles to calculate target deadlines.</p>
+          <p class="description">
+            Assign uploaded textbooks to study profiles to calculate target deadlines.
+          </p>
 
           <div v-if="notebooks.length === 0" class="empty-state">
             No textbooks uploaded. Go to Bookshelf to add them.
@@ -323,7 +463,11 @@
         </div>
         <div class="modal-actions">
           <button class="cancel-btn" @click="showAddModal = false">Cancel</button>
-          <button class="save-btn" :disabled="!newProfileName || !newProfileDeadline" @click="handleAddProfile">
+          <button
+            class="save-btn"
+            :disabled="!newProfileName || !newProfileDeadline"
+            @click="handleAddProfile"
+          >
             Create Profile
           </button>
         </div>
@@ -344,7 +488,11 @@
         </div>
         <div class="modal-actions">
           <button class="cancel-btn" @click="closeEditModal">Cancel</button>
-          <button class="save-btn" :disabled="!editProfileName || !editProfileDeadline" @click="handleUpdateProfile">
+          <button
+            class="save-btn"
+            :disabled="!editProfileName || !editProfileDeadline"
+            @click="handleUpdateProfile"
+          >
             Save Changes
           </button>
         </div>
@@ -352,53 +500,49 @@
     </div>
 
     <!-- RAG Setup Modal -->
-    <div v-if="showRagModal" class="modal-overlay" @click.self="isSettingUpRag ? null : showRagModal = false">
+    <div
+      v-if="showRagModal"
+      class="modal-overlay"
+      @click.self="handleRagModalDismiss"
+    >
       <div class="modal-card">
         <h2>Local AI Setup (RAG)</h2>
         <p class="description">
-          We will run system specs check, stage DLLs, and initialize the ONNX embedding engine.
-          This will take a few seconds and run completely on your system.
+          We will run system specs check, stage DLLs, and initialize the ONNX embedding engine. This
+          will take a few seconds and run completely on your system.
         </p>
 
         <div class="rag-setup-box">
           <div class="setup-header">
-            <span v-if="ragStatus" class="status-badge" :class="ragStatus">{{ ragStatus.toUpperCase() }}</span>
+            <span v-if="ragStatus" class="status-badge" :class="ragStatus">{{
+              ragStatus.toUpperCase()
+            }}</span>
             <span class="setup-msg">{{ ragMessage }}</span>
           </div>
-          
+
           <div class="progress-bar-mini">
             <div class="progress-fill-mini" :style="{ width: ragPercent + '%' }"></div>
           </div>
-          
+
           <p class="setup-detail">{{ ragDetail }}</p>
           <div v-if="ragError" class="error-banner">{{ ragError }}</div>
         </div>
 
         <div class="modal-actions">
-          <button 
-            class="cancel-btn" 
-            :disabled="isSettingUpRag" 
-            @click="showRagModal = false"
-          >
+          <button class="cancel-btn" :disabled="isSettingUpRag" @click="handleRagModalDismiss">
             Cancel
           </button>
-          
-          <button 
-            v-if="!ragSetupCompleted" 
-            class="save-btn" 
-            :disabled="isSettingUpRag" 
+
+          <button
+            v-if="!ragSetupCompleted"
+            class="save-btn"
+            :disabled="isSettingUpRag"
             @click="startRagSetup"
           >
             {{ isSettingUpRag ? 'Setting Up...' : 'Start Setup' }}
           </button>
-          
-          <button 
-            v-else 
-            class="save-btn" 
-            @click="closeRagModal"
-          >
-            Finish
-          </button>
+
+          <button v-else class="save-btn" @click="closeRagModal">Finish</button>
         </div>
       </div>
     </div>
@@ -422,7 +566,7 @@ import {
   updateLLMSettings,
   saveLLMAPIKey,
   deleteLLMAPIKey,
-  getLLMProviderPreset
+  getLLMProviderPreset,
 } from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
@@ -442,7 +586,10 @@ const settings = ref({
   cloud_sync_url: '',
   cloud_api_token: '',
   theme: 'light-classic',
-  rag_enabled: false
+  rag_enabled: false,
+  rag_notebook_chapter: true,
+  rag_entire_notebook: true,
+  rag_queue_study: true,
 })
 
 const llmFastKey = ref('')
@@ -456,7 +603,7 @@ const llmSettings = ref({
     model: 'openai/gpt-oss-120b',
     timeout_ms: 60000,
     api_key_source: 'keyring',
-    has_api_key: false
+    has_api_key: false,
   },
   heavy: {
     tier: 'heavy',
@@ -465,18 +612,19 @@ const llmSettings = ref({
     model: 'openai/gpt-oss-120b',
     timeout_ms: 90000,
     api_key_source: 'keyring',
-    has_api_key: false
-  }
+    has_api_key: false,
+  },
 })
-
-
 
 // Watch settings theme to apply it in real-time
-watch(() => settings.value.theme, (newTheme) => {
-  if (newTheme) {
-    document.documentElement.setAttribute('data-theme', newTheme)
+watch(
+  () => settings.value.theme,
+  (newTheme) => {
+    if (newTheme) {
+      document.documentElement.setAttribute('data-theme', newTheme)
+    }
   }
-})
+)
 
 const profiles = ref([])
 const notebooks = ref([])
@@ -537,7 +685,7 @@ function startRagSetup() {
       isSettingUpRag.value = false
       EventsOff('rag-setup-progress')
     }
-    
+
     if (data.status === 'ready') {
       ragSetupCompleted.value = true
       isSettingUpRag.value = false
@@ -545,17 +693,28 @@ function startRagSetup() {
     }
   })
 
-  initializeRAG().then(res => {
-    if (res.error) {
-      ragError.value = res.error
+  initializeRAG()
+    .then((res) => {
+      if (res.error) {
+        ragError.value = res.error
+        isSettingUpRag.value = false
+        EventsOff('rag-setup-progress')
+      }
+    })
+    .catch((err) => {
+      ragError.value = err.message || 'RAG setup failed.'
       isSettingUpRag.value = false
       EventsOff('rag-setup-progress')
-    }
-  }).catch(err => {
-    ragError.value = err.message || 'RAG setup failed.'
-    isSettingUpRag.value = false
-    EventsOff('rag-setup-progress')
-  })
+    })
+}
+
+function handleRagModalDismiss() {
+  if (isSettingUpRag.value) return
+  if (ragSetupCompleted.value) {
+    closeRagModal()
+  } else {
+    showRagModal.value = false
+  }
 }
 
 function closeRagModal() {
@@ -591,7 +750,7 @@ async function loadAllData() {
   try {
     loading.value = true
     error.value = ''
-    
+
     // Load settings
     const settingsRes = await getUserSettings()
     if (settingsRes.error) {
@@ -643,7 +802,7 @@ async function saveLLMProviderSettings() {
     const res = await updateLLMSettings({
       use_same_for_heavy: llmSettings.value.use_same_for_heavy,
       fast,
-      heavy
+      heavy,
     })
     if (res.error) {
       error.value = res.error
@@ -724,7 +883,10 @@ async function saveUserSettings() {
       settings.value.cloud_sync_url,
       settings.value.cloud_api_token,
       settings.value.theme,
-      settings.value.rag_enabled
+      settings.value.rag_enabled,
+      settings.value.rag_notebook_chapter,
+      settings.value.rag_entire_notebook,
+      settings.value.rag_queue_study
     )
     if (res.error) {
       error.value = res.error
@@ -798,7 +960,11 @@ function closeEditModal() {
 
 async function handleUpdateProfile() {
   try {
-    const res = await updateProfile(editProfileId.value, editProfileName.value, editProfileDeadline.value)
+    const res = await updateProfile(
+      editProfileId.value,
+      editProfileName.value,
+      editProfileDeadline.value
+    )
     if (res.error) {
       alert(res.error)
       return
@@ -811,7 +977,11 @@ async function handleUpdateProfile() {
 }
 
 async function handleDeleteProfile(id) {
-  if (!confirm('Are you sure you want to delete this profile? Associated books will become unassigned.')) {
+  if (
+    !confirm(
+      'Are you sure you want to delete this profile? Associated books will become unassigned.'
+    )
+  ) {
     return
   }
   try {
@@ -894,7 +1064,9 @@ h2 {
   padding: 8px 16px;
   cursor: pointer;
   border-radius: 8px;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 
 .tab-btn:hover {
@@ -932,11 +1104,11 @@ label {
   color: var(--on-surface);
 }
 
-input[type="number"],
-input[type="text"],
-input[type="url"],
-input[type="password"],
-input[type="date"],
+input[type='number'],
+input[type='text'],
+input[type='url'],
+input[type='password'],
+input[type='date'],
 select {
   border: 1px solid var(--outline-variant);
   border-radius: 12px;
@@ -947,7 +1119,8 @@ select {
   font-family: inherit;
 }
 
-input:focus, select:focus {
+input:focus,
+select:focus {
   border-color: var(--primary);
   outline: none;
 }
@@ -989,7 +1162,7 @@ input:focus, select:focus {
 }
 
 .checkmark:after {
-  content: "";
+  content: '';
   position: absolute;
   display: none;
 }
@@ -1176,7 +1349,8 @@ input:focus, select:focus {
   letter-spacing: 0.05em;
 }
 
-.edit-btn, .delete-btn {
+.edit-btn,
+.delete-btn {
   background: none;
   border: none;
   color: var(--muted-text);
@@ -1330,13 +1504,34 @@ input:focus, select:focus {
   color: #121212;
 }
 
-.status-badge.checking { background: #f59e0b; color: #121212; }
-.status-badge.acquiring { background: #3b82f6; color: #ffffff; }
-.status-badge.verifying { background: #8b5cf6; color: #ffffff; }
-.status-badge.extracting { background: #14b8a6; color: #ffffff; }
-.status-badge.initializing { background: #06b6d4; color: #ffffff; }
-.status-badge.ready { background: #10b981; color: #ffffff; }
-.status-badge.failed { background: #ef4444; color: #ffffff; }
+.status-badge.checking {
+  background: #f59e0b;
+  color: #121212;
+}
+.status-badge.acquiring {
+  background: #3b82f6;
+  color: #ffffff;
+}
+.status-badge.verifying {
+  background: #8b5cf6;
+  color: #ffffff;
+}
+.status-badge.extracting {
+  background: #14b8a6;
+  color: #ffffff;
+}
+.status-badge.initializing {
+  background: #06b6d4;
+  color: #ffffff;
+}
+.status-badge.ready {
+  background: #10b981;
+  color: #ffffff;
+}
+.status-badge.failed {
+  background: #ef4444;
+  color: #ffffff;
+}
 
 .setup-msg {
   font-size: 13px;
