@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -134,16 +133,13 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 
 	// Count active notebooks for the dashboard empty-state distinction.
-	var activeNotebookCount int
-	var activeProfileID sql.NullString
-	if err := repo.GetConnection().QueryRow(`SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1`).Scan(&activeProfileID); err == nil && activeProfileID.Valid && activeProfileID.String != "" {
-		_ = repo.GetConnection().QueryRow(`
-			SELECT COUNT(*) FROM notebooks 
-			WHERE study_status = 'active' 
-			  AND (profile_id = ? OR profile_id IS NULL OR profile_id = '')
-		`, activeProfileID.String).Scan(&activeNotebookCount)
-	} else {
-		_ = repo.GetConnection().QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&activeNotebookCount)
+	activeProfileID, err := repo.GetActiveProfileID()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	activeNotebookCount, err := repo.CountActiveNotebooksForActiveProfile(activeProfileID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
 	}
 
 	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
@@ -405,6 +401,7 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			utils.QueueLogger.Info("idempotent resume: task already active", "taskID", taskID, "status", qTask.Status, "type", qTask.TaskType, "notebookID", qTask.NotebookID, "topicID", qTask.TopicID)
 		default:
 			utils.QueueLogger.Info("task terminal", "status", qTask.Status, "taskID", taskID)
+			return map[string]interface{}{"error": "task is in terminal status: " + string(qTask.Status), "code": 409}
 		}
 	}
 
@@ -437,21 +434,8 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 		}
 	}
 
-	// Get current progress from reading_progress table
-	var currentPage int
-	err = repo.GetConnection().QueryRow(`
-		SELECT COALESCE(current_page, 0) FROM reading_progress WHERE task_id = ?
-	`, taskID).Scan(&currentPage)
-	if err != nil || currentPage == 0 {
-		currentPage = task.StartPage
-	}
-	// Clamp to bounds
-	if currentPage < task.StartPage {
-		currentPage = task.StartPage
-	}
-	if currentPage > task.EndPage {
-		currentPage = task.EndPage
-	}
+	// Use repository-provided and clamped CurrentPage from GetReadingTask
+	currentPage := task.CurrentPage
 	utils.Warnf("[READER_INIT] InitializeReadingSession response payload canonicalTaskID=%s", task.TaskID)
 
 	return map[string]interface{}{
@@ -496,6 +480,16 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 		}
 	}
 	utils.Warnf("[COMPLETE_SESSION] CompleteReading loaded reading task taskID=%s startPage=%d endPage=%d currentPage=%d", taskID, task.StartPage, task.EndPage, task.CurrentPage)
+
+	queueTask, qErr := repo.GetTaskByID(taskID)
+	if qErr != nil {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading GetTaskByID error taskID=%s err=%v", taskID, qErr)
+		return map[string]interface{}{"error": qErr.Error()}
+	}
+	if queueTask.Status != models.StudyTaskStatusActive {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading task not active taskID=%s status=%s", taskID, queueTask.Status)
+		return map[string]interface{}{"error": "task is not active", "code": 409}
+	}
 
 	if a.studyService == nil {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading error: study service not initialized taskID=%s", taskID)

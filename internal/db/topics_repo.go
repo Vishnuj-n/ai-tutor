@@ -522,3 +522,10 @@ func (r *Repository) DeleteTopic(topicID string) error {
 		return nil
 	})
 }
+
+// DeleteFSRSCardsByTopicIDTx deletes FSRS cards for a given topic in a transaction.
+func (r *Repository) DeleteFSRSCardsByTopicIDTx(tx *sql.Tx, topicID string) error {
+	_, err := tx.Exec("DELETE FROM fsrs_cards WHERE topic_id = ?", topicID)
+	return err
+}
+

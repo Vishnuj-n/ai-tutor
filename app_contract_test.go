@@ -96,7 +96,7 @@ func TestSubmitQuizAttemptFailedQuizInsertsRereadAndReturnsCountMetadata(t *test
 	}
 
 	var rereadCount int
-	if err := testRepo.GetConnection().QueryRow(`
+	if err := testRepo.QueryRowForTest(`
 		SELECT COUNT(*)
 		FROM study_queue
 		WHERE id = ? AND task_type = 'REREAD' AND status = 'PENDING'
@@ -113,14 +113,14 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	mustInsertActiveQuizTask(t, "nb-quiz-max", "topic-quiz-max", "task-quiz-max", 100)
 
 	// Insert dummy FSRS card for the topic to verify it is deleted during safety transaction
-	if _, err := testRepo.GetConnection().Exec(`
+	if _, err := testRepo.ExecForTest(`
 		INSERT INTO fsrs_cards (id, topic_id, prompt, answer)
 		VALUES ('dummy-card-1', 'topic-quiz-max', 'Prompt 1', 'Answer 1')
 	`); err != nil {
 		t.Fatalf("failed to insert dummy FSRS card: %v", err)
 	}
 
-	tx, err := testRepo.GetConnection().Begin()
+	tx, err := testRepo.Begin()
 	if err != nil {
 		t.Fatalf("begin tx failed: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	}
 
 	var pendingRereads int
-	if err := testRepo.GetConnection().QueryRow(`
+	if err := testRepo.QueryRowForTest(`
 		SELECT COUNT(*)
 		FROM study_queue
 		WHERE topic_id = 'topic-quiz-max' AND task_type = 'REREAD' AND status = 'PENDING'
@@ -173,7 +173,7 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 
 	// Verify dummy FSRS card was deleted
 	var cardCount int
-	if err := testRepo.GetConnection().QueryRow(`
+	if err := testRepo.QueryRowForTest(`
 		SELECT COUNT(*) FROM fsrs_cards WHERE id = 'dummy-card-1'
 	`).Scan(&cardCount); err != nil {
 		t.Fatalf("query FSRS cards count failed: %v", err)
@@ -184,7 +184,7 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 
 	// Verify quiz task status is FAILED
 	var taskStatus string
-	if err := testRepo.GetConnection().QueryRow(`
+	if err := testRepo.QueryRowForTest(`
 		SELECT status FROM study_queue WHERE id = 'task-quiz-max'
 	`).Scan(&taskStatus); err != nil {
 		t.Fatalf("query task status failed: %v", err)
@@ -195,7 +195,7 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 
 	// Verify EXAMINER task with status PENDING is created
 	var examinerCount int
-	if err := testRepo.GetConnection().QueryRow(`
+	if err := testRepo.QueryRowForTest(`
 		SELECT COUNT(*) FROM study_queue WHERE topic_id = 'topic-quiz-max' AND task_type = 'EXAMINER' AND status = 'PENDING'
 	`).Scan(&examinerCount); err != nil {
 		t.Fatalf("query EXAMINER task count failed: %v", err)
@@ -226,7 +226,7 @@ func TestSubmitQuizAttemptRepeatedSubmissionReturnsErrTaskNotActiveAndNoDuplicat
 	}
 
 	var pendingRereads int
-	if err := testRepo.GetConnection().QueryRow(`
+	if err := testRepo.QueryRowForTest(`
 		SELECT COUNT(*)
 		FROM study_queue
 		WHERE topic_id = 'topic-quiz-repeat' AND task_type = 'REREAD' AND status = 'PENDING'
@@ -242,7 +242,7 @@ func TestSubmitQuizAttemptPassResetsAttemptsAndFutureFailureStartsAtOne(t *testi
 	app := newTestApp(t)
 
 	mustInsertActiveQuizTask(t, "nb-quiz-pass-reset", "topic-quiz-pass-reset", "task-quiz-pass", 100)
-	tx, err := testRepo.GetConnection().Begin()
+	tx, err := testRepo.Begin()
 	if err != nil {
 		t.Fatalf("begin seed tx failed: %v", err)
 	}
@@ -663,7 +663,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 	if err := testRepo.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", 15); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if _, err := testRepo.GetConnection().Exec(`
+	if _, err := testRepo.ExecForTest(`
 		INSERT INTO notebook_topics (notebook_id, topic_id)
 		VALUES ('queue-review-nb', 'queue-review-topic')
 	`); err != nil {

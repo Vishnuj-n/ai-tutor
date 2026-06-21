@@ -119,7 +119,7 @@ Student answer: %s`, question.Prompt, userAnswer)
 		score = 10
 	}
 
-	tx, err := s.repo.GetConnection().Begin()
+	tx, err := s.repo.Begin()
 	if err != nil {
 		return map[string]interface{}{"error": "failed to begin transaction: " + err.Error()}
 	}

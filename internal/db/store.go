@@ -54,21 +54,7 @@ func (r *Repository) GetActiveProfileID() (string, error) {
 	return activeProfileID.String, nil
 }
 
-// GetActiveNotebookCount retrieves the count of active notebooks, optionally filtered by profile ID.
-func (r *Repository) GetActiveNotebookCount(profileID string) (int, error) {
-	var count int
-	var err error
-	if profileID != "" {
-		err = r.db.QueryRow(`
-			SELECT COUNT(*) FROM notebooks 
-			WHERE study_status = 'active' 
-			  AND (profile_id = ? OR profile_id IS NULL OR profile_id = '')
-		`, profileID).Scan(&count)
-	} else {
-		err = r.db.QueryRow(`SELECT COUNT(*) FROM notebooks WHERE study_status = 'active'`).Scan(&count)
-	}
-	return count, err
-}
+
 
 // ExecForTest executes a query directly on the underlying database. ONLY for test usage.
 func (r *Repository) ExecForTest(query string, args ...interface{}) (sql.Result, error) {

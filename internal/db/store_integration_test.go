@@ -1031,10 +1031,14 @@ func TestCountActiveNotebooksForActiveProfile(t *testing.T) {
 		t.Fatalf("failed to clean up notebooks: %v", err)
 	}
 
-	// Create a test profile
+	// Create test profiles
 	profileID := "prof-test-1"
-	if _, err := testRepo.db.Exec("INSERT INTO study_profiles (id, name, created_at) VALUES (?, ?, 0)", profileID, "Test Profile"); err != nil {
+	if err := testRepo.CreateProfile(models.StudyProfile{ID: profileID, Name: "Test Profile", DeadlineAt: 0}); err != nil {
 		t.Fatalf("failed to insert study profile: %v", err)
+	}
+	otherProfileID := "prof-other"
+	if err := testRepo.CreateProfile(models.StudyProfile{ID: otherProfileID, Name: "Other Profile", DeadlineAt: 0}); err != nil {
+		t.Fatalf("failed to insert other study profile: %v", err)
 	}
 
 	// Insert some notebooks with various study statuses and profiles
@@ -1054,10 +1058,10 @@ func TestCountActiveNotebooksForActiveProfile(t *testing.T) {
 		t.Fatalf("failed to insert notebook 2: %v", err)
 	}
 
-	// Notebook 3: active, profile is empty string
+	// Notebook 3: active, profile is NULL
 	if _, err := testRepo.db.Exec(`
 		INSERT INTO notebooks (id, title, file_path, file_type, status, study_status, profile_id, page_count)
-		VALUES ('nb-3', 'Active Notebook 3', '/tmp/3.txt', 'txt', 'uploaded', 'active', '', 1)
+		VALUES ('nb-3', 'Active Notebook 3', '/tmp/3.txt', 'txt', 'uploaded', 'active', NULL, 1)
 	`); err != nil {
 		t.Fatalf("failed to insert notebook 3: %v", err)
 	}
@@ -1073,13 +1077,13 @@ func TestCountActiveNotebooksForActiveProfile(t *testing.T) {
 	// Notebook 5: active, different profile
 	if _, err := testRepo.db.Exec(`
 		INSERT INTO notebooks (id, title, file_path, file_type, status, study_status, profile_id, page_count)
-		VALUES ('nb-5', 'Other Profile Notebook', '/tmp/5.txt', 'txt', 'uploaded', 'active', 'prof-other', 1)
-	`); err != nil {
+		VALUES ('nb-5', 'Other Profile Notebook', '/tmp/5.txt', 'txt', 'uploaded', 'active', ?, 1)
+	`, otherProfileID); err != nil {
 		t.Fatalf("failed to insert notebook 5: %v", err)
 	}
 
 	// Test 1: Count active notebooks for profileID "prof-test-1"
-	// Should match nb-1 (matching profile), nb-2 (NULL profile), nb-3 (empty profile). Total = 3.
+	// Should match nb-1 (matching profile), nb-2 (NULL profile), nb-3 (NULL profile). Total = 3.
 	count, err := testRepo.CountActiveNotebooksForActiveProfile(profileID)
 	if err != nil {
 		t.Fatalf("CountActiveNotebooksForActiveProfile failed: %v", err)

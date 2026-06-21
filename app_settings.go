@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/study"
@@ -229,7 +230,11 @@ func (a *App) DeleteLLMAPIKey(tier string) map[string]interface{} {
 }
 
 func (a *App) reloadLLMProviders() error {
-	settings, err := a.repo.GetLLMSettings()
+	repo := a.getRepo()
+	if repo == nil {
+		return fmt.Errorf("reloadLLMProviders: repository not initialized")
+	}
+	settings, err := repo.GetLLMSettings()
 	if err != nil {
 		return err
 	}
@@ -247,7 +252,7 @@ func (a *App) reloadLLMProviders() error {
 	a.heavyLLMProvider = heavyProvider
 	engine := a.retrievalEngine
 	a.studyService = study.NewStudyService(study.Config{
-		Repo:             a.repo,
+		Repo:             repo,
 		FastLLMProvider:  fastProvider,
 		HeavyLLMProvider: heavyProvider,
 		RetrievalEngine:  engine,
@@ -415,7 +420,7 @@ func (a *App) TriggerCloudSync() map[string]interface{} {
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
 	}
-	if err := study.TriggerCloudSync(a.repo); err != nil {
+	if err := study.TriggerCloudSync(repo); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true}
