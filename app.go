@@ -496,6 +496,11 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		a.aiMutex.Lock()
 		a.aiReady = true
 		a.aiInitError = ""
+		if a.indexQueue != nil {
+			a.indexQueue.Stop()
+		}
+		a.indexQueue = retrieval.NewVectorIndexQueue(newRepo, emb, a.ctx)
+		a.indexQueue.Start()
 		a.aiMutex.Unlock()
 
 		// Emit final ready event only after indexing succeeds

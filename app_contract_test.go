@@ -95,16 +95,12 @@ func TestSubmitQuizAttemptFailedQuizInsertsRereadAndReturnsCountMetadata(t *test
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
-	var rereadCount int
-	if err := testRepo.QueryRowForTest(`
-		SELECT COUNT(*)
-		FROM study_queue
-		WHERE id = ? AND task_type = 'REREAD' AND status = 'PENDING'
-	`, result.RereadTaskID).Scan(&rereadCount); err != nil {
+	rereadTask, err := testRepo.GetTaskByID(result.RereadTaskID)
+	if err != nil {
 		t.Fatalf("query reread follow-up failed: %v", err)
 	}
-	if rereadCount != 1 {
-		t.Fatalf("expected one pending reread follow-up, got %d", rereadCount)
+	if rereadTask.TaskType != "REREAD" || rereadTask.Status != "PENDING" {
+		t.Fatalf("expected pending reread follow-up, got type=%s status=%s", rereadTask.TaskType, rereadTask.Status)
 	}
 }
 
@@ -159,12 +155,8 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
-	var pendingRereads int
-	if err := testRepo.QueryRowForTest(`
-		SELECT COUNT(*)
-		FROM study_queue
-		WHERE topic_id = 'topic-quiz-max' AND task_type = 'REREAD' AND status = 'PENDING'
-	`).Scan(&pendingRereads); err != nil {
+	pendingRereads, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-max", "REREAD", "PENDING")
+	if err != nil {
 		t.Fatalf("query pending rereads failed: %v", err)
 	}
 	if pendingRereads != 0 {
@@ -172,32 +164,26 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	}
 
 	// Verify dummy FSRS card was deleted
-	var cardCount int
-	if err := testRepo.QueryRowForTest(`
-		SELECT COUNT(*) FROM fsrs_cards WHERE id = 'dummy-card-1'
-	`).Scan(&cardCount); err != nil {
+	cardExists, err := testRepo.FlashcardExistsByID("dummy-card-1")
+	if err != nil {
 		t.Fatalf("query FSRS cards count failed: %v", err)
 	}
-	if cardCount != 0 {
-		t.Fatalf("expected FSRS cards to be deleted on max reread failure, but found %d", cardCount)
+	if cardExists {
+		t.Fatalf("expected FSRS cards to be deleted on max reread failure, but found")
 	}
 
 	// Verify quiz task status is FAILED
-	var taskStatus string
-	if err := testRepo.QueryRowForTest(`
-		SELECT status FROM study_queue WHERE id = 'task-quiz-max'
-	`).Scan(&taskStatus); err != nil {
+	failedTask, err := testRepo.GetTaskByID("task-quiz-max")
+	if err != nil {
 		t.Fatalf("query task status failed: %v", err)
 	}
-	if taskStatus != string(models.StudyTaskStatusFailed) {
-		t.Fatalf("expected quiz task status to be FAILED, got %q", taskStatus)
+	if failedTask.Status != models.StudyTaskStatusFailed {
+		t.Fatalf("expected quiz task status to be FAILED, got %q", failedTask.Status)
 	}
 
 	// Verify EXAMINER task with status PENDING is created
-	var examinerCount int
-	if err := testRepo.QueryRowForTest(`
-		SELECT COUNT(*) FROM study_queue WHERE topic_id = 'topic-quiz-max' AND task_type = 'EXAMINER' AND status = 'PENDING'
-	`).Scan(&examinerCount); err != nil {
+	examinerCount, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-max", "EXAMINER", "PENDING")
+	if err != nil {
 		t.Fatalf("query EXAMINER task count failed: %v", err)
 	}
 	if examinerCount != 1 {
@@ -225,12 +211,8 @@ func TestSubmitQuizAttemptRepeatedSubmissionReturnsErrTaskNotActiveAndNoDuplicat
 		t.Fatalf("expected ErrTaskNotActive on repeated submit, got %#v", got)
 	}
 
-	var pendingRereads int
-	if err := testRepo.QueryRowForTest(`
-		SELECT COUNT(*)
-		FROM study_queue
-		WHERE topic_id = 'topic-quiz-repeat' AND task_type = 'REREAD' AND status = 'PENDING'
-	`).Scan(&pendingRereads); err != nil {
+	pendingRereads, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-repeat", "REREAD", "PENDING")
+	if err != nil {
 		t.Fatalf("query pending rereads failed: %v", err)
 	}
 	if pendingRereads != 1 {
@@ -663,10 +645,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 	if err := testRepo.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", 15); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
-	if _, err := testRepo.ExecForTest(`
-		INSERT INTO notebook_topics (notebook_id, topic_id)
-		VALUES ('queue-review-nb', 'queue-review-topic')
-	`); err != nil {
+	if err := testRepo.LinkNotebookTopics("queue-review-nb", []string{"queue-review-topic"}); err != nil {
 		t.Fatalf("link notebook_topics failed: %v", err)
 	}
 	if err := testRepo.CreateFlashcards("queue-review-topic", []models.Flashcard{

@@ -1033,3 +1033,17 @@ func (r *Repository) GetReadingProgressPage(taskID string) (int, error) {
 	return currentPage, err
 }
 
+// CountTasksByTopicTypeAndStatus counts study_queue tasks matching the given filters.
+// Pass empty string for any filter to skip it.
+func (r *Repository) CountTasksByTopicTypeAndStatus(topicID, taskType, status string) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM study_queue
+		WHERE (? = '' OR topic_id = ?)
+		  AND (? = '' OR task_type = ?)
+		  AND (? = '' OR status = ?)
+	`, topicID, topicID, taskType, taskType, status, status).Scan(&count)
+	return count, err
+}
+

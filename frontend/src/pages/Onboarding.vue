@@ -618,6 +618,7 @@ function startRagSetup() {
     if (data.errorReason) {
       ragError.value = data.errorReason
       isSettingUpRag.value = false
+      EventsOff('rag-setup-progress')
     }
 
     if (data.status === 'ready') {

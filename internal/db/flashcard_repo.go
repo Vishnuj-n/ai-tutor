@@ -501,6 +501,13 @@ func normalizeValidateFlashcards(topicID string, cards []models.Flashcard, state
 	return normalizedCards, nil
 }
 
+// FlashcardExistsByID returns true if a flashcard with the given ID exists.
+func (r *Repository) FlashcardExistsByID(cardID string) (bool, error) {
+	var exists int
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM fsrs_cards WHERE id = ?`, cardID).Scan(&exists)
+	return exists > 0, err
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

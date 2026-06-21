@@ -659,15 +659,15 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 		}
 	}
 
-	// Delete file from disk
-	if err := a.notebookService.DeleteFile(nb.FilePath); err != nil {
+	// Delete database record
+	if err := repo.DeleteNotebook(notebookID); err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}
 	}
 
-	// Delete database record
-	if err := repo.DeleteNotebook(notebookID); err != nil {
+	// Delete file from disk
+	if err := a.notebookService.DeleteFile(nb.FilePath); err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}
