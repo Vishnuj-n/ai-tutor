@@ -510,7 +510,10 @@ async function saveLLMAndContinue() {
           timeout_ms: 90000,
           has_api_key: llmFastKey.value.trim() !== '',
         }
-      : { ...llmHeavy.value, has_api_key: llmHeavyKey.value.trim() !== '' }
+      : {
+          ...llmHeavy.value,
+          has_api_key: llmHeavyKey.value.trim() !== '' || llmFastKey.value.trim() !== '',
+        }
 
     const settingsRes = await updateLLMSettings({
       use_same_for_heavy: useSameLLMForHeavy.value,
@@ -536,11 +539,14 @@ async function saveLLMAndContinue() {
         }
       }
     }
-    if (!useSameLLMForHeavy.value && llmHeavyKey.value.trim()) {
-      const keyRes = await saveLLMAPIKey('heavy', llmHeavyKey.value.trim())
-      if (keyRes.error) {
-        error.value = keyRes.error
-        return
+    if (!useSameLLMForHeavy.value) {
+      const heavyKeyValue = llmHeavyKey.value.trim() || llmFastKey.value.trim()
+      if (heavyKeyValue) {
+        const keyRes = await saveLLMAPIKey('heavy', heavyKeyValue)
+        if (keyRes.error) {
+          error.value = keyRes.error
+          return
+        }
       }
     }
     step.value = 3

@@ -503,7 +503,7 @@
     <div
       v-if="showRagModal"
       class="modal-overlay"
-      @click.self="isSettingUpRag ? null : (showRagModal = false)"
+      @click.self="handleRagModalDismiss"
     >
       <div class="modal-card">
         <h2>Local AI Setup (RAG)</h2>
@@ -529,7 +529,7 @@
         </div>
 
         <div class="modal-actions">
-          <button class="cancel-btn" :disabled="isSettingUpRag" @click="showRagModal = false">
+          <button class="cancel-btn" :disabled="isSettingUpRag" @click="handleRagModalDismiss">
             Cancel
           </button>
 
@@ -706,6 +706,15 @@ function startRagSetup() {
       isSettingUpRag.value = false
       EventsOff('rag-setup-progress')
     })
+}
+
+function handleRagModalDismiss() {
+  if (isSettingUpRag.value) return
+  if (ragSetupCompleted.value) {
+    closeRagModal()
+  } else {
+    showRagModal.value = false
+  }
 }
 
 function closeRagModal() {
