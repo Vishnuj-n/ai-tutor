@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/llm"
@@ -91,7 +94,7 @@ func TestSubmitQuizAttemptFailedQuizInsertsRereadAndReturnsCountMetadata(t *test
 	if result.ManualReviewRecommended {
 		t.Fatalf("expected manual_review_recommended=false below cap")
 	}
-	if result.RereadAttemptCount != 1 || result.MaxRereadAttempts != 3 {
+	if result.RereadAttemptCount != 1 || result.MaxRereadAttempts != 2 {
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
@@ -126,9 +129,6 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
 		t.Fatalf("seed attempt 2 failed: %v", err)
 	}
-	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
-		t.Fatalf("seed attempt 3 failed: %v", err)
-	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit seed attempts failed: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	if !result.ManualReviewRecommended {
 		t.Fatalf("expected manual_review_recommended=true after max automatic rereads")
 	}
-	if result.RereadAttemptCount != 4 || result.MaxRereadAttempts != 3 {
+	if result.RereadAttemptCount != 3 || result.MaxRereadAttempts != 2 {
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
@@ -172,22 +172,22 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 		t.Fatalf("expected FSRS cards to be deleted on max reread failure, but found")
 	}
 
-	// Verify quiz task status is FAILED
+	// Verify quiz task status is COMPLETED
 	failedTask, err := testRepo.GetTaskByID("task-quiz-max")
 	if err != nil {
 		t.Fatalf("query task status failed: %v", err)
 	}
-	if failedTask.Status != models.StudyTaskStatusFailed {
-		t.Fatalf("expected quiz task status to be FAILED, got %q", failedTask.Status)
+	if failedTask.Status != models.StudyTaskStatusCompleted {
+		t.Fatalf("expected quiz task status to be COMPLETED, got %q", failedTask.Status)
 	}
 
-	// Verify EXAMINER task with status PENDING is created
-	examinerCount, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-max", "EXAMINER", "PENDING")
+	// Verify SOCRATIC_REMEDIAL task with status PENDING is created
+	socraticCount, err := testRepo.CountTasksByTopicTypeAndStatus("topic-quiz-max", "SOCRATIC_REMEDIAL", "PENDING")
 	if err != nil {
-		t.Fatalf("query EXAMINER task count failed: %v", err)
+		t.Fatalf("query SOCRATIC_REMEDIAL task count failed: %v", err)
 	}
-	if examinerCount != 1 {
-		t.Fatalf("expected 1 PENDING EXAMINER task, got %d", examinerCount)
+	if socraticCount != 1 {
+		t.Fatalf("expected 1 PENDING SOCRATIC_REMEDIAL task, got %d", socraticCount)
 	}
 }
 
@@ -1703,6 +1703,372 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 	}
 }
 
+func mustInsertMockChunk(t *testing.T, notebookID, topicID, chunkID string, pageNum int) {
+	t.Helper()
+	// Ensure chunk exists in chunks table
+	if _, err := testRepo.ExecForTest(`
+		INSERT OR IGNORE INTO chunks (id, topic_id, chunk_text)
+		VALUES (?, ?, 'Mock chunk text for calibration test')
+	`, chunkID, topicID); err != nil {
+		t.Fatalf("failed to insert chunk: %v", err)
+	}
+
+	// Link chunk to notebook
+	if _, err := testRepo.ExecForTest(`
+		INSERT OR IGNORE INTO notebook_chunks (id, notebook_id, chunk_id, page_num)
+		VALUES (?, ?, ?, ?)
+	`, uuid.NewString(), notebookID, chunkID, pageNum); err != nil {
+		t.Fatalf("failed to insert notebook_chunk link: %v", err)
+	}
+}
+
+func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
+	app := newTestApp(t)
+	// Seed notebook and topic
+	if err := testRepo.EnsureTopic("topic-test", "Topic Test"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook("nb-test", "NB Test", "/tmp/nb-test.pdf", "pdf", "topic-test", 12); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Seed a pending/active SOCRATIC_REMEDIAL task
+	task := models.StudyQueueTask{
+		ID:          "task-socratic-test",
+		NotebookID:  "nb-test",
+		TopicID:     "topic-test",
+		TaskType:    models.StudyTaskTypeSocraticRemedial,
+		Status:      models.StudyTaskStatusActive,
+		StartPage:   1,
+		EndPage:     2,
+	}
+	if err := testRepo.InsertStudyTask(task); err != nil {
+		t.Fatalf("failed to insert socratic task: %v", err)
+	}
+
+	err := app.CompleteSocraticRescue("task-socratic-test")
+	if err != nil {
+		t.Fatalf("CompleteSocraticRescue failed: %v", err)
+	}
+
+	// Verify SOCRATIC_REMEDIAL task status is COMPLETED
+	socraticTask, err := testRepo.GetTaskByID("task-socratic-test")
+	if err != nil {
+		t.Fatalf("failed to get socratic task: %v", err)
+	}
+	if socraticTask.Status != models.StudyTaskStatusCompleted {
+		t.Fatalf("expected socratic task status to be COMPLETED, got %q", socraticTask.Status)
+	}
+
+	// Verify a new QUIZ task was created with the correct source payload
+	quizCount, err := testRepo.CountTasksByTopicTypeAndStatus("topic-test", "QUIZ", "PENDING")
+	if err != nil {
+		t.Fatalf("failed to query quiz task: %v", err)
+	}
+	if quizCount != 1 {
+		t.Fatalf("expected 1 PENDING QUIZ task, got %d", quizCount)
+	}
+}
+
+func TestRequizPassGeneratesFlashcards(t *testing.T) {
+	app := newTestApp(t)
+	// Seed notebook and topic
+	if err := testRepo.EnsureTopic("topic-requiz-pass", "Requiz Pass Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook("nb-requiz-pass", "NB Requiz Pass", "/tmp/nb-requiz-pass.pdf", "pdf", "topic-requiz-pass", 12); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Seed an active re-quiz task
+	payloadBytes, _ := json.Marshal(map[string]interface{}{
+		"source":   "socratic_rescue_requiz",
+		"topic_id": "topic-requiz-pass",
+		"questions": []models.QuizTaskQuestion{
+			{ID: "q1", Prompt: "P1", Options: []string{"A", "B"}, CorrectAnswer: "A"},
+		},
+		"passing_score": 70,
+	})
+	task := models.StudyQueueTask{
+		ID:          "task-requiz-pass",
+		NotebookID:  "nb-requiz-pass",
+		TopicID:     "topic-requiz-pass",
+		TaskType:    models.StudyTaskTypeQuiz,
+		Status:      models.StudyTaskStatusActive,
+		PayloadJSON: string(payloadBytes),
+		StartPage:   1,
+		EndPage:     2,
+	}
+	if err := testRepo.InsertStudyTask(task); err != nil {
+		t.Fatalf("failed to insert requiz task: %v", err)
+	}
+
+	resp := app.SubmitQuizAttempt("task-requiz-pass", []models.QuizAnswer{
+		{QuestionID: "q1", Selected: "A"},
+	})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected submit success, got error: %v", resp["error"])
+	}
+
+	result, ok := resp["result"].(models.QuizResult)
+	if !ok {
+		t.Fatalf("expected QuizResult payload, got %#v", resp["result"])
+	}
+	if !result.Passed {
+		t.Fatalf("expected passed quiz result")
+	}
+	if !result.FlashcardsPending {
+		t.Fatalf("expected FlashcardsPending to be true on passing re-quiz")
+	}
+}
+
+func TestRequizFailMarksExternalHelp(t *testing.T) {
+	app := newTestApp(t)
+	// Ensure topic and notebook exist
+	if err := testRepo.EnsureTopic("topic-requiz-fail", "Requiz Fail Topic"); err != nil {
+		t.Fatalf("failed to ensure topic: %v", err)
+	}
+	if err := testRepo.CreateNotebook("nb-requiz-fail", "NB Requiz Fail", "/tmp/nb-requiz-fail.pdf", "pdf", "topic-requiz-fail", 12); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Seed an active re-quiz task
+	payloadBytes, _ := json.Marshal(map[string]interface{}{
+		"source":   "socratic_rescue_requiz",
+		"topic_id": "topic-requiz-fail",
+		"questions": []models.QuizTaskQuestion{
+			{ID: "q1", Prompt: "P1", Options: []string{"A", "B"}, CorrectAnswer: "A"},
+		},
+		"passing_score": 70,
+	})
+	task := models.StudyQueueTask{
+		ID:          "task-requiz-fail",
+		NotebookID:  "nb-requiz-fail",
+		TopicID:     "topic-requiz-fail",
+		TaskType:    models.StudyTaskTypeQuiz,
+		Status:      models.StudyTaskStatusActive,
+		PayloadJSON: string(payloadBytes),
+		StartPage:   1,
+		EndPage:     2,
+	}
+	if err := testRepo.InsertStudyTask(task); err != nil {
+		t.Fatalf("failed to insert requiz task: %v", err)
+	}
+
+	resp := app.SubmitQuizAttempt("task-requiz-fail", []models.QuizAnswer{
+		{QuestionID: "q1", Selected: "B"},
+	})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected submit success, got error: %v", resp["error"])
+	}
+
+	result, ok := resp["result"].(models.QuizResult)
+	if !ok {
+		t.Fatalf("expected QuizResult payload, got %#v", resp["result"])
+	}
+	if result.Passed {
+		t.Fatalf("expected failed quiz result")
+	}
+	if result.FlashcardsPending {
+		t.Fatalf("expected FlashcardsPending to be false on failing re-quiz")
+	}
+
+	// Verify topic.external_help_required is 1
+	var required bool
+	err := testRepo.QueryRowForTest("SELECT external_help_required FROM topics WHERE id = 'topic-requiz-fail'").Scan(&required)
+	if err != nil {
+		t.Fatalf("failed to query topic: %v", err)
+	}
+	if !required {
+		t.Fatalf("expected external_help_required to be true, got false")
+	}
+}
+
+func TestFSRSCalibrationEasyAndDoubleGood(t *testing.T) {
+	app := newTestApp(t)
+
+	// 1. Test Ace calibration: seed a 100% quiz attempt
+	mustInsertActiveQuizTask(t, "nb-calibration-1", "topic-calibration-1", "task-quiz-ace", 100)
+	mustInsertMockChunk(t, "nb-calibration-1", "topic-calibration-1", "chunk-fallback", 3)
+
+	respAce := app.SubmitQuizAttempt("task-quiz-ace", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "A"}, // Correct
+		{QuestionID: "quiz-q2", Selected: "B"}, // Correct
+	})
+	if _, hasErr := respAce["error"]; hasErr {
+		t.Fatalf("expected submit success, got error: %v", respAce["error"])
+	}
+
+	// Generate flashcards
+	genResp1 := app.GenerateFlashcardsForQuizTask("task-quiz-ace")
+	if _, hasErr := genResp1["error"]; hasErr {
+		t.Fatalf("expected flashcard generation success, got error: %v", genResp1["error"])
+	}
+
+	// Verify that the generated flashcard has Easy FSRS state (stability > 8.0, difficulty = 1.0, reps = 1)
+	var stateJSON sql.NullString
+	var dueAt int64
+	err := testRepo.QueryRowForTest("SELECT state_json, due_at FROM fsrs_cards WHERE topic_id = 'topic-calibration-1' LIMIT 1").Scan(&stateJSON, &dueAt)
+	if err != nil {
+		t.Fatalf("failed to query card: %v", err)
+	}
+	var cardState models.FlashcardState
+	if err := json.Unmarshal([]byte(stateJSON.String), &cardState); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if cardState.Reps != 1 || cardState.Difficulty != 1.0 || cardState.Stability < 8.0 {
+		t.Fatalf("expected Ace card state to be calibrated to Easy, got reps=%d diff=%f stability=%f", cardState.Reps, cardState.Difficulty, cardState.Stability)
+	}
+
+	// 2. Test Pass calibration: seed a 50% quiz attempt (passing_score = 50)
+	mustInsertActiveQuizTask(t, "nb-calibration-2", "topic-calibration-2", "task-quiz-pass", 50)
+	mustInsertMockChunk(t, "nb-calibration-2", "topic-calibration-2", "chunk-fallback", 3)
+
+	respPass := app.SubmitQuizAttempt("task-quiz-pass", []models.QuizAnswer{
+		{QuestionID: "quiz-q1", Selected: "A"}, // Correct
+		{QuestionID: "quiz-q2", Selected: "C"}, // Incorrect
+	})
+	if _, hasErr := respPass["error"]; hasErr {
+		t.Fatalf("expected submit success, got error: %v", respPass["error"])
+	}
+
+	// Generate flashcards
+	genResp2 := app.GenerateFlashcardsForQuizTask("task-quiz-pass")
+	if _, hasErr := genResp2["error"]; hasErr {
+		t.Fatalf("expected flashcard generation success, got error: %v", genResp2["error"])
+	}
+
+	// Verify that the generated flashcard has Double Good FSRS state (reps = 2, stability = 2.3065)
+	var stateJSON2 sql.NullString
+	var dueAt2 int64
+	err = testRepo.QueryRowForTest("SELECT state_json, due_at FROM fsrs_cards WHERE topic_id = 'topic-calibration-2' LIMIT 1").Scan(&stateJSON2, &dueAt2)
+	if err != nil {
+		t.Fatalf("failed to query card: %v", err)
+	}
+	var cardState2 models.FlashcardState
+	if err := json.Unmarshal([]byte(stateJSON2.String), &cardState2); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if cardState2.Reps != 2 || cardState2.Stability != 2.3065 {
+		t.Fatalf("expected Pass card state to be calibrated to Double Good, got reps=%d stability=%f", cardState2.Reps, cardState2.Stability)
+	}
+}
+
+func TestTriggerCloudSyncRetriesAndFailSafe(t *testing.T) {
+	_ = newTestApp(t)
+
+	// Ensure we create a notebook to make sure sync has a valid notebook ID
+	if err := testRepo.CreateNotebook("os-notebook-sync", "OS Notebook", "/tmp/os-notebook.pdf", "pdf", "", 12); err != nil {
+		t.Fatalf("failed to create notebook: %v", err)
+	}
+
+	// Seed user settings with local server URL
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			// Fail first 2 attempts
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		// Succeed on 3rd attempt
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"new_notebooks": []interface{}{},
+		})
+	}))
+	defer server.Close()
+
+	// Update user settings in DB
+	if _, err := testRepo.ExecForTest(`
+		UPDATE user_settings
+		SET cloud_sync_url = ?, cloud_api_token = 'token'
+		WHERE id = 1
+	`, server.URL); err != nil {
+		t.Fatalf("failed to update user settings: %v", err)
+	}
+
+	// 1. Verify successful sync after retries
+	err := study.TriggerCloudSync(testRepo)
+	if err != nil {
+		t.Fatalf("expected cloud sync to succeed, got error: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected exactly 3 attempts, got %d", attempts)
+	}
+
+	// Verify no FLASHCARD_SYNC task was inserted since sync succeeded eventually
+	syncCount, err := testRepo.CountTasksByTopicTypeAndStatus("", "FLASHCARD_SYNC", "PENDING")
+	if err != nil {
+		t.Fatalf("failed to query sync task: %v", err)
+	}
+	if syncCount != 0 {
+		t.Fatalf("expected no PENDING FLASHCARD_SYNC task, got %d", syncCount)
+	}
+
+	// 2. Test persistent failure: make server return 500 always
+	serverFail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer serverFail.Close()
+
+	if _, err := testRepo.ExecForTest(`
+		UPDATE user_settings
+		SET cloud_sync_url = ?
+		WHERE id = 1
+	`, serverFail.URL); err != nil {
+		t.Fatalf("failed to update user settings: %v", err)
+	}
+
+	err = study.TriggerCloudSync(testRepo)
+	if err == nil {
+		t.Fatalf("expected sync to fail, but it succeeded")
+	}
+
+	// Verify FLASHCARD_SYNC task was inserted
+	syncCount, err = testRepo.CountTasksByTopicTypeAndStatus("", "FLASHCARD_SYNC", "PENDING")
+	if err != nil {
+		t.Fatalf("failed to query sync task: %v", err)
+	}
+	if syncCount != 1 {
+		t.Fatalf("expected 1 PENDING FLASHCARD_SYNC task, got %d", syncCount)
+	}
+
+	// 3. Verify sync resolution: make server succeed again
+	serverSuccess := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"new_notebooks": []interface{}{},
+		})
+	}))
+	defer serverSuccess.Close()
+
+	if _, err := testRepo.ExecForTest(`
+		UPDATE user_settings
+		SET cloud_sync_url = ?
+		WHERE id = 1
+	`, serverSuccess.URL); err != nil {
+		t.Fatalf("failed to update user settings: %v", err)
+	}
+
+	err = study.TriggerCloudSync(testRepo)
+	if err != nil {
+		t.Fatalf("expected sync to succeed, got %v", err)
+	}
+
+	// Verify FLASHCARD_SYNC task was resolved (status == COMPLETED)
+	var status string
+	err = testRepo.QueryRowForTest("SELECT status FROM study_queue WHERE task_type = 'FLASHCARD_SYNC'").Scan(&status)
+	if err != nil {
+		t.Fatalf("failed to query sync task status: %v", err)
+	}
+	if status != "COMPLETED" {
+		t.Fatalf("expected sync task status to be COMPLETED, got %q", status)
+	}
+}
+
+
 // ============================================================================
 // LIGHTWEIGHT TEST BUILDERS
 // ============================================================================
+

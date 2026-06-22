@@ -82,26 +82,62 @@ func TriggerCloudSync(repo *db.Repository) error {
 		return fmt.Errorf("failed to marshal sync payload: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", settings.CloudSyncURL, bytes.NewBuffer(jsonBytes))
-	if err != nil {
-		return fmt.Errorf("failed to create http request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if settings.CloudAPIToken != "" {
-		req.Header.Set("Authorization", "Bearer "+settings.CloudAPIToken)
+	var resp *http.Response
+	var lastErr error
+	const attempts = 3
+
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			utils.Warnf("[SYNC] Retrying cloud sync, attempt %d/%d due to: %v", i+1, attempts, lastErr)
+			time.Sleep(1 * time.Second)
+		}
+
+		var req *http.Request
+		req, lastErr = http.NewRequest("POST", settings.CloudSyncURL, bytes.NewBuffer(jsonBytes))
+		if lastErr != nil {
+			lastErr = fmt.Errorf("failed to create http request: %w", lastErr)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if settings.CloudAPIToken != "" {
+			req.Header.Set("Authorization", "Bearer "+settings.CloudAPIToken)
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, lastErr = client.Do(req)
+		if lastErr != nil {
+			lastErr = fmt.Errorf("network error during sync: %w", lastErr)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("sync server returned status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue
+		}
+
+		// Success!
+		lastErr = nil
+		break
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("network error during sync: %w", err)
+	if lastErr != nil {
+		utils.Warnf("[SYNC] Cloud sync failed after %d attempts: %v", attempts, lastErr)
+		// Insert FLASHCARD_SYNC task if not already pending/active
+		var notebookID string
+		if len(notebooks) > 0 {
+			notebookID = notebooks[0].ID
+		} else {
+			notebookID = "system_default"
+		}
+		if syncErr := repo.EnsurePendingFlashcardSyncTask(notebookID); syncErr != nil {
+			utils.Warnf("[SYNC] failed to insert FLASHCARD_SYNC task: %v", syncErr)
+		}
+		return lastErr
 	}
+
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("sync server returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
 
 	var syncResp SyncResponse
 	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
@@ -118,6 +154,11 @@ func TriggerCloudSync(repo *db.Repository) error {
 				}
 			}(assigned)
 		}
+	}
+
+	// Sync completed successfully. Clear any pending FLASHCARD_SYNC tasks.
+	if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
+		utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
 	}
 
 	utils.Warnf("[SYNC] Cloud sync completed successfully.")
