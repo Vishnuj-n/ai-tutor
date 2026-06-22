@@ -21,6 +21,9 @@ func (s *StudyService) CompleteSocraticRescue(taskID string) error {
 	if task.TaskType != models.StudyTaskTypeSocraticRemedial {
 		return fmt.Errorf("task %s is not SOCRATIC_REMEDIAL", taskID)
 	}
+	if task.Status != models.StudyTaskStatusActive {
+		return fmt.Errorf("task %s is not ACTIVE (status=%s)", taskID, task.Status)
+	}
 
 	// Start a transaction
 	tx, err := s.repo.Begin()

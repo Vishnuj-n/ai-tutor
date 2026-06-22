@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxAutomaticRereadAttempts = 2
+const maxAutomaticRereadAttempts = 1
 
 // GenerateFlashcardsAfterQuiz generates flashcards after successful quiz completion.
 // New cards are future-dated and intentionally excluded from immediate review materialization.
@@ -356,9 +356,9 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			feedback = "This concept requires external review. Your next reading task has been unlocked."
 			attempt.Feedback = feedback
 
-			// Mark topic as needing external help
+			// Mark topic as needing external help — abort transaction on failure to prevent infinite rescue loop
 			if err := s.repo.MarkTopicExternalHelpRequiredTx(tx, task.TopicID); err != nil {
-				utils.Warnf("[SOCRATIC_RESCUE] failed to mark external help: %v", err)
+				return models.QuizResult{}, fmt.Errorf("failed to mark topic as requiring external help: %w", err)
 			}
 			utils.Warnf("[SOCRATIC_RESCUE] requiz_failed topicID=%s — external help required", task.TopicID)
 		} else {

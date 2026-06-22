@@ -94,7 +94,7 @@ func TestSubmitQuizAttemptFailedQuizInsertsRereadAndReturnsCountMetadata(t *test
 	if result.ManualReviewRecommended {
 		t.Fatalf("expected manual_review_recommended=false below cap")
 	}
-	if result.RereadAttemptCount != 1 || result.MaxRereadAttempts != 2 {
+	if result.RereadAttemptCount != 1 || result.MaxRereadAttempts != 1 {
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
@@ -126,9 +126,6 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
 		t.Fatalf("seed attempt 1 failed: %v", err)
 	}
-	if _, err := testRepo.IncrementRereadAttemptCountTx(tx, "topic-quiz-max"); err != nil {
-		t.Fatalf("seed attempt 2 failed: %v", err)
-	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit seed attempts failed: %v", err)
 	}
@@ -151,7 +148,7 @@ func TestSubmitQuizAttemptAfterMaxReturnsManualReviewWithoutReread(t *testing.T)
 	if !result.ManualReviewRecommended {
 		t.Fatalf("expected manual_review_recommended=true after max automatic rereads")
 	}
-	if result.RereadAttemptCount != 3 || result.MaxRereadAttempts != 2 {
+	if result.RereadAttemptCount != 2 || result.MaxRereadAttempts != 1 {
 		t.Fatalf("unexpected reread metadata: %#v", result)
 	}
 
