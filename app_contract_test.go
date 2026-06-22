@@ -424,28 +424,7 @@ func newTestApp(t *testing.T) *App {
 
 	return app
 }
-
-// ============================================================================
-// SECTION MARKERS FOR FUTURE MODULAR SPLIT
-// ============================================================================
-// The following sections organize tests by domain for easier navigation and
-// future extraction into separate test files. This is a light organization
-// pass without premature churn.
-//
-// Domain sections:
-// - Notebook/Topic tests (GetAvailableTopics, GetNotebookTopicTree, etc.)
-// - Quiz/Scoring tests (ScoreAnswer, quiz generation)
-// - Flashcard/FSRS tests (GenerateFlashcards)
-// - Written Answer tests (ScoreShortAnswer)
-// - Reader tests (GetReaderTopicBundle)
-// - Notebook Upload tests (DraftNotebookSyllabus, ConfirmNotebookSyllabus)
-// - Queue tests (ActivateTask, CompleteTask, SkipTask) [TO BE ADDED]
-// - Deterministic Ordering tests [TO BE ADDED]
-// ============================================================================
-
-// ============================================================================
-// AI/RAG TESTS
-// ============================================================================
+// === START APP CONTRACT TESTS ===
 
 func TestGetAvailableTopicsFromDB(t *testing.T) {
 	initTestDB(t)
@@ -468,10 +447,6 @@ func TestGetAvailableTopicsFromDB(t *testing.T) {
 		t.Fatalf("expected seeded topic os-scheduling in available topics: %#v", topics)
 	}
 }
-
-// ============================================================================
-// NOTEBOOK/TOPIC TESTS
-// ============================================================================
 
 func TestGetNotebookTopicTreeEmptyReturnsArray(t *testing.T) {
 	initCleanTestDB(t)
@@ -565,16 +540,8 @@ func TestGetNotebookTopicTreeReturnsNestedTopics(t *testing.T) {
 		t.Fatalf("unexpected history topics: %#v", historyTopics)
 	}
 }
-
-// ============================================================================
-// QUIZ/SCORING TESTS
-// ============================================================================
-
-
-
-// ============================================================================
-// FLASHCARD/FSRS TESTS
-// ============================================================================
+// === END APP CONTRACT TESTS ===
+// === START STUDY TESTS ===
 
 func TestGenerateFlashcardsCreatesAndReturnsCards(t *testing.T) {
 	app := newTestApp(t)
@@ -755,10 +722,6 @@ func TestGetReviewSessionNoDueCards(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// WRITTEN ANSWER TESTS
-// ============================================================================
-
 // TestGenerateShortAnswerPrompt_NoLLMProvider removed - study service now has fallback behavior
 
 // TestGenerateShortAnswerPrompt_NoRAGPipeline removed - study service now has fallback behavior
@@ -891,10 +854,6 @@ func extractFirstChunkID(prompt string) string {
 	}
 	return strings.TrimSpace(rest[:end])
 }
-
-// ============================================================================
-// READER TESTS
-// ============================================================================
 
 // Contract tests for GetReaderTopicBundle
 func TestGetReaderTopicBundle_Success(t *testing.T) {
@@ -1052,10 +1011,6 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 		t.Fatalf("expected citations array, got %#v", resp["cited_sections"])
 	}
 }
-
-// ============================================================================
-// NOTEBOOK UPLOAD TESTS
-// ============================================================================
 
 func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 	initTestDB(t)
@@ -1354,10 +1309,8 @@ func mustNotebookChunkCount(t *testing.T, notebookID string) int {
 	}
 	return len(chunks)
 }
-
-// ============================================================================
-// QUEUE CONTRACT TESTS
-// ============================================================================
+// === END STUDY TESTS ===
+// === START QUEUE TESTS ===
 
 // TestActivateTask_TransitionsPendingToActive verifies ActivateTask moves task from PENDING to ACTIVE.
 func TestActivateTask_TransitionsPendingToActive(t *testing.T) {
@@ -1534,10 +1487,6 @@ func TestSkipTask_MarksTaskAsSkipped(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// DETERMINISTIC ORDERING TESTS
-// ============================================================================
-
 // TestOrdering_TaskTypePriority verifies FLASHCARD_REVIEW > REREAD > QUIZ > READING > EXAMINER.
 func TestOrdering_TaskTypePriority(t *testing.T) {
 	initTestDB(t)
@@ -1702,7 +1651,4 @@ func TestOrdering_AntiStarvation(t *testing.T) {
 		t.Fatalf("expected task-b to win due to task type precedence, got: %s", firstTaskID)
 	}
 }
-
-// ============================================================================
-// LIGHTWEIGHT TEST BUILDERS
-// ============================================================================
+// === END QUEUE TESTS ===
