@@ -1060,3 +1060,68 @@ func (r *Repository) CountTasksByTopicTypeAndStatus(topicID, taskType, status st
 	return count, err
 }
 
+// GetLatestQuizAttemptScoreByTopic returns the score and passed status of the latest completed quiz attempt for a topic.
+func (r *Repository) GetLatestQuizAttemptScoreByTopic(topicID string) (int, bool, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return 0, false, fmt.Errorf("topic ID is required")
+	}
+	var score int
+	var passed bool
+	err := r.db.QueryRow(`
+		SELECT qa.score, qa.passed
+		FROM quiz_attempts qa
+		JOIN study_queue sq ON qa.task_id = sq.id
+		WHERE sq.topic_id = ? AND sq.task_type = 'QUIZ'
+		ORDER BY qa.completed_at DESC
+		LIMIT 1
+	`, topicID).Scan(&score, &passed)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return score, passed, nil
+}
+
+// EnsurePendingFlashcardSyncTask inserts a new FLASHCARD_SYNC task if none exists in PENDING or ACTIVE status.
+func (r *Repository) EnsurePendingFlashcardSyncTask(notebookID string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook ID is required")
+	}
+
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*) FROM study_queue
+		WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
+	`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil // Already exists
+	}
+
+	task := models.StudyQueueTask{
+		ID:         uuid.NewString(),
+		NotebookID: notebookID,
+		TaskType:   models.StudyTaskTypeFlashcardSync,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   0,
+	}
+	return r.InsertStudyTask(task)
+}
+
+// ResolveFlashcardSyncTasks marks all pending/active FLASHCARD_SYNC tasks as COMPLETED.
+func (r *Repository) ResolveFlashcardSyncTasks() error {
+	_, err := r.db.Exec(`
+		UPDATE study_queue
+		SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+		WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
+	`)
+	return err
+}
+
+

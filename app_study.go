@@ -815,3 +815,12 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 	}
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
 }
+
+// CompleteSocraticRescue completes the socratic rescue session and inserts a re-quiz.
+func (a *App) CompleteSocraticRescue(taskID string) error {
+	if a.studyService == nil {
+		return fmt.Errorf("study service not initialized")
+	}
+	return a.studyService.CompleteSocraticRescue(taskID)
+}
+
