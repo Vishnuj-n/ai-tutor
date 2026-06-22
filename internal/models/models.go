@@ -36,6 +36,8 @@ const (
 	StudyTaskTypeQuiz            StudyTaskType = "QUIZ"
 	StudyTaskTypeReading         StudyTaskType = "READING"
 	StudyTaskTypeExaminer        StudyTaskType = "EXAMINER"
+	StudyTaskTypeSocraticRemedial StudyTaskType = "SOCRATIC_REMEDIAL"
+	StudyTaskTypeFlashcardSync    StudyTaskType = "FLASHCARD_SYNC"
 )
 
 type StudyTaskStatus string
