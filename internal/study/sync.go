@@ -85,6 +85,7 @@ func TriggerCloudSync(repo *db.Repository) error {
 	var resp *http.Response
 	var lastErr error
 	const attempts = 3
+	client := &http.Client{Timeout: 10 * time.Second}
 
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
@@ -103,7 +104,6 @@ func TriggerCloudSync(repo *db.Repository) error {
 			req.Header.Set("Authorization", "Bearer "+settings.CloudAPIToken)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
 		resp, lastErr = client.Do(req)
 		if lastErr != nil {
 			lastErr = fmt.Errorf("network error during sync: %w", lastErr)
