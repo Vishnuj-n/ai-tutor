@@ -30,6 +30,7 @@ func InitSchema(tx *sql.Tx) error {
 			start_page INTEGER DEFAULT 0,
 			end_page INTEGER DEFAULT 0,
 			current_page_cursor INTEGER DEFAULT 0,
+			external_help_required BOOLEAN DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -350,6 +351,7 @@ func InitSchema(tx *sql.Tx) error {
 		{"user_settings", "rag_notebook_chapter", "ALTER TABLE user_settings ADD COLUMN rag_notebook_chapter BOOLEAN DEFAULT 1"},
 		{"user_settings", "rag_entire_notebook", "ALTER TABLE user_settings ADD COLUMN rag_entire_notebook BOOLEAN DEFAULT 1"},
 		{"user_settings", "rag_queue_study", "ALTER TABLE user_settings ADD COLUMN rag_queue_study BOOLEAN DEFAULT 1"},
+		{"topics", "external_help_required", "ALTER TABLE topics ADD COLUMN external_help_required BOOLEAN DEFAULT 0"},
 	}
 
 	for _, stmt := range alterStatements {

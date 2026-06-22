@@ -3,6 +3,7 @@ package db
 import (
 	"ai-tutor/internal/models"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -728,3 +729,72 @@ func TestCreateReviewSessionResolvesLegacyNotebookTopicContext(t *testing.T) {
 		t.Fatalf("expected 2 linked review cards, got %d", linkedCount)
 	}
 }
+
+func TestStudyQueueNewPriorityLevels(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "topic-priority"
+	notebookID := "nb-priority"
+
+	if err := testRepo.EnsureTopic(topicID, "Priority Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook(notebookID, "Priority Notebook", "/tmp/priority.pdf", "pdf", topicID, 5); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	taskTypes := []models.StudyTaskType{
+		models.StudyTaskTypeExaminer,
+		models.StudyTaskTypeSocraticRemedial,
+		models.StudyTaskTypeReading,
+		models.StudyTaskTypeQuiz,
+		models.StudyTaskTypeReread,
+		models.StudyTaskTypeFlashcardReview,
+		models.StudyTaskTypeFlashcardSync,
+	}
+
+	// Insert all task types in reverse-priority or arbitrary order to test queue sorting
+	for i, taskType := range taskTypes {
+		taskID := fmt.Sprintf("task-%d", i)
+		if err := testRepo.InsertStudyTask(models.StudyQueueTask{
+			ID:         taskID,
+			NotebookID: notebookID,
+			TopicID:    topicID,
+			TaskType:   taskType,
+			Status:     models.StudyTaskStatusPending,
+			Priority:   1, // keep same priority to test task type precedence
+		}); err != nil {
+			t.Fatalf("InsertStudyTask %s failed: %v", taskType, err)
+		}
+	}
+
+	// Expected order (highest priority first)
+	expectedOrder := []models.StudyTaskType{
+		models.StudyTaskTypeFlashcardSync,
+		models.StudyTaskTypeFlashcardReview,
+		models.StudyTaskTypeReread,
+		models.StudyTaskTypeQuiz,
+		models.StudyTaskTypeReading,
+		models.StudyTaskTypeSocraticRemedial,
+		models.StudyTaskTypeExaminer,
+	}
+
+	for _, expectedType := range expectedOrder {
+		next, err := testRepo.GetNextTask(notebookID)
+		if err != nil {
+			t.Fatalf("GetNextTask failed: %v", err)
+		}
+		if next.TaskType != expectedType {
+			t.Fatalf("expected next task type to be %s, got %s", expectedType, next.TaskType)
+		}
+		// Activate task first
+		if err := testRepo.ActivateTask(next.ID); err != nil {
+			t.Fatalf("ActivateTask failed: %v", err)
+		}
+		// Complete task to get the next one in queue
+		if err := testRepo.CompleteTask(next.ID, models.CompletionResult{Status: models.StudyTaskStatusCompleted}); err != nil {
+			t.Fatalf("CompleteTask failed: %v", err)
+		}
+	}
+}
+

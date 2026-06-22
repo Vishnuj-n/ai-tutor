@@ -121,10 +121,12 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			WHERE sq.status = 'PENDING'
 			ORDER BY
 				CASE sq.task_type
-					WHEN 'FLASHCARD_REVIEW' THEN 5
-					WHEN 'REREAD' THEN 4
-					WHEN 'QUIZ' THEN 3
-					WHEN 'READING' THEN 2
+					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'FLASHCARD_REVIEW' THEN 6
+					WHEN 'REREAD' THEN 5
+					WHEN 'QUIZ' THEN 4
+					WHEN 'READING' THEN 3
+					WHEN 'SOCRATIC_REMEDIAL' THEN 2
 					WHEN 'EXAMINER' THEN 1
 					ELSE 0
 				END DESC,
@@ -201,19 +203,23 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 						-- Escape hatch ranking
 						CASE WHEN ? = 1 THEN
 							CASE sq.task_type
-								WHEN 'REREAD' THEN 5
-								WHEN 'QUIZ' THEN 4
-								WHEN 'READING' THEN 3
+								WHEN 'FLASHCARD_SYNC' THEN 7
+								WHEN 'REREAD' THEN 6
+								WHEN 'QUIZ' THEN 5
+								WHEN 'READING' THEN 4
+								WHEN 'SOCRATIC_REMEDIAL' THEN 3
 								WHEN 'EXAMINER' THEN 2
 								WHEN 'FLASHCARD_REVIEW' THEN 1
 								ELSE 0
 							END
 						ELSE
 							CASE sq.task_type
-								WHEN 'FLASHCARD_REVIEW' THEN 5
-								WHEN 'REREAD' THEN 4
-								WHEN 'QUIZ' THEN 3
-								WHEN 'READING' THEN 2
+								WHEN 'FLASHCARD_SYNC' THEN 7
+								WHEN 'FLASHCARD_REVIEW' THEN 6
+								WHEN 'REREAD' THEN 5
+								WHEN 'QUIZ' THEN 4
+								WHEN 'READING' THEN 3
+								WHEN 'SOCRATIC_REMEDIAL' THEN 2
 								WHEN 'EXAMINER' THEN 1
 								ELSE 0
 							END
@@ -231,6 +237,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			  AND (
 				  ? = ''
 				  OR sq.task_type = 'FLASHCARD_REVIEW'
+				  OR sq.task_type = 'FLASHCARD_SYNC'
 				  OR n.study_status = 'active'
 			  )
 		)
@@ -425,10 +432,12 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 		query += `
 			ORDER BY
 				CASE sq.task_type
-					WHEN 'FLASHCARD_REVIEW' THEN 5
-					WHEN 'REREAD' THEN 4
-					WHEN 'QUIZ' THEN 3
-					WHEN 'READING' THEN 2
+					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'FLASHCARD_REVIEW' THEN 6
+					WHEN 'REREAD' THEN 5
+					WHEN 'QUIZ' THEN 4
+					WHEN 'READING' THEN 3
+					WHEN 'SOCRATIC_REMEDIAL' THEN 2
 					WHEN 'EXAMINER' THEN 1
 					ELSE 0
 				END DESC,
@@ -497,26 +506,30 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 			query += ` AND n.profile_id = ?`
 			args = append(args, activeProfileStr)
 		}
-		query += ` AND (sq.task_type = 'FLASHCARD_REVIEW' OR n.study_status = 'active')`
+		query += ` AND (sq.task_type = 'FLASHCARD_REVIEW' OR sq.task_type = 'FLASHCARD_SYNC' OR n.study_status = 'active')`
 	}
 
 	query += `
 		ORDER BY
 			CASE WHEN ? = 1 THEN
 				CASE sq.task_type
-					WHEN 'REREAD' THEN 5
-					WHEN 'QUIZ' THEN 4
-					WHEN 'READING' THEN 3
+					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'REREAD' THEN 6
+					WHEN 'QUIZ' THEN 5
+					WHEN 'READING' THEN 4
+					WHEN 'SOCRATIC_REMEDIAL' THEN 3
 					WHEN 'EXAMINER' THEN 2
 					WHEN 'FLASHCARD_REVIEW' THEN 1
 					ELSE 0
 				END
 			ELSE
 				CASE sq.task_type
-					WHEN 'FLASHCARD_REVIEW' THEN 5
-					WHEN 'REREAD' THEN 4
-					WHEN 'QUIZ' THEN 3
-					WHEN 'READING' THEN 2
+					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'FLASHCARD_REVIEW' THEN 6
+					WHEN 'REREAD' THEN 5
+					WHEN 'QUIZ' THEN 4
+					WHEN 'READING' THEN 3
+					WHEN 'SOCRATIC_REMEDIAL' THEN 2
 					WHEN 'EXAMINER' THEN 1
 					ELSE 0
 				END
