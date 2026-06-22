@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -178,6 +179,10 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		titlePrefix = "Flashcard Review"
 	case models.StudyTaskTypeExaminer:
 		titlePrefix = "Examiner"
+	case models.StudyTaskTypeSocraticRemedial:
+		titlePrefix = "Concept Rescue"
+	case models.StudyTaskTypeFlashcardSync:
+		titlePrefix = "Sync Flashcards"
 	}
 
 	meta := ""
@@ -817,10 +822,82 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 }
 
 // CompleteSocraticRescue completes the socratic rescue session and inserts a re-quiz.
-func (a *App) CompleteSocraticRescue(taskID string) error {
+func (a *App) CompleteSocraticRescue(taskID string) map[string]interface{} {
 	if a.studyService == nil {
-		return fmt.Errorf("study service not initialized")
+		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	return a.studyService.CompleteSocraticRescue(taskID)
+	if err := a.studyService.CompleteSocraticRescue(taskID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+// GetAppEnv returns the current value of the APP_ENV environment variable.
+func (a *App) GetAppEnv() map[string]interface{} {
+	return map[string]interface{}{
+		"env": os.Getenv("APP_ENV"),
+	}
+}
+
+// DevForceSocraticRescue forces a topic into the SOCRATIC_REMEDIAL queue task state.
+// Only accessible when APP_ENV = dev.
+func (a *App) DevForceSocraticRescue(notebookID, topicID string) map[string]interface{} {
+	if os.Getenv("APP_ENV") != "dev" {
+		return map[string]interface{}{"error": "forbidden: dev mode only"}
+	}
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+
+	tx, err := repo.Begin()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	defer tx.Rollback()
+
+	// Wipe FSRS flashcards for this topic to protect purity
+	if err := repo.DeleteFSRSCardsByTopicIDTx(tx, topicID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	feedback := "Concept rescue activated. Complete the Socratic session to retry."
+	socraticTaskID := uuid.NewString()
+	socraticPayload, _ := json.Marshal(map[string]string{
+		"feedback": feedback,
+		"lane":     "socratic_rescue",
+		"mode":     "external_prompt",
+	})
+
+	_, err = tx.Exec(`
+		INSERT INTO study_queue (
+			id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
+		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
+	`, socraticTaskID, notebookID, topicID, string(models.StudyTaskTypeSocraticRemedial), string(models.StudyTaskStatusPending), 0, string(socraticPayload), 1, 10)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	return map[string]interface{}{"ok": true, "task_id": socraticTaskID}
+}
+
+// DevForceFlashcardSync forces a FLASHCARD_SYNC task into the pending queue.
+// Only accessible when APP_ENV = dev.
+func (a *App) DevForceFlashcardSync(notebookID string) map[string]interface{} {
+	if os.Getenv("APP_ENV") != "dev" {
+		return map[string]interface{}{"error": "forbidden: dev mode only"}
+	}
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if err := repo.EnsurePendingFlashcardSyncTask(notebookID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
 }
 

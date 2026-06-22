@@ -111,22 +111,50 @@
         </p>
       </div>
 
+      <!-- Flashcard generation/sync error -->
       <div
         v-if="result.passed && result.flashcards_generation_error"
-        class="result-panel__reread-message"
+        class="result-panel__network-warning"
       >
-        Flashcard generation failed: {{ result.flashcards_generation_message || 'Unknown error' }}
+        <span class="warning-icon">⚠</span>
+        <div class="warning-text">
+          <p class="warning-title">Sync Warning / Network Error</p>
+          <p class="warning-detail">
+            Flashcard sync could not be completed automatically. A background task has been scheduled.
+            You can try manually retrying the sync now.
+          </p>
+          <p class="warning-message">Reason: {{ result.flashcards_generation_message || 'Unknown error' }}</p>
+        </div>
       </div>
 
       <!-- Reread message (when failed) -->
       <p v-if="!result.passed && result.reread_task_id" class="result-panel__reread-message">
         Reread session added to your learning queue.
       </p>
-      <p v-if="!result.passed" class="result-panel__attempts">
+      <p v-if="!result.passed && result.reread_task_id" class="result-panel__attempts">
         Attempt {{ result.reread_attempt_count }} of {{ result.max_reread_attempts }}
       </p>
 
+      <!-- External help notice (when failed re-quiz) -->
+      <div v-if="!result.passed && !result.reread_task_id && result.manual_review_recommended" class="result-panel__external-help-notice">
+        <p class="external-help-title">External Review Required</p>
+        <p class="external-help-desc">
+          This concept requires external review. Your next reading task has been unlocked so you don't fall behind.
+          Please consult your notes or instructor for this page range.
+        </p>
+      </div>
+
       <div class="result-panel__actions">
+        <!-- Retry Sync Button -->
+        <button
+          v-if="result.passed && result.flashcards_generation_error"
+          class="primary-btn retry-btn"
+          :disabled="generatingFlashcards"
+          @click="retryFlashcardGeneration"
+        >
+          {{ generatingFlashcards ? 'Retrying sync...' : 'Retry Sync' }}
+        </button>
+
         <button
           class="primary-btn continue-btn"
           :disabled="generatingFlashcards"
@@ -398,6 +426,15 @@ async function submitQuiz() {
     error.value = err?.message || 'Failed to submit quiz.'
   } finally {
     submitting.value = false
+  }
+}
+
+async function retryFlashcardGeneration() {
+  if (result.value) {
+    result.value.flashcards_generation_error = false
+    result.value.flashcards_generation_message = ''
+    result.value.flashcards_pending = true
+    await handleContinue()
   }
 }
 
@@ -697,8 +734,8 @@ async function handleContinue() {
 
 .option-row {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   padding: 10px 12px;
   border-radius: 10px;
   background: var(--surface-container-low);
@@ -769,5 +806,79 @@ async function handleContinue() {
 .primary-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.result-panel__network-warning {
+  display: flex;
+  gap: 12px;
+  background: rgba(230, 126, 34, 0.1);
+  border: 1px solid rgba(230, 126, 34, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.warning-icon {
+  font-size: 20px;
+  color: #d35400;
+  flex-shrink: 0;
+}
+
+.warning-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #d35400;
+}
+
+.warning-detail, .warning-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--on-surface);
+}
+
+.warning-message {
+  margin-top: 6px;
+  font-family: monospace;
+  font-size: 11.5px;
+  background: var(--surface-container-low);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.result-panel__external-help-notice {
+  background: rgba(192, 41, 43, 0.1);
+  border: 1px solid rgba(192, 41, 43, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.external-help-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #c0392b;
+}
+
+.external-help-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--on-surface);
+}
+
+.retry-btn {
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  border: 1px solid var(--outline-variant);
+  margin-right: 12px;
+}
+
+.retry-btn:hover {
+  background: var(--outline-variant);
 }
 </style>

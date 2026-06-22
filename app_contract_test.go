@@ -1745,10 +1745,9 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("failed to insert socratic task: %v", err)
 	}
-
-	err := app.CompleteSocraticRescue("task-socratic-test")
-	if err != nil {
-		t.Fatalf("CompleteSocraticRescue failed: %v", err)
+	res := app.CompleteSocraticRescue("task-socratic-test")
+	if errVal, ok := res["error"]; ok && errVal != nil {
+		t.Fatalf("CompleteSocraticRescue failed: %v", errVal)
 	}
 
 	// Verify SOCRATIC_REMEDIAL task status is COMPLETED

@@ -244,6 +244,22 @@ export function getProfileDailyPace(profileID) {
   return appBridge().GetProfileDailyPace(profileID)
 }
 
+export function completeSocraticRescue(taskID) {
+  return appBridge().CompleteSocraticRescue(taskID)
+}
+
+export function getAppEnv() {
+  return appBridge().GetAppEnv()
+}
+
+export function devForceSocraticRescue(notebookID, topicID) {
+  return appBridge().DevForceSocraticRescue(notebookID, topicID)
+}
+
+export function devForceFlashcardSync(notebookID) {
+  return appBridge().DevForceFlashcardSync(notebookID)
+}
+
 export function logFrontendEvent(level, component, event, details = '') {
   try {
     const bridge = window?.go?.main?.App
