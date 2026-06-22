@@ -32,6 +32,20 @@
       </div>
     </article>
 
+    <!-- Socratic Rescue Active Banner -->
+    <article v-if="hasSocraticRescueTask" class="card rescue-banner">
+      <div class="rescue-content">
+        <span class="rescue-icon">🛡</span>
+        <div class="rescue-text">
+          <p class="rescue-title">Concept Rescue Active</p>
+          <p class="rescue-subtitle">
+            Your study queue is locked because you failed the quiz twice on this topic.
+            You must complete the Socratic tutor rescue session to unblock your timeline.
+          </p>
+        </div>
+      </div>
+    </article>
+
     <!-- Flashcard creation confirmation banner -->
     <article v-if="flashcardsJustCreated" class="card flashcard-success-banner">
       <div class="flashcard-success-content">
@@ -140,7 +154,7 @@
       <div v-if="tasks.length > 0" class="task-list">
         <article v-for="task in tasks" :key="task.id" class="card task-card">
           <div class="task-header">
-            <span class="task-type">{{ task.action_type }}</span>
+            <span class="task-type" :class="task.action_type.toLowerCase()">{{ formatTaskType(task.action_type) }}</span>
             <span class="task-estimate">{{ task.estimate_minutes }} min</span>
           </div>
           <h3>{{ task.title }}</h3>
@@ -159,10 +173,14 @@
           <button
             type="button"
             class="primary-btn"
+            :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
             :aria-label="'Start task ' + (task.title || task.id)"
+            :disabled="syncingTaskId === task.id"
             @click="startTask(task)"
           >
-            Start
+            <span v-if="syncingTaskId === task.id">Syncing...</span>
+            <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
+            <span v-else>Start</span>
           </button>
         </article>
       </div>
@@ -177,6 +195,33 @@
         <p class="muted">Go to Notebooks to upload and activate textbooks.</p>
       </div>
     </template>
+
+    <!-- Dev Mode Bypass Panel -->
+    <div v-if="appEnv === 'dev'" class="dev-panel card">
+      <header class="dev-header">
+        <h4>🛠 Dev Tools</h4>
+        <span class="dev-badge">APP_ENV = dev</span>
+      </header>
+      <div class="dev-actions">
+        <button
+          type="button"
+          class="dev-btn"
+          :disabled="forcingRescue"
+          @click="forceRescueState"
+        >
+          {{ forcingRescue ? 'Forcing...' : 'Force Socratic Rescue' }}
+        </button>
+        <button
+          type="button"
+          class="dev-btn"
+          :disabled="forcingSync"
+          @click="forceSyncTask"
+        >
+          {{ forcingSync ? 'Forcing...' : 'Force Flashcard Sync' }}
+        </button>
+      </div>
+      <p v-if="devMessage" class="dev-message">{{ devMessage }}</p>
+    </div>
   </section>
 </template>
 
@@ -189,6 +234,11 @@ import {
   getUserSettings,
   updateUserSettings,
   getProfileDailyPace,
+  triggerCloudSync,
+  getAppEnv,
+  devForceSocraticRescue,
+  devForceFlashcardSync,
+  getNotebooks,
 } from '../services/appApi'
 
 const router = useRouter()
@@ -224,7 +274,25 @@ const activeProfileName = computed(() => {
   return p ? p.name : 'Unknown'
 })
 
+const appEnv = ref('')
+const forcingRescue = ref(false)
+const forcingSync = ref(false)
+const devMessage = ref('')
+const syncingTaskId = ref('')
+
+const hasSocraticRescueTask = computed(() => {
+  return tasks.value.some((t) => t.action_type === 'socratic_remedial')
+})
+
 onMounted(async () => {
+  try {
+    const envRes = await getAppEnv()
+    if (envRes && envRes.env) {
+      appEnv.value = envRes.env
+    }
+  } catch (err) {
+    console.error('Failed to get APP_ENV:', err)
+  }
   if (flashcardsJustCreated.value > 0) {
     const newQuery = { ...route.query }
     delete newQuery.flashcardsCreated
@@ -365,6 +433,92 @@ function formatDaysRemaining(days) {
   return `${days} days left`
 }
 
+async function runFlashcardSyncInline(task) {
+  try {
+    syncingTaskId.value = task.id
+    actionError.value = ''
+    const res = await triggerCloudSync()
+    if (res && res.error) {
+      actionError.value = `Cloud Sync Failed: ${res.error}. Please check your connection.`
+    } else {
+      await loadAgenda()
+    }
+  } catch (err) {
+    actionError.value = `Cloud Sync Error: ${err.message || err}`
+  } finally {
+    syncingTaskId.value = ''
+  }
+}
+
+function formatTaskType(type) {
+  const t = (type || '').toLowerCase()
+  if (t === 'reading') return 'Reading'
+  if (t === 'flashcard_review') return 'Review'
+  if (t === 'quiz') return 'Quiz'
+  if (t === 'examiner') return 'Examiner'
+  if (t === 'reread') return 'Reread'
+  if (t === 'socratic_remedial') return 'Concept Rescue'
+  if (t === 'flashcard_sync') return 'Cloud Sync'
+  return type
+}
+
+async function forceRescueState() {
+  forcingRescue.value = true
+  devMessage.value = ''
+  try {
+    const nbsRes = await getNotebooks()
+    const notebooks = Array.isArray(nbsRes) ? nbsRes.filter((n) => !n.error) : []
+    if (notebooks.length === 0) {
+      devMessage.value = 'No notebooks found. Please upload a notebook first.'
+      forcingRescue.value = false
+      return
+    }
+
+    const validNb = notebooks.find(n => n.topic_id)
+    if (!validNb) {
+      devMessage.value = 'No notebook with a linked topic found. Confirm syllabus first.'
+      forcingRescue.value = false
+      return
+    }
+
+    const res = await devForceSocraticRescue(validNb.id, validNb.topic_id)
+    if (res && res.error) {
+      devMessage.value = 'Error: ' + res.error
+    } else {
+      devMessage.value = 'Successfully forced Socratic Rescue state!'
+      await loadAgenda()
+    }
+  } catch (err) {
+    devMessage.value = 'Error: ' + err.message
+  } finally {
+    forcingRescue.value = false
+  }
+}
+
+async function forceSyncTask() {
+  forcingSync.value = true
+  devMessage.value = ''
+  try {
+    const nbsRes = await getNotebooks()
+    const notebooks = Array.isArray(nbsRes) ? nbsRes.filter((n) => !n.error) : []
+    let nbId = 'system_default'
+    if (notebooks.length > 0) {
+      nbId = notebooks[0].id
+    }
+    const res = await devForceFlashcardSync(nbId)
+    if (res && res.error) {
+      devMessage.value = 'Error: ' + res.error
+    } else {
+      devMessage.value = 'Successfully forced Flashcard Sync task!'
+      await loadAgenda()
+    }
+  } catch (err) {
+    devMessage.value = 'Error: ' + err.message
+  } finally {
+    forcingSync.value = false
+  }
+}
+
 function startTask(task) {
   let routePath = '/dashboard'
   const query = {
@@ -386,6 +540,11 @@ function startTask(task) {
     routePath = '/examiner'
   } else if (action === 'reread') {
     routePath = '/reader'
+  } else if (action === 'socratic_remedial') {
+    routePath = '/socratic-rescue'
+  } else if (action === 'flashcard_sync') {
+    runFlashcardSyncInline(task)
+    return
   } else {
     actionError.value = `Unknown task action type: ${task.action_type}`
     return
@@ -737,5 +896,114 @@ function startTask(task) {
 
 .error-card h2 {
   color: #eb5e55;
+}
+
+.rescue-banner {
+  background: rgba(211, 84, 0, 0.1);
+  border: 1px solid rgba(211, 84, 0, 0.2);
+}
+
+.rescue-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px;
+}
+
+.rescue-icon {
+  width: 40px;
+  height: 40px;
+  background: #d35400;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.rescue-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #d35400;
+}
+
+.rescue-subtitle {
+  margin: 0;
+  font-size: 13px;
+}
+
+.task-type.flashcard_sync {
+  color: #c0392b;
+  background: rgba(192, 41, 43, 0.1);
+}
+
+.task-type.socratic_remedial {
+  color: #d35400;
+  background: rgba(211, 84, 0, 0.1);
+}
+
+.primary-btn.sync-btn {
+  background: linear-gradient(135deg, #c0392b, #e74c3c);
+  box-shadow: 0 4px 10px rgba(192, 41, 43, 0.15);
+}
+
+.dev-panel {
+  margin-top: 32px;
+  padding: 20px;
+  border-color: #f1c40f;
+  background: rgba(241, 196, 15, 0.05);
+}
+
+.dev-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.dev-header h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.dev-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: #f1c40f;
+  color: #2c3e50;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.dev-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.dev-btn {
+  background: #34495e;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.dev-btn:hover {
+  opacity: 0.9;
+}
+
+.dev-message {
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #16a085;
 }
 </style>

@@ -5,6 +5,7 @@ import Reader from '../pages/Reader.vue'
 import Quiz from '../pages/Quiz.vue'
 import Flashcards from '../pages/Flashcards.vue'
 import Socratic from '../pages/Socratic.vue'
+import SocraticRescue from '../pages/SocraticRescue.vue'
 import Settings from '../pages/Settings.vue'
 import Notebook from '../pages/Notebook.vue'
 import Onboarding from '../pages/Onboarding.vue'
@@ -23,6 +24,7 @@ const routes = [
   },
   { path: '/tutor', name: 'tutor', component: Socratic },
   { path: '/socratic', redirect: '/tutor' },
+  { path: '/socratic-rescue', name: 'socratic-rescue', component: SocraticRescue },
   { path: '/notebooks', name: 'notebooks', component: Notebook },
   { path: '/settings', name: 'settings', component: Settings },
   { path: '/onboarding', name: 'onboarding', component: Onboarding },
