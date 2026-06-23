@@ -534,9 +534,7 @@ When a student fails a quiz twice on the same topic, the system intervenes with 
 ```
 
 **Key behaviors:**
-- SOCRATIC_REMEDIAL sits at priority tier 2 (between READING=3 and EXAMINER=1)
-- In standard mode, READING tasks may surface before SOCRATIC_REMEDIAL for other topics
-- In escape-hatch mode, SOCRATIC_REMEDIAL is tier 3 (blocks READING)
+- SOCRATIC_REMEDIAL sits at priority tier 6 (between READING at tier 5 and EXAMINER at tier 7)
 - Student cannot skip — must complete rescue session
 - Re-quiz pass → flashcards generated, topic mastered
 - Re-quiz fail → `external_help_required` flag set on topic, queue unblocks, notice shown

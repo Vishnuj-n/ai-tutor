@@ -310,6 +310,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	attemptID := uuid.NewString()
 	followUps := make([]models.StudyQueueTask, 0, 1)
 	rereadTaskID := ""
+	socraticTaskID := ""
 	rereadAttemptCount := 0
 	manualReviewRecommended := false
 	completionStatus := models.StudyTaskStatusCompleted
@@ -393,7 +394,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				}
 
 				// Shift session into Socratic Rescue Lane by generating a SOCRATIC_REMEDIAL task
-				socraticTaskID := uuid.NewString()
+				socraticTaskID = uuid.NewString()
 				socraticPayload, _ := json.Marshal(map[string]string{
 					"feedback": feedback,
 					"lane":     "socratic_rescue",
@@ -450,11 +451,19 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	if passed {
 		utils.LogQuizResult(task.ID, score, true, "")
 	} else if task.TopicID != "" {
-		if rereadAttemptCount <= maxAutomaticRereadAttempts {
-			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
+		if isRescueRequiz {
+			utils.LogQuizResult(task.ID, score, false, "")
+			utils.Warnf("[QUIZ] quiz_failed_requiz_failed notebookID=%s topicID=%s — external help marked", task.NotebookID, task.TopicID)
+		} else if rereadAttemptCount <= maxAutomaticRereadAttempts {
+			if rereadTaskID != "" {
+				utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
+			}
+			utils.LogQuizResult(task.ID, score, false, rereadTaskID)
+			utils.Warnf("[QUIZ] quiz_failed_reread_created notebookID=%s topicID=%s rereadTaskID=%s", task.NotebookID, task.TopicID, rereadTaskID)
+		} else {
+			utils.LogQuizResult(task.ID, score, false, "")
+			utils.Warnf("[QUIZ] quiz_failed_socratic_rescue_created notebookID=%s topicID=%s socraticTaskID=%s", task.NotebookID, task.TopicID, socraticTaskID)
 		}
-		utils.LogQuizResult(task.ID, score, false, rereadTaskID)
-		utils.Warnf("[QUIZ] quiz_failed_reread_created notebookID=%s topicID=%s rereadTaskID=%s", task.NotebookID, task.TopicID, rereadTaskID)
 	}
 
 	return models.QuizResult{

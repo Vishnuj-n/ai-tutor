@@ -16,26 +16,8 @@
       </div>
     </template>
 
-    <!-- Mode tabs (pill style, no divider line) -->
-    <nav class="mode-tabs" aria-label="Assessment mode">
-      <button
-        id="tab-comprehensive"
-        :class="['mode-tab', { 'mode-tab--active': activeTab === 'comprehensive' }]"
-        @click="activeTab = 'comprehensive'"
-      >
-        Comprehensive Exam
-      </button>
-      <button
-        id="tab-explorer"
-        :class="['mode-tab', { 'mode-tab--active': activeTab === 'explorer' }]"
-        @click="activeTab = 'explorer'"
-      >
-        Semantic Discovery
-      </button>
-    </nav>
-
     <!-- ── COMPREHENSIVE TAB ───────────────────── -->
-    <section v-if="activeTab === 'comprehensive'" class="tab-content">
+    <section class="tab-content">
       <!-- Config panel: idle / pre-question state -->
       <div v-if="!question" class="config-panel">
         <p class="config-panel__hint">
@@ -141,14 +123,6 @@
       </article>
     </section>
 
-    <!-- ── EXPLORER TAB (stub) ────────────────── -->
-    <section v-else class="tab-content stub-panel">
-      <p class="eyebrow-inline">Coming in Phase 2</p>
-      <p class="stub-text">
-        Semantic Discovery will surface concept clusters and generate targeted questions across your
-        notebooks.
-      </p>
-    </section>
   </StudyPageLayout>
 </template>
 
@@ -159,7 +133,6 @@ import StudyPageLayout from '../components/StudyPageLayout.vue'
 
 const notebooks = ref([])
 const selectedNotebookID = ref('')
-const activeTab = ref('comprehensive')
 const startPage = ref(1)
 const endPage = ref(10)
 const loading = ref(false)
@@ -301,41 +274,6 @@ function reset() {
 .ghost-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* ── Mode tabs (pill style, no divider line) ──── */
-.mode-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--surface-container-low);
-  border-radius: 12px;
-  width: fit-content;
-}
-
-.mode-tab {
-  padding: 7px 16px;
-  border: 0;
-  border-radius: 9px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted-text);
-  background: transparent;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.mode-tab:hover:not(.mode-tab--active) {
-  color: var(--on-surface);
-  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
-}
-
-.mode-tab--active {
-  background: var(--surface-container-lowest);
-  color: var(--on-surface);
 }
 
 /* ── Tab content ──────────────────────────────── */
@@ -630,32 +568,6 @@ function reset() {
   color: var(--on-surface);
   line-height: 1.65;
   max-width: 72ch;
-}
-
-/* ── Explorer stub ────────────────────────────── */
-.stub-panel {
-  background: var(--surface-container-low);
-  border-radius: 16px;
-  padding: 64px 24px;
-  text-align: center;
-}
-
-.eyebrow-inline {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted-text);
-}
-
-.stub-text {
-  margin: 8px 0 0;
-  font-size: 15px;
-  color: var(--muted-text);
-  line-height: 1.6;
-  max-width: 52ch;
-  margin-inline: auto;
 }
 
 /* ── Responsive ───────────────────────────────── */

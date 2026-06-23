@@ -170,7 +170,7 @@ const isLoading = ref(false)
 const globalError = ref('')
 const threadRef = ref(null)
 
-const taskId = ref(route.query.taskId || '')
+const taskId = ref(route.query.taskId || route.query.task_id || '')
 const isRescueMode = computed(() => !!taskId.value)
 const completingRescue = ref(false)
 

@@ -99,7 +99,7 @@ describe('Dashboard.vue Integration', () => {
       tasks: [
         {
           id: 'task-2',
-          task_type: 'EXAMINER',
+          task_type: 'SOCRATIC_REMEDIAL',
           action_type: 'socratic_remedial'
         }
       ],

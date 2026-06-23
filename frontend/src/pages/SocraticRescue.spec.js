@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import SocraticRescue from './SocraticRescue.vue'
 import * as appApi from '../services/appApi'
@@ -9,7 +9,8 @@ const routeQuery = ref({})
 // Mock services/appApi
 vi.mock('../services/appApi', () => ({
   getReaderTopicBundle: vi.fn(),
-  completeSocraticRescue: vi.fn()
+  completeSocraticRescue: vi.fn(),
+  GetTaskContext: vi.fn()
 }))
 
 // Mock vue-router hooks
@@ -38,6 +39,17 @@ describe('SocraticRescue.vue Integration', () => {
         writeText: vi.fn().mockResolvedValue()
       }
     })
+
+    // Mock GetTaskContext
+    appApi.GetTaskContext.mockResolvedValue({
+      task: {
+        id: 'task-456',
+        topic_id: 'topic-123',
+        notebook_id: 'notebook-789',
+        start_page: 1,
+        end_page: 10
+      }
+    })
   })
 
   it('loads source material and displays generated socratic prompt', async () => {
@@ -48,9 +60,9 @@ describe('SocraticRescue.vue Integration', () => {
     })
 
     const wrapper = mount(SocraticRescue)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
-    expect(appApi.getReaderTopicBundle).toHaveBeenCalledWith('topic-123', '')
+    expect(appApi.getReaderTopicBundle).toHaveBeenCalledWith('topic-123', 'notebook-789')
     expect(wrapper.find('.source-text').text()).toBe('DeepMind builds AI agents.')
     expect(wrapper.find('.prompt-textarea').element.value).toContain('DeepMind builds AI agents.')
   })
@@ -60,11 +72,11 @@ describe('SocraticRescue.vue Integration', () => {
     appApi.completeSocraticRescue.mockResolvedValue({ error: null })
 
     const wrapper = mount(SocraticRescue)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     const completeBtn = wrapper.find('.complete-btn')
     await completeBtn.trigger('click')
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(appApi.completeSocraticRescue).toHaveBeenCalledWith('task-456')
   })
@@ -73,7 +85,7 @@ describe('SocraticRescue.vue Integration', () => {
     routeQuery.value = {} // Empty query parameters
 
     const wrapper = mount(SocraticRescue)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(wrapper.find('.error-state').exists()).toBe(true)
     expect(wrapper.find('.error-msg').text()).toContain('Missing required route context')

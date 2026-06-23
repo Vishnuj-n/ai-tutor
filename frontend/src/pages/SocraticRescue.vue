@@ -120,7 +120,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getReaderTopicBundle, completeSocraticRescue } from '../services/appApi'
+import { getReaderTopicBundle, completeSocraticRescue, GetTaskContext } from '../services/appApi'
 
 const route = useRoute()
 const router = useRouter()
@@ -148,15 +148,42 @@ ${sourceText.value}
 })
 
 onMounted(async () => {
-  topicID.value = route.query.topicId || ''
-  notebookID.value = route.query.notebookId || ''
-  taskID.value = route.query.taskId || ''
-  startPage.value = parseInt(route.query.startPage, 10) || 1
-  endPage.value = parseInt(route.query.endPage, 10) || 10
+  taskID.value = route.query.taskId || route.query.task_id || ''
 
-  if (!topicID.value || !taskID.value) {
-    error.value = 'Missing required route context (topicId/taskId).'
+  if (!taskID.value) {
+    error.value = 'Missing required route context (taskId).'
     loading.value = false
+    return
+  }
+
+  try {
+    loading.value = true
+    const contextRes = await GetTaskContext(taskID.value)
+    if (contextRes?.error) {
+      error.value = `Failed to load task context: ${contextRes.error}`
+      loading.value = false
+      return
+    }
+    const task = contextRes?.task
+    if (!task) {
+      error.value = 'Task not found.'
+      loading.value = false
+      return
+    }
+    topicID.value = task.topic_id || ''
+    notebookID.value = task.notebook_id || ''
+    startPage.value = parseInt(task.start_page, 10) || 1
+    endPage.value = parseInt(task.end_page, 10) || 10
+  } catch (err) {
+    error.value = `Failed to fetch task context: ${err.message || err}`
+    loading.value = false
+    return
+  } finally {
+    loading.value = false
+  }
+
+  if (!topicID.value) {
+    error.value = 'Task does not specify a topic.'
     return
   }
 

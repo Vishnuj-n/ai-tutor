@@ -566,6 +566,33 @@ func (a *App) GetTask(taskID string) map[string]interface{} {
 	return map[string]interface{}{"task": task}
 }
 
+func (a *App) GetTaskContext(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	task, err := repo.GetTaskByID(taskID)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{
+		"task": task,
+		"topic": map[string]interface{}{
+			"id": task.TopicID,
+		},
+		"notebook": map[string]interface{}{
+			"id": task.NotebookID,
+		},
+	}
+}
+
 func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -893,11 +920,18 @@ func (a *App) DevForceSocraticRescue(notebookID, topicID string) map[string]inte
 		"mode":     "external_prompt",
 	})
 
-	_, err = tx.Exec(`
-		INSERT INTO study_queue (
-			id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
-		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
-	`, socraticTaskID, notebookID, topicID, string(models.StudyTaskTypeSocraticRemedial), string(models.StudyTaskStatusPending), 0, string(socraticPayload), 1, 10)
+	socraticTask := models.StudyQueueTask{
+		ID:          socraticTaskID,
+		NotebookID:  notebookID,
+		TopicID:     topicID,
+		TaskType:    models.StudyTaskTypeSocraticRemedial,
+		Status:      models.StudyTaskStatusPending,
+		Priority:    0,
+		PayloadJSON: string(socraticPayload),
+		StartPage:   1,
+		EndPage:     10,
+	}
+	err = repo.InsertStudyTaskTx(tx, socraticTask)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
