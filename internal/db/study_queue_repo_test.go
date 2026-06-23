@@ -771,11 +771,11 @@ func TestStudyQueueNewPriorityLevels(t *testing.T) {
 	// Expected order (highest priority first)
 	expectedOrder := []models.StudyTaskType{
 		models.StudyTaskTypeFlashcardSync,
+		models.StudyTaskTypeSocraticRemedial,
 		models.StudyTaskTypeFlashcardReview,
 		models.StudyTaskTypeReread,
 		models.StudyTaskTypeQuiz,
 		models.StudyTaskTypeReading,
-		models.StudyTaskTypeSocraticRemedial,
 		models.StudyTaskTypeExaminer,
 	}
 

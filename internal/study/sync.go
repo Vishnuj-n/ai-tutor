@@ -53,6 +53,9 @@ func TriggerCloudSync(repo *db.Repository) error {
 		return err
 	}
 	if settings.CloudSyncURL == "" {
+		if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
+			utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
+		}
 		return nil // Cloud sync not configured
 	}
 

@@ -6,40 +6,78 @@
     </header>
 
     <article class="chat-shell">
-      <div class="chat-toolbar">
-        <div class="control-group">
-          <label for="notebook-select">Notebook</label>
-          <select id="notebook-select" v-model="selectedNotebookID" @change="handleNotebookChange">
-            <option value="" disabled>Choose notebook</option>
-            <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
-              {{ formatNotebookLabel(notebook) }}
-            </option>
-          </select>
+      <!-- Socratic Rescue Active Banner -->
+      <div v-if="isRescueMode" class="rescue-alert-banner">
+        <div class="rescue-alert-content">
+          <span class="rescue-alert-icon">🛡️</span>
+          <div class="rescue-alert-text">
+            <strong>Concept Rescue Active</strong>
+            <p>Chat with the Socratic tutor about this topic. When you feel ready, click the button to retry your quiz.</p>
+          </div>
         </div>
-
-        <div class="control-group">
-          <label for="topic-select">Topic</label>
-          <select id="topic-select" v-model="selectedTopicID" @change="handleTopicChange">
-            <option v-if="ragEntireNotebookEnabled" value="">Entire book (No topic filter)</option>
-            <option v-else value="" disabled>Choose topic</option>
-            <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
-              {{ topic.title }}
-            </option>
-          </select>
-        </div>
-
-        <button type="button" class="clear-btn" @click="clearConversation">Clear Chat</button>
+        <button type="button" class="rescue-complete-btn" :disabled="completingRescue" @click="finishRescue">
+          {{ completingRescue ? 'Completing...' : 'Complete Session & Retry Quiz' }}
+        </button>
       </div>
 
-      <p v-if="selectionHint" class="selection-hint">{{ selectionHint }}</p>
+      <div class="chat-header-row">
+        <div class="selector-pills">
+          <div class="selector-pill">
+            <span class="pill-icon">📖</span>
+            <select id="notebook-select" v-model="selectedNotebookID" @change="handleNotebookChange" :disabled="isRescueMode">
+              <option value="" disabled>Choose notebook</option>
+              <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
+                {{ formatNotebookLabel(notebook) }}
+              </option>
+            </select>
+          </div>
+
+          <div class="selector-pill">
+            <span class="pill-icon">🎯</span>
+            <select id="topic-select" v-model="selectedTopicID" @change="handleTopicChange" :disabled="isRescueMode">
+              <option v-if="ragEntireNotebookEnabled" value="">Entire book (No topic filter)</option>
+              <option v-else value="" disabled>Choose topic</option>
+              <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
+                {{ topic.title }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <button type="button" class="clear-btn-slim" @click="clearConversation" :disabled="isRescueMode" title="Clear chat history">
+          <span class="clear-icon">🧹</span> Clear Chat
+        </button>
+      </div>
 
       <div ref="threadRef" class="chat-thread">
         <div v-if="messages.length === 0" class="empty-state">
-          <h3>Start the Socratic conversation</h3>
-          <p>
-            Select a topic or notebook, then ask a grounded question. The tutor will respond with a
-            guiding question and a hint based on the selected material.
-          </p>
+          <div class="welcome-card">
+            <div class="welcome-icon">🧠</div>
+            <h3 v-if="isRescueMode">Concept Rescue Session</h3>
+            <h3 v-else>Socratic Tutor</h3>
+            
+            <p v-if="isRescueMode" class="welcome-desc">
+              Let's clarify your understanding before retaking the quiz. Ask questions or start a guided session with the tutor.
+            </p>
+            <p v-else class="welcome-desc">
+              Select a notebook and topic above, then start a guided session or type a specific question below to begin.
+            </p>
+
+            <p v-if="selectionHint" class="selection-status-hint">
+              {{ selectionHint }}
+            </p>
+
+            <button 
+              type="button" 
+              class="start-session-btn" 
+              :disabled="!canStart || isLoading" 
+              @click="initiateSocraticSession"
+            >
+              <span v-if="isLoading" class="spinner"></span>
+              <span v-else class="start-icon">▶</span>
+              {{ isLoading ? 'Initializing...' : (isRescueMode ? 'Start Concept Rescue' : 'Start Socratic Session') }}
+            </button>
+          </div>
         </div>
 
         <div v-for="(message, idx) in messages" :key="idx" :class="['bubble-row', message.role]">
@@ -77,20 +115,27 @@
       </div>
 
       <form class="composer" @submit.prevent="submitQuestion">
-        <textarea
-          v-model="inputQuestion"
-          class="composer-input"
-          aria-label="Question"
-          placeholder="Ask a grounded question about your material, and the tutor will guide you with a Socratic hint."
-          :disabled="isLoading"
-          @keydown="handleComposerKeydown"
-        ></textarea>
+        <div class="composer-box">
+          <textarea
+            v-model="inputQuestion"
+            class="composer-input"
+            aria-label="Question"
+            placeholder="Ask a grounded question about your material, and the tutor will guide you..."
+            :disabled="isLoading"
+            @keydown="handleComposerKeydown"
+          ></textarea>
 
-        <div class="composer-footer">
-          <p>Enter to send, Shift+Enter for new line</p>
-          <button type="submit" class="send-btn" :disabled="!canSend">
-            {{ isLoading ? 'Thinking...' : 'Send' }}
+          <button type="submit" class="composer-send-btn" :disabled="!canSend || isLoading" title="Send message">
+            <svg v-if="!isLoading" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="send-svg">
+              <path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" />
+            </svg>
+            <span v-else class="thinking-dot-loader">
+              <span></span><span></span><span></span>
+            </span>
           </button>
+        </div>
+        <div class="composer-hint-row">
+          <span>Enter to send, Shift+Enter for new line</span>
         </div>
       </form>
     </article>
@@ -101,16 +146,18 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   askSocratic,
   getAvailableTopics as fetchAvailableTopics,
   getNotebooks as fetchNotebooks,
   getUserSettings,
+  completeSocraticRescue,
 } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
 const route = useRoute()
+const router = useRouter()
 const ragEntireNotebookEnabled = ref(true)
 
 const availableTopics = ref([])
@@ -122,6 +169,10 @@ const messages = ref([])
 const isLoading = ref(false)
 const globalError = ref('')
 const threadRef = ref(null)
+
+const taskId = ref(route.query.taskId || '')
+const isRescueMode = computed(() => !!taskId.value)
+const completingRescue = ref(false)
 
 const selectedNotebook = computed(() =>
   notebooks.value.find((notebook) => notebook.id === selectedNotebookID.value)
@@ -146,6 +197,22 @@ const canSend = computed(() => {
   }
   if (!selectedNotebookID.value) {
     return false
+  }
+  if (isRescueMode.value) {
+    return true
+  }
+  if (ragEntireNotebookEnabled.value) {
+    return true
+  }
+  return effectiveTopicID.value !== ''
+})
+
+const canStart = computed(() => {
+  if (!selectedNotebookID.value) {
+    return false
+  }
+  if (isRescueMode.value) {
+    return true
   }
   if (ragEntireNotebookEnabled.value) {
     return true
@@ -191,11 +258,14 @@ onMounted(async () => {
 
   await Promise.all([loadTopics(), loadNotebooks()])
 
-  if (route.query.topic_id) {
-    selectedTopicID.value = route.query.topic_id
+  const nbParam = route.query.notebook_id || route.query.notebookId || ''
+  const topicParam = route.query.topic_id || route.query.topicId || ''
+
+  if (topicParam) {
+    selectedTopicID.value = topicParam
   }
-  if (route.query.notebook_id) {
-    selectedNotebookID.value = route.query.notebook_id
+  if (nbParam) {
+    selectedNotebookID.value = nbParam
   }
 })
 
@@ -287,6 +357,43 @@ async function submitQuestion() {
   }
 }
 
+async function initiateSocraticSession() {
+  if (!canStart.value || isLoading.value) {
+    return
+  }
+
+  isLoading.value = true
+  globalError.value = ''
+
+  const startPrompt = isRescueMode.value
+    ? "Let's start the Concept Rescue session. Please ask me a guiding question about the topic to help me clear up my confusion."
+    : "Let's start our Socratic discussion. Please introduce yourself and ask me a starting question to check my understanding of this material."
+
+  try {
+    const topicID = effectiveTopicID.value
+    const result = await askSocratic(selectedNotebookID.value, topicID, startPrompt)
+
+    if (result.error) {
+      messages.value.push({
+        role: 'assistant',
+        text: 'Unable to answer this query right now.',
+        error: result.error,
+      })
+    } else {
+      messages.value.push({
+        role: 'assistant',
+        text: result.answer || 'No response generated.',
+        citations: result.cited_sections || [],
+      })
+    }
+  } catch (err) {
+    globalError.value = `Failed to start session: ${err.message}`
+  } finally {
+    isLoading.value = false
+    await scrollToBottom()
+  }
+}
+
 function handleComposerKeydown(event) {
   if (event.key !== 'Enter') {
     return
@@ -317,18 +424,38 @@ async function scrollToBottom() {
   }
   threadRef.value.scrollTop = threadRef.value.scrollHeight
 }
+
+async function finishRescue() {
+  if (completingRescue.value) return
+  completingRescue.value = true
+  globalError.value = ''
+  try {
+    const res = await completeSocraticRescue(taskId.value)
+    if (res && res.error) {
+      globalError.value = res.error
+      completingRescue.value = false
+      return
+    }
+    router.push('/dashboard')
+  } catch (err) {
+    globalError.value = 'Failed to complete session: ' + (err.message || err)
+    completingRescue.value = false
+  }
+}
 </script>
 
 <style scoped>
 .socratic-page {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  min-height: calc(100vh - 48px);
+  gap: 16px;
+  height: calc(100vh - 32px);
+  overflow: hidden;
 }
 
 .page-header {
   padding: 0;
+  flex-shrink: 0;
 }
 
 .eyebrow {
@@ -342,8 +469,8 @@ async function scrollToBottom() {
 }
 
 h1 {
-  margin: 8px 0 0;
-  font-size: 42px;
+  margin: 4px 0 0;
+  font-size: 36px;
   font-family: 'Manrope', sans-serif;
   letter-spacing: -0.03em;
   color: var(--on-surface);
@@ -352,86 +479,97 @@ h1 {
 .chat-shell {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-height: 620px;
+  gap: 12px;
   flex: 1;
+  min-height: 0;
   background: var(--surface-container-lowest);
   border-radius: 16px;
-  padding: 24px;
+  padding: 16px 20px 20px;
+  border: 1px solid var(--outline-variant);
 }
 
-.chat-toolbar {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 16px;
-  align-items: flex-end;
-  padding: 16px;
+.chat-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.selector-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.selector-pill {
+  display: inline-flex;
+  align-items: center;
   background: var(--surface-container-low);
-  border-radius: 12px;
-}
-
-.control-group {
-  display: grid;
-  gap: 6px;
-}
-
-.control-group label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted-text);
+  border: 1px solid var(--outline-variant);
+  border-radius: 20px;
+  padding: 4px 12px 4px 10px;
   font-family: 'Inter', sans-serif;
-}
-
-.control-group select {
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--surface-container-lowest);
-  color: var(--on-surface);
-  font-family: 'Inter', sans-serif;
-  font-size: 14px;
-  outline: none;
+  font-size: 13px;
   transition: all 0.2s ease;
 }
 
-.control-group select:focus {
+.selector-pill:focus-within {
   border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(0, 91, 193, 0.1);
 }
 
-.clear-btn {
+.pill-icon {
+  font-size: 14px;
+  margin-right: 6px;
+}
+
+.selector-pill select {
   border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  background: var(--surface-container-lowest);
+  background: transparent;
   color: var(--on-surface);
   font-family: 'Inter', sans-serif;
   font-size: 13px;
+  font-weight: 500;
+  outline: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  max-width: 260px;
+  text-overflow: ellipsis;
+}
+
+.clear-btn-slim {
+  border: 1px solid var(--outline-variant);
+  border-radius: 20px;
+  padding: 6px 12px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
-.clear-btn:hover {
+.clear-btn-slim:hover:not(:disabled) {
   background: var(--surface-container-highest);
-  transform: translateY(-1px);
+  border-color: var(--outline);
 }
 
-.selection-hint {
-  margin: 0;
-  padding: 12px 16px;
-  border-radius: 12px;
-  background: var(--surface-container-low);
-  color: var(--muted-text);
-  font-size: 13px;
-  font-family: 'Inter', sans-serif;
+.clear-btn-slim:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chat-thread {
   overflow-y: auto;
-  padding: 24px;
+  padding: 20px;
   background: var(--surface-container-low);
   border-radius: 12px;
   display: flex;
@@ -442,21 +580,108 @@ h1 {
 
 .empty-state {
   margin: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 480px;
+  padding: 16px;
+}
+
+.welcome-card {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 16px;
+  padding: 32px 24px;
   text-align: center;
-  max-width: 440px;
-  padding: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
 }
 
-.empty-state h3 {
-  margin: 0;
-  font-size: 24px;
+.welcome-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+  animation: pulse-slow 3s infinite ease-in-out;
+}
+
+.welcome-card h3 {
+  margin: 0 0 8px;
+  font-size: 22px;
   font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  color: var(--on-surface);
 }
 
-.empty-state p {
-  margin: 10px 0 0;
-  color: var(--muted-text);
+.welcome-desc {
+  margin: 0 0 16px;
+  font-size: 14px;
   line-height: 1.5;
+  color: var(--muted-text);
+}
+
+.selection-status-hint {
+  margin: 0 0 20px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface-container-low);
+  color: var(--muted-text);
+  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+  border: 1px dashed var(--outline-variant);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.start-session-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 20px;
+  padding: 10px 24px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
+  color: var(--on-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 91, 193, 0.15);
+  width: 100%;
+}
+
+.start-session-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 91, 193, 0.25);
+}
+
+.start-session-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.start-session-btn:disabled {
+  background: var(--surface-container-highest);
+  color: var(--muted-text);
+  border: 1px solid var(--outline-variant);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.start-icon {
+  font-size: 12px;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 .bubble-row {
@@ -470,7 +695,7 @@ h1 {
 .bubble {
   max-width: 78%;
   border-radius: 14px;
-  padding: 10px 12px;
+  padding: 10px 14px;
   background: var(--surface-container-lowest);
   border: 1px solid var(--outline-variant);
 }
@@ -493,21 +718,9 @@ h1 {
   line-height: 1.6;
 }
 
-.markdown-body :first-child {
-  margin-top: 0;
-}
-
-.markdown-body :last-child {
-  margin-bottom: 0;
-}
-
-.markdown-body p,
-.markdown-body ul,
-.markdown-body ol,
-.markdown-body pre,
-.markdown-body blockquote {
-  margin: 0 0 8px;
-}
+.markdown-body :first-child { margin-top: 0; }
+.markdown-body :last-child { margin-bottom: 0; }
+.markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body pre, .markdown-body blockquote { margin: 0 0 8px; }
 
 .markdown-body code {
   background: rgba(45, 51, 56, 0.08);
@@ -523,10 +736,7 @@ h1 {
   overflow-x: auto;
 }
 
-.markdown-body pre code {
-  background: transparent;
-  padding: 0;
-}
+.markdown-body pre code { background: transparent; padding: 0; }
 
 .message-error {
   margin-top: 8px;
@@ -552,103 +762,94 @@ h1 {
   color: var(--muted-text);
 }
 
-.citations ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-}
-
-.citations li {
-  margin: 4px 0;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.loading-bubble {
-  width: 58px;
-  display: flex;
-  justify-content: space-between;
-}
-
-.loading-bubble span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted-text);
-  animation: pulse 1.1s infinite ease-in-out;
-}
-
-.loading-bubble span:nth-child(2) {
-  animation-delay: 0.12s;
-}
-
-.loading-bubble span:nth-child(3) {
-  animation-delay: 0.24s;
-}
+.citations ul { margin: 6px 0 0; padding-left: 18px; }
+.citations li { margin: 4px 0; font-size: 12px; line-height: 1.4; }
 
 .composer {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: 20px;
+  padding: 8px 12px;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.composer-box:focus-within {
+  border-color: var(--primary);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .composer-input {
-  width: 100%;
-  min-height: 88px;
-  max-height: 160px;
-  resize: vertical;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: var(--surface-container-low);
-  padding: 16px;
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 4px 40px 4px 4px;
   color: var(--on-surface);
   font-family: 'Inter', sans-serif;
   font-size: 14px;
   line-height: 1.5;
   outline: none;
-  transition: all 0.2s ease;
+  resize: none;
+  min-height: 24px;
+  max-height: 120px;
 }
 
-.composer-input:focus {
-  border-color: var(--primary);
-  background: var(--surface-container-lowest);
-}
-
-.composer-footer {
+.composer-send-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  background: var(--primary);
+  color: var(--on-primary);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-}
-
-.composer-footer p {
-  margin: 0;
-  color: var(--muted-text);
-  font-size: 12px;
-}
-
-.send-btn {
-  border: 0;
-  border-radius: 12px;
-  padding: 12px 24px;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
-  color: var(--on-primary);
-  font-family: 'Inter', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
+  justify-content: center;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0, 91, 193, 0.15);
 }
 
-.send-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(0, 91, 193, 0.25);
+.composer-send-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+  background: var(--primary-dim);
 }
 
-.send-btn:disabled {
-  opacity: 0.4;
+.composer-send-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.composer-send-btn:disabled {
+  background: var(--surface-container-highest);
+  color: var(--muted-text);
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
+}
+
+.send-svg {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-hint-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px;
+}
+
+.composer-hint-row span {
+  font-size: 10px;
+  color: var(--muted-text);
 }
 
 .global-error {
@@ -660,38 +861,104 @@ h1 {
   font-size: 13px;
 }
 
+.thinking-dot-loader {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.thinking-dot-loader span {
+  width: 4px;
+  height: 4px;
+  background-color: var(--on-primary);
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse 1.1s infinite ease-in-out;
+}
+
+.thinking-dot-loader span:nth-child(2) { animation-delay: 0.12s; }
+.thinking-dot-loader span:nth-child(3) { animation-delay: 0.24s; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes pulse-slow {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+
 @keyframes pulse {
-  0%,
-  80%,
-  100% {
-    opacity: 0.32;
-    transform: translateY(0);
-  }
-  40% {
-    opacity: 1;
-    transform: translateY(-2px);
-  }
+  0%, 80%, 100% { opacity: 0.32; }
+  40% { opacity: 1; }
 }
 
 @media (max-width: 980px) {
-  .socratic-page {
-    min-height: auto;
-  }
+  .socratic-page { height: auto; overflow: visible; }
+  h1 { font-size: 30px; }
+  .chat-header-row { flex-direction: column; align-items: stretch; }
+  .clear-btn-slim { width: 100%; justify-content: center; }
+  .bubble { max-width: 94%; }
+}
 
-  h1 {
-    font-size: 34px;
-  }
+.rescue-alert-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, rgba(211, 84, 0, 0.1) 0%, rgba(230, 126, 34, 0.15) 100%);
+  border: 1px solid rgba(211, 84, 0, 0.25);
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
 
-  .chat-toolbar {
-    grid-template-columns: 1fr;
-  }
+.rescue-alert-content {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+}
 
-  .clear-btn {
-    width: 100%;
-  }
+.rescue-alert-icon {
+  font-size: 20px;
+  line-height: 1;
+}
 
-  .bubble {
-    max-width: 94%;
-  }
+.rescue-alert-text strong {
+  display: block;
+  font-size: 14px;
+  color: #d35400;
+  margin-bottom: 1px;
+}
+
+.rescue-alert-text p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--on-surface);
+  opacity: 0.9;
+}
+
+.rescue-complete-btn {
+  background: linear-gradient(135deg, #d35400, #e67e22);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 10px rgba(211, 84, 0, 0.15);
+}
+
+.rescue-complete-btn:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.rescue-complete-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

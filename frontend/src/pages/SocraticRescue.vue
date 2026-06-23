@@ -17,34 +17,65 @@
     </div>
 
     <div v-else class="split-layout">
-      <!-- Left Lane: Source Text Preview -->
-      <section class="lane left-lane card">
+      <!-- Option A: In-App Socratic Tutor -->
+      <section class="lane left-lane card in-app-lane">
         <header class="lane-header">
-          <h2>Source Material</h2>
-          <span class="page-range">Pages {{ startPage }}–{{ endPage }}</span>
+          <h2>Option A: Chat In-App</h2>
+          <span class="lane-badge badge-primary">Interactive Tutor</span>
         </header>
 
-        <div class="scroll-content">
-          <div v-if="sourceText" class="source-text">
-            {{ sourceText }}
+        <div class="lane-content">
+          <p class="option-desc">
+            Resolve this concept rescue directly within our interactive learning environment.
+            The in-app Socratic tutor will guide you through leading questions to help you master the material.
+          </p>
+
+          <div class="features-list">
+            <div class="feature-item">
+              <span class="feature-icon">💬</span>
+              <div>
+                <strong>Interactive Dialogue</strong>
+                <p class="feature-sub">Engage in a live, guided conversation grounded in your material.</p>
+              </div>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">📖</span>
+              <div>
+                <strong>Context Grounded</strong>
+                <p class="feature-sub">The tutor retrieves relevant sections dynamically from this notebook.</p>
+              </div>
+            </div>
           </div>
-          <div v-else class="empty-source">
-            No source text found for this topic range.
+
+          <div class="action-box">
+            <button
+              type="button"
+              class="tutor-btn"
+              @click="startInAppTutor"
+            >
+              Start Socratic Chat In-App ➔
+            </button>
           </div>
         </div>
       </section>
 
-      <!-- Right Lane: External Prompt Clipboard Panel -->
-      <section class="lane right-lane card">
+      <!-- Option B: External AI Prompt -->
+      <section class="lane right-lane card external-lane">
         <header class="lane-header">
-          <h2>Socratic Guidance</h2>
-          <span class="lane-badge">External AI Prompt</span>
+          <h2>Option B: Use External AI</h2>
+          <span class="lane-badge badge-secondary">Copy Prompt</span>
         </header>
 
-        <div class="prompt-box">
-          <p class="prompt-instruction">
-            Copy the pre-engineered prompt below and paste it into a premium external LLM (e.g. ChatGPT, Claude, Gemini) to run your tutor session.
+        <div class="lane-content">
+          <p class="option-desc">
+            Prefer using a premium model (like ChatGPT, Claude, or Gemini)?
+            Copy the pre-engineered prompt containing the topic's source material below.
           </p>
+
+          <div class="source-preview">
+            <h3>Source Material</h3>
+            <div class="source-text">{{ sourceText }}</div>
+          </div>
 
           <div class="prompt-container">
             <textarea
@@ -65,21 +96,21 @@
               {{ copied ? 'Copied!' : 'Copy to Clipboard' }}
             </button>
           </div>
-        </div>
 
-        <div class="completion-box">
-          <p class="completion-instruction">
-            Once you have completed the Socratic session and feel confident with the material, click the button below to retry the quiz.
-          </p>
+          <div class="completion-box">
+            <p class="completion-instruction">
+              Once you have finished the Socratic session externally and feel confident with the material, mark this task complete.
+            </p>
 
-          <button
-            type="button"
-            class="complete-btn"
-            :disabled="completing"
-            @click="finishRescueSession"
-          >
-            {{ completing ? 'Completing...' : 'I\'ve Completed the Session' }}
-          </button>
+            <button
+              type="button"
+              class="complete-btn"
+              :disabled="completing"
+              @click="finishRescueSession"
+            >
+              {{ completing ? 'Completing...' : 'I\'ve Completed the External Session' }}
+            </button>
+          </div>
         </div>
       </section>
     </div>
@@ -105,11 +136,13 @@ const taskID = ref('')
 const startPage = ref(1)
 const endPage = ref(10)
 const sourceText = ref('')
+const notebookTitle = ref('')
 
 const fullPrompt = computed(() => {
-  return `I'm studying the following text for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.
+  const bookContext = notebookTitle.value ? `Book: ${notebookTitle.value}\n` : ''
+  return `I'm studying the following text from ${notebookTitle.value || 'my material'} for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.
 
----
+${bookContext}---
 ${sourceText.value}
 ---`
 })
@@ -142,6 +175,7 @@ async function loadSourceContent() {
 
     // Join all section text contents to create the single source body
     const sections = res.sections || []
+    notebookTitle.value = res.notebook_title || ''
     sourceText.value = sections
       .map((s) => s.content)
       .filter(Boolean)
@@ -163,6 +197,17 @@ async function copyPromptToClipboard() {
   } catch (err) {
     console.error('Failed to copy to clipboard', err)
   }
+}
+
+function startInAppTutor() {
+  router.push({
+    path: '/tutor',
+    query: {
+      notebook_id: notebookID.value,
+      topic_id: topicID.value,
+      taskId: taskID.value,
+    },
+  })
 }
 
 async function finishRescueSession() {
@@ -324,32 +369,90 @@ h1 {
   border-radius: 8px;
 }
 
-.scroll-content {
-  flex: 1;
-  overflow-y: auto;
-  max-height: 480px;
-  padding-right: 8px;
+.badge-primary {
+  background: rgba(0, 91, 193, 0.1);
+  color: #005bc1;
 }
 
-.source-text {
-  font-size: 14.5px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  color: var(--on-surface);
+.badge-secondary {
+  background: rgba(211, 84, 0, 0.1);
+  color: #d35400;
 }
 
-.empty-source {
-  color: var(--muted-text);
-  font-style: italic;
-  text-align: center;
-  padding: 32px 0;
-}
-
-.prompt-box {
+.lane-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 20px;
   flex: 1;
+}
+
+.option-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted-text);
+}
+
+.features-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--surface-container-low);
+  border-radius: 14px;
+  padding: 20px;
+  border: 1px solid var(--outline-variant);
+  flex: 1;
+}
+
+.feature-item {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.feature-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.feature-item strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-surface);
+  margin-bottom: 2px;
+}
+
+.feature-sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted-text);
+  line-height: 1.4;
+}
+
+.action-box {
+  margin-top: auto;
+  border-top: 1px solid var(--outline-variant);
+  padding-top: 20px;
+}
+
+.tutor-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #005bc1, #0077ff);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s;
+  box-shadow: 0 4px 12px rgba(0, 91, 193, 0.2);
+}
+
+.tutor-btn:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
 }
 
 .prompt-instruction,
@@ -358,6 +461,35 @@ h1 {
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--muted-text);
+}
+
+.source-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-container-low);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--outline-variant);
+  text-align: left;
+}
+
+.source-preview h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-text);
+}
+
+.source-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--on-surface);
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
 }
 
 .prompt-container {
@@ -372,7 +504,7 @@ h1 {
 
 .prompt-textarea {
   width: 100%;
-  height: 160px;
+  height: 140px;
   border: none;
   background: transparent;
   resize: none;
