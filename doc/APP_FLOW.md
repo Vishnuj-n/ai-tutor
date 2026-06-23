@@ -232,12 +232,13 @@ QUIZ task → mark COMPLETED
 → Dashboard shows Concept Rescue as next task
 ```
 
-**Rescue session:**
+**Rescue session (dual-lane):**
 ```plaintext
 Student opens SocraticRescue page
-→ Source text preview + pre-engineered Socratic prompt
-→ Student copies prompt to external LLM (copy-to-clipboard)
-→ Student completes external Socratic tutoring session
+→ Option A: In-App Socratic Tutor (interactive chat with context-grounded leading questions)
+→ Option B: External AI Prompt (source text preview + pre-engineered Socratic prompt)
+  → Student copies prompt to external LLM (copy-to-clipboard)
+  → Student completes external Socratic tutoring session
 → Clicks "I've Completed the Session"
 → SOCRATIC_REMEDIAL task marked COMPLETED
 → Fresh QUIZ task inserted for same topic

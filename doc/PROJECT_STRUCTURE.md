@@ -11,7 +11,9 @@ Directory organization and package ownership. For architecture details, see `ARC
 | File | Responsibility |
 |------|----------------|
 | `main.go` | Wails bootstrap only |
-| `app.go` | Wails-facing methods |
+| `app.go` | Core Wails-facing methods (startup, RAG, reader, topics) |
+| `app_study.go` | Study-mode Wails endpoints (quiz, flashcards, rescue, sync) |
+| `app_settings.go` | Settings and profile Wails endpoints |
 | `notebook_endpoints.go` | Notebook API endpoints |
 
 ### Internal Packages
@@ -23,34 +25,42 @@ internal/
     schema.go         # Table definitions and migrations
     study_queue_repo.go # Queue CRUD operations
     reader_repo.go    # Reader state queries
+    reader_bundle_repo.go # Reader topic bundle queries
     flashcard_repo.go # Flashcard card operations
     topics_repo.go    # Topic/chunk queries
     notebooks_repo.go # Notebook management
     vector_repo.go    # Embedding vector storage
+    review_session_repo.go # Review session queries
+    reread_attempts_repo.go # Reread attempt tracking
+    fsrs_review_log_repo.go # FSRS review log queries
+    assessment_repo.go # Written assessment queries
     tx.go             # Transaction helpers
     types.go          # Shared DB types
+    extension_cgo.go  # CGO-enabled vec0 extension loading
+    extension_nocgo.go # No-CGO fallback
 
-  study/              # Study session logic (8 files)
-    service.go        # Core study service
-    flashcard.go      # Flashcard review session
+  study/              # Study session logic (9 files)
+    service.go        # Core study service + LLM routing
+    flashcard.go      # Flashcard generation
     examiner.go       # Written assessment session
-    quiz_sync.go      # Synchronous quiz generation
+    quiz_sync.go      # Synchronous quiz generation + 2-strike rescue
     reader_ai.go      # Reader AI interactions
-    socratic.go       # Socratic tutor session
-    review_session.go # Review session management
-    sync.go           # Sync utilities
+    socratic.go       # Socratic tutor session (in-app + retrieval)
+    socratic_rescue.go # SOCRATIC_REMEDIAL completion handler
+    review_session.go # Review session management + suspend
+    sync.go           # Cloud sync + FLASHCARD_SYNC task management
 
-  notebook/           # Upload + ingestion (5 files)
+  notebook/           # Upload + ingestion (4 files)
     upload.go         # PDF upload handling
     ingestion.go      # PDF processing pipeline
     pdfcpu.go         # PDF text extraction
     syllabus.go       # Chapter boundary detection
 
-  scheduler/          # Scheduling algorithms (4 files)
+  scheduler/          # Scheduling algorithms (2 files)
     fsrs.go           # FSRS spaced repetition algorithm
     service.go        # Scheduler service wrapper
 
-  embeddings/         # Local embedding inference (6 files)
+  embeddings/         # Local embedding inference (3 files)
     onnx.go           # ONNX Runtime embedding model
     text.go           # Text preprocessing
     tokenizer_utils.go # Tokenizer utilities
@@ -60,7 +70,7 @@ internal/
     indexer.go        # Index management
     queue.go          # Queue-based retrieval
 
-  llm/                # LLM provider adapter (3 files)
+  llm/                # LLM provider adapter (2 files)
     provider.go       # OpenAI-compatible client
     keyring.go        # OS keyring for API keys
 
@@ -97,7 +107,8 @@ frontend/src/
     Quiz.vue             # Quiz generation and scoring
     Flashcards.vue       # Flashcard review with FSRS
     WrittenAssessment.vue # Written assessment (Examiner)
-    Socratic.vue         # Socratic tutor chat
+    Socratic.vue         # Socratic tutor chat (in-app)
+    SocraticRescue.vue   # Concept rescue (dual-lane: in-app + external)
     Notebook.vue         # Notebook management
     Onboarding.vue       # First-time setup wizard
     Settings.vue         # Provider config, themes, profiles
@@ -190,10 +201,10 @@ Task shape:
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | TEXT | Task UUID |
-| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
+| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_SYNC` |
 | `block_id` | TEXT | Content reference |
 | `related_id` | TEXT | Topic reference |
-| `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED` |
+| `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED` |
 | `priority` | INTEGER | Lower = higher priority |
 | `created_at` | INTEGER | Unix timestamp |
 
