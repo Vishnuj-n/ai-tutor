@@ -164,6 +164,7 @@ func SubmitQuiz(blockID string, answers []Answer) (*QuizResult, error)
 ```go
 func GetDueCards(blockID string) ([]Card, error)
 func RateCard(cardID string, rating Rating) error
+func SuspendFlashcard(taskID string, cardID string) (int, error)
 ```
 
 **Props from Queue Router:**
@@ -449,9 +450,10 @@ internal/
     examiner.go      # Written assessment session
     quiz_sync.go     # Synchronous quiz generation + 2-strike rescue logic
     reader_ai.go     # Reader AI interactions
-    socratic.go      # Socratic tutor session
+    socratic.go       # Socratic tutor session
     socratic_rescue.go # SOCRATIC_REMEDIAL completion handler (re-quiz insertion)
-    sync.go          # Cloud sync + FLASHCARD_SYNC task management
+    review_session.go # Review session management
+    sync.go           # Cloud sync + FLASHCARD_SYNC task management
   scheduler/         # Scheduling algorithms
     fsrs.go          # FSRS spaced repetition algorithm
     service.go       # Scheduler service wrapper

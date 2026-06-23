@@ -343,6 +343,49 @@ Answers a question using topic-scoped retrieval.
 
 ---
 
+## SuspendFlashcard API
+
+### SuspendFlashcard
+
+Suspends a flashcard, removing it from all future review sessions.
+
+**Endpoint:** `SuspendFlashcard(taskID string, cardID string) → int`
+
+**Request:**
+```json
+{
+  "task_id": "review-task-uuid",
+  "card_id": "card-uuid"
+}
+```
+
+**Response:** Remaining pending card count in current session.
+
+**Side Effects:**
+- `fsrs_cards.suspended` set to `1`
+- Card removed from all future `FLASHCARD_REVIEW` sessions
+- Review task card marked as reviewed
+
+---
+
+## GetTopicSectionsContent API
+
+### GetTopicSectionsContent
+
+Returns joined text content of all sections in a topic, used by SocraticRescue to display source material.
+
+**Endpoint:** `GetTopicSectionsContent(topicID string, notebookID string) → map`
+
+**Response:**
+```json
+{
+  "content": "Joined text of all chunks in topic...",
+  "notebook_title": "Neural Networks"
+}
+```
+
+---
+
 ## SocraticRescue API
 
 ### CompleteSocraticRescue

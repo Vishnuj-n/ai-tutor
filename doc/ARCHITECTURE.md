@@ -10,7 +10,7 @@ Advanced learning systems are treated as **"Data, not Engines."** They create qu
 
 - **Reading Layer**: Validates immediate comprehension and progression readiness (Reading → Quiz → pass/fail → reread or progress).
 - **Retention Layer**: Optimizes long-term retention using spaced retrieval (Flashcards / Examiner → FSRS update → adaptive review scheduling).
-- **Rescue Layer**: 2-strike Socratic rescue for repeated quiz failures (Quiz fail #2 → SOCRATIC_REMEDIAL → re-quiz → mastery or external help).
+- **Rescue Layer**: 2-strike Socratic rescue for repeated quiz failures (Quiz fail #1 → REREAD → Quiz fail #2 → SOCRATIC_REMEDIAL → re-quiz → mastery or external help).
 
 Canonical checkpoint flow:
 Dashboard -> Reader -> Quiz -> Dashboard
@@ -444,7 +444,9 @@ This is acceptable for MVP. Future refactoring may separate generation state to 
 
 ### Task Priority Order (Legacy Reference)
 
-| Priority | Task Type | Source |
+**⚠️ This table is OUTDATED.** The actual priority ordering is defined by the SQL query above (Section 7) where higher numeric value = higher priority. See the ordering SQL for authoritative values.
+
+| Legacy Priority | Task Type | Source |
 |----------|-----------|--------|
 | 1 | FLASHCARD_SYNC | Cloud sync pending |
 | 2 | FLASHCARD_REVIEW | FSRS due date passed |

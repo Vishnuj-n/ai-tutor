@@ -20,24 +20,24 @@
 ---
 
 ### Sprint 11: 2-Strike Socratic Rescue Pipeline [DONE]
-**Goal:** Implement cognitive damage control via database clean slate, queue interleaving, and split-screen tutor layout.
+**Goal:** Implement cognitive damage control via database clean slate, queue interleaving, and dual-lane rescue UI.
 
-- [ ] **Task 11.1: Database Intervention & Trigger**
-  - Track consecutive quiz failures per chunk/topic.
-  - On the 2nd strike, wipe or suspend all flashcards associated with that chunk to prevent FSRS ease hell.
-  - Unblock the main reading timeline by marking the blocking reading task as `COMPLETED`.
-- [ ] **Task 11.2: Queue Interleaving**
-  - Generate a `SOCRATIC_REMEDIAL` task.
-  - Place it in a specialized asynchronous bucket/lane on the dashboard instead of blocking the main linear progression.
-- [ ] **Task 11.3: Dual-Lane Breakdown View (UI)**
-  - Create a split-pane layout:
-    - **Left Lane:** Local Socratic chat interface with raw text and local LLM acting as a strict tutor (leading questions only).
-    - **Right Lane:** Fallback card that copies raw text and pre-engineered expert prompt template to the clipboard for external premium LLM use.
-- [ ] **Task 11.4: Dev Mode Bypass Panel**
-  - Add a floating developer panel enabled only in Vite Dev Mode (`import.meta.env.DEV`).
-  - Implement a *"Force 2-Strike Rescue UI State"* trigger which mocks the backend state to test the UI instantly.
-- [ ] **Task 11.5: Isolated Automated Tests**
-  - Write isolated Go tests validating that the 3-strike trigger deletes flashcards, unblocks the reading task, and inserts the `SOCRATIC_REMEDIAL` task.
+**Implementation:** 2-strike (`maxAutomaticRereadAttempts = 1`), not 3-strike as originally planned.
+
+- [x] **Task 11.1: Database Intervention & Trigger**
+  - Track consecutive quiz failures per topic via `reread_attempts` table.
+  - On the 2nd quiz failure (after 1 reread), delete FSRS cards for the topic and insert `SOCRATIC_REMEDIAL` task.
+- [x] **Task 11.2: Queue Interleaving**
+  - `SOCRATIC_REMEDIAL` task type inserted at priority tier 6 (blocks queue until completed).
+  - Quiz marked COMPLETED on rescue insertion to unblock main timeline.
+- [x] **Task 11.3: Dual-Lane Breakdown View (UI)**
+  - Split-pane layout in `SocraticRescue.vue`:
+    - **Option A:** In-App Socratic Tutor (interactive chat with context-grounded leading questions).
+    - **Option B:** External AI Prompt (source text preview + copy-to-clipboard for external LLM use).
+- [x] **Task 11.4: Dev Mode Bypass Panel**
+  - `DevForceSocraticRescue` endpoint for testing (requires `APP_ENV=dev`).
+- [x] **Task 11.5: Automated Tests**
+  - Tests validating rescue trigger, flashcard deletion, and `SOCRATIC_REMEDIAL` task insertion.
 
 ---
 
@@ -246,12 +246,13 @@ PENDING → ACTIVE → COMPLETED
 ```
 
 **Task Types (Priority Order):**
-1. `FLASHCARD_REVIEW` — Highest priority
-2. `SOCRATIC_REMEDIAL` — Socratic Rescue Lane
-3. `REREAD` — Remediation tasks
-4. `QUIZ` — Assessment tasks  
-5. `READING` — Content consumption
-6. `EXAMINER` — Mastery verification
+1. `FLASHCARD_SYNC` — Cloud sync recovery (highest)
+2. `FLASHCARD_REVIEW` — Spaced repetition reviews
+3. `SOCRATIC_REMEDIAL` — Socratic Rescue Lane
+4. `REREAD` — Remediation tasks
+5. `QUIZ` — Assessment tasks  
+6. `READING` — Content consumption
+7. `EXAMINER` — Mastery verification (lowest)
 
 **Queue Ordering Rules:**
 1. Task type priority (as above)
