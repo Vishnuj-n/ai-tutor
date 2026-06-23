@@ -19,12 +19,12 @@
 
 ---
 
-### Sprint 11: 3-Strike Socratic Rescue Pipeline
+### Sprint 11: 2-Strike Socratic Rescue Pipeline [DONE]
 **Goal:** Implement cognitive damage control via database clean slate, queue interleaving, and split-screen tutor layout.
 
 - [ ] **Task 11.1: Database Intervention & Trigger**
   - Track consecutive quiz failures per chunk/topic.
-  - On the 3rd strike, wipe or suspend all flashcards associated with that chunk to prevent FSRS ease hell.
+  - On the 2nd strike, wipe or suspend all flashcards associated with that chunk to prevent FSRS ease hell.
   - Unblock the main reading timeline by marking the blocking reading task as `COMPLETED`.
 - [ ] **Task 11.2: Queue Interleaving**
   - Generate a `SOCRATIC_REMEDIAL` task.
@@ -35,7 +35,7 @@
     - **Right Lane:** Fallback card that copies raw text and pre-engineered expert prompt template to the clipboard for external premium LLM use.
 - [ ] **Task 11.4: Dev Mode Bypass Panel**
   - Add a floating developer panel enabled only in Vite Dev Mode (`import.meta.env.DEV`).
-  - Implement a *"Force 3-Strike Rescue UI State"* trigger which mocks the backend state to test the UI instantly.
+  - Implement a *"Force 2-Strike Rescue UI State"* trigger which mocks the backend state to test the UI instantly.
 - [ ] **Task 11.5: Isolated Automated Tests**
   - Write isolated Go tests validating that the 3-strike trigger deletes flashcards, unblocks the reading task, and inserts the `SOCRATIC_REMEDIAL` task.
 
@@ -53,7 +53,7 @@
 
 ---
 
-### SPRINT 13 User Asset Provisioning
+### SPRINT 13 User Asset Provisioning [DONE]
 
 - Detect missing RAG assets
 - Download assets from GitHub Releases

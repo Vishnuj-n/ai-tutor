@@ -8,7 +8,7 @@ const routeQuery = ref({})
 
 // Mock services/appApi
 vi.mock('../services/appApi', () => ({
-  getReaderTopicBundle: vi.fn(),
+  getTopicSectionsContent: vi.fn(),
   completeSocraticRescue: vi.fn(),
   GetTaskContext: vi.fn()
 }))
@@ -53,22 +53,20 @@ describe('SocraticRescue.vue Integration', () => {
   })
 
   it('loads source material and displays generated socratic prompt', async () => {
-    appApi.getReaderTopicBundle.mockResolvedValue({
-      sections: [
-        { content: 'DeepMind builds AI agents.' }
-      ]
+    appApi.getTopicSectionsContent.mockResolvedValue({
+      content: 'DeepMind builds AI agents.'
     })
 
     const wrapper = mount(SocraticRescue)
     await flushPromises()
 
-    expect(appApi.getReaderTopicBundle).toHaveBeenCalledWith('topic-123', 'notebook-789')
+    expect(appApi.getTopicSectionsContent).toHaveBeenCalledWith('topic-123', 'notebook-789')
     expect(wrapper.find('.source-text').text()).toBe('DeepMind builds AI agents.')
     expect(wrapper.find('.prompt-textarea').element.value).toContain('DeepMind builds AI agents.')
   })
 
   it('completes socratic rescue session when user clicks I completed the session', async () => {
-    appApi.getReaderTopicBundle.mockResolvedValue({ sections: [] })
+    appApi.getTopicSectionsContent.mockResolvedValue({ content: '' })
     appApi.completeSocraticRescue.mockResolvedValue({ error: null })
 
     const wrapper = mount(SocraticRescue)

@@ -218,14 +218,14 @@ When a student fails a quiz twice on the same topic, the system intervenes with 
 ### How
 
 **Strike 1 (quiz fail):**
-```
+```plaintext
 QUIZ task → mark COMPLETED
 → Insert REREAD task (if reread_attempt <= maxAutomaticRereadAttempts=1)
 → Dashboard shows REREAD as next task
 ```
 
 **Strike 2 (quiz fail again after reread):**
-```
+```plaintext
 QUIZ task → mark COMPLETED
 → SOCRATIC_REMEDIAL task inserted (blocks queue)
 → FSRS flashcards for topic deleted (protect purity)
@@ -233,7 +233,7 @@ QUIZ task → mark COMPLETED
 ```
 
 **Rescue session:**
-```
+```plaintext
 Student opens SocraticRescue page
 → Source text preview + pre-engineered Socratic prompt
 → Student copies prompt to external LLM (copy-to-clipboard)
@@ -244,7 +244,7 @@ Student opens SocraticRescue page
 ```
 
 **Re-quiz outcomes:**
-```
+```plaintext
 [Pass] → Flashcards generated → Topic mastered → Next task
 [Fail] → external_help_required flag set on topic → Queue unblocks → Notice shown
 ```

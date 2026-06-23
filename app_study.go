@@ -905,7 +905,7 @@ func (a *App) DevForceSocraticRescue(notebookID, topicID string) map[string]inte
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Wipe FSRS flashcards for this topic to protect purity
 	if err := repo.DeleteFSRSCardsByTopicIDTx(tx, topicID); err != nil {
@@ -920,6 +920,7 @@ func (a *App) DevForceSocraticRescue(notebookID, topicID string) map[string]inte
 		"mode":     "external_prompt",
 	})
 
+	// Note: the hardcoded start_page value of 1 and end_page value of 10 are placeholder bounds used only for this dev helper function.
 	socraticTask := models.StudyQueueTask{
 		ID:          socraticTaskID,
 		NotebookID:  notebookID,

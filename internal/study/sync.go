@@ -87,6 +87,7 @@ func TriggerCloudSync(repo *db.Repository) error {
 
 	var resp *http.Response
 	var lastErr error
+	var syncResp SyncResponse
 	const attempts = 3
 	client := &http.Client{Timeout: 10 * time.Second}
 
@@ -120,6 +121,14 @@ func TriggerCloudSync(repo *db.Repository) error {
 			continue
 		}
 
+		// Decode response body inside loop to catch decode failures as errors
+		decodeErr := json.NewDecoder(resp.Body).Decode(&syncResp)
+		resp.Body.Close()
+		if decodeErr != nil {
+			lastErr = fmt.Errorf("failed to decode sync response: %w", decodeErr)
+			continue
+		}
+
 		// Success!
 		lastErr = nil
 		break
@@ -127,24 +136,14 @@ func TriggerCloudSync(repo *db.Repository) error {
 
 	if lastErr != nil {
 		utils.Warnf("[SYNC] Cloud sync failed after %d attempts: %v", attempts, lastErr)
-		// Insert FLASHCARD_SYNC task if not already pending/active
-		var notebookID string
+		// Insert FLASHCARD_SYNC task if not already pending/active and a valid notebook exists
 		if len(notebooks) > 0 {
-			notebookID = notebooks[0].ID
-		} else {
-			notebookID = "system_default"
-		}
-		if syncErr := repo.EnsurePendingFlashcardSyncTask(notebookID); syncErr != nil {
-			utils.Warnf("[SYNC] failed to insert FLASHCARD_SYNC task: %v", syncErr)
+			notebookID := notebooks[0].ID
+			if syncErr := repo.EnsurePendingFlashcardSyncTask(notebookID); syncErr != nil {
+				utils.Warnf("[SYNC] failed to insert FLASHCARD_SYNC task: %v", syncErr)
+			}
 		}
 		return lastErr
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	var syncResp SyncResponse
-	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
-		return fmt.Errorf("failed to decode sync response: %w", err)
 	}
 
 	// Handle assigned notebooks from teacher

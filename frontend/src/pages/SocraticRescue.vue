@@ -120,7 +120,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getReaderTopicBundle, completeSocraticRescue, GetTaskContext } from '../services/appApi'
+import { getTopicSectionsContent, completeSocraticRescue, GetTaskContext } from '../services/appApi'
 
 const route = useRoute()
 const router = useRouter()
@@ -194,19 +194,14 @@ async function loadSourceContent() {
   loading.value = true
   error.value = ''
   try {
-    const res = await getReaderTopicBundle(topicID.value, notebookID.value)
+    const res = await getTopicSectionsContent(topicID.value, notebookID.value)
     if (res.error) {
       error.value = res.error
       return
     }
 
-    // Join all section text contents to create the single source body
-    const sections = res.sections || []
     notebookTitle.value = res.notebook_title || ''
-    sourceText.value = sections
-      .map((s) => s.content)
-      .filter(Boolean)
-      .join('\n\n')
+    sourceText.value = res.content || ''
   } catch (err) {
     error.value = 'Failed to fetch topic source: ' + (err.message || err)
   } finally {

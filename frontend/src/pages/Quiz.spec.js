@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import Quiz from './Quiz.vue'
 import * as appApi from '../services/appApi'
@@ -39,7 +39,7 @@ describe('Quiz.vue Integration & State', () => {
     ])
 
     const wrapper = mount(Quiz)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(wrapper.find('#quiz-notebook-select').exists()).toBe(true)
     expect(wrapper.find('option[value="nb-1"]').text()).toBe('Calculus 101')
@@ -69,7 +69,7 @@ describe('Quiz.vue Integration & State', () => {
     })
 
     const wrapper = mount(Quiz)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     // Loading should finish
     expect(wrapper.find('.state-panel').exists()).toBe(false)
@@ -111,7 +111,7 @@ describe('Quiz.vue Integration & State', () => {
     })
 
     const wrapper = mount(Quiz)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     // Select the "Yes" radio button option
     const radio = wrapper.find('input[type="radio"][value="Yes"]')
@@ -122,7 +122,7 @@ describe('Quiz.vue Integration & State', () => {
     expect(submitBtn.element.disabled).toBe(false)
 
     await wrapper.find('form').trigger('submit.prevent')
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(appApi.submitQuizAttempt).toHaveBeenCalledWith('task-123', [
       { question_id: 'q1', selected: 'Yes' }
@@ -139,7 +139,7 @@ describe('Quiz.vue Integration & State', () => {
     appApi.activateTask.mockResolvedValue({ error: 'System overload' })
 
     const wrapper = mount(Quiz)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(wrapper.find('.state-panel--error').exists()).toBe(true)
     expect(wrapper.find('.state-text').text()).toBe('System overload')

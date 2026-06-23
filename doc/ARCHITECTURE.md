@@ -515,7 +515,7 @@ When a student fails a quiz twice on the same topic, the system intervenes with 
 **Strike 2**: SOCRATIC_REMEDIAL task inserted, QUIZ marked COMPLETED, FSRS cards deleted
 
 **Flow:**
-```
+```plaintext
 [Quiz Fail #1] → REREAD task → Student re-reads → Quiz again
                                                     ↓
                                             [Quiz Fail #2]

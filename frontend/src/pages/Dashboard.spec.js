@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import Dashboard from './Dashboard.vue'
 import * as appApi from '../services/appApi'
@@ -65,7 +65,7 @@ describe('Dashboard.vue Integration', () => {
     })
 
     const wrapper = mount(Dashboard)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(wrapper.find('.status-strip h1').text()).toBe("Today's Tasks")
     expect(wrapper.text()).toContain('Introduction to Calculus')
@@ -77,7 +77,7 @@ describe('Dashboard.vue Integration', () => {
     appApi.updateUserSettings.mockResolvedValue({ error: null })
 
     const wrapper = mount(Dashboard)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     const toggleBtn = wrapper.find('.escape-hatch-toggle')
     expect(toggleBtn.text()).toBe('Skip to Reading')
@@ -107,7 +107,7 @@ describe('Dashboard.vue Integration', () => {
     })
 
     const wrapper = mount(Dashboard)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(wrapper.find('.rescue-banner').exists()).toBe(true)
     expect(wrapper.find('.rescue-title').text()).toBe('Concept Rescue Active')

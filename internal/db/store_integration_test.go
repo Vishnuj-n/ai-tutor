@@ -1141,6 +1141,16 @@ func TestMarkTopicExternalHelpRequiredTx(t *testing.T) {
 	if finalVal != 1 {
 		t.Fatalf("expected final external_help_required to be 1, got %d", finalVal)
 	}
+
+	// Test failure case: topic does not exist
+	tx2, err := testRepo.db.Begin()
+	if err != nil {
+		t.Fatalf("db.Begin failed: %v", err)
+	}
+	defer func() { _ = tx2.Rollback() }()
+	if err := testRepo.MarkTopicExternalHelpRequiredTx(tx2, "nonexistent-topic"); err == nil {
+		t.Errorf("expected MarkTopicExternalHelpRequiredTx to return error for nonexistent topic, got nil")
+	}
 }
 
 
