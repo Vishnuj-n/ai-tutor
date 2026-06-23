@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 /* eslint-env node */
 import {defineConfig} from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -18,5 +19,9 @@ export default defineConfig({
     alias: {
       '@': resolve(__dirname, 'src')
     }
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom'
   }
 })
