@@ -343,6 +343,49 @@ Answers a question using topic-scoped retrieval.
 
 ---
 
+## SocraticRescue API
+
+### CompleteSocraticRescue
+
+Completes a SOCRATIC_REMEDIAL rescue session and inserts a fresh QUIZ task for re-quiz.
+
+**Endpoint:** `CompleteSocraticRescue(taskID string) → error`
+
+**Request:**
+```json
+{
+  "task_id": "socratic-remedial-task-uuid"
+}
+```
+
+**Response:** Success or error
+
+**Side Effects:**
+- SOCRATIC_REMEDIAL task marked COMPLETED
+- Fresh QUIZ task inserted into queue with `"source": "socratic_rescue_requiz"` in payload
+- Queue unblocks — fresh quiz becomes next pending task
+
+**Errors:**
+- `ErrNotFound` - Task not found
+- `ErrTaskNotActive` - Task is not in ACTIVE status
+- `ErrInvalidTaskType` - Task is not SOCRATIC_REMEDIAL
+
+---
+
+### DevForceSocraticRescue
+
+Dev-only endpoint to force a topic into SOCRATIC_REMEDIAL state for testing.
+
+**Endpoint:** `DevForceSocraticRescue(notebookID, topicID string) → error`
+
+**Access:** Only when `APP_ENV = dev`
+
+**Side Effects:**
+- Deletes FSRS flashcards for the topic
+- Inserts SOCRATIC_REMEDIAL task into queue
+
+---
+
 ## Ingestion API
 
 ### ProcessPDF
@@ -378,6 +421,8 @@ const (
   TaskTypeReread          TaskType = "REREAD"
   TaskTypeFlashcardReview TaskType = "FLASHCARD_REVIEW"
   TaskTypeExaminer        TaskType = "EXAMINER"
+  TaskTypeSocraticRemedial TaskType = "SOCRATIC_REMEDIAL"
+  TaskTypeFlashcardSync   TaskType = "FLASHCARD_SYNC"
 )
 ```
 
