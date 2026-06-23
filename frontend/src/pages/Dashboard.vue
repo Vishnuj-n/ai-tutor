@@ -155,7 +155,7 @@
         <article v-for="task in tasks" :key="task.id" class="card task-card">
           <div class="task-header">
             <span class="task-type" :class="task.action_type.toLowerCase()">{{ formatTaskType(task.action_type) }}</span>
-            <span class="task-estimate">{{ task.estimate_minutes }} min</span>
+            <span v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0" class="task-estimate">{{ task.estimate_minutes }} min</span>
           </div>
           <h3>{{ task.title }}</h3>
           <p class="task-meta">

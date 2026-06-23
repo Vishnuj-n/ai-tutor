@@ -190,7 +190,9 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		meta = fmt.Sprintf("Pages %d-%d", task.StartPage, task.EndPage)
 	}
 	estimateMinutes := 10
-	if task.TaskType == models.StudyTaskTypeFlashcardReview {
+	if task.TaskType == models.StudyTaskTypeFlashcardSync {
+		estimateMinutes = 0
+	} else if task.TaskType == models.StudyTaskTypeFlashcardReview {
 		// Use card count from payload if available
 		var payload models.ReviewSessionPayload
 		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err == nil && payload.CardCount > 0 {
@@ -808,6 +810,28 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) SuspendFlashcard(taskID, cardID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	remaining, err := a.studyService.SuspendFlashcard(taskID, cardID)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true, "remaining": remaining}
 }
 
 func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {
