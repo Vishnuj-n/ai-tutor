@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import Flashcards from './Flashcards.vue'
 import * as appApi from '../services/appApi'
@@ -38,7 +38,7 @@ describe('Flashcards.vue Integration', () => {
     ])
 
     const wrapper = mount(Flashcards)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(wrapper.find('#fc-notebook-select').exists()).toBe(true)
     expect(wrapper.find('#fc-generate-btn').exists()).toBe(true)
@@ -53,12 +53,12 @@ describe('Flashcards.vue Integration', () => {
     })
 
     const wrapper = mount(Flashcards)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     // Select notebook and input page range
     await wrapper.find('#fc-notebook-select').setValue('nb-1')
     await wrapper.find('#fc-generate-btn').trigger('click')
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     // Review session should be active
     expect(wrapper.find('.review-session').exists()).toBe(true)
@@ -72,7 +72,7 @@ describe('Flashcards.vue Integration', () => {
 
     // Click Good rating
     await wrapper.find('#fc-rate-good').trigger('click')
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     // Completed session panel
     expect(wrapper.find('.done-panel').exists()).toBe(true)

@@ -164,7 +164,7 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 	lightSections := make([]map[string]interface{}, 0, len(bundle.Sections))
 	for _, s := range bundle.Sections {
 		lightSections = append(lightSections, map[string]interface{}{
-			"id": s.ID, "heading": s.Heading, "content": s.Content, "page_num": s.PageNum, "order": s.Order,
+			"id": s.ID, "heading": s.Heading, "page_num": s.PageNum, "order": s.Order,
 		})
 	}
 	return map[string]interface{}{
@@ -173,6 +173,30 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 		"notebook_id": bundle.NotebookID, "notebook_title": bundle.NotebookTitle,
 		"notebook_url": bundle.NotebookURL, "file_type": bundle.FileType,
 		"page_count": bundle.PageCount, "sections": lightSections,
+	}
+}
+
+// GetTopicSectionsContent returns the joined text content of all sections in a topic, along with the notebook title.
+func (a *App) GetTopicSectionsContent(topicID string, notebookID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	bundle, err := repo.GetReaderTopicBundle(topicID, notebookID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	var sectionsContent []string
+	for _, s := range bundle.Sections {
+		if s.Content != "" {
+			sectionsContent = append(sectionsContent, s.Content)
+		}
+	}
+
+	return map[string]interface{}{
+		"content":        strings.Join(sectionsContent, "\n\n"),
+		"notebook_title": bundle.NotebookTitle,
 	}
 }
 

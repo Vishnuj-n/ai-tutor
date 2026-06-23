@@ -1764,6 +1764,27 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 	if quizCount != 1 {
 		t.Fatalf("expected 1 PENDING QUIZ task, got %d", quizCount)
 	}
+
+	// Retrieve actual payload and assert
+	var payloadJSON string
+	err = testRepo.QueryRowForTest(`
+		SELECT payload_json
+		FROM study_queue
+		WHERE topic_id = ? AND task_type = 'QUIZ' AND status = 'PENDING'
+		LIMIT 1
+	`, "topic-test").Scan(&payloadJSON)
+	if err != nil {
+		t.Fatalf("failed to retrieve quiz task payload: %v", err)
+	}
+
+	var payloadMap map[string]interface{}
+	if err := json.Unmarshal([]byte(payloadJSON), &payloadMap); err != nil {
+		t.Fatalf("failed to unmarshal quiz task payload: %v", err)
+	}
+
+	if source, ok := payloadMap["source"].(string); !ok || source != "socratic_rescue_requiz" {
+		t.Fatalf("expected payload source to be %q, got %q", "socratic_rescue_requiz", payloadMap["source"])
+	}
 }
 
 func TestRequizPassGeneratesFlashcards(t *testing.T) {

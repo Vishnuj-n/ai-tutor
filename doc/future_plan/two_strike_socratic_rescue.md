@@ -1,5 +1,8 @@
 # 2-Strike Socratic Rescue Pipeline — Implementation Plan
 
+> [!NOTE]
+> This document represents the original design plan. The actual implementation has diverged from it in some aspects. Specifically, regarding queue prioritization weights: `SOCRATIC_REMEDIAL` was assigned tier weight 2 in this original plan, but the actual implementation uses tier weight 6 to ensure proper queue blocking within notebooks. Refer to the solutions directory documentation for the final implementation details.
+
 ## Overview
 
 When a student fails a quiz twice on the same topic, the system intervenes:
@@ -15,7 +18,7 @@ No flashcards are ever generated for failed concepts. No complex counters needed
 
 ## Flow Diagram
 
-```
+```plaintext
 [Quiz Fail #1] → REREAD task → Student re-reads → Quiz again
                                                     ↓
                                             [Quiz Fail #2]
@@ -329,7 +332,7 @@ Create the rescue UI. This is a modal or full-page view with two sections:
 
 **Right Section (External Prompt):**
 - Pre-engineered Socratic prompt template:
-  ```
+  ```plaintext
   I'm studying the following text for UPSC preparation. I've failed to understand
   it twice. Please act as a Socratic tutor — don't give me summaries or answers.
   Instead, ask me leading questions that guide me to discover the key concepts
@@ -351,7 +354,7 @@ Create the rescue UI. This is a modal or full-page view with two sections:
 
 After a re-quiz failure, show a distinct notice:
 
-```
+```plaintext
 This concept requires external review.
 Your next reading task has been unlocked so you don't fall behind.
 Please consult your notes or instructor for this page range.

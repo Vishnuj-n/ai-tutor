@@ -260,6 +260,10 @@ export function getAppEnv() {
   return appBridge().GetAppEnv()
 }
 
+export function getTopicSectionsContent(topicID, notebookID) {
+  return appBridge().GetTopicSectionsContent(topicID, notebookID)
+}
+
 export function devForceSocraticRescue(notebookID, topicID) {
   return appBridge().DevForceSocraticRescue(notebookID, topicID)
 }
