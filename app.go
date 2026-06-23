@@ -164,7 +164,7 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 	lightSections := make([]map[string]interface{}, 0, len(bundle.Sections))
 	for _, s := range bundle.Sections {
 		lightSections = append(lightSections, map[string]interface{}{
-			"id": s.ID, "heading": s.Heading, "page_num": s.PageNum, "order": s.Order,
+			"id": s.ID, "heading": s.Heading, "content": s.Content, "page_num": s.PageNum, "order": s.Order,
 		})
 	}
 	return map[string]interface{}{
