@@ -21,6 +21,13 @@ var (
 
 // InsertStudyTask inserts one task row in study_queue.
 func (r *Repository) InsertStudyTask(task models.StudyQueueTask) error {
+	return r.withTx(func(tx *sql.Tx) error {
+		return r.InsertStudyTaskTx(tx, task)
+	})
+}
+
+// InsertStudyTaskTx inserts one task row in study_queue inside an existing transaction.
+func (r *Repository) InsertStudyTaskTx(tx *sql.Tx, task models.StudyQueueTask) error {
 	task.ID = strings.TrimSpace(task.ID)
 	task.NotebookID = strings.TrimSpace(task.NotebookID)
 	task.TopicID = strings.TrimSpace(task.TopicID)
@@ -38,7 +45,7 @@ func (r *Repository) InsertStudyTask(task models.StudyQueueTask) error {
 		task.Status = models.StudyTaskStatusPending
 	}
 
-	_, err := r.db.Exec(`
+	_, err := tx.Exec(`
 		INSERT INTO study_queue (
 			id, notebook_id, topic_id, task_type, status, priority, payload_json, start_page, end_page
 		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)
@@ -1092,36 +1099,85 @@ func (r *Repository) EnsurePendingFlashcardSyncTask(notebookID string) error {
 		return fmt.Errorf("notebook ID is required")
 	}
 
-	var count int
-	err := r.db.QueryRow(`
-		SELECT COUNT(*) FROM study_queue
-		WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
-	`).Scan(&count)
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil // Already exists
-	}
+	return r.withTx(func(tx *sql.Tx) error {
+		var count int
+		err := tx.QueryRow(`
+			SELECT COUNT(*) FROM study_queue
+			WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
+		`).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil // Already exists
+		}
 
-	task := models.StudyQueueTask{
-		ID:         uuid.NewString(),
-		NotebookID: notebookID,
-		TaskType:   models.StudyTaskTypeFlashcardSync,
-		Status:     models.StudyTaskStatusPending,
-		Priority:   0,
-	}
-	return r.InsertStudyTask(task)
+		task := models.StudyQueueTask{
+			ID:         uuid.NewString(),
+			NotebookID: notebookID,
+			TaskType:   models.StudyTaskTypeFlashcardSync,
+			Status:     models.StudyTaskStatusPending,
+			Priority:   0,
+		}
+		return r.InsertStudyTaskTx(tx, task)
+	})
 }
 
 // ResolveFlashcardSyncTasks marks all pending/active FLASHCARD_SYNC tasks as COMPLETED.
 func (r *Repository) ResolveFlashcardSyncTasks() error {
-	_, err := r.db.Exec(`
-		UPDATE study_queue
-		SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
-		WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
-	`)
-	return err
+	return r.withTx(func(tx *sql.Tx) error {
+		rows, err := tx.Query(`
+			SELECT id, status FROM study_queue
+			WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
+		`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		type taskInfo struct {
+			id     string
+			status string
+		}
+		var tasks []taskInfo
+		for rows.Next() {
+			var t taskInfo
+			if err := rows.Scan(&t.id, &t.status); err != nil {
+				return err
+			}
+			tasks = append(tasks, t)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for _, t := range tasks {
+			if t.status == string(models.StudyTaskStatusPending) {
+				res, err := tx.Exec(`
+					UPDATE study_queue
+					SET status = 'ACTIVE', activated_at = CURRENT_TIMESTAMP
+					WHERE id = ? AND status = 'PENDING'
+				`, t.id)
+				if err != nil {
+					return err
+				}
+				affected, err := res.RowsAffected()
+				if err != nil {
+					return err
+				}
+				if affected == 1 {
+					utils.LogQueueTransition(t.id, "", "PENDING", "ACTIVE", "task_activated")
+				}
+			}
+
+			if err := r.CompleteTaskTx(tx, t.id, models.CompletionResult{
+				Status: models.StudyTaskStatusCompleted,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 

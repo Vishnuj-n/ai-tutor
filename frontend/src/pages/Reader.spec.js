@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import Reader from './Reader.vue'
 import * as appApi from '../services/appApi'
@@ -96,7 +96,7 @@ describe('Reader.vue Integration', () => {
 
   it('initializes reading session and displays PDF viewer placeholder', async () => {
     const wrapper = mount(Reader)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(appApi.initializeReadingSession).toHaveBeenCalledWith('task-read-456', 'nb-1', 'topic-1', 0, 0)
     expect(wrapper.find('.mock-pdf-embed').exists()).toBe(true)
@@ -110,11 +110,11 @@ describe('Reader.vue Integration', () => {
     })
 
     const wrapper = mount(Reader)
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     const completeBtn = wrapper.find('button.primary')
     await completeBtn.trigger('click')
-    await vi.dynamicImportSettled()
+    await flushPromises()
 
     expect(appApi.completeReading).toHaveBeenCalledWith('task-read-456')
   })

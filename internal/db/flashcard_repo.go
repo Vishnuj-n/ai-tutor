@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -538,22 +539,23 @@ func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
 	if cardID == "" {
 		return fmt.Errorf("flashcard id is required")
 	}
-	result, err := tx.Exec(`
+	var suspended int
+	err := tx.QueryRow(`SELECT suspended FROM fsrs_cards WHERE id = ?`, cardID).Scan(&suspended)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("flashcard %s not found", cardID)
+		}
+		return err
+	}
+	if suspended == 1 {
+		return nil // already suspended, success
+	}
+	_, err = tx.Exec(`
 		UPDATE fsrs_cards
 		SET suspended = 1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND suspended = 0
 	`, cardID)
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return fmt.Errorf("flashcard %s not found or already suspended", cardID)
-	}
-	return nil
+	return err
 }
 
 func boolToInt(b bool) int {

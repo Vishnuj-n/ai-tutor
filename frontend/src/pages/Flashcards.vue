@@ -28,26 +28,8 @@
       </div>
     </template>
 
-    <!-- Mode tabs -->
-    <nav class="mode-tabs" aria-label="Flashcard mode">
-      <button
-        id="tab-comprehensive"
-        :class="['mode-tab', { 'mode-tab--active': activeTab === 'comprehensive' }]"
-        @click="activeTab = 'comprehensive'"
-      >
-        Comprehensive
-      </button>
-      <button
-        id="tab-explorer"
-        :class="['mode-tab', { 'mode-tab--active': activeTab === 'explorer' }]"
-        @click="activeTab = 'explorer'"
-      >
-        Semantic Discovery
-      </button>
-    </nav>
-
     <!-- ── COMPREHENSIVE TAB ───────────────────── -->
-    <section v-if="activeTab === 'comprehensive'" class="tab-content">
+    <section class="tab-content">
       <!-- Config panel: page range -->
       <div v-if="!reviewing" class="config-panel">
         <p class="config-panel__hint">Enter the page range to extract flashcards from.</p>
@@ -204,13 +186,6 @@
       </div>
     </section>
 
-    <!-- ── EXPLORER TAB (stub) ────────────────── -->
-    <section v-else class="tab-content stub-panel">
-      <p class="eyebrow-inline">Coming in Phase 2</p>
-      <p class="stub-text">
-        Semantic Discovery will surface concept clusters across your notebooks.
-      </p>
-    </section>
   </StudyPageLayout>
 </template>
 
@@ -234,7 +209,6 @@ const route = useRoute()
 const router = useRouter()
 const notebooks = ref([])
 const selectedNotebookID = ref('')
-const activeTab = ref('comprehensive')
 const startPage = ref(1)
 const endPage = ref(10)
 const loading = ref(false)
@@ -409,7 +383,7 @@ async function suspendCard() {
 
 function handleKeydown(e) {
   if (!reviewing.value || !currentCard.value) return
-  if (e.key === 'S' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+  if (queueMode.value && e.key === 'S' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     suspendCard()
   }
@@ -505,41 +479,6 @@ async function loadQueueSession(taskID, notebookID = '') {
 .ghost-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* ── Mode tabs (pill style, no divider line) ──── */
-.mode-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--surface-container-low);
-  border-radius: 12px;
-  width: fit-content;
-}
-
-.mode-tab {
-  padding: 7px 16px;
-  border: 0;
-  border-radius: 9px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted-text);
-  background: transparent;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.mode-tab:hover:not(.mode-tab--active) {
-  color: var(--on-surface);
-  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
-}
-
-.mode-tab--active {
-  background: var(--surface-container-lowest);
-  color: var(--on-surface);
 }
 
 /* ── Tab content ──────────────────────────────── */
@@ -1015,23 +954,6 @@ async function loadQueueSession(taskID, notebookID = '') {
 .tooltip-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(8px);
-}
-
-/* ── Explorer stub ────────────────────────────── */
-.stub-panel {
-  background: var(--surface-container-low);
-  border-radius: 16px;
-  padding: 64px 24px;
-  text-align: center;
-}
-
-.stub-text {
-  margin: 8px 0 0;
-  font-size: 15px;
-  color: var(--muted-text);
-  line-height: 1.6;
-  max-width: 52ch;
-  margin-inline: auto;
 }
 
 /* ── Responsive ───────────────────────────────── */

@@ -544,11 +544,21 @@ func (r *Repository) MarkTopicExternalHelpRequiredTx(tx *sql.Tx, topicID string)
 	if topicID == "" {
 		return fmt.Errorf("topic id is required")
 	}
-	_, err := tx.Exec(`
+	result, err := tx.Exec(`
 		UPDATE topics
 		SET external_help_required = 1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, topicID)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("topic %s not found", topicID)
+	}
+	return nil
 }
 

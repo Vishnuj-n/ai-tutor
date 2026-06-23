@@ -175,10 +175,10 @@
             class="primary-btn"
             :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
             :aria-label="'Start task ' + (task.title || task.id)"
-            :disabled="syncingTaskId === task.id"
+            :disabled="task.action_type === 'flashcard_sync' && isSyncing"
             @click="startTask(task)"
           >
-            <span v-if="syncingTaskId === task.id">Syncing...</span>
+            <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
             <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
             <span v-else>Start</span>
           </button>
@@ -278,7 +278,7 @@ const appEnv = ref('')
 const forcingRescue = ref(false)
 const forcingSync = ref(false)
 const devMessage = ref('')
-const syncingTaskId = ref('')
+const isSyncing = ref(false)
 
 const hasSocraticRescueTask = computed(() => {
   return tasks.value.some((t) => t.action_type === 'socratic_remedial')
@@ -435,7 +435,7 @@ function formatDaysRemaining(days) {
 
 async function runFlashcardSyncInline(task) {
   try {
-    syncingTaskId.value = task.id
+    isSyncing.value = true
     actionError.value = ''
     const res = await triggerCloudSync()
     if (res && res.error) {
@@ -446,7 +446,7 @@ async function runFlashcardSyncInline(task) {
   } catch (err) {
     actionError.value = `Cloud Sync Error: ${err.message || err}`
   } finally {
-    syncingTaskId.value = ''
+    isSyncing.value = false
   }
 }
 
