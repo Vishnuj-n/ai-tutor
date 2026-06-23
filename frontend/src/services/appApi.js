@@ -118,6 +118,10 @@ export function completeReviewSession(taskID) {
   return appBridge().CompleteReviewSession(taskID)
 }
 
+export function suspendFlashcard(taskID, cardID) {
+  return appBridge().SuspendFlashcard(taskID, cardID)
+}
+
 export function getNotebooks(topicID = '', profileID = '') {
   return appBridge().GetNotebooks(topicID, profileID)
 }

@@ -158,3 +158,54 @@ func (s *StudyService) CompleteReviewSession(taskID string) error {
 	}
 	return s.repo.CompleteReviewSession(taskID)
 }
+
+// SuspendFlashcard marks a card as suspended, removing it from future reviews.
+// Returns the remaining pending card count in the current session.
+func (s *StudyService) SuspendFlashcard(taskID, cardID string) (int, error) {
+	taskID = strings.TrimSpace(taskID)
+	cardID = strings.TrimSpace(cardID)
+	if taskID == "" || cardID == "" {
+		return 0, fmt.Errorf("task ID and card ID are required")
+	}
+
+	tx, err := s.repo.Begin()
+	if err != nil {
+		return 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	task, err := s.repo.GetTaskByIDTx(tx, taskID)
+	if err != nil {
+		return 0, err
+	}
+	if task.TaskType != models.StudyTaskTypeFlashcardReview {
+		return 0, fmt.Errorf("task %s is not a flashcard review task", taskID)
+	}
+	if task.Status != models.StudyTaskStatusActive {
+		return 0, db.ErrTaskNotActive
+	}
+
+	if err := s.repo.SuspendFlashcardTx(tx, cardID); err != nil {
+		return 0, err
+	}
+
+	if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
+		return 0, err
+	}
+
+	remaining, err := s.repo.RemainingReviewTaskCardsTx(tx, taskID)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	committed = true
+	return remaining, nil
+}

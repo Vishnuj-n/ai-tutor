@@ -508,6 +508,54 @@ func (r *Repository) FlashcardExistsByID(cardID string) (bool, error) {
 	return exists > 0, err
 }
 
+// SuspendFlashcard sets the suspended flag on a flashcard, removing it from all future review sessions.
+func (r *Repository) SuspendFlashcard(cardID string) error {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return fmt.Errorf("flashcard id is required")
+	}
+	result, err := r.db.Exec(`
+		UPDATE fsrs_cards
+		SET suspended = 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND suspended = 0
+	`, cardID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("flashcard %s not found or already suspended", cardID)
+	}
+	return nil
+}
+
+// SuspendFlashcardTx sets the suspended flag on a flashcard within a transaction.
+func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return fmt.Errorf("flashcard id is required")
+	}
+	result, err := tx.Exec(`
+		UPDATE fsrs_cards
+		SET suspended = 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND suspended = 0
+	`, cardID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("flashcard %s not found or already suspended", cardID)
+	}
+	return nil
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
