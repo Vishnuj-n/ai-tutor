@@ -69,6 +69,10 @@ export function getTask(taskID) {
   return appBridge().GetTask(taskID)
 }
 
+export function GetTaskContext(taskID) {
+  return appBridge().GetTaskContext(taskID)
+}
+
 export function generateQuizForPageRange(notebookID, startPage, endPage) {
   return appBridge().GenerateQuizForPageRange(notebookID, startPage, endPage)
 }
@@ -116,6 +120,10 @@ export function recordCardReview(taskID, cardID, rating) {
 
 export function completeReviewSession(taskID) {
   return appBridge().CompleteReviewSession(taskID)
+}
+
+export function suspendFlashcard(taskID, cardID) {
+  return appBridge().SuspendFlashcard(taskID, cardID)
 }
 
 export function getNotebooks(topicID = '', profileID = '') {
@@ -242,6 +250,26 @@ export function triggerCloudSync() {
 
 export function getProfileDailyPace(profileID) {
   return appBridge().GetProfileDailyPace(profileID)
+}
+
+export function completeSocraticRescue(taskID) {
+  return appBridge().CompleteSocraticRescue(taskID)
+}
+
+export function getAppEnv() {
+  return appBridge().GetAppEnv()
+}
+
+export function getTopicSectionsContent(topicID, notebookID) {
+  return appBridge().GetTopicSectionsContent(topicID, notebookID)
+}
+
+export function devForceSocraticRescue(notebookID, topicID) {
+  return appBridge().DevForceSocraticRescue(notebookID, topicID)
+}
+
+export function devForceFlashcardSync(notebookID) {
+  return appBridge().DevForceFlashcardSync(notebookID)
 }
 
 export function logFrontendEvent(level, component, event, details = '') {

@@ -10,6 +10,7 @@ Advanced learning systems are treated as **"Data, not Engines."** They create qu
 
 - **Reading Layer**: Validates immediate comprehension and progression readiness (Reading → Quiz → pass/fail → reread or progress).
 - **Retention Layer**: Optimizes long-term retention using spaced retrieval (Flashcards / Examiner → FSRS update → adaptive review scheduling).
+- **Rescue Layer**: 2-strike Socratic rescue for repeated quiz failures (Quiz fail #1 → REREAD → Quiz fail #2 → SOCRATIC_REMEDIAL → re-quiz → mastery or external help).
 
 Canonical checkpoint flow:
 Dashboard -> Reader -> Quiz -> Dashboard
@@ -145,7 +146,7 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | TEXT PK | Unique task identifier |
-| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
+| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_SYNC` |
 | `block_id` | TEXT | Reference to content block (chunk, quiz_set, etc.) |
 | `related_id` | TEXT | Optional related topic identifier |
 | `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED` |
@@ -161,6 +162,7 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 - `written_user_answers` - id, written_question_id, user_answer, score, feedback
 - `fsrs_cards` - id, topic_id, source_chunk_id, prompt, answer, state_json, due_at, suspended
 - `manual_flashcards` - id, notebook_id, prompt, answer
+- `external_help_required` (on `topics` table) - boolean flag for topics needing external review after failed Socratic rescue
 
 ### What the Queue Replaces
 
@@ -319,11 +321,13 @@ Explicit priority hierarchy with notebook biasing:
 
 | Order | Task Type | Rationale |
 |-------|-----------|-----------|
-| 1 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
-| 2 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
-| 3 | `QUIZ` | Assessment after reading (Reading Layer) |
-| 4 | `READING` | New material after obligations (Reading Layer) |
-| 5 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
+| 1 | `FLASHCARD_SYNC` (cloud sync) | Sync pending flashcard data |
+| 2 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
+| 3 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
+| 4 | `QUIZ` | Assessment after reading (Reading Layer) |
+| 5 | `READING` | New material after obligations (Reading Layer) |
+| 6 | `SOCRATIC_REMEDIAL` (concept rescue) | Blocks queue after 2nd quiz failure; requires intervention |
+| 7 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
 
 **Deterministic Query-Time Rules:**
 - Same `study_queue` state always produces same task order
@@ -338,12 +342,15 @@ LEFT JOIN notebooks n ON sq.notebook_id = n.id
 WHERE sq.status = 'PENDING'
 ORDER BY 
   CASE sq.task_type
-    WHEN 'FLASHCARD_REVIEW' THEN 1
-    WHEN 'REREAD' THEN 2
-    WHEN 'QUIZ' THEN 3
-    WHEN 'READING' THEN 4
-    WHEN 'EXAMINER' THEN 5
-  END,
+    WHEN 'FLASHCARD_SYNC' THEN 7
+    WHEN 'FLASHCARD_REVIEW' THEN 6
+    WHEN 'REREAD' THEN 5
+    WHEN 'QUIZ' THEN 4
+    WHEN 'READING' THEN 3
+    WHEN 'SOCRATIC_REMEDIAL' THEN 2
+    WHEN 'EXAMINER' THEN 1
+    ELSE 0
+  END DESC,
   n.priority DESC,
   sq.priority ASC,
   sq.created_at ASC;
@@ -395,15 +402,12 @@ After 5 review tasks (`FLASHCARD_REVIEW` or `REREAD`), surface 1 `READING` task.
 
 ### Reread Loop Protection
 
-Maximum reread attempts: **3** (default)
+Maximum reread attempts: **1** (default)
 
-- `reread_attempt` counter tracked per block
-- After max reached: stop auto-inserting reread tasks
-- Show recommendation message to user
-- Allow manual retry if user chooses
-- Continue queue progression
-
-Prevents infinite queue pollution from remediation loops.
+- `reread_attempt` counter tracked per topic (topic_id PK in `reread_attempts`)
+- After max reached: SOCRATIC_REMEDIAL rescue task inserted (see Socratic Rescue Pipeline below)
+- No infinite reread loops
+- Continue queue progression via intervention flow
 
 ### Quiz Generation States
 
@@ -440,13 +444,17 @@ This is acceptable for MVP. Future refactoring may separate generation state to 
 
 ### Task Priority Order (Legacy Reference)
 
-| Priority | Task Type | Source |
+**⚠️ This table is OUTDATED.** The actual priority ordering is defined by the SQL query above (Section 7) where higher numeric value = higher priority. See the ordering SQL for authoritative values.
+
+| Legacy Priority | Task Type | Source |
 |----------|-----------|--------|
-| 1 | Overdue FLASHCARD_REVIEW | FSRS due date passed |
-| 2 | PENDING QUIZ | Reading completion |
-| 3 | PENDING READING | New material ingestion |
-| 4 | REREAD (remediation) | Failed quiz |
-| 5 | EXAMINER | Mastery threshold met |
+| 1 | FLASHCARD_SYNC | Cloud sync pending |
+| 2 | FLASHCARD_REVIEW | FSRS due date passed |
+| 3 | REREAD (remediation) | Failed quiz |
+| 4 | QUIZ | Reading completion |
+| 5 | READING | New material ingestion |
+| 6 | SOCRATIC_REMEDIAL | 2nd quiz failure rescue |
+| 7 | EXAMINER | Mastery threshold met |
 
 ### Adaptive Token-Budget Reading Windows
 
@@ -499,7 +507,57 @@ EXAMINER tasks:
 - Remain optional (user can skip)
 - Appear through deterministic queue ordering, NOT hidden orchestration
 
-Prevents starvation: EXAMINER tasks are tier 5 in priority hierarchy, ensuring reviews and reading are not blocked.
+Prevents starvation: EXAMINER tasks are tier 7 in priority hierarchy, ensuring reviews and reading are not blocked.
+
+### Socratic Rescue Pipeline (2-Strike)
+
+When a student fails a quiz twice on the same topic, the system intervenes with a guided rescue flow:
+
+**Strike 1**: REREAD task inserted (standard remediation)
+**Strike 2**: SOCRATIC_REMEDIAL task inserted, QUIZ marked COMPLETED, FSRS cards deleted
+
+**Flow:**
+```plaintext
+[Quiz Fail #1] → REREAD task → Student re-reads → Quiz again
+                                                    ↓
+                                            [Quiz Fail #2]
+                                                    ↓
+                                    SOCRATIC_REMEDIAL task (blocks queue)
+                                                    ↓
+                                    Student completes external Socratic prompt
+                                                    ↓
+                                        Re-quiz (one shot)
+                                       ↙                ↘
+                              [Pass]                    [Fail]
+                               ↓                          ↓
+                        Flashcards generated        EXTERNAL_HELP_REQUIRED
+                        Topic mastered              Queue unblocks
+                                                   Notice shown
+```
+
+**Key behaviors:**
+- SOCRATIC_REMEDIAL sits at priority tier 6 (between READING at tier 5 and EXAMINER at tier 7)
+- Student cannot skip — must complete rescue session
+- Re-quiz pass → flashcards generated, topic mastered
+- Re-quiz fail → `external_help_required` flag set on topic, queue unblocks, notice shown
+- No flashcards are generated for failed concepts at any point
+- Single rescue cycle only — no infinite loops
+
+**External prompt mode:** The rescue UI provides a pre-engineered Socratic prompt template with source text that the student copies to an external LLM. No local LLM integration required.
+
+**Database changes:**
+- `topics.external_help_required` boolean column tracks topics needing external review
+- `study_queue.task_type` accepts `SOCRATIC_REMEDIAL`
+- Re-quiz tasks include `"source": "socratic_rescue_requiz"` in payload for identification
+
+### FLASHCARD_SYNC Task
+
+Cloud sync operations use a dedicated `FLASHCARD_SYNC` task type:
+
+- Inserted when cloud sync fails (after retry exhaustion)
+- Resolved (COMPLETED) when sync succeeds on next attempt
+- Priority tier 7 (highest, above all other task types)
+- Prevents data loss by ensuring pending sync data is not forgotten
 
 ### Reading Completion (Trust-Based)
 

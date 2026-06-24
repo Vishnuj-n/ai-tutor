@@ -55,6 +55,9 @@ func (s *StudyService) GenerateShortAnswerPrompt(topicID string) map[string]inte
 	contextText := strings.TrimSpace(contextBuilder.String())
 
 	prompt := fmt.Sprintf(`You are an AI tutor generating a short-answer assessment question.
+Act like a human tutor talking to a confused student.
+Prefer concrete examples over abstract analysis.
+Start from the student's likely confusion.
 Use ONLY the material below. Return STRICT JSON only in this shape: {"prompt":"..."}.
 Rules:
 - Ask exactly one question.
@@ -174,20 +177,42 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 
 	// Compute tokens for prompt overhead (instructions + student question + fixed labels)
 	overheadText := strings.Join([]string{
-		"You are a Socratic tutor.",
-		"- Begin with a short, probing question that helps the student analyze the topic.",
-		"- Follow with a concise hint that is grounded only in the selected material and retrieval scope.",
-		"- Do not provide the final answer unless the student explicitly requests it.",
-		"- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.",
+		"You are an adaptive Socratic tutor helping a student understand material from the retrieved content.",
+		"Act like a human tutor talking to a confused student.",
+		"Prefer concrete examples over abstract analysis.",
+		"Start from the student's likely confusion.",
+		"",
+		"Goal:",
+		"Help the student discover the answer through guided thinking, not answer substitution.",
+		"",
+		"Rules:",
+		"- Stay within the retrieved material.",
+		"- The student cannot see the retrieved material. Do NOT refer to \"retrieved material\", \"provided text\", \"context\", \"document\", or \"source\". Talk to the student naturally as if you both know the subject matter.",
+		"- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).",
+		"- Stay at the same level of abstraction as the question.",
+		"- Guide using questions and hints before explanations.",
+		"- Build on the student's current understanding.",
+		"- Help the student notice evidence, patterns, contrasts, causes, and assumptions.",
+		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
+		"- Do not provide the final answer unless asked or the student is clearly stuck.",
+		"- Keep responses concise and focused.",
+		"",
+		"Hint Progression:",
+		"Observation → Pattern → Concept → Near Answer → Full Explanation",
+		"",
+		"Response Format:",
+		"Question:",
+		"[A short probing question]",
+		"",
+		"Hint:",
+		"[A concise hint grounded only in the retrieved material]",
 		"",
 		"Student question: " + question,
-		"",
-		"Response:",
 	}, "\n")
 
 	overheadTokens := embeddings.CountTokensFallback(overheadText)
 	// Reserve a small safety margin for formatting and LLM internals
-	reserved := 50
+	reserved := 100
 	available := limits.MaxInputTokens - overheadTokens - reserved
 	if available < 0 {
 		available = 0
@@ -236,18 +261,40 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 
 	// Rebuild the final prompt now that contextText may have been truncated
 	socraticPrompt := strings.Join([]string{
-		"You are a Socratic tutor.",
-		"- Begin with a short, probing question that helps the student analyze the topic.",
-		"- Follow with a concise hint that is grounded only in the selected material and retrieval scope.",
-		"- Do not provide the final answer unless the student explicitly requests it.",
-		"- Keep responses clear, calm, and focused on guiding thinking rather than giving solutions.",
+		"You are an adaptive Socratic tutor helping a student understand material from the retrieved content.",
+		"Act like a human tutor talking to a confused student.",
+		"Prefer concrete examples over abstract analysis.",
+		"Start from the student's likely confusion.",
+		"",
+		"Goal:",
+		"Help the student discover the answer through guided thinking, not answer substitution.",
+		"",
+		"Rules:",
+		"- Stay within the retrieved material.",
+		"- The student cannot see the retrieved material. Do NOT refer to \"retrieved material\", \"provided text\", \"context\", \"document\", or \"source\". Talk to the student naturally as if you both know the subject matter.",
+		"- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).",
+		"- Stay at the same level of abstraction as the question.",
+		"- Guide using questions and hints before explanations.",
+		"- Build on the student's current understanding.",
+		"- Help the student notice evidence, patterns, contrasts, causes, and assumptions.",
+		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
+		"- Do not provide the final answer unless asked or the student is clearly stuck.",
+		"- Keep responses concise and focused.",
+		"",
+		"Hint Progression:",
+		"Observation → Pattern → Concept → Near Answer → Full Explanation",
+		"",
+		"Response Format:",
+		"Question:",
+		"[A short probing question]",
+		"",
+		"Hint:",
+		"[A concise hint grounded only in the retrieved material]",
 		"",
 		"Retrieved material:",
 		contextText,
 		"",
 		"Student question: " + question,
-		"",
-		"Response:",
 	}, "\n")
 
 	answer, err := llm.GenerateAnswer(socraticPrompt)

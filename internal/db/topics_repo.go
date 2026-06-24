@@ -538,3 +538,27 @@ func (r *Repository) DeleteFSRSCardsByTopicIDTx(tx *sql.Tx, topicID string) erro
 	return err
 }
 
+// MarkTopicExternalHelpRequiredTx sets external_help_required = 1 for the specified topic within a transaction.
+func (r *Repository) MarkTopicExternalHelpRequiredTx(tx *sql.Tx, topicID string) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	res, err := tx.Exec(`
+		UPDATE topics
+		SET external_help_required = 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, topicID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("topic %s not found", topicID)
+	}
+	return nil
+}
+

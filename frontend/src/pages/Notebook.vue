@@ -120,7 +120,6 @@
 
           <div class="notebook-actions">
             <button class="btn-sleep" @click="setStudyStatus(notebook.id, 'dormant')">Sleep</button>
-            <button class="btn-download" @click="downloadNotebook(notebook.id)">Download</button>
             <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
           </div>
         </div>
@@ -213,7 +212,6 @@
             >
               Activate
             </button>
-            <button class="btn-download" @click="downloadNotebook(notebook.id)">Download</button>
             <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
           </div>
         </div>
@@ -882,11 +880,6 @@ async function confirmSyllabusDraft() {
   } finally {
     isConfirmingDraft.value = false
   }
-}
-
-function downloadNotebook(notebookId) {
-  // TODO: Trigger download from backend
-  console.log('Download notebook:', notebookId)
 }
 
 async function deleteNotebook(notebookId) {

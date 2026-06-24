@@ -32,6 +32,8 @@ Reader completes the reading task only. The backend generates and activates the 
 - Insert follow-up tasks per explicit rules (respecting max reread attempts)
 - Crash recovery: reset stale ACTIVE tasks on startup (30-min timeout)
 - Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when they are the next pending queue item
+- Handle SOCRATIC_REMEDIAL tasks (concept rescue) with queue-blocking semantics
+- Handle FLASHCARD_SYNC tasks for cloud sync recovery
 
 **Explicitly Deterministic:**
 - No adaptive scheduling
@@ -162,6 +164,7 @@ func SubmitQuiz(blockID string, answers []Answer) (*QuizResult, error)
 ```go
 func GetDueCards(blockID string) ([]Card, error)
 func RateCard(cardID string, rating Rating) error
+func SuspendFlashcard(taskID string, cardID string) (int, error)
 ```
 
 **Props from Queue Router:**
@@ -225,6 +228,51 @@ func SubmitAssessment(blockID string, answers []Answer) (*AssessmentResult, erro
 
 **Props from Queue Router:**
 - `block_id`: Assessment to display
+
+---
+
+## SocraticRescue Module
+
+**File:** `frontend/src/pages/SocraticRescue.vue` + `internal/study/socratic_rescue.go`
+
+**Responsibility:** 2-strike rescue for repeated quiz failures (Rescue Layer)
+
+**Does:**
+- Display source text preview for the topic's page range
+- Show pre-engineered Socratic prompt for copy-to-clipboard
+- Provide "I've Completed the Session" button
+- Call `CompleteSocraticRescue(taskID)` on completion
+- Redirect to dashboard (fresh QUIZ task appears in queue)
+
+**Does NOT:**
+- Integrate local LLM (external clipboard only)
+- Generate flashcards (re-quiz does that)
+- Skip or bypass queue ordering
+
+**API:**
+```go
+func (s *StudyService) CompleteSocraticRescue(taskID string) error
+```
+
+**Backend behavior:**
+- Validates task is SOCRATIC_REMEDIAL and ACTIVE
+- Marks task COMPLETED
+- Inserts fresh QUIZ task for same topic with `source: "socratic_rescue_requiz"` in payload
+- Transactional — both complete + insert happen atomically
+
+**Props from Queue Router:**
+- `task_id`: SOCRATIC_REMEDIAL task to complete
+
+**Triggered by:**
+- Quiz fail #2 (after 1 reread attempt) → SOCRATIC_REMEDIAL task inserted
+- `external_help_required` flag on topic prevents further rescue cycles
+
+**Flow:**
+1. Student opens rescue page → sees source text + Socratic prompt
+2. Copies prompt to external LLM (e.g., ChatGPT)
+3. Completes Socratic tutoring session externally
+4. Clicks "I've Completed the Session"
+5. Fresh QUIZ task inserted into queue
 
 ---
 
@@ -340,16 +388,16 @@ func RetrieveContext(topicID string, query string, limit int) ([]Context, error)
 └──────┬──────┘     └─────────────────────────────────────┘
        │ Route by task_type
        ▼
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│   Reader    │  │    Quiz     │  │ Flashcards  │  │  Examiner   │
-│             │  │             │  │             │  │             │
-│ (No routing │  │ (No routing │  │ (No routing │  │ (No routing │
-│  logic)     │  │  logic)     │  │  logic)     │  │  logic)     │
-└──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
-       │                │                │                │
-       │ MarkComplete() │ SubmitQuiz()   │ RateCard()     │ Submit()
-       │                │                │                │
-       └────────────────┴────────────────┴────────────────┘
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐
+│   Reader    │  │    Quiz     │  │ Flashcards  │  │  Examiner   │  │ SocraticRescue  │
+│             │  │             │  │             │  │             │  │                 │
+│ (No routing │  │ (No routing │  │ (No routing │  │ (No routing │  │ (No routing     │
+│  logic)     │  │  logic)     │  │  logic)     │  │  logic)     │  │  logic)         │
+└──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────────┘
+       │                │                │                │                 │
+       │ MarkComplete() │ SubmitQuiz()   │ RateCard()     │ Submit()        │ CompleteRescue()
+       │                │                │                │                 │
+       └────────────────┴────────────────┴────────────────┴─────────────────┘
                           │
                           ▼
                    ┌─────────────┐
@@ -400,9 +448,12 @@ internal/
     service.go       # Core study service
     flashcard.go     # Flashcard review session
     examiner.go      # Written assessment session
-    quiz_sync.go     # Synchronous quiz generation
+    quiz_sync.go     # Synchronous quiz generation + 2-strike rescue logic
     reader_ai.go     # Reader AI interactions
-    socratic.go      # Socratic tutor session
+    socratic.go       # Socratic tutor session
+    socratic_rescue.go # SOCRATIC_REMEDIAL completion handler (re-quiz insertion)
+    review_session.go # Review session management
+    sync.go           # Cloud sync + FLASHCARD_SYNC task management
   scheduler/         # Scheduling algorithms
     fsrs.go          # FSRS spaced repetition algorithm
     service.go       # Scheduler service wrapper
@@ -438,6 +489,7 @@ frontend/src/pages/
   Flashcards.vue     # Flashcard module
   WrittenAssessment.vue # Written assessment (Examiner)
   Socratic.vue       # Socratic tutor
+  SocraticRescue.vue # Concept rescue (2-strike Socratic prompt)
   Notebook.vue       # Notebook management
   Onboarding.vue     # First-time setup
   Settings.vue       # Provider config

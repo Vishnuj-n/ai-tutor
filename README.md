@@ -49,8 +49,12 @@ It is not a chatbot, PDF viewer, or standalone flashcard app. It is a guided tut
 	- Explain action (secondary Ask AI placement)
 - **Socratic Tutor:**
 	- Guided questioning mode scoped to current topic
-	- 3-strike rescue pipeline for struggling topics
+	- 2-strike rescue pipeline for struggling topics
 	- Enter to send, Shift+Enter for new line
+- **SocraticRescue (Concept Rescue):**
+	- 2-strike rescue pipeline for repeated quiz failures
+	- Pre-engineered Socratic prompt for external LLM copy-to-clipboard
+	- Queue-blocking until rescue session completed
 - **Examiner (Written Assessment):**
 	- Advanced assessment tasks for mastery verification
 	- Notebook selection and scoring

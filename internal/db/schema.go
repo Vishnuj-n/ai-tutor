@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
-	"ai-tutor/internal/utils"
 )
 
 // InitSchema creates all tables and indexes with a single clean schema.
@@ -30,6 +28,7 @@ func InitSchema(tx *sql.Tx) error {
 			start_page INTEGER DEFAULT 0,
 			end_page INTEGER DEFAULT 0,
 			current_page_cursor INTEGER DEFAULT 0,
+			external_help_required BOOLEAN DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -325,41 +324,6 @@ func InitSchema(tx *sql.Tx) error {
 			if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
 				return fmt.Errorf("failed to create unique index on notebook_chunks: %w", err)
 			}
-		}
-	}
-
-	// Safely add columns if they do not exist (active migration support)
-	alterStatements := []struct {
-		table  string
-		column string
-		sql    string
-	}{
-		{"notebooks", "profile_id", "ALTER TABLE notebooks ADD COLUMN profile_id TEXT REFERENCES study_profiles(id) ON DELETE SET NULL"},
-		{"notebooks", "study_status", "ALTER TABLE notebooks ADD COLUMN study_status TEXT DEFAULT 'dormant'"},
-		{"notebooks", "exam_deadline", "ALTER TABLE notebooks ADD COLUMN exam_deadline TEXT"},
-		{"notebooks", "priority", "ALTER TABLE notebooks ADD COLUMN priority INTEGER DEFAULT 5"},
-		{"notebooks", "indexing_status", "ALTER TABLE notebooks ADD COLUMN indexing_status TEXT DEFAULT 'PENDING'"},
-		{"notebooks", "syllabus_draft_json", "ALTER TABLE notebooks ADD COLUMN syllabus_draft_json TEXT"},
-		{"topic_progress", "status", "ALTER TABLE topic_progress ADD COLUMN status TEXT DEFAULT 'active'"},
-		{"user_settings", "active_profile_id", "ALTER TABLE user_settings ADD COLUMN active_profile_id TEXT REFERENCES study_profiles(id) ON DELETE SET NULL"},
-		{"user_settings", "skip_to_reading_active", "ALTER TABLE user_settings ADD COLUMN skip_to_reading_active BOOLEAN DEFAULT 0"},
-		{"user_settings", "cloud_sync_url", "ALTER TABLE user_settings ADD COLUMN cloud_sync_url TEXT DEFAULT ''"},
-		{"user_settings", "cloud_api_token", "ALTER TABLE user_settings ADD COLUMN cloud_api_token TEXT DEFAULT ''"},
-		{"user_settings", "theme", "ALTER TABLE user_settings ADD COLUMN theme TEXT DEFAULT 'light-classic'"},
-		{"user_settings", "rag_enabled", "ALTER TABLE user_settings ADD COLUMN rag_enabled BOOLEAN DEFAULT 0"},
-		{"user_settings", "rag_notebook_chapter", "ALTER TABLE user_settings ADD COLUMN rag_notebook_chapter BOOLEAN DEFAULT 1"},
-		{"user_settings", "rag_entire_notebook", "ALTER TABLE user_settings ADD COLUMN rag_entire_notebook BOOLEAN DEFAULT 1"},
-		{"user_settings", "rag_queue_study", "ALTER TABLE user_settings ADD COLUMN rag_queue_study BOOLEAN DEFAULT 1"},
-	}
-
-	for _, stmt := range alterStatements {
-		var count int
-		err := tx.QueryRow(fmt.Sprintf("SELECT count(*) FROM pragma_table_info('%s') WHERE name='%s'", stmt.table, stmt.column)).Scan(&count)
-		if err == nil && count == 0 {
-			if _, err := tx.Exec(stmt.sql); err != nil {
-				return fmt.Errorf("[SCHEMA] failed to add column %s to %s (%s): %w", stmt.column, stmt.table, stmt.sql, err)
-			}
-			utils.Warnf("[SCHEMA] added column %s to %s", stmt.column, stmt.table)
 		}
 	}
 

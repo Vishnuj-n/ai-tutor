@@ -343,6 +343,92 @@ Answers a question using topic-scoped retrieval.
 
 ---
 
+## SuspendFlashcard API
+
+### SuspendFlashcard
+
+Suspends a flashcard, removing it from all future review sessions.
+
+**Endpoint:** `SuspendFlashcard(taskID string, cardID string) → int`
+
+**Request:**
+```json
+{
+  "task_id": "review-task-uuid",
+  "card_id": "card-uuid"
+}
+```
+
+**Response:** Remaining pending card count in current session.
+
+**Side Effects:**
+- `fsrs_cards.suspended` set to `1`
+- Card removed from all future `FLASHCARD_REVIEW` sessions
+- Review task card marked as reviewed
+
+---
+
+## GetTopicSectionsContent API
+
+### GetTopicSectionsContent
+
+Returns joined text content of all sections in a topic, used by SocraticRescue to display source material.
+
+**Endpoint:** `GetTopicSectionsContent(topicID string, notebookID string) → map`
+
+**Response:**
+```json
+{
+  "content": "Joined text of all chunks in topic...",
+  "notebook_title": "Neural Networks"
+}
+```
+
+---
+
+## SocraticRescue API
+
+### CompleteSocraticRescue
+
+Completes a SOCRATIC_REMEDIAL rescue session and inserts a fresh QUIZ task for re-quiz.
+
+**Endpoint:** `CompleteSocraticRescue(taskID string) → error`
+
+**Request:**
+```json
+{
+  "task_id": "socratic-remedial-task-uuid"
+}
+```
+
+**Response:** Success or error
+
+**Side Effects:**
+- SOCRATIC_REMEDIAL task marked COMPLETED
+- Fresh QUIZ task inserted into queue with `"source": "socratic_rescue_requiz"` in payload
+- Queue unblocks — fresh quiz becomes next pending task
+
+**Errors:**
+- `ErrNotFound` - Task not found
+- `ErrTaskNotActive` - Task is not in ACTIVE status
+- `ErrInvalidTaskType` - Task is not SOCRATIC_REMEDIAL
+
+---
+
+### DevForceSocraticRescue
+
+Dev-only endpoint to force a topic into SOCRATIC_REMEDIAL state for testing.
+
+**Endpoint:** `DevForceSocraticRescue(notebookID, topicID string) → error`
+
+**Access:** Only when `APP_ENV = dev`
+
+**Side Effects:**
+- Deletes FSRS flashcards for the topic
+- Inserts SOCRATIC_REMEDIAL task into queue
+
+---
+
 ## Ingestion API
 
 ### ProcessPDF
@@ -378,6 +464,8 @@ const (
   TaskTypeReread          TaskType = "REREAD"
   TaskTypeFlashcardReview TaskType = "FLASHCARD_REVIEW"
   TaskTypeExaminer        TaskType = "EXAMINER"
+  TaskTypeSocraticRemedial TaskType = "SOCRATIC_REMEDIAL"
+  TaskTypeFlashcardSync   TaskType = "FLASHCARD_SYNC"
 )
 ```
 
