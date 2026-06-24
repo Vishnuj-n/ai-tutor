@@ -37,10 +37,11 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"rag_notebook_chapter":       s.RAGNotebookChapter,
 		"rag_entire_notebook":        s.RAGEntireNotebook,
 		"rag_queue_study":            s.RAGQueueStudy,
+		"default_remedial_strategy":  s.DefaultRemedialStrategy,
 	}
 }
 
-func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool) map[string]interface{} {
+func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
@@ -62,6 +63,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 		RAGNotebookChapter:      ragNotebookChapter,
 		RAGEntireNotebook:       ragEntireNotebook,
 		RAGQueueStudy:           ragQueueStudy,
+		DefaultRemedialStrategy: defaultRemedialStrategy,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {
@@ -86,6 +88,23 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	}
 
 	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) GetRemedialStrategy() string {
+	repo := a.getRepo()
+	if repo == nil {
+		return "CLASSIC"
+	}
+	strategy, _ := repo.GetRemedialStrategy()
+	return strategy
+}
+
+func (a *App) SetRemedialStrategy(strategy string) error {
+	repo := a.getRepo()
+	if repo == nil {
+		return fmt.Errorf("database repository not initialized")
+	}
+	return repo.SetRemedialStrategy(strategy)
 }
 
 func (a *App) GetLLMSettings() map[string]interface{} {

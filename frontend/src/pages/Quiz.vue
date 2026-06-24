@@ -127,10 +127,12 @@
         <div class="warning-text">
           <p class="warning-title">Sync Warning / Network Error</p>
           <p class="warning-detail">
-            Flashcard sync could not be completed automatically. A background task has been scheduled.
-            You can try manually retrying the sync now.
+            Flashcard sync could not be completed automatically. A background task has been
+            scheduled. You can try manually retrying the sync now.
           </p>
-          <p class="warning-message">Reason: {{ result.flashcards_generation_message || 'Unknown error' }}</p>
+          <p class="warning-message">
+            Reason: {{ result.flashcards_generation_message || 'Unknown error' }}
+          </p>
         </div>
       </div>
 
@@ -143,11 +145,14 @@
       </p>
 
       <!-- External help notice (when failed re-quiz) -->
-      <div v-if="!result.passed && !result.reread_task_id && result.manual_review_recommended" class="result-panel__external-help-notice">
+      <div
+        v-if="!result.passed && !result.reread_task_id && result.manual_review_recommended"
+        class="result-panel__external-help-notice"
+      >
         <p class="external-help-title">External Review Required</p>
         <p class="external-help-desc">
-          This concept requires external review. Your next reading task has been unlocked so you don't fall behind.
-          Please consult your notes or instructor for this page range.
+          This concept requires external review. Your next reading task has been unlocked so you
+          don't fall behind. Please consult your notes or instructor for this page range.
         </p>
       </div>
 
@@ -282,7 +287,12 @@ const canGenerateManual = computed(
 )
 
 const canRetryGeneration = computed(() => {
-  return !taskID.value && selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value
+  return (
+    !taskID.value &&
+    selectedNotebookID.value &&
+    startPage.value > 0 &&
+    endPage.value >= startPage.value
+  )
 })
 
 onMounted(async () => {
@@ -843,7 +853,8 @@ async function handleContinue() {
   color: #d35400;
 }
 
-.warning-detail, .warning-message {
+.warning-detail,
+.warning-message {
   margin: 0;
   font-size: 13px;
   line-height: 1.4;

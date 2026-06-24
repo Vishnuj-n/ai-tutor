@@ -122,7 +122,6 @@
         </div>
       </article>
     </section>
-
   </StudyPageLayout>
 </template>
 

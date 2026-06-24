@@ -13,17 +13,17 @@ vi.mock('../services/appApi', () => ({
   getNotebooks: vi.fn(),
   generateManualFlashcards: vi.fn(),
   getReviewSession: vi.fn(),
-  recordCardReview: vi.fn()
+  recordCardReview: vi.fn(),
 }))
 
 // Mock vue-router hooks
 vi.mock('vue-router', () => ({
   useRoute: () => ({
-    query: routeQuery.value
+    query: routeQuery.value,
   }),
   useRouter: () => ({
-    push: vi.fn()
-  })
+    push: vi.fn(),
+  }),
 }))
 
 describe('Flashcards.vue Integration', () => {
@@ -33,9 +33,7 @@ describe('Flashcards.vue Integration', () => {
   })
 
   it('loads notebooks and renders config panel by default', async () => {
-    appApi.getNotebooks.mockResolvedValue([
-      { id: 'nb-1', title: 'Calculus 101' }
-    ])
+    appApi.getNotebooks.mockResolvedValue([{ id: 'nb-1', title: 'Calculus 101' }])
 
     const wrapper = mount(Flashcards)
     await flushPromises()
@@ -47,9 +45,7 @@ describe('Flashcards.vue Integration', () => {
   it('runs comprehensive flashcard generation and reviews cards', async () => {
     appApi.getNotebooks.mockResolvedValue([{ id: 'nb-1', title: 'Calculus 101' }])
     appApi.generateManualFlashcards.mockResolvedValue({
-      cards: [
-        { id: 'fc-1', prompt: 'Derivative of x^2?', answer: '2x' }
-      ]
+      cards: [{ id: 'fc-1', prompt: 'Derivative of x^2?', answer: '2x' }],
     })
 
     const wrapper = mount(Flashcards)

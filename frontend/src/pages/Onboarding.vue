@@ -52,43 +52,39 @@
             step="5"
             required
           />
-          <p class="hint" style="margin-top: 4px; font-size: 0.85rem; opacity: 0.7;">
+          <p class="hint" style="margin-top: 4px; font-size: 0.85rem; opacity: 0.7">
             Caps spacing repetition reviews active in any single study session.
           </p>
         </div>
 
-        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
-          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+        <div style="display: flex; gap: 16px; margin-bottom: 20px">
+          <div class="form-group" style="flex: 1; margin-bottom: 0">
             <label for="study-start-time">Study Start Time</label>
-            <input
-              id="study-start-time"
-              v-model="studyStartTime"
-              type="time"
-              required
-            />
+            <input id="study-start-time" v-model="studyStartTime" type="time" required />
           </div>
-          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+          <div class="form-group" style="flex: 1; margin-bottom: 0">
             <label for="study-end-time">Study End Time</label>
-            <input
-              id="study-end-time"
-              v-model="studyEndTime"
-              type="time"
-              required
-            />
+            <input id="study-end-time" v-model="studyEndTime" type="time" required />
           </div>
         </div>
 
-        <div class="form-group check-group" style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px;">
-          <label class="checkbox-container" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+        <div
+          class="form-group check-group"
+          style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
+        >
+          <label
+            class="checkbox-container"
+            style="display: flex; align-items: center; gap: 10px; cursor: pointer"
+          >
             <input
               id="reminders-enabled"
               v-model="remindersEnabled"
               type="checkbox"
-              style="width: 18px; height: 18px; cursor: pointer;"
+              style="width: 18px; height: 18px; cursor: pointer"
             />
             <div class="check-label">
               <strong>Enable Study Reminders</strong>
-              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7;">
+              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
                 Notify when daily study time starts and ends.
               </p>
             </div>

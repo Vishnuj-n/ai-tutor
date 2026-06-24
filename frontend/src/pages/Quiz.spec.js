@@ -14,17 +14,17 @@ vi.mock('../services/appApi', () => ({
   submitQuizAttempt: vi.fn(),
   getNotebooks: vi.fn(),
   generateQuizForPageRange: vi.fn(),
-  generateFlashcardsForQuizTask: vi.fn()
+  generateFlashcardsForQuizTask: vi.fn(),
 }))
 
 // Mock vue-router hooks
 vi.mock('vue-router', () => ({
   useRoute: () => ({
-    query: routeQuery.value
+    query: routeQuery.value,
   }),
   useRouter: () => ({
-    push: vi.fn()
-  })
+    push: vi.fn(),
+  }),
 }))
 
 describe('Quiz.vue Integration & State', () => {
@@ -34,9 +34,7 @@ describe('Quiz.vue Integration & State', () => {
   })
 
   it('renders select notebook selector when no taskId is provided', async () => {
-    appApi.getNotebooks.mockResolvedValue([
-      { id: 'nb-1', title: 'Calculus 101' }
-    ])
+    appApi.getNotebooks.mockResolvedValue([{ id: 'nb-1', title: 'Calculus 101' }])
 
     const wrapper = mount(Quiz)
     await flushPromises()
@@ -60,12 +58,12 @@ describe('Quiz.vue Integration & State', () => {
               id: 'q1',
               prompt: 'What is 2+2?',
               options: ['3', '4', '5'],
-              correct_answer: '4'
-            }
+              correct_answer: '4',
+            },
           ],
-          passing_score: 100
-        })
-      }
+          passing_score: 100,
+        }),
+      },
     })
 
     const wrapper = mount(Quiz)
@@ -92,12 +90,12 @@ describe('Quiz.vue Integration & State', () => {
               id: 'q1',
               prompt: 'Is testing good?',
               options: ['Yes', 'No'],
-              correct_answer: 'Yes'
-            }
+              correct_answer: 'Yes',
+            },
           ],
-          passing_score: 100
-        })
-      }
+          passing_score: 100,
+        }),
+      },
     })
 
     appApi.submitQuizAttempt.mockResolvedValue({
@@ -106,8 +104,8 @@ describe('Quiz.vue Integration & State', () => {
         passed: true,
         passing_score: 100,
         feedback: 'Excellent work!',
-        flashcards_pending: false
-      }
+        flashcards_pending: false,
+      },
     })
 
     const wrapper = mount(Quiz)
@@ -125,7 +123,7 @@ describe('Quiz.vue Integration & State', () => {
     await flushPromises()
 
     expect(appApi.submitQuizAttempt).toHaveBeenCalledWith('task-123', [
-      { question_id: 'q1', selected: 'Yes' }
+      { question_id: 'q1', selected: 'Yes' },
     ])
     expect(wrapper.find('.result-panel').exists()).toBe(true)
     expect(wrapper.text()).toContain('Passed')
