@@ -316,6 +316,8 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	completionStatus := models.StudyTaskStatusCompleted
 	var resultPayload []byte
 
+	strategy, _ := s.repo.GetRemedialStrategy()
+
 	tx, err := s.repo.Begin()
 	if err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to begin quiz transaction: %w", err)
@@ -363,7 +365,6 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			}
 			utils.Warnf("[SOCRATIC_RESCUE] requiz_failed topicID=%s — external help required", task.TopicID)
 		} else {
-			strategy, _ := s.repo.GetRemedialStrategy()
 			if strategy == "FAST" {
 				manualReviewRecommended = true
 				feedback = "Concept rescue activated. Complete the Socratic session to retry."
