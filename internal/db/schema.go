@@ -105,7 +105,10 @@ func InitSchema(tx *sql.Tx) error {
 		// User settings
 		`CREATE TABLE IF NOT EXISTS user_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
-			daily_study_minutes INTEGER NOT NULL DEFAULT 90,
+			max_flashcards_per_session INTEGER NOT NULL DEFAULT 30,
+			study_start_time TEXT DEFAULT '17:00',
+			study_end_time TEXT DEFAULT '18:00',
+			reminders_enabled BOOLEAN DEFAULT 1,
 			active_profile_id TEXT,
 			skip_to_reading_active BOOLEAN DEFAULT 0,
 			cloud_sync_url TEXT DEFAULT '',
@@ -329,8 +332,8 @@ func InitSchema(tx *sql.Tx) error {
 
 	// Initialize default user settings
 	if _, err := tx.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes)
-		VALUES (1, 90)
+		INSERT INTO user_settings (id, max_flashcards_per_session, study_start_time, study_end_time, reminders_enabled)
+		VALUES (1, 30, '17:00', '18:00', 1)
 		ON CONFLICT(id) DO NOTHING
 	`); err != nil {
 		return fmt.Errorf("failed to initialize user settings: %w", err)

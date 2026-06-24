@@ -26,19 +26,61 @@
         <h2>Study Budget & Routine</h2>
 
         <div class="form-group">
-          <label for="daily-minutes">Daily study goal (minutes)</label>
+          <label for="max-flashcards">Max Flashcards per Session</label>
           <input
-            id="daily-minutes"
-            v-model.number="settings.daily_study_minutes"
+            id="max-flashcards"
+            v-model.number="settings.max_flashcards_per_session"
             type="number"
-            min="15"
-            max="480"
+            min="5"
+            max="200"
             step="5"
             :disabled="loading || saving"
+            required
           />
           <p class="hint">
-            Adjusts FSRS review capacities and reading goals to match your daily schedule.
+            Caps the number of FSRS reviews active in any single study session.
           </p>
+        </div>
+
+        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="study-start-time">Study Start Time</label>
+            <input
+              id="study-start-time"
+              v-model="settings.study_start_time"
+              type="time"
+              :disabled="loading || saving"
+              required
+            />
+          </div>
+          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="study-end-time">Study End Time</label>
+            <input
+              id="study-end-time"
+              v-model="settings.study_end_time"
+              type="time"
+              :disabled="loading || saving"
+              required
+            />
+          </div>
+        </div>
+
+        <div class="form-group check-group" style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px;">
+          <label class="checkbox-container" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input
+              id="reminders-enabled"
+              v-model="settings.reminders_enabled"
+              type="checkbox"
+              :disabled="loading || saving"
+              style="width: 18px; height: 18px; cursor: pointer;"
+            />
+            <div class="check-label">
+              <strong>Enable Study Reminders</strong>
+              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7;">
+                Notify when daily study time starts and ends.
+              </p>
+            </div>
+          </label>
         </div>
 
         <div class="form-group check-group">
@@ -580,7 +622,10 @@ const error = ref('')
 const success = ref('')
 
 const settings = ref({
-  daily_study_minutes: 90,
+  max_flashcards_per_session: 30,
+  study_start_time: '17:00',
+  study_end_time: '18:00',
+  reminders_enabled: true,
   active_profile_id: '',
   skip_to_reading_active: false,
   cloud_sync_url: '',
@@ -877,7 +922,10 @@ async function saveUserSettings() {
   try {
     saving.value = true
     const res = await updateUserSettings(
-      settings.value.daily_study_minutes,
+      settings.value.max_flashcards_per_session,
+      settings.value.study_start_time,
+      settings.value.study_end_time,
+      settings.value.reminders_enabled,
       settings.value.active_profile_id,
       settings.value.skip_to_reading_active,
       settings.value.cloud_sync_url,
@@ -893,6 +941,7 @@ async function saveUserSettings() {
       return
     }
     success.value = 'Settings updated successfully.'
+    window.dispatchEvent(new CustomEvent('settings-updated'))
     setTimeout(() => (success.value = ''), 4000)
   } catch (err) {
     error.value = err.message || 'Failed to save settings'

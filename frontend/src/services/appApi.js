@@ -89,13 +89,7 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
-export function getDailyStudySettings() {
-  return appBridge().GetDailyStudySettings()
-}
 
-export function updateDailyStudyMinutes(minutes) {
-  return appBridge().UpdateDailyStudyMinutes(minutes)
-}
 
 // Comprehensive Mode endpoints (Phase 1)
 export function generateManualFlashcards(notebookID, startPage, endPage) {
@@ -167,7 +161,10 @@ export function getUserSettings() {
 }
 
 export function updateUserSettings(
-  minutes,
+  maxFlashcards,
+  startTime,
+  endTime,
+  remindersEnabled,
   activeProfileID,
   skipToReading,
   syncURL,
@@ -179,7 +176,10 @@ export function updateUserSettings(
   ragQueueStudy
 ) {
   return appBridge().UpdateUserSettings(
-    minutes,
+    maxFlashcards,
+    startTime,
+    endTime,
+    remindersEnabled,
     activeProfileID,
     skipToReading,
     syncURL,

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -36,7 +37,7 @@ const (
 )
 
 type queryDueReviewCardsFn func(now int64) (int, error)
-type queryDailyStudyMinutesFn func() (int, error)
+type queryUserSettingsFn func() (*models.UserSettings, error)
 type queryNextReadingTopicFn func() (models.ReadingTopicCursor, bool, error)
 type queryTokensPerPageMapFn func(topicID string, startPage int, endPage int) (map[int]int, error)
 type queryNextDueReviewNotebookFn func(now int64) (string, int, error)
@@ -44,7 +45,7 @@ type queryNextDueReviewNotebookFn func(now int64) (string, int, error)
 // service builds one context-locked daily reading task.
 type service struct {
 	queryDueReviewCards        queryDueReviewCardsFn
-	queryDailyStudyMinute      queryDailyStudyMinutesFn
+	queryUserSettings          queryUserSettingsFn
 	queryNextReadingTopic      queryNextReadingTopicFn
 	queryTokensPerPageMap      queryTokensPerPageMapFn
 	queryNextDueReviewNotebook queryNextDueReviewNotebookFn
@@ -71,11 +72,11 @@ func WithQueryNextDueReviewNotebook(fn queryNextDueReviewNotebookFn) Option {
 	}
 }
 
-// WithQueryDailyStudyMinutes overrides the user settings query dependency.
-func WithQueryDailyStudyMinutes(fn queryDailyStudyMinutesFn) Option {
+// WithQueryUserSettings overrides the user settings query dependency.
+func WithQueryUserSettings(fn queryUserSettingsFn) Option {
 	return func(s *service) {
 		if fn != nil {
-			s.queryDailyStudyMinute = fn
+			s.queryUserSettings = fn
 		}
 	}
 }
@@ -109,7 +110,7 @@ func New(repo *db.Repository, opts ...Option) Service {
 	s := &service{}
 	if repo != nil {
 		s.queryDueReviewCards = repo.QueryDueReviewCards
-		s.queryDailyStudyMinute = repo.GetDailyStudyMinutes
+		s.queryUserSettings = repo.GetUserSettings
 		s.queryNextReadingTopic = repo.QueryNextReadingTopic
 		s.queryTokensPerPageMap = repo.GetTokensPerPageMap
 		s.queryNextDueReviewNotebook = repo.GetNextDueReviewNotebook
@@ -124,69 +125,43 @@ func New(repo *db.Repository, opts ...Option) Service {
 
 // BuildTodayPlan calculates review budget, reading budget, and one context-locked reading task.
 func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
-
 	dueCards, err := s.queryDueReviewCards(now.Unix())
 	if err != nil {
 		return nil, err
 	}
 
-	dailyStudyMinutes, err := s.queryDailyStudyMinute()
+	settings, err := s.queryUserSettings()
 	if err != nil {
 		return nil, err
 	}
 
-	if dailyStudyMinutes <= 0 {
-		dailyStudyMinutes = DefaultDailyStudyMinutes
+	maxFlashcards := settings.MaxFlashcardsPerSession
+	if maxFlashcards <= 0 {
+		maxFlashcards = 30
 	}
+
+	dailyStudyMinutes := calculateDurationMinutes(settings.StudyStartTime, settings.StudyEndTime)
 
 	totalDueCards := dueCards
-	reviewBudget := int(math.Ceil(float64(dueCards) * ReviewMinutesPerCard))
-
-	// Intelligent Balancing: Cap review time to prevent it from consuming the entire session.
-	// We use the smaller of:
-	// 1. MaxReviewMinutesSession (hard cap)
-	// 2. MaxReviewMinutesRatio * dailyStudyMinutes (proportional cap)
-	proportionalCap := int(float64(dailyStudyMinutes) * MaxReviewMinutesRatio)
-	safeReviewBudget := reviewBudget
-	if safeReviewBudget > proportionalCap {
-		safeReviewBudget = proportionalCap
-	}
-	if safeReviewBudget > MaxReviewMinutesSession {
-		safeReviewBudget = MaxReviewMinutesSession
-	}
-
-	// Calculate materialized cards based on the safe budget
-	materializedCards := int(float64(safeReviewBudget) / ReviewMinutesPerCard)
-	if materializedCards > dueCards {
-		materializedCards = dueCards
+	materializedCards := dueCards
+	if materializedCards > maxFlashcards {
+		materializedCards = maxFlashcards
 	}
 	deferredCards := totalDueCards - materializedCards
-
-	utils.Warnf("[SCHEDULER] workload_audit total_due_cards=%d review_cards_materialized=%d estimated_review_minutes=%d deferred_review_cards=%d review_session_limit=%d daily_mins=%d",
-		totalDueCards, materializedCards, reviewBudget, deferredCards, MaxReviewMinutesSession, dailyStudyMinutes)
-
-	readingBudget := dailyStudyMinutes - safeReviewBudget
-
-	if readingBudget < 0 {
-		readingBudget = 0
+	if deferredCards < 0 {
+		deferredCards = 0
 	}
 
-	// Convert reading budget into adaptive word budget
-	tokenBudget := readingBudget * WordsPerMinute
+	finalDueReviewCards := materializedCards
+	finalReviewMinutes := int(math.Ceil(float64(materializedCards) * ReviewMinutesPerCard))
+
+	utils.Warnf("[SCHEDULER] workload_audit total_due_cards=%d review_cards_materialized=%d estimated_review_minutes=%d deferred_review_cards=%d max_flashcards=%d daily_mins=%d",
+		totalDueCards, materializedCards, finalReviewMinutes, deferredCards, maxFlashcards, dailyStudyMinutes)
 
 	// Keep sessions near intended workload size
-	if tokenBudget > TargetSessionWords {
-		tokenBudget = TargetSessionWords
-	}
-
-	// Final plan values use the safe (materialized) counts
-	finalReviewMinutes := safeReviewBudget
-	finalDueReviewCards := materializedCards
-
-	// tokenBudget cannot be negative since readingBudget is clamped to >=0 and WordsPerMinute is positive
+	tokenBudget := TargetSessionWords
 
 	readingTopic, foundReadingTopic, err := s.queryNextReadingTopic()
-
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +170,6 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	activeTopics := make([]string, 0, 1)
 
 	if foundReadingTopic {
-
 		startPage, endPage, ok, tokenMap := resolvePageWindow(
 			readingTopic,
 			tokenBudget,
@@ -203,11 +177,8 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		)
 
 		if ok {
-
 			generatedTaskID := "task-read-" + readingTopic.ID
-
 			utils.LogSchedulerDecision(readingTopic.ID, startPage, endPage, strconv.Itoa(tokenBudget), "adaptive_window_resolved")
-
 			activeTopics = append(activeTopics, readingTopic.Title)
 
 			actualTaskMinutes := s.estimateTaskMinutes(
@@ -435,4 +406,35 @@ func (s *service) estimateTaskMinutes(
 			float64(pageCount) * MinutesPerPage,
 		),
 	)
+}
+
+func parseTimeToMinutes(t string) (int, bool) {
+	parts := strings.Split(t, ":")
+	if len(parts) != 2 {
+		return 0, false
+	}
+	var h, m int
+	if _, err := fmt.Sscanf(t, "%d:%d", &h, &m); err != nil {
+		return 0, false
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+func calculateDurationMinutes(start, end string) int {
+	startMins, ok1 := parseTimeToMinutes(start)
+	endMins, ok2 := parseTimeToMinutes(end)
+	if !ok1 || !ok2 {
+		return 60 // Default fallback
+	}
+	diff := endMins - startMins
+	if diff < 0 {
+		diff += 1440 // Wraps around midnight
+	}
+	if diff == 0 {
+		return 60 // Default fallback if start == end
+	}
+	return diff
 }

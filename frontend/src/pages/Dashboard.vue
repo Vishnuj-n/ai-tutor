@@ -253,7 +253,10 @@ const dueReviewCards = ref(0)
 
 const profiles = ref([])
 const userSettings = ref({
-  daily_study_minutes: 90,
+  max_flashcards_per_session: 30,
+  study_start_time: '17:00',
+  study_end_time: '18:00',
+  reminders_enabled: true,
   active_profile_id: '',
   skip_to_reading_active: false,
   cloud_sync_url: '',
@@ -376,7 +379,10 @@ async function changeActiveProfile(event) {
   try {
     loading.value = true
     const res = await updateUserSettings(
-      userSettings.value.daily_study_minutes,
+      userSettings.value.max_flashcards_per_session,
+      userSettings.value.study_start_time,
+      userSettings.value.study_end_time,
+      userSettings.value.reminders_enabled,
       newProfileID,
       userSettings.value.skip_to_reading_active,
       userSettings.value.cloud_sync_url,
@@ -390,6 +396,7 @@ async function changeActiveProfile(event) {
       return
     }
     lastPersistedProfile.value = newProfileID
+    window.dispatchEvent(new CustomEvent('settings-updated'))
     await loadAgenda()
   } catch (err) {
     userSettings.value.active_profile_id = oldProfileID
@@ -405,7 +412,10 @@ async function toggleEscapeHatch() {
     loading.value = true
     userSettings.value.skip_to_reading_active = !userSettings.value.skip_to_reading_active
     const res = await updateUserSettings(
-      userSettings.value.daily_study_minutes,
+      userSettings.value.max_flashcards_per_session,
+      userSettings.value.study_start_time,
+      userSettings.value.study_end_time,
+      userSettings.value.reminders_enabled,
       userSettings.value.active_profile_id,
       userSettings.value.skip_to_reading_active,
       userSettings.value.cloud_sync_url,
@@ -418,6 +428,7 @@ async function toggleEscapeHatch() {
       actionError.value = res.error
       return
     }
+    window.dispatchEvent(new CustomEvent('settings-updated'))
     await loadAgenda()
   } catch (err) {
     userSettings.value.skip_to_reading_active = previousSkipToReading
