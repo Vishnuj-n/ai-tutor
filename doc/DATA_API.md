@@ -429,6 +429,40 @@ Dev-only endpoint to force a topic into SOCRATIC_REMEDIAL state for testing.
 
 ---
 
+## Settings API
+
+### GetRemedialStrategy
+
+Returns the user's current preference for handling quiz failures.
+
+**Endpoint:** `GetRemedialStrategy() → string`
+
+**Response:**
+```json
+"CLASSIC"
+```
+
+**Values:** `"CLASSIC"` (reread first) or `"FAST"` (direct Socratic rescue).
+
+---
+
+### SetRemedialStrategy
+
+Updates the user's preference for handling quiz failures.
+
+**Endpoint:** `SetRemedialStrategy(strategy string) → error`
+
+**Request:**
+```json
+"FAST"
+```
+
+**Side Effects:**
+- Updates `default_remedial_strategy` in `user_settings` table
+- Affects subsequent quiz failure behavior in `SubmitQuizAttempt`
+
+---
+
 ## Ingestion API
 
 ### ProcessPDF

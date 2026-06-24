@@ -34,6 +34,7 @@ Reader completes the reading task only. The backend generates and activates the 
 - Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when they are the next pending queue item
 - Handle SOCRATIC_REMEDIAL tasks (concept rescue) with queue-blocking semantics
 - Handle FLASHCARD_SYNC tasks for cloud sync recovery
+- Branch quiz failure logic based on user's `default_remedial_strategy` (Classic vs Fast track)
 
 **Explicitly Deterministic:**
 - No adaptive scheduling
