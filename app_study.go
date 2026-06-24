@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -178,6 +179,10 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		titlePrefix = "Flashcard Review"
 	case models.StudyTaskTypeExaminer:
 		titlePrefix = "Examiner"
+	case models.StudyTaskTypeSocraticRemedial:
+		titlePrefix = "Concept Rescue"
+	case models.StudyTaskTypeFlashcardSync:
+		titlePrefix = "Sync Flashcards"
 	}
 
 	meta := ""
@@ -185,7 +190,9 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		meta = fmt.Sprintf("Pages %d-%d", task.StartPage, task.EndPage)
 	}
 	estimateMinutes := 10
-	if task.TaskType == models.StudyTaskTypeFlashcardReview {
+	if task.TaskType == models.StudyTaskTypeFlashcardSync {
+		estimateMinutes = 0
+	} else if task.TaskType == models.StudyTaskTypeFlashcardReview {
 		// Use card count from payload if available
 		var payload models.ReviewSessionPayload
 		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err == nil && payload.CardCount > 0 {
@@ -559,6 +566,33 @@ func (a *App) GetTask(taskID string) map[string]interface{} {
 	return map[string]interface{}{"task": task}
 }
 
+func (a *App) GetTaskContext(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	task, err := repo.GetTaskByID(taskID)
+	if err != nil {
+		if err == db.ErrTaskNotFound {
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		}
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{
+		"task": task,
+		"topic": map[string]interface{}{
+			"id": task.TopicID,
+		},
+		"notebook": map[string]interface{}{
+			"id": task.NotebookID,
+		},
+	}
+}
+
 func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -805,6 +839,28 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 	return map[string]interface{}{"ok": true}
 }
 
+func (a *App) SuspendFlashcard(taskID, cardID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	remaining, err := a.studyService.SuspendFlashcard(taskID, cardID)
+	if err != nil {
+		switch err {
+		case db.ErrTaskNotFound:
+			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+		case db.ErrTaskNotActive:
+			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+		default:
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"ok": true, "remaining": remaining}
+}
+
 func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -815,3 +871,92 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 	}
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
 }
+
+// CompleteSocraticRescue completes the socratic rescue session and inserts a re-quiz.
+func (a *App) CompleteSocraticRescue(taskID string) map[string]interface{} {
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+	if err := a.studyService.CompleteSocraticRescue(taskID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+// GetAppEnv returns the current value of the APP_ENV environment variable.
+func (a *App) GetAppEnv() map[string]interface{} {
+	return map[string]interface{}{
+		"env": os.Getenv("APP_ENV"),
+	}
+}
+
+// DevForceSocraticRescue forces a topic into the SOCRATIC_REMEDIAL queue task state.
+// Only accessible when APP_ENV = dev.
+func (a *App) DevForceSocraticRescue(notebookID, topicID string) map[string]interface{} {
+	if os.Getenv("APP_ENV") != "dev" {
+		return map[string]interface{}{"error": "forbidden: dev mode only"}
+	}
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+
+	tx, err := repo.Begin()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Wipe FSRS flashcards for this topic to protect purity
+	if err := repo.DeleteFSRSCardsByTopicIDTx(tx, topicID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	feedback := "Concept rescue activated. Complete the Socratic session to retry."
+	socraticTaskID := uuid.NewString()
+	socraticPayload, _ := json.Marshal(map[string]string{
+		"feedback": feedback,
+		"lane":     "socratic_rescue",
+		"mode":     "external_prompt",
+	})
+
+	// Note: the hardcoded start_page value of 1 and end_page value of 10 are placeholder bounds used only for this dev helper function.
+	socraticTask := models.StudyQueueTask{
+		ID:          socraticTaskID,
+		NotebookID:  notebookID,
+		TopicID:     topicID,
+		TaskType:    models.StudyTaskTypeSocraticRemedial,
+		Status:      models.StudyTaskStatusPending,
+		Priority:    0,
+		PayloadJSON: string(socraticPayload),
+		StartPage:   1,
+		EndPage:     10,
+	}
+	err = repo.InsertStudyTaskTx(tx, socraticTask)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	return map[string]interface{}{"ok": true, "task_id": socraticTaskID}
+}
+
+// DevForceFlashcardSync forces a FLASHCARD_SYNC task into the pending queue.
+// Only accessible when APP_ENV = dev.
+func (a *App) DevForceFlashcardSync(notebookID string) map[string]interface{} {
+	if os.Getenv("APP_ENV") != "dev" {
+		return map[string]interface{}{"error": "forbidden: dev mode only"}
+	}
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if err := repo.EnsurePendingFlashcardSyncTask(notebookID); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+

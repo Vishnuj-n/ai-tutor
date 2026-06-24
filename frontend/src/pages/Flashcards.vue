@@ -4,6 +4,14 @@
     title="Flashcards"
     :subtitle="queueMode ? `Queue session · ${sessionRemaining} remaining` : ''"
   >
+    <!-- Toast notification -->
+    <Teleport to="body">
+      <Transition name="toast">
+        <div v-if="toast.show" class="toast-notification" :class="`toast-${toast.type}`">
+          {{ toast.message }}
+        </div>
+      </Transition>
+    </Teleport>
     <!-- Toolbar: notebook selector -->
     <template #toolbar>
       <div class="toolbar-field">
@@ -20,26 +28,8 @@
       </div>
     </template>
 
-    <!-- Mode tabs -->
-    <nav class="mode-tabs" aria-label="Flashcard mode">
-      <button
-        id="tab-comprehensive"
-        :class="['mode-tab', { 'mode-tab--active': activeTab === 'comprehensive' }]"
-        @click="activeTab = 'comprehensive'"
-      >
-        Comprehensive
-      </button>
-      <button
-        id="tab-explorer"
-        :class="['mode-tab', { 'mode-tab--active': activeTab === 'explorer' }]"
-        @click="activeTab = 'explorer'"
-      >
-        Semantic Discovery
-      </button>
-    </nav>
-
     <!-- ── COMPREHENSIVE TAB ───────────────────── -->
-    <section v-if="activeTab === 'comprehensive'" class="tab-content">
+    <section class="tab-content">
       <!-- Config panel: page range -->
       <div v-if="!reviewing" class="config-panel">
         <p class="config-panel__hint">Enter the page range to extract flashcards from.</p>
@@ -96,6 +86,18 @@
           <div class="card-inner">
             <!-- Front -->
             <div class="card-face card-front">
+              <button
+                v-if="queueMode"
+                class="suspend-btn"
+                title="Suspend card (Shift+S)"
+                :disabled="isSubmittingReview"
+                @click="suspendCard"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                </svg>
+              </button>
               <p class="card-text">{{ currentCard.prompt }}</p>
               <button id="fc-reveal-btn" class="reveal-btn" @click="flipped = true">
                 Show Answer
@@ -103,6 +105,18 @@
             </div>
             <!-- Back -->
             <div class="card-face card-back">
+              <button
+                v-if="queueMode"
+                class="suspend-btn"
+                title="Suspend card (Shift+S)"
+                :disabled="isSubmittingReview"
+                @click="suspendCard"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                </svg>
+              </button>
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
               <div class="rating-row">
                 <button
@@ -119,6 +133,46 @@
             </div>
           </div>
         </div>
+
+        <!-- Info tooltip -->
+        <div class="info-trigger" @mouseenter="showInfoTooltip = true" @mouseleave="showInfoTooltip = false">
+          <button class="info-btn" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+          </button>
+          <Transition name="tooltip">
+            <div v-if="showInfoTooltip" class="info-tooltip">
+              <p class="tooltip-title">Rating Guide</p>
+              <div class="tooltip-items">
+                <div class="tooltip-item">
+                  <span class="tooltip-key again">Again</span>
+                  <span class="tooltip-desc">You forgot it completely. You'll see this card again soon.</span>
+                </div>
+                <div class="tooltip-item">
+                  <span class="tooltip-key hard">Hard</span>
+                  <span class="tooltip-desc">You got it, but it was a struggle.</span>
+                </div>
+                <div class="tooltip-item">
+                  <span class="tooltip-key good">Good</span>
+                  <span class="tooltip-desc">You knew it after thinking for a moment.</span>
+                </div>
+                <div class="tooltip-item">
+                  <span class="tooltip-key easy">Easy</span>
+                  <span class="tooltip-desc">You knew it right away, no thinking needed.</span>
+                </div>
+                <div class="tooltip-divider"></div>
+                <div class="tooltip-item">
+                  <span class="tooltip-key suspend">Suspend</span>
+                  <span class="tooltip-desc">Bad card? Hide it forever. Your data stays safe.</span>
+                </div>
+                <div class="tooltip-shortcut">Press <kbd>Shift</kbd> + <kbd>S</kbd> to suspend</div>
+              </div>
+            </div>
+          </Transition>
+        </div>
       </div>
 
       <!-- Session complete -->
@@ -132,18 +186,11 @@
       </div>
     </section>
 
-    <!-- ── EXPLORER TAB (stub) ────────────────── -->
-    <section v-else class="tab-content stub-panel">
-      <p class="eyebrow-inline">Coming in Phase 2</p>
-      <p class="stub-text">
-        Semantic Discovery will surface concept clusters across your notebooks.
-      </p>
-    </section>
   </StudyPageLayout>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   activateTask,
@@ -152,6 +199,7 @@ import {
   generateManualFlashcards as generateManualFlashcards,
   getReviewSession,
   recordCardReview,
+  suspendFlashcard,
 } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
@@ -161,7 +209,6 @@ const route = useRoute()
 const router = useRouter()
 const notebooks = ref([])
 const selectedNotebookID = ref('')
-const activeTab = ref('comprehensive')
 const startPage = ref(1)
 const endPage = ref(10)
 const loading = ref(false)
@@ -174,6 +221,8 @@ const isSubmittingReview = ref(false)
 const reviewTaskID = ref('')
 const sessionRemaining = ref(0)
 const queueMode = computed(() => !!reviewTaskID.value)
+const toast = ref({ show: false, message: '', type: 'info' })
+const showInfoTooltip = ref(false)
 
 const ratings = [
   { key: 'again', label: '✕ Again', value: 1 },
@@ -192,6 +241,7 @@ const canGenerate = computed(
 const currentCard = computed(() => cards.value[reviewIndex.value] ?? null)
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleKeydown)
   try {
     const res = await getNotebooks()
     notebooks.value = Array.isArray(res) ? res.filter((n) => !n.error) : []
@@ -201,6 +251,10 @@ onMounted(async () => {
   if (route.query.taskId) {
     await loadQueueSession(String(route.query.taskId), String(route.query.notebookId || ''))
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
 })
 
 async function generate() {
@@ -227,6 +281,17 @@ async function generate() {
   } finally {
     loading.value = false
   }
+}
+
+async function handleQueueCompletion() {
+  const completeRes = await completeReviewSession(reviewTaskID.value)
+  if (completeRes?.error) {
+    error.value = `Failed to complete session: ${completeRes.error}`
+    return false
+  }
+  console.warn('[FLASHCARDS] flashcard_review_completed_dashboard_redirect')
+  router.push('/dashboard')
+  return true
 }
 
 async function rate(ratingKey) {
@@ -257,13 +322,7 @@ async function rate(ratingKey) {
       flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)
       if (sessionRemaining.value <= 0) {
-        const completeRes = await completeReviewSession(reviewTaskID.value)
-        if (completeRes?.error) {
-          error.value = `Failed to complete session: ${completeRes.error}`
-          return
-        }
-        console.warn('[FLASHCARDS] flashcard_review_completed_dashboard_redirect')
-        router.push('/dashboard')
+        await handleQueueCompletion()
         return
       }
       await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
@@ -287,6 +346,47 @@ function reset() {
   error.value = ''
   reviewTaskID.value = ''
   sessionRemaining.value = 0
+}
+
+function showToast(message, type = 'info') {
+  toast.value = { show: true, message, type }
+  setTimeout(() => {
+    toast.value.show = false
+  }, 2000)
+}
+
+async function suspendCard() {
+  const card = currentCard.value
+  if (!card || !queueMode.value || isSubmittingReview.value) return
+
+  isSubmittingReview.value = true
+  try {
+    const res = await suspendFlashcard(reviewTaskID.value, card.card_id)
+    if (res.error) {
+      error.value = `Failed to suspend card: ${res.error}`
+      return
+    }
+    showToast('Card Suspended', 'success')
+    flipped.value = false
+    sessionRemaining.value = Number(res.remaining ?? 0)
+    if (sessionRemaining.value <= 0) {
+      await handleQueueCompletion()
+      return
+    }
+    await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
+  } catch (e) {
+    error.value = `Failed to suspend card: ${e?.message ?? 'Unknown error'}`
+  } finally {
+    isSubmittingReview.value = false
+  }
+}
+
+function handleKeydown(e) {
+  if (!reviewing.value || !currentCard.value) return
+  if (queueMode.value && e.key === 'S' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault()
+    suspendCard()
+  }
 }
 
 async function loadQueueSession(taskID, notebookID = '') {
@@ -379,41 +479,6 @@ async function loadQueueSession(taskID, notebookID = '') {
 .ghost-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* ── Mode tabs (pill style, no divider line) ──── */
-.mode-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--surface-container-low);
-  border-radius: 12px;
-  width: fit-content;
-}
-
-.mode-tab {
-  padding: 7px 16px;
-  border: 0;
-  border-radius: 9px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted-text);
-  background: transparent;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.mode-tab:hover:not(.mode-tab--active) {
-  color: var(--on-surface);
-  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
-}
-
-.mode-tab--active {
-  background: var(--surface-container-lowest);
-  color: var(--on-surface);
 }
 
 /* ── Tab content ──────────────────────────────── */
@@ -691,21 +756,204 @@ async function loadQueueSession(taskID, notebookID = '') {
   color: var(--on-surface);
 }
 
-/* ── Explorer stub ────────────────────────────── */
-.stub-panel {
-  background: var(--surface-container-low);
-  border-radius: 16px;
-  padding: 64px 24px;
-  text-align: center;
+/* ── Suspend button ──────────────────────────── */
+.suspend-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+  color: var(--muted-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  z-index: 2;
 }
 
-.stub-text {
-  margin: 8px 0 0;
-  font-size: 15px;
+.suspend-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: #dc2626;
+}
+
+.suspend-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Toast notification ──────────────────────── */
+.toast-notification {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.toast-success {
+  background: #16a34a;
+}
+
+.toast-error {
+  background: #dc2626;
+}
+
+.toast-info {
+  background: var(--primary);
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.3s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(20px);
+}
+
+/* ── Info tooltip ────────────────────────────── */
+.info-trigger {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-btn {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
   color: var(--muted-text);
-  line-height: 1.6;
-  max-width: 52ch;
-  margin-inline: auto;
+  cursor: help;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.info-btn:hover {
+  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
+  color: var(--on-surface);
+}
+
+.info-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+}
+
+.tooltip-title {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-text);
+}
+
+.tooltip-items {
+  display: grid;
+  gap: 8px;
+}
+
+.tooltip-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.tooltip-key {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.tooltip-key.again {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: #dc2626;
+}
+
+.tooltip-key.hard {
+  background: color-mix(in srgb, #f97316 14%, transparent);
+  color: #ea580c;
+}
+
+.tooltip-key.good {
+  background: color-mix(in srgb, #22c55e 14%, transparent);
+  color: #16a34a;
+}
+
+.tooltip-key.easy {
+  background: color-mix(in srgb, #8b5cf6 14%, transparent);
+  color: #7c3aed;
+}
+
+.tooltip-key.suspend {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: #dc2626;
+}
+
+.tooltip-desc {
+  font-size: 12px;
+  color: var(--muted-text);
+  line-height: 1.4;
+}
+
+.tooltip-divider {
+  height: 1px;
+  background: var(--outline-variant);
+  margin: 4px 0;
+}
+
+.tooltip-shortcut {
+  font-size: 11px;
+  color: var(--muted-text);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.tooltip-shortcut kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+}
+
+.tooltip-enter-active,
+.tooltip-leave-active {
+  transition: all 0.2s ease;
+}
+
+.tooltip-enter-from,
+.tooltip-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
 }
 
 /* ── Responsive ───────────────────────────────── */

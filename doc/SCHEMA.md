@@ -27,7 +27,7 @@ Central task table for the application.
 | `id`           | TEXT PRIMARY KEY                    | Unique task identifier                                      |
 | `notebook_id`  | TEXT NOT NULL                       | Parent notebook. FK → `notebooks(id)`                       |
 | `topic_id`     | TEXT                                | Optional task context. FK → `topics(id)`                    |
-| `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER` |
+| `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_SYNC` |
 | `status`       | TEXT NOT NULL                       | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED`       |
 | `priority`     | INTEGER DEFAULT 0                   | Lower values sort first                                     |
 | `created_at`   | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time                                               |
@@ -114,6 +114,7 @@ Topic or section container.
 | `start_page` | INTEGER DEFAULT 0 | Start page |
 | `end_page` | INTEGER DEFAULT 0 | End page |
 | `current_page_cursor` | INTEGER DEFAULT 0 | Latest reading cursor |
+| `external_help_required` | BOOLEAN DEFAULT 0 | Whether topic requires external review after failed rescue |
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
@@ -457,6 +458,8 @@ These mappings are documentation-only: the code and live schema already use the 
 1. Ingestion creates `notebooks`, `topics`, and `chunks`.
 2. Study work is queued through `study_queue`.
 3. Quiz generation uses `written_questions` and inline payload quiz questions; answers/attempts land in `quiz_attempts` and `written_user_answers`.
-4. Quiz completion is rolled up in `quiz_attempts`, with `reread_attempts` tracking repeated remediation.
-5. Long-term retention is handled by `fsrs_cards`, `fsrs_review_log`, and `manual_flashcards`.
+4. Quiz completion is rolled up in `quiz_attempts`, with `reread_attempts` tracking repeated remediation. After 1 failed reread, `SOCRATIC_REMEDIAL` rescue task is inserted.
+5. Socratic rescue uses `external_help_required` flag on `topics` to prevent infinite rescue cycles.
+6. Long-term retention is handled by `fsrs_cards`, `fsrs_review_log`, and `manual_flashcards`.
+7. Cloud sync failures insert `FLASHCARD_SYNC` tasks at highest queue priority.
 6. Session-specific review mappings live in `review_task_cards`, and per-task reading cursors live in `reading_progress`.

@@ -1103,3 +1103,54 @@ func TestCountActiveNotebooksForActiveProfile(t *testing.T) {
 	}
 }
 
+func TestMarkTopicExternalHelpRequiredTx(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "topic-external-help"
+	if err := testRepo.EnsureTopic(topicID, "External Help Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	var initialVal int
+	err := testRepo.db.QueryRow("SELECT COALESCE(external_help_required, 0) FROM topics WHERE id = ?", topicID).Scan(&initialVal)
+	if err != nil {
+		t.Fatalf("failed to query external_help_required initially: %v", err)
+	}
+	if initialVal != 0 {
+		t.Fatalf("expected initial external_help_required to be 0, got %d", initialVal)
+	}
+
+	// Run inside tx
+	tx, err := testRepo.db.Begin()
+	if err != nil {
+		t.Fatalf("db.Begin failed: %v", err)
+	}
+	if err := testRepo.MarkTopicExternalHelpRequiredTx(tx, topicID); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("MarkTopicExternalHelpRequiredTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("tx.Commit failed: %v", err)
+	}
+
+	var finalVal int
+	err = testRepo.db.QueryRow("SELECT COALESCE(external_help_required, 0) FROM topics WHERE id = ?", topicID).Scan(&finalVal)
+	if err != nil {
+		t.Fatalf("failed to query external_help_required after update: %v", err)
+	}
+	if finalVal != 1 {
+		t.Fatalf("expected final external_help_required to be 1, got %d", finalVal)
+	}
+
+	// Test failure case: topic does not exist
+	tx2, err := testRepo.db.Begin()
+	if err != nil {
+		t.Fatalf("db.Begin failed: %v", err)
+	}
+	defer func() { _ = tx2.Rollback() }()
+	if err := testRepo.MarkTopicExternalHelpRequiredTx(tx2, "nonexistent-topic"); err == nil {
+		t.Errorf("expected MarkTopicExternalHelpRequiredTx to return error for nonexistent topic, got nil")
+	}
+}
+
+

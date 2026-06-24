@@ -51,11 +51,13 @@ Explicit priority hierarchy (task type first, then notebook priority):
 
 | Order | Task Type |
 |-------|-----------|
-| 1 | `FLASHCARD_REVIEW` (due reviews) |
-| 2 | `REREAD` |
-| 3 | `QUIZ` |
-| 4 | `READING` |
-| 5 | `EXAMINER` |
+| 1 | `FLASHCARD_SYNC` (cloud sync pending) |
+| 2 | `FLASHCARD_REVIEW` (due reviews) |
+| 3 | `REREAD` |
+| 4 | `QUIZ` |
+| 5 | `READING` |
+| 6 | `SOCRATIC_REMEDIAL` (concept rescue) |
+| 7 | `EXAMINER` |
 
 Then apply notebook priority bias within each tier.
 
@@ -205,17 +207,72 @@ User can:
 
 Dashboard regains orchestration ownership after quiz submission and evaluation.
 
-### Reread Loop Protection
+---
 
-Maximum reread attempts: **3** (default per block)
+## 4a. Socratic Rescue Pipeline (2-Strike)
 
-- `reread_attempt` counter tracked per block
-- After max reached: stop auto-inserting reread tasks
-- Show recommendation message to user
-- Allow manual retry if user chooses
-- Continue queue progression
+### What
 
-Prevents infinite queue pollution.
+When a student fails a quiz twice on the same topic, the system intervenes with a guided rescue flow.
+
+### How
+
+**Strike 1 (quiz fail):**
+```plaintext
+QUIZ task → mark COMPLETED
+→ Insert REREAD task (if reread_attempt <= maxAutomaticRereadAttempts=1)
+→ Dashboard shows REREAD as next task
+```
+
+**Strike 2 (quiz fail again after reread):**
+```plaintext
+QUIZ task → mark COMPLETED
+→ SOCRATIC_REMEDIAL task inserted (blocks queue)
+→ FSRS flashcards for topic deleted (protect purity)
+→ Dashboard shows Concept Rescue as next task
+```
+
+**Rescue session (dual-lane):**
+```plaintext
+Student opens SocraticRescue page
+→ Option A: In-App Socratic Tutor (interactive chat with context-grounded leading questions)
+→ Option B: External AI Prompt (source text preview + pre-engineered Socratic prompt)
+  → Student copies prompt to external LLM (copy-to-clipboard)
+  → Student completes external Socratic tutoring session
+→ Clicks "I've Completed the Session"
+→ SOCRATIC_REMEDIAL task marked COMPLETED
+→ Fresh QUIZ task inserted for same topic
+```
+
+**Re-quiz outcomes:**
+```plaintext
+[Pass] → Flashcards generated → Topic mastered → Next task
+[Fail] → external_help_required flag set on topic → Queue unblocks → Notice shown
+```
+
+### Key Behaviors
+
+- SOCRATIC_REMEDIAL **blocks the queue** — student must complete rescue before progressing
+- Single rescue cycle only — no infinite loops
+- No flashcards generated for failed concepts at any point
+- External prompt mode — no local LLM integration, student uses external tool
+- `external_help_required` flag on topic prevents further rescue cycles
+- Re-quiz identified by `"source": "socratic_rescue_requiz"` in task payload
+
+---
+
+## 4b. FLASHCARD_SYNC (Cloud Sync Recovery)
+
+### What
+
+When cloud sync fails after retry exhaustion, a `FLASHCARD_SYNC` task is inserted to ensure pending sync data is not lost.
+
+### How
+
+1. Cloud sync fails after all retry attempts
+2. `FLASHCARD_SYNC` task inserted into queue (priority tier 7, highest)
+3. On next sync attempt, if successful → `FLASHCARD_SYNC` tasks resolved (COMPLETED)
+4. If sync fails again → new `FLASHCARD_SYNC` task inserted
 
 ---
 
@@ -284,8 +341,9 @@ Left sidebar navigation with persistent sections:
 5. Flashcards
 6. Examiner (WrittenAssessment)
 7. Tutor (Socratic)
-8. Settings (bottom)
-9. Sync (bottom)
+8. SocraticRescue (Concept Rescue — queue-driven, not in sidebar)
+9. Settings (bottom)
+10. Sync (bottom)
 
 ### Why
 
@@ -358,6 +416,13 @@ Generated follow-up QUIZ tasks may be activated immediately after Reader complet
 
 ### Examiner Module
 - Renders written assessments
+- No orchestration logic
+
+### SocraticRescue Module
+- Renders source text preview + pre-engineered Socratic prompt
+- Provides "Copy to Clipboard" for external LLM interaction
+- "I've Completed the Session" calls `CompleteSocraticRescue(taskID)`
+- Inserts fresh QUIZ task for re-quiz
 - No orchestration logic
 
 **Queue Router only**: fetch next pending task, mount correct module, mark complete, insert follow-up tasks.

@@ -176,6 +176,30 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 	}
 }
 
+// GetTopicSectionsContent returns the joined text content of all sections in a topic, along with the notebook title.
+func (a *App) GetTopicSectionsContent(topicID string, notebookID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	bundle, err := repo.GetReaderTopicBundle(topicID, notebookID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	var sectionsContent []string
+	for _, s := range bundle.Sections {
+		if s.Content != "" {
+			sectionsContent = append(sectionsContent, s.Content)
+		}
+	}
+
+	return map[string]interface{}{
+		"content":        strings.Join(sectionsContent, "\n\n"),
+		"notebook_title": bundle.NotebookTitle,
+	}
+}
+
 func (a *App) GetAvailableTopics() []map[string]string {
 	repo := a.getRepo()
 	if repo == nil {
