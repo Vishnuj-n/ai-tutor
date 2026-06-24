@@ -550,12 +550,19 @@ func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
 	if suspended == 1 {
 		return nil // already suspended, success
 	}
-	_, err = tx.Exec(`
+	result, err := tx.Exec(`
 		UPDATE fsrs_cards
 		SET suspended = 1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND suspended = 0
 	`, cardID)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("flashcard %s already suspended or not found", cardID)
+	}
+	return nil
 }
 
 func boolToInt(b bool) int {

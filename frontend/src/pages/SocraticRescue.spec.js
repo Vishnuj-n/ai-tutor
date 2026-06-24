@@ -60,6 +60,7 @@ describe('SocraticRescue.vue Integration', () => {
     const wrapper = mount(SocraticRescue)
     await flushPromises()
 
+    expect(appApi.GetTaskContext).toHaveBeenCalledWith('task-456')
     expect(appApi.getTopicSectionsContent).toHaveBeenCalledWith('topic-123', 'notebook-789')
     expect(wrapper.find('.source-text').text()).toBe('DeepMind builds AI agents.')
     expect(wrapper.find('.prompt-textarea').element.value).toContain('DeepMind builds AI agents.')

@@ -87,7 +87,6 @@ func TriggerCloudSync(repo *db.Repository) error {
 
 	var resp *http.Response
 	var lastErr error
-	var syncResp SyncResponse
 	const attempts = 3
 	client := &http.Client{Timeout: 10 * time.Second}
 
@@ -122,6 +121,7 @@ func TriggerCloudSync(repo *db.Repository) error {
 		}
 
 		// Decode response body inside loop to catch decode failures as errors
+		var syncResp SyncResponse
 		decodeErr := json.NewDecoder(resp.Body).Decode(&syncResp)
 		resp.Body.Close()
 		if decodeErr != nil {
@@ -131,6 +131,24 @@ func TriggerCloudSync(repo *db.Repository) error {
 
 		// Success!
 		lastErr = nil
+
+		// Handle assigned notebooks from teacher
+		if len(syncResp.NewNotebooks) > 0 {
+			utils.Warnf("[SYNC] Found %d new teacher assignments", len(syncResp.NewNotebooks))
+			for _, assigned := range syncResp.NewNotebooks {
+				go func(nb AssignedNotebook) {
+					if err := downloadAndRegisterNotebook(repo, nb); err != nil {
+						utils.Warnf("[SYNC] Failed to download assigned notebook %s: %v", nb.Title, err)
+					}
+				}(assigned)
+			}
+		}
+
+		// Sync completed successfully. Clear any pending FLASHCARD_SYNC tasks.
+		if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
+			utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
+		}
+
 		break
 	}
 
@@ -144,23 +162,6 @@ func TriggerCloudSync(repo *db.Repository) error {
 			}
 		}
 		return lastErr
-	}
-
-	// Handle assigned notebooks from teacher
-	if len(syncResp.NewNotebooks) > 0 {
-		utils.Warnf("[SYNC] Found %d new teacher assignments", len(syncResp.NewNotebooks))
-		for _, assigned := range syncResp.NewNotebooks {
-			go func(nb AssignedNotebook) {
-				if err := downloadAndRegisterNotebook(repo, nb); err != nil {
-					utils.Warnf("[SYNC] Failed to download assigned notebook %s: %v", nb.Title, err)
-				}
-			}(assigned)
-		}
-	}
-
-	// Sync completed successfully. Clear any pending FLASHCARD_SYNC tasks.
-	if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
-		utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
 	}
 
 	utils.Warnf("[SYNC] Cloud sync completed successfully.")
