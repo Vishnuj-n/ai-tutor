@@ -134,15 +134,22 @@ const chat = inject('chat')
 const messagesPaneRef = ref(null)
 
 // Watch settings errors and RAG toggle status
-watch(() => props.ragSettingsError, (newVal) => {
-  if (newVal) {
-    logFrontendEvent('error', 'ReaderChat', 'rag_settings_error', { error: newVal })
+watch(
+  () => props.ragSettingsError,
+  (newVal) => {
+    if (newVal) {
+      logFrontendEvent('error', 'ReaderChat', 'rag_settings_error', { error: newVal })
+    }
   }
-})
+)
 
-watch(() => props.ragEnabled, (newVal) => {
-  logFrontendEvent('info', 'ReaderChat', 'rag_status_changed', { enabled: newVal })
-}, { immediate: true })
+watch(
+  () => props.ragEnabled,
+  (newVal) => {
+    logFrontendEvent('info', 'ReaderChat', 'rag_status_changed', { enabled: newVal })
+  },
+  { immediate: true }
+)
 
 // Synchronize messages pane element reference with parent's chat state
 let activePaneEl = null

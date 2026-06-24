@@ -54,7 +54,7 @@ export function useChat() {
       topicID: context.topicID,
       notebookID: context.notebookID,
       currentPage: context.currentPage,
-      questionLength: question.length
+      questionLength: question.length,
     })
 
     chatInput.value = ''
@@ -82,7 +82,7 @@ export function useChat() {
         chatLoading.value = false
         logFrontendEvent('error', 'ReaderChat', 'send_message_api_error', {
           error: result.error,
-          topicID: context.topicID
+          topicID: context.topicID,
         })
         return false
       }
@@ -99,7 +99,7 @@ export function useChat() {
 
       logFrontendEvent('info', 'ReaderChat', 'send_message_success', {
         topicID: context.topicID,
-        answerLength: (result?.answer || '').length
+        answerLength: (result?.answer || '').length,
       })
 
       // Auto-scroll to bottom
@@ -114,7 +114,7 @@ export function useChat() {
       chatError.value = errMsg
       logFrontendEvent('error', 'ReaderChat', 'send_message_exception', {
         error: errMsg,
-        topicID: context?.topicID
+        topicID: context?.topicID,
       })
       return false
     } finally {

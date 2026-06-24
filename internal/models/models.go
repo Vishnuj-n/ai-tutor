@@ -545,6 +545,7 @@ type UserSettings struct {
 	RAGNotebookChapter  bool   `json:"rag_notebook_chapter"`
 	RAGEntireNotebook   bool   `json:"rag_entire_notebook"`
 	RAGQueueStudy       bool   `json:"rag_queue_study"`
+	DefaultRemedialStrategy string `json:"default_remedial_strategy"`
 }
 
 // LLMTierSettings stores non-secret OpenAI-compatible provider config.

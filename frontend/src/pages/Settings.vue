@@ -37,13 +37,11 @@
             :disabled="loading || saving"
             required
           />
-          <p class="hint">
-            Caps the number of FSRS reviews active in any single study session.
-          </p>
+          <p class="hint">Caps the number of FSRS reviews active in any single study session.</p>
         </div>
 
-        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
-          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+        <div style="display: flex; gap: 16px; margin-bottom: 20px">
+          <div class="form-group" style="flex: 1; margin-bottom: 0">
             <label for="study-start-time">Study Start Time</label>
             <input
               id="study-start-time"
@@ -53,7 +51,7 @@
               required
             />
           </div>
-          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+          <div class="form-group" style="flex: 1; margin-bottom: 0">
             <label for="study-end-time">Study End Time</label>
             <input
               id="study-end-time"
@@ -65,18 +63,24 @@
           </div>
         </div>
 
-        <div class="form-group check-group" style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px;">
-          <label class="checkbox-container" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+        <div
+          class="form-group check-group"
+          style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
+        >
+          <label
+            class="checkbox-container"
+            style="display: flex; align-items: center; gap: 10px; cursor: pointer"
+          >
             <input
               id="reminders-enabled"
               v-model="settings.reminders_enabled"
               type="checkbox"
               :disabled="loading || saving"
-              style="width: 18px; height: 18px; cursor: pointer;"
+              style="width: 18px; height: 18px; cursor: pointer"
             />
             <div class="check-label">
               <strong>Enable Study Reminders</strong>
-              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7;">
+              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
                 Notify when daily study time starts and ends.
               </p>
             </div>
@@ -99,6 +103,57 @@
               </p>
             </div>
           </label>
+        </div>
+
+        <hr class="divider" />
+
+        <h2>Quiz Failure Rescue</h2>
+        <p class="hint" style="margin-top: -10px; margin-bottom: 20px">
+          Choose what happens when you fail a quiz. Customize the remediation track to match your
+          study style.
+        </p>
+
+        <div class="form-group">
+          <div class="strategy-options">
+            <label
+              class="strategy-option"
+              :class="{ active: settings.default_remedial_strategy === 'CLASSIC' }"
+            >
+              <input
+                v-model="settings.default_remedial_strategy"
+                type="radio"
+                value="CLASSIC"
+                :disabled="loading || saving"
+                style="margin-top: 4px; cursor: pointer"
+              />
+              <div class="option-content">
+                <span class="option-title">Classic Track</span>
+                <span class="option-desc"
+                  >Reread first, then Socratic tutor if you fail again (dense text, sequential
+                  learning)</span
+                >
+              </div>
+            </label>
+
+            <label
+              class="strategy-option"
+              :class="{ active: settings.default_remedial_strategy === 'FAST' }"
+            >
+              <input
+                v-model="settings.default_remedial_strategy"
+                type="radio"
+                value="FAST"
+                :disabled="loading || saving"
+                style="margin-top: 4px; cursor: pointer"
+              />
+              <div class="option-content">
+                <span class="option-title">Fast Track</span>
+                <span class="option-desc"
+                  >Go directly to Socratic AI tutor (deeper encoding, conceptual topics)</span
+                >
+              </div>
+            </label>
+          </div>
         </div>
 
         <div class="form-group check-group">
@@ -542,11 +597,7 @@
     </div>
 
     <!-- RAG Setup Modal -->
-    <div
-      v-if="showRagModal"
-      class="modal-overlay"
-      @click.self="handleRagModalDismiss"
-    >
+    <div v-if="showRagModal" class="modal-overlay" @click.self="handleRagModalDismiss">
       <div class="modal-card">
         <h2>Local AI Setup (RAG)</h2>
         <p class="description">
@@ -635,6 +686,7 @@ const settings = ref({
   rag_notebook_chapter: true,
   rag_entire_notebook: true,
   rag_queue_study: true,
+  default_remedial_strategy: 'CLASSIC',
 })
 
 const llmFastKey = ref('')
@@ -934,7 +986,8 @@ async function saveUserSettings() {
       settings.value.rag_enabled,
       settings.value.rag_notebook_chapter,
       settings.value.rag_entire_notebook,
-      settings.value.rag_queue_study
+      settings.value.rag_queue_study,
+      settings.value.default_remedial_strategy
     )
     if (res.error) {
       error.value = res.error
@@ -1606,5 +1659,50 @@ select:focus {
   font-size: 11px;
   color: #888888;
   margin: 0;
+}
+
+.strategy-options {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.strategy-option {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--surface-container-low);
+}
+
+.strategy-option:hover {
+  border-color: var(--primary);
+  background: var(--surface-container-high);
+}
+
+.strategy-option.active {
+  border-color: var(--primary);
+  background: var(--surface-container-high);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.option-title {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.option-desc {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted-text);
+  margin-top: 4px;
+  line-height: 1.4;
 }
 </style>

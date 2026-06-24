@@ -11,7 +11,7 @@ const banner = ref({
   type: 'start',
   title: '',
   desc: '',
-  unfinishedCount: 0
+  unfinishedCount: 0,
 })
 
 let schedulerTimeout = null
@@ -53,7 +53,7 @@ function getNextEventTimeout(startTimeStr, endTimeStr) {
   const next = events[0]
   return {
     type: next.type,
-    delay: next.time.getTime() - now.getTime()
+    delay: next.time.getTime() - now.getTime(),
   }
 }
 
@@ -62,7 +62,7 @@ async function fireEvent(type, settings) {
   if (type === 'start') {
     if ('Notification' in window && Notification.permission === 'granted') {
       new Notification('Study Time Started!', {
-        body: 'It\'s study time! Let\'s work on today\'s learning queue.'
+        body: "It's study time! Let's work on today's learning queue.",
       })
     }
     banner.value = {
@@ -70,7 +70,7 @@ async function fireEvent(type, settings) {
       type: 'start',
       title: 'Study Time Started!',
       desc: 'Your study window has started. Time to work on your queue!',
-      unfinishedCount: 0
+      unfinishedCount: 0,
     }
   } else if (type === 'end') {
     let unfinishedCount = 0
@@ -86,7 +86,7 @@ async function fireEvent(type, settings) {
     if (unfinishedCount > 0) {
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('Study Time is Up!', {
-          body: `You still have ${unfinishedCount} unfinished tasks today.`
+          body: `You still have ${unfinishedCount} unfinished tasks today.`,
         })
       }
       banner.value = {
@@ -94,12 +94,12 @@ async function fireEvent(type, settings) {
         type: 'end',
         title: 'Study Time is Up!',
         desc: `You still have ${unfinishedCount} unfinished study tasks remaining today.`,
-        unfinishedCount
+        unfinishedCount,
       }
     } else {
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('Study Time is Up!', {
-          body: 'Great job! You finished all your study tasks for today.'
+          body: 'Great job! You finished all your study tasks for today.',
         })
       }
       banner.value = {
@@ -107,7 +107,7 @@ async function fireEvent(type, settings) {
         type: 'end',
         title: 'Study Time is Up!',
         desc: 'Great job! You finished all your study tasks for today.',
-        unfinishedCount: 0
+        unfinishedCount: 0,
       }
     }
   }
@@ -144,7 +144,6 @@ async function syncScheduler() {
       await fireEvent(next.type, settings)
       syncScheduler() // Queue up the next event
     }, next.delay)
-
   } catch (err) {
     console.error('Scheduler sync failed:', err)
   }
@@ -162,7 +161,9 @@ async function extendStudyWindow(minutes) {
       newMins -= 1440 // Midnight wrap-around
     }
 
-    const newH = Math.floor(newMins / 60).toString().padStart(2, '0')
+    const newH = Math.floor(newMins / 60)
+      .toString()
+      .padStart(2, '0')
     const newM = (newMins % 60).toString().padStart(2, '0')
     const newEndTimeStr = `${newH}:${newM}`
 
@@ -179,7 +180,8 @@ async function extendStudyWindow(minutes) {
       settings.rag_enabled,
       settings.rag_notebook_chapter,
       settings.rag_entire_notebook,
-      settings.rag_queue_study
+      settings.rag_queue_study,
+      settings.default_remedial_strategy
     )
 
     if (res.error) {
@@ -189,7 +191,6 @@ async function extendStudyWindow(minutes) {
 
     window.dispatchEvent(new CustomEvent('settings-updated'))
     banner.value.show = false
-
   } catch (err) {
     console.error('Extend study window failed:', err)
   }
@@ -265,7 +266,9 @@ onMounted(() => {
   z-index: 9999;
   background: var(--card-bg, rgba(30, 41, 59, 0.95));
   border: 1px solid var(--accent, #4f46e5);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.3),
+    0 8px 10px -6px rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(12px);
   border-radius: 12px;
   padding: 14px 20px;

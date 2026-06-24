@@ -118,6 +118,7 @@ func InitSchema(tx *sql.Tx) error {
 			rag_notebook_chapter BOOLEAN DEFAULT 1,
 			rag_entire_notebook BOOLEAN DEFAULT 1,
 			rag_queue_study BOOLEAN DEFAULT 1,
+			default_remedial_strategy TEXT DEFAULT 'CLASSIC',
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (active_profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
@@ -349,5 +350,48 @@ func InitSchema(tx *sql.Tx) error {
 		return fmt.Errorf("failed to initialize llm settings: %w", err)
 	}
 
+	// Run alterStatements migration
+	for _, alter := range alterStatements {
+		exists, err := columnExists(tx, alter.Table, alter.Column)
+		if err != nil {
+			return fmt.Errorf("failed to check column %s in table %s: %w", alter.Column, alter.Table, err)
+		}
+		if !exists {
+			if _, err := tx.Exec(alter.SQL); err != nil {
+				return fmt.Errorf("failed to execute alter statement for %s.%s: %w", alter.Table, alter.Column, err)
+			}
+		}
+	}
+
 	return nil
+}
+
+var alterStatements = []struct {
+	Table  string
+	Column string
+	SQL    string
+}{
+	{"user_settings", "default_remedial_strategy", "ALTER TABLE user_settings ADD COLUMN default_remedial_strategy TEXT DEFAULT 'CLASSIC'"},
+}
+
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typeStr string
+		var notnull int
+		var dfltValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typeStr, &notnull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

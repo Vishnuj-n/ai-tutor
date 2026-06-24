@@ -26,8 +26,9 @@
 
         <div class="lane-content">
           <p class="option-desc">
-            Resolve this concept rescue directly within our interactive learning environment.
-            The in-app Socratic tutor will guide you through leading questions to help you master the material.
+            Resolve this concept rescue directly within our interactive learning environment. The
+            in-app Socratic tutor will guide you through leading questions to help you master the
+            material.
           </p>
 
           <div class="features-list">
@@ -35,24 +36,24 @@
               <span class="feature-icon">💬</span>
               <div>
                 <strong>Interactive Dialogue</strong>
-                <p class="feature-sub">Engage in a live, guided conversation grounded in your material.</p>
+                <p class="feature-sub">
+                  Engage in a live, guided conversation grounded in your material.
+                </p>
               </div>
             </div>
             <div class="feature-item">
               <span class="feature-icon">📖</span>
               <div>
                 <strong>Context Grounded</strong>
-                <p class="feature-sub">The tutor retrieves relevant sections dynamically from this notebook.</p>
+                <p class="feature-sub">
+                  The tutor retrieves relevant sections dynamically from this notebook.
+                </p>
               </div>
             </div>
           </div>
 
           <div class="action-box">
-            <button
-              type="button"
-              class="tutor-btn"
-              @click="startInAppTutor"
-            >
+            <button type="button" class="tutor-btn" @click="startInAppTutor">
               Start Socratic Chat In-App ➔
             </button>
           </div>
@@ -68,8 +69,8 @@
 
         <div class="lane-content">
           <p class="option-desc">
-            Prefer using a premium model (like ChatGPT, Claude, or Gemini)?
-            Copy the pre-engineered prompt containing the topic's source material below.
+            Prefer using a premium model (like ChatGPT, Claude, or Gemini)? Copy the pre-engineered
+            prompt containing the topic's source material below.
           </p>
 
           <div class="source-preview">
@@ -99,7 +100,8 @@
 
           <div class="completion-box">
             <p class="completion-instruction">
-              Once you have finished the Socratic session externally and feel confident with the material, mark this task complete.
+              Once you have finished the Socratic session externally and feel confident with the
+              material, mark this task complete.
             </p>
 
             <button
@@ -108,7 +110,7 @@
               :disabled="completing"
               @click="finishRescueSession"
             >
-              {{ completing ? 'Completing...' : 'I\'ve Completed the External Session' }}
+              {{ completing ? 'Completing...' : "I've Completed the External Session" }}
             </button>
           </div>
         </div>
@@ -468,7 +470,9 @@ h1 {
   padding: 12px;
   font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s, transform 0.15s;
+  transition:
+    opacity 0.2s,
+    transform 0.15s;
   box-shadow: 0 4px 12px rgba(0, 91, 193, 0.2);
 }
 
@@ -584,7 +588,9 @@ h1 {
   padding: 12px;
   font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s, transform 0.15s;
+  transition:
+    opacity 0.2s,
+    transform 0.15s;
   box-shadow: 0 4px 12px rgba(211, 84, 0, 0.2);
 }
 

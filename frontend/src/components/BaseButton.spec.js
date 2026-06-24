@@ -6,8 +6,8 @@ describe('BaseButton.vue', () => {
   it('renders slot content', () => {
     const wrapper = mount(BaseButton, {
       slots: {
-        default: 'Click Me'
-      }
+        default: 'Click Me',
+      },
     })
     expect(wrapper.text()).toContain('Click Me')
   })
@@ -21,8 +21,8 @@ describe('BaseButton.vue', () => {
   it('does not emit click event when disabled', async () => {
     const wrapper = mount(BaseButton, {
       props: {
-        disabled: true
-      }
+        disabled: true,
+      },
     })
     await wrapper.trigger('click')
     expect(wrapper.emitted('click')).toBeUndefined()
@@ -31,11 +31,11 @@ describe('BaseButton.vue', () => {
   it('shows loading spinner and hides content when loading', () => {
     const wrapper = mount(BaseButton, {
       props: {
-        loading: true
+        loading: true,
       },
       slots: {
-        default: 'Submit'
-      }
+        default: 'Submit',
+      },
     })
     expect(wrapper.find('.spinner').exists()).toBe(true)
     expect(wrapper.find('.btn-content').classes()).toContain('visually-hidden')

@@ -309,7 +309,7 @@ function logScroll(event, data = {}) {
     visible: currentVisiblePage.value,
     virtualCenter: virtualWindowCenter.value,
     isProgrammatic: isProgrammaticScroll,
-    ...data
+    ...data,
   }
   console.log(`[SCROLL:${event}]`, payload)
   logFrontendEvent('info', 'ReaderScroll', event, payload)
@@ -380,7 +380,10 @@ watch(
       return
     }
     if (newVal !== currentVisiblePage.value) {
-      logScroll('watchCurrentPage_programmatic_change', { from: currentVisiblePage.value, to: newVal })
+      logScroll('watchCurrentPage_programmatic_change', {
+        from: currentVisiblePage.value,
+        to: newVal,
+      })
       setScrollStatus('scrolling', newVal)
 
       // Attempt scroll immediately in case the page wrapper is already rendered
@@ -444,7 +447,7 @@ function onPageRendered(pageNum) {
   logScroll('onPageRendered', { pageNum })
   if (scrollState.value.status === 'loading' || scrollState.value.status === 'scrolling') {
     const targetPage = scrollState.value.targetPage || reader.currentPage.value
-    
+
     // Scroll dynamically when any page <= targetPage in the visible range renders,
     // to compensate for preceding page heights changing.
     if (visiblePages.value.includes(pageNum) && pageNum <= targetPage) {
@@ -513,7 +516,10 @@ async function resolveBrowseContext() {
 onMounted(async () => {
   await loadRagSettings()
 
-  logFrontendEvent('info', 'ReaderInit', 'mounted', { query: route.query, routeTaskID: routeTaskID.value })
+  logFrontendEvent('info', 'ReaderInit', 'mounted', {
+    query: route.query,
+    routeTaskID: routeTaskID.value,
+  })
 
   if (routeTaskID.value) {
     const taskQuery = {
@@ -727,9 +733,10 @@ function handleViewportScroll() {
 
 function handlePDFLoadFailed(err) {
   console.error('[Reader] PDF loading failed:', err)
-  const errMsg = typeof err === 'string'
-    ? err
-    : err?.message || (err && JSON.stringify(err)) || 'Failed to load PDF document.'
+  const errMsg =
+    typeof err === 'string'
+      ? err
+      : err?.message || (err && JSON.stringify(err)) || 'Failed to load PDF document.'
   pdfLoadError.value = errMsg
   logFrontendEvent('error', 'ReaderPDF', 'pdf_load_failed', { error: errMsg })
   setScrollStatus('ready')

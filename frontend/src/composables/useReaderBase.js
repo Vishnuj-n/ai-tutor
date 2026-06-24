@@ -222,10 +222,10 @@ export function useReaderBase(taskID) {
       activeSection.value = sections.value[0] || null
 
       readerContext.value = {
-        pdfUrl:    notebookUrl.value,
+        pdfUrl: notebookUrl.value,
         startPage: currentPage.value,
-        endPage:   navigationMaxPage.value || 0,
-        mode:      'task',
+        endPage: navigationMaxPage.value || 0,
+        mode: 'task',
       }
 
       return {
@@ -279,10 +279,10 @@ export function useReaderBase(taskID) {
       currentPage.value = topicStart
 
       readerContext.value = {
-        pdfUrl:    notebookUrl.value,
+        pdfUrl: notebookUrl.value,
         startPage: currentPage.value,
-        endPage:   0,
-        mode:      'browse',
+        endPage: 0,
+        mode: 'browse',
       }
 
       return true

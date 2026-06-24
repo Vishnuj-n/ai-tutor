@@ -363,26 +363,8 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			}
 			utils.Warnf("[SOCRATIC_RESCUE] requiz_failed topicID=%s — external help required", task.TopicID)
 		} else {
-			rereadAttemptCount, err = s.repo.IncrementRereadAttemptCountTx(tx, task.TopicID)
-			if err != nil {
-				return models.QuizResult{}, fmt.Errorf("failed to increment reread attempts: %w", err)
-			}
-			if rereadAttemptCount <= maxAutomaticRereadAttempts {
-				rereadTaskID = uuid.NewString()
-				feedbackPayload, _ := json.Marshal(map[string]string{"feedback": feedback})
-				followUps = append(followUps, models.StudyQueueTask{
-					ID:          rereadTaskID,
-					NotebookID:  task.NotebookID,
-					TopicID:     task.TopicID,
-					TaskType:    models.StudyTaskTypeReread,
-					Status:      models.StudyTaskStatusPending,
-					Priority:    0,
-					PayloadJSON: string(feedbackPayload),
-					StartPage:   task.StartPage,
-					EndPage:     task.EndPage,
-				})
-			} else {
-				// Strike 3: SOCRATIC_REMEDIAL rescue
+			strategy, _ := s.repo.GetRemedialStrategy()
+			if strategy == "FAST" {
 				manualReviewRecommended = true
 				feedback = "Concept rescue activated. Complete the Socratic session to retry."
 				attempt.Feedback = feedback
@@ -411,6 +393,56 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 					StartPage:   task.StartPage,
 					EndPage:     task.EndPage,
 				})
+			} else {
+				rereadAttemptCount, err = s.repo.IncrementRereadAttemptCountTx(tx, task.TopicID)
+				if err != nil {
+					return models.QuizResult{}, fmt.Errorf("failed to increment reread attempts: %w", err)
+				}
+				if rereadAttemptCount <= maxAutomaticRereadAttempts {
+					rereadTaskID = uuid.NewString()
+					feedbackPayload, _ := json.Marshal(map[string]string{"feedback": feedback})
+					followUps = append(followUps, models.StudyQueueTask{
+						ID:          rereadTaskID,
+						NotebookID:  task.NotebookID,
+						TopicID:     task.TopicID,
+						TaskType:    models.StudyTaskTypeReread,
+						Status:      models.StudyTaskStatusPending,
+						Priority:    0,
+						PayloadJSON: string(feedbackPayload),
+						StartPage:   task.StartPage,
+						EndPage:     task.EndPage,
+					})
+				} else {
+					// Strike 3: SOCRATIC_REMEDIAL rescue
+					manualReviewRecommended = true
+					feedback = "Concept rescue activated. Complete the Socratic session to retry."
+					attempt.Feedback = feedback
+					completionStatus = models.StudyTaskStatusCompleted // Mark QUIZ as COMPLETED
+
+					// Safety transaction: Delete FSRS cards to protect purity from rote clutter
+					if err := s.repo.DeleteFSRSCardsByTopicIDTx(tx, task.TopicID); err != nil {
+						return models.QuizResult{}, fmt.Errorf("failed to delete FSRS cards: %w", err)
+					}
+
+					// Shift session into Socratic Rescue Lane by generating a SOCRATIC_REMEDIAL task
+					socraticTaskID = uuid.NewString()
+					socraticPayload, _ := json.Marshal(map[string]string{
+						"feedback": feedback,
+						"lane":     "socratic_rescue",
+						"mode":     "external_prompt",
+					})
+					followUps = append(followUps, models.StudyQueueTask{
+						ID:          socraticTaskID,
+						NotebookID:  task.NotebookID,
+						TopicID:     task.TopicID,
+						TaskType:    models.StudyTaskTypeSocraticRemedial,
+						Status:      models.StudyTaskStatusPending,
+						Priority:    0,
+						PayloadJSON: string(socraticPayload),
+						StartPage:   task.StartPage,
+						EndPage:     task.EndPage,
+					})
+				}
 			}
 		}
 	}

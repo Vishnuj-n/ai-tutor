@@ -89,8 +89,6 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
-
-
 // Comprehensive Mode endpoints (Phase 1)
 export function generateManualFlashcards(notebookID, startPage, endPage) {
   return appBridge().GenerateManualFlashcards(notebookID, startPage, endPage)
@@ -173,7 +171,8 @@ export function updateUserSettings(
   ragEnabled,
   ragNotebookChapter,
   ragEntireNotebook,
-  ragQueueStudy
+  ragQueueStudy,
+  defaultRemedialStrategy
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -188,8 +187,17 @@ export function updateUserSettings(
     ragEnabled,
     ragNotebookChapter,
     ragEntireNotebook,
-    ragQueueStudy
+    ragQueueStudy,
+    defaultRemedialStrategy
   )
+}
+
+export function getRemedialStrategy() {
+  return appBridge().GetRemedialStrategy()
+}
+
+export function setRemedialStrategy(strategy) {
+  return appBridge().SetRemedialStrategy(strategy)
 }
 
 export function getLLMSettings() {

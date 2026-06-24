@@ -39,8 +39,8 @@
         <div class="rescue-text">
           <p class="rescue-title">Concept Rescue Active</p>
           <p class="rescue-subtitle">
-            Your study queue is locked because you failed the quiz twice on this topic.
-            You must complete the Socratic tutor rescue session to unblock your timeline.
+            Your study queue is locked because you failed the quiz twice on this topic. You must
+            complete the Socratic tutor rescue session to unblock your timeline.
           </p>
         </div>
       </div>
@@ -154,8 +154,14 @@
       <div v-if="tasks.length > 0" class="task-list">
         <article v-for="task in tasks" :key="task.id" class="card task-card">
           <div class="task-header">
-            <span class="task-type" :class="task.action_type.toLowerCase()">{{ formatTaskType(task.action_type) }}</span>
-            <span v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0" class="task-estimate">{{ task.estimate_minutes }} min</span>
+            <span class="task-type" :class="task.action_type.toLowerCase()">{{
+              formatTaskType(task.action_type)
+            }}</span>
+            <span
+              v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0"
+              class="task-estimate"
+              >{{ task.estimate_minutes }} min</span
+            >
           </div>
           <h3>{{ task.title }}</h3>
           <p class="task-meta">
@@ -203,20 +209,10 @@
         <span class="dev-badge">APP_ENV = dev</span>
       </header>
       <div class="dev-actions">
-        <button
-          type="button"
-          class="dev-btn"
-          :disabled="forcingRescue"
-          @click="forceRescueState"
-        >
+        <button type="button" class="dev-btn" :disabled="forcingRescue" @click="forceRescueState">
           {{ forcingRescue ? 'Forcing...' : 'Force Socratic Rescue' }}
         </button>
-        <button
-          type="button"
-          class="dev-btn"
-          :disabled="forcingSync"
-          @click="forceSyncTask"
-        >
+        <button type="button" class="dev-btn" :disabled="forcingSync" @click="forceSyncTask">
           {{ forcingSync ? 'Forcing...' : 'Force Flashcard Sync' }}
         </button>
       </div>
@@ -263,6 +259,10 @@ const userSettings = ref({
   cloud_api_token: '',
   theme: '',
   rag_enabled: false,
+  rag_notebook_chapter: true,
+  rag_entire_notebook: true,
+  rag_queue_study: true,
+  default_remedial_strategy: 'CLASSIC',
 })
 const activeProfilePace = ref(null)
 const lastPersistedProfile = ref('')
@@ -388,7 +388,11 @@ async function changeActiveProfile(event) {
       userSettings.value.cloud_sync_url,
       userSettings.value.cloud_api_token,
       userSettings.value.theme || '',
-      userSettings.value.rag_enabled || false
+      userSettings.value.rag_enabled || false,
+      userSettings.value.rag_notebook_chapter,
+      userSettings.value.rag_entire_notebook,
+      userSettings.value.rag_queue_study,
+      userSettings.value.default_remedial_strategy
     )
     if (res && res.error) {
       userSettings.value.active_profile_id = oldProfileID
@@ -421,7 +425,11 @@ async function toggleEscapeHatch() {
       userSettings.value.cloud_sync_url,
       userSettings.value.cloud_api_token,
       userSettings.value.theme || '',
-      userSettings.value.rag_enabled || false
+      userSettings.value.rag_enabled || false,
+      userSettings.value.rag_notebook_chapter,
+      userSettings.value.rag_entire_notebook,
+      userSettings.value.rag_queue_study,
+      userSettings.value.default_remedial_strategy
     )
     if (res && res.error) {
       userSettings.value.skip_to_reading_active = previousSkipToReading
@@ -485,7 +493,7 @@ async function forceRescueState() {
       return
     }
 
-    const validNb = notebooks.find(n => n.topic_id)
+    const validNb = notebooks.find((n) => n.topic_id)
     if (!validNb) {
       devMessage.value = 'No notebook with a linked topic found. Confirm syllabus first.'
       forcingRescue.value = false
