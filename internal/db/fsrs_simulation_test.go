@@ -70,7 +70,10 @@ func reviewCard(t *testing.T, repo *Repository, cardID, topicID string, rating f
 	}
 
 	newDueAt := simNow.Add(time.Duration(newState.ScheduledDays) * 24 * time.Hour).Unix()
-	stateBeforeJSON, _ := json.Marshal(*state)
+	stateBeforeJSON, err := json.Marshal(*state)
+	if err != nil {
+		t.Fatalf("json.Marshal(state) failed: %v", err)
+	}
 
 	reviewLog := models.FSRSReviewLog{
 		ID:              cardID + "-rev-" + simNow.Format("20060102"),
