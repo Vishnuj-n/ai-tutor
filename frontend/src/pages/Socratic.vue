@@ -86,7 +86,21 @@
             <div v-else class="markdown-body" v-html="renderMarkdown(message.text)"></div>
 
             <div v-if="message.role === 'assistant' && message.error" class="message-error">
-              {{ message.error }}
+              <p class="error-text">{{ message.error }}</p>
+              <button
+                v-if="message.isNetworkError && message.promptText"
+                class="retry-msg-btn"
+                @click="retrySocraticMessage(idx)"
+              >
+                {{ retryingMessageId === idx ? 'Retrying...' : 'Retry' }}
+              </button>
+              <button
+                v-if="message.isNetworkError && message.promptText && message.isRescueContext"
+                class="copy-prompt-btn"
+                @click="copyPromptToClipboard(message.promptText)"
+              >
+                {{ copiedMessageId === idx ? 'Copied!' : 'Copy Prompt' }}
+              </button>
             </div>
 
             <div
@@ -173,6 +187,8 @@ const threadRef = ref(null)
 const taskId = ref(route.query.taskId || route.query.task_id || '')
 const isRescueMode = computed(() => !!taskId.value)
 const completingRescue = ref(false)
+const copiedMessageId = ref(null)
+const retryingMessageId = ref(null)
 
 const selectedNotebook = computed(() =>
   notebooks.value.find((notebook) => notebook.id === selectedNotebookID.value)
@@ -337,10 +353,17 @@ async function submitQuestion() {
     const result = await askSocratic(selectedNotebookID.value, topicID, question)
 
     if (result.error) {
+      const isNetworkError = result.error.includes('network') || 
+                             result.error.includes('fetch') ||
+                             result.error.includes('Failed to fetch') ||
+                             result.error.includes('NetworkError')
       messages.value.push({
         role: 'assistant',
         text: 'Unable to answer this query right now.',
         error: result.error,
+        isNetworkError,
+        promptText: question,
+        isRescueContext: isRescueMode.value,
       })
     } else {
       messages.value.push({
@@ -374,10 +397,17 @@ async function initiateSocraticSession() {
     const result = await askSocratic(selectedNotebookID.value, topicID, startPrompt)
 
     if (result.error) {
+      const isNetworkError = result.error.includes('network') || 
+                             result.error.includes('fetch') ||
+                             result.error.includes('Failed to fetch') ||
+                             result.error.includes('NetworkError')
       messages.value.push({
         role: 'assistant',
         text: 'Unable to answer this query right now.',
         error: result.error,
+        isNetworkError,
+        promptText: startPrompt,
+        isRescueContext: isRescueMode.value,
       })
     } else {
       messages.value.push({
@@ -415,6 +445,79 @@ function formatNotebookLabel(notebook) {
     }
   }
   return notebook.title
+}
+
+async function copyPromptToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    const msgIndex = messages.value.findIndex(m => m.promptText === text)
+    if (msgIndex !== -1) {
+      copiedMessageId.value = msgIndex
+      setTimeout(() => {
+        copiedMessageId.value = null
+      }, 2000)
+    }
+  } catch (err) {
+    console.error('Failed to copy prompt:', err)
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    const msgIndex = messages.value.findIndex(m => m.promptText === text)
+    if (msgIndex !== -1) {
+      copiedMessageId.value = msgIndex
+      setTimeout(() => {
+        copiedMessageId.value = null
+      }, 2000)
+    }
+  }
+}
+
+async function retrySocraticMessage(messageIdx) {
+  const failedMsg = messages.value[messageIdx]
+  if (!failedMsg || retryingMessageId.value !== null) return
+
+  retryingMessageId.value = messageIdx
+  const prompt = failedMsg.promptText
+
+  messages.value.splice(messageIdx, 1)
+
+  isLoading.value = true
+  await scrollToBottom()
+
+  try {
+    const topicID = effectiveTopicID.value
+    const result = await askSocratic(selectedNotebookID.value, topicID, prompt)
+
+    if (result.error) {
+      const isNetworkError = result.error.includes('network') || 
+                             result.error.includes('fetch') ||
+                             result.error.includes('Failed to fetch') ||
+                             result.error.includes('NetworkError')
+      messages.value.push({
+        role: 'assistant',
+        text: 'Unable to answer this query right now.',
+        error: result.error,
+        isNetworkError,
+        promptText: prompt,
+        isRescueContext: failedMsg.isRescueContext,
+      })
+    } else {
+      messages.value.push({
+        role: 'assistant',
+        text: result.answer || 'No response generated.',
+        citations: result.cited_sections || [],
+      })
+    }
+  } catch (err) {
+    globalError.value = `Retry failed: ${err.message}`
+  } finally {
+    retryingMessageId.value = null
+    isLoading.value = false
+    await scrollToBottom()
+  }
 }
 
 async function scrollToBottom() {
@@ -745,6 +848,9 @@ h1 {
   color: #b43131;
   border-radius: 10px;
   font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .citations {
@@ -960,5 +1066,46 @@ h1 {
 .rescue-complete-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.error-text {
+  margin: 0;
+}
+
+.copy-prompt-btn {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.copy-prompt-btn:hover {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.retry-msg-btn {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.retry-msg-btn:hover {
+  background: var(--surface-container-low);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 </style>

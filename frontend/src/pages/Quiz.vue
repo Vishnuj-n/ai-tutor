@@ -28,6 +28,13 @@
     <!-- Error -->
     <article v-else-if="error" class="state-panel state-panel--error">
       <p class="state-text">{{ error }}</p>
+      <button
+        v-if="canRetryGeneration"
+        class="primary-btn retry-generation-btn"
+        @click="generateManualQuiz"
+      >
+        Retry
+      </button>
     </article>
 
     <!-- Manual controls: page range + generate -->
@@ -273,6 +280,10 @@ const canGenerateManual = computed(
     endPage.value >= startPage.value &&
     !generating.value
 )
+
+const canRetryGeneration = computed(() => {
+  return !taskID.value && selectedNotebookID.value && startPage.value > 0 && endPage.value >= startPage.value
+})
 
 onMounted(async () => {
   await loadNotebooks()
@@ -880,5 +891,10 @@ async function handleContinue() {
 
 .retry-btn:hover {
   background: var(--outline-variant);
+}
+
+.retry-generation-btn {
+  margin-top: 12px;
+  min-width: 120px;
 }
 </style>
