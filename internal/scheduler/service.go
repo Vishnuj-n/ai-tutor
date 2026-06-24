@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -51,52 +50,13 @@ type service struct {
 	queryNextDueReviewNotebook queryNextDueReviewNotebookFn
 }
 
-// Option customizes service dependencies for testing and advanced setups.
-type Option func(*service)
-
-// WithQueryDueReviewCards overrides the review query dependency.
-func WithQueryDueReviewCards(fn queryDueReviewCardsFn) Option {
-	return func(s *service) {
-		if fn != nil {
-			s.queryDueReviewCards = fn
-		}
-	}
-}
-// WithQueryNextDueReviewNotebook overrides the due-review notebook query dependency.
-// A nil fn is ignored so the default set in New() is preserved.
-func WithQueryNextDueReviewNotebook(fn queryNextDueReviewNotebookFn) Option {
-	return func(s *service) {
-		if fn != nil {
-			s.queryNextDueReviewNotebook = fn
-		}
-	}
-}
-
-// WithQueryUserSettings overrides the user settings query dependency.
-func WithQueryUserSettings(fn queryUserSettingsFn) Option {
-	return func(s *service) {
-		if fn != nil {
-			s.queryUserSettings = fn
-		}
-	}
-}
-
-// WithQueryNextReadingTopic overrides the topic cursor query dependency.
-func WithQueryNextReadingTopic(fn queryNextReadingTopicFn) Option {
-	return func(s *service) {
-		if fn != nil {
-			s.queryNextReadingTopic = fn
-		}
-	}
-}
-
-// WithQueryTokensPerPageMap overrides the chunk token query dependency.
-func WithQueryTokensPerPageMap(fn queryTokensPerPageMapFn) Option {
-	return func(s *service) {
-		if fn != nil {
-			s.queryTokensPerPageMap = fn
-		}
-	}
+// Dependencies holds overridable function references for the scheduler service.
+type Dependencies struct {
+	QueryDueReviewCards        queryDueReviewCardsFn
+	QueryUserSettings          queryUserSettingsFn
+	QueryNextReadingTopic      queryNextReadingTopicFn
+	QueryTokensPerPageMap      queryTokensPerPageMapFn
+	QueryNextDueReviewNotebook queryNextDueReviewNotebookFn
 }
 
 
@@ -106,7 +66,7 @@ type Service interface {
 }
 
 // New creates a new scheduler service with real database queries.
-func New(repo *db.Repository, opts ...Option) Service {
+func New(repo *db.Repository, deps Dependencies) Service {
 	s := &service{}
 	if repo != nil {
 		s.queryDueReviewCards = repo.QueryDueReviewCards
@@ -115,11 +75,21 @@ func New(repo *db.Repository, opts ...Option) Service {
 		s.queryTokensPerPageMap = repo.GetTokensPerPageMap
 		s.queryNextDueReviewNotebook = repo.GetNextDueReviewNotebook
 	}
-
-	for _, opt := range opts {
-		opt(s)
+	if deps.QueryDueReviewCards != nil {
+		s.queryDueReviewCards = deps.QueryDueReviewCards
 	}
-
+	if deps.QueryUserSettings != nil {
+		s.queryUserSettings = deps.QueryUserSettings
+	}
+	if deps.QueryNextReadingTopic != nil {
+		s.queryNextReadingTopic = deps.QueryNextReadingTopic
+	}
+	if deps.QueryTokensPerPageMap != nil {
+		s.queryTokensPerPageMap = deps.QueryTokensPerPageMap
+	}
+	if deps.QueryNextDueReviewNotebook != nil {
+		s.queryNextDueReviewNotebook = deps.QueryNextDueReviewNotebook
+	}
 	return s
 }
 
@@ -275,15 +245,9 @@ func resolvePageWindow(
 	}
 
 	startPage := topic.CurrentPageCursor
-
-	if startPage <= 0 {
-		startPage = topic.StartPage
+	if startPage < 1 {
+		startPage = max(1, topic.StartPage)
 	}
-
-	if startPage <= 0 {
-		startPage = 1
-	}
-
 	if topic.StartPage > 0 && startPage < topic.StartPage {
 		startPage = topic.StartPage
 	}
@@ -409,10 +373,6 @@ func (s *service) estimateTaskMinutes(
 }
 
 func parseTimeToMinutes(t string) (int, bool) {
-	parts := strings.Split(t, ":")
-	if len(parts) != 2 {
-		return 0, false
-	}
 	var h, m int
 	if _, err := fmt.Sscanf(t, "%d:%d", &h, &m); err != nil {
 		return 0, false
