@@ -358,6 +358,7 @@ Singleton table for global preferences.
 | `rag_notebook_chapter` | BOOLEAN DEFAULT 1 | RAG over notebook chapters |
 | `rag_entire_notebook` | BOOLEAN DEFAULT 1 | RAG over entire notebook |
 | `rag_queue_study` | BOOLEAN DEFAULT 1 | RAG over queued study content |
+| `default_remedial_strategy` | TEXT DEFAULT 'CLASSIC' | User preference for quiz failure handling (`CLASSIC` or `FAST`) |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
 
 **Foreign keys:** `active_profile_id` → `study_profiles(id)` ON DELETE SET NULL.

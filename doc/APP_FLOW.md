@@ -193,19 +193,32 @@ QUIZ task → mark COMPLETED
 ```
 
 **IF FAIL (below threshold):**
-```
+
+Remediation behavior depends on the user-configured `default_remedial_strategy` (`CLASSIC` or `FAST`):
+
+**Classic Track (Default):**
+```plaintext
 QUIZ task → mark COMPLETED
-→ Insert REREAD task for the material or other remediation follow-ups (if under max attempts)
+→ Insert REREAD task for the material (if under max attempts)
 → Generate lightweight AI feedback
 → Dashboard shows REREAD as next pending task
 ```
 
+**Fast Track (Direct Socratic Rescue):**
+```plaintext
+QUIZ task → mark COMPLETED
+→ Skip REREAD and directly insert SOCRATIC_REMEDIAL task
+→ Delete FSRS flashcards for the topic (protect purity)
+→ Dashboard shows Concept Rescue as next task
+```
+
 User can:
-- Complete the REREAD task
+- Complete the REREAD task (Classic Track)
 - Skip it (mark SKIPPED - auditable, can resurface)
 - The system does NOT force remediation loops
 
 Dashboard regains orchestration ownership after quiz submission and evaluation.
+
 
 ---
 
