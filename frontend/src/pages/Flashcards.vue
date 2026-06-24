@@ -283,6 +283,17 @@ async function generate() {
   }
 }
 
+async function handleQueueCompletion() {
+  const completeRes = await completeReviewSession(reviewTaskID.value)
+  if (completeRes?.error) {
+    error.value = `Failed to complete session: ${completeRes.error}`
+    return false
+  }
+  console.warn('[FLASHCARDS] flashcard_review_completed_dashboard_redirect')
+  router.push('/dashboard')
+  return true
+}
+
 async function rate(ratingKey) {
   const card = currentCard.value
   if (!card || isSubmittingReview.value) return
@@ -311,13 +322,7 @@ async function rate(ratingKey) {
       flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)
       if (sessionRemaining.value <= 0) {
-        const completeRes = await completeReviewSession(reviewTaskID.value)
-        if (completeRes?.error) {
-          error.value = `Failed to complete session: ${completeRes.error}`
-          return
-        }
-        console.warn('[FLASHCARDS] flashcard_review_completed_dashboard_redirect')
-        router.push('/dashboard')
+        await handleQueueCompletion()
         return
       }
       await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
@@ -365,12 +370,7 @@ async function suspendCard() {
     flipped.value = false
     sessionRemaining.value = Number(res.remaining ?? 0)
     if (sessionRemaining.value <= 0) {
-      const completeRes = await completeReviewSession(reviewTaskID.value)
-      if (completeRes?.error) {
-        error.value = `Failed to complete session: ${completeRes.error}`
-        return
-      }
-      router.push('/dashboard')
+      await handleQueueCompletion()
       return
     }
     await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
