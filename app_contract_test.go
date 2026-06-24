@@ -383,7 +383,7 @@ func newTestApp(t *testing.T) *App {
 		repo:              testRepo,
 		fastLLMProvider:   provider,
 		heavyLLMProvider:  provider,
-		scheduler:         scheduler.New(testRepo),
+		scheduler:         scheduler.New(testRepo, scheduler.Dependencies{}),
 		notebookService:   notebook.NewService(uploadDir),
 		notebookUploadDir: uploadDir,
 		aiReady:           true,

@@ -219,15 +219,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 		cardPrompt := strings.TrimSpace(candidate.Prompt)
 		answer := strings.TrimSpace(candidate.Answer)
 		if cardPrompt == "" || answer == "" || sourceChunkID == "" {
-			if cardPrompt == "" {
-				utils.Warnf("Skipping flashcard: empty prompt")
-			}
-			if answer == "" {
-				utils.Warnf("Skipping flashcard: empty answer")
-			}
-			if sourceChunkID == "" {
-				utils.Warnf("Skipping flashcard: empty source_chunk_id")
-			}
+			utils.Warnf("Skipping flashcard: missing required fields")
 			continue
 		}
 		if _, ok := allowedChunkIDs[sourceChunkID]; !ok {

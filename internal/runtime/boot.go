@@ -150,7 +150,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 
 	study.StartCloudSyncLoop(res.Repo)
 
-	res.Scheduler = scheduler.New(res.Repo)
+	res.Scheduler = scheduler.New(res.Repo, scheduler.Dependencies{})
 
 	// Init shared retrieval engine (embedder may be nil, which triggers lexical fallback)
 	res.RetrievalEngine = retrieval.NewEngine(res.Repo, embedder)
