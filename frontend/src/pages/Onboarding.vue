@@ -42,15 +42,57 @@
         </div>
 
         <div class="form-group">
-          <label for="daily-minutes">Daily Study Goal (Minutes)</label>
+          <label for="max-flashcards">Max Flashcards per Session</label>
           <input
-            id="daily-minutes"
-            v-model.number="dailyMinutes"
+            id="max-flashcards"
+            v-model.number="maxFlashcards"
             type="number"
-            min="15"
-            max="480"
+            min="5"
+            max="200"
             step="5"
+            required
           />
+          <p class="hint" style="margin-top: 4px; font-size: 0.85rem; opacity: 0.7;">
+            Caps spacing repetition reviews active in any single study session.
+          </p>
+        </div>
+
+        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="study-start-time">Study Start Time</label>
+            <input
+              id="study-start-time"
+              v-model="studyStartTime"
+              type="time"
+              required
+            />
+          </div>
+          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="study-end-time">Study End Time</label>
+            <input
+              id="study-end-time"
+              v-model="studyEndTime"
+              type="time"
+              required
+            />
+          </div>
+        </div>
+
+        <div class="form-group check-group" style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px;">
+          <label class="checkbox-container" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input
+              id="reminders-enabled"
+              v-model="remindersEnabled"
+              type="checkbox"
+              style="width: 18px; height: 18px; cursor: pointer;"
+            />
+            <div class="check-label">
+              <strong>Enable Study Reminders</strong>
+              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7;">
+                Notify when daily study time starts and ends.
+              </p>
+            </div>
+          </label>
         </div>
 
         <button class="action-button" :disabled="!isStep1Valid" @click="step = 2">Next Step</button>
@@ -412,7 +454,10 @@ const appInitials = computed(() => {
 
 const profileName = ref('')
 const profileDeadline = ref('')
-const dailyMinutes = ref(90)
+const maxFlashcards = ref(30)
+const studyStartTime = ref('17:00')
+const studyEndTime = ref('18:00')
+const remindersEnabled = ref(true)
 const cloudSyncURL = ref('')
 const apiToken = ref('')
 const selectedTheme = ref('light-classic')
@@ -471,7 +516,14 @@ const ragSetupCompleted = ref(false)
 const isSettingUpRag = ref(false)
 
 const isStep1Valid = computed(() => {
-  return profileName.value.trim() !== '' && profileDeadline.value !== '' && dailyMinutes.value >= 15
+  return (
+    profileName.value.trim() !== '' &&
+    profileDeadline.value !== '' &&
+    maxFlashcards.value >= 5 &&
+    maxFlashcards.value <= 200 &&
+    studyStartTime.value !== '' &&
+    studyEndTime.value !== ''
+  )
 })
 
 const isLLMStepValid = computed(() => {
@@ -665,7 +717,10 @@ async function completeOnboarding() {
 
     // 2. Set settings with this profile as active
     const settingsRes = await updateUserSettings(
-      dailyMinutes.value,
+      maxFlashcards.value,
+      studyStartTime.value,
+      studyEndTime.value,
+      remindersEnabled.value,
       newProfile.id,
       false, // skip to reading off by default
       cloudSyncURL.value.trim(),

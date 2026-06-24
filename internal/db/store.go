@@ -225,35 +225,7 @@ func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
 	return count, err
 }
 
-// GetDailyStudyMinutes returns the persisted global daily study budget.
-func (r *Repository) GetDailyStudyMinutes() (int, error) {
-	var minutes int
-	err := r.db.QueryRow(`
-		SELECT daily_study_minutes
-		FROM user_settings
-		WHERE id = 1
-	`).Scan(&minutes)
-	if err == sql.ErrNoRows {
-		return 90, nil
-	}
-	return minutes, err
-}
 
-// UpsertDailyStudyMinutes stores the global daily study budget.
-func (r *Repository) UpsertDailyStudyMinutes(minutes int) error {
-	if minutes <= 0 {
-		return fmt.Errorf("daily study minutes must be positive")
-	}
-
-	_, err := r.db.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes)
-		VALUES (1, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			daily_study_minutes = excluded.daily_study_minutes,
-			updated_at = CURRENT_TIMESTAMP
-	`, minutes)
-	return err
-}
 
 // GetRAGEnabled returns the status of RAG flag.
 func (r *Repository) GetRAGEnabled() (bool, error) {
@@ -286,18 +258,21 @@ func (r *Repository) GetUserSettings() (*models.UserSettings, error) {
 	var s models.UserSettings
 	var activeProfileID sql.NullString
 	err := r.db.QueryRow(`
-		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0), COALESCE(rag_notebook_chapter, 1), COALESCE(rag_entire_notebook, 1), COALESCE(rag_queue_study, 1)
+		SELECT max_flashcards_per_session, COALESCE(study_start_time, '17:00'), COALESCE(study_end_time, '18:00'), COALESCE(reminders_enabled, 1), COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0), COALESCE(rag_notebook_chapter, 1), COALESCE(rag_entire_notebook, 1), COALESCE(rag_queue_study, 1)
 		FROM user_settings
 		WHERE id = 1
-	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled, &s.RAGNotebookChapter, &s.RAGEntireNotebook, &s.RAGQueueStudy)
+	`).Scan(&s.MaxFlashcardsPerSession, &s.StudyStartTime, &s.StudyEndTime, &s.RemindersEnabled, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled, &s.RAGNotebookChapter, &s.RAGEntireNotebook, &s.RAGQueueStudy)
 	if err == sql.ErrNoRows {
 		s = models.UserSettings{
-			DailyStudyMinutes:  90,
-			Theme:              "light-classic",
-			RAGEnabled:         false,
-			RAGNotebookChapter: true,
-			RAGEntireNotebook:  true,
-			RAGQueueStudy:      true,
+			MaxFlashcardsPerSession: 30,
+			StudyStartTime:          "17:00",
+			StudyEndTime:            "18:00",
+			RemindersEnabled:        true,
+			Theme:                   "light-classic",
+			RAGEnabled:              false,
+			RAGNotebookChapter:     true,
+			RAGEntireNotebook:      true,
+			RAGQueueStudy:          true,
 		}
 	} else if err != nil {
 		return nil, err
@@ -358,10 +333,13 @@ func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 		theme = "light-classic"
 	}
 	_, err := r.db.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled, rag_notebook_chapter, rag_entire_notebook, rag_queue_study)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO user_settings (id, max_flashcards_per_session, study_start_time, study_end_time, reminders_enabled, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled, rag_notebook_chapter, rag_entire_notebook, rag_queue_study)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			daily_study_minutes = excluded.daily_study_minutes,
+			max_flashcards_per_session = excluded.max_flashcards_per_session,
+			study_start_time = excluded.study_start_time,
+			study_end_time = excluded.study_end_time,
+			reminders_enabled = excluded.reminders_enabled,
 			active_profile_id = excluded.active_profile_id,
 			skip_to_reading_active = excluded.skip_to_reading_active,
 			cloud_sync_url = excluded.cloud_sync_url,
@@ -372,7 +350,7 @@ func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 			rag_entire_notebook = excluded.rag_entire_notebook,
 			rag_queue_study = excluded.rag_queue_study,
 			updated_at = CURRENT_TIMESTAMP
-	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy)
+	`, s.MaxFlashcardsPerSession, s.StudyStartTime, s.StudyEndTime, s.RemindersEnabled, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy)
 	return err
 }
 

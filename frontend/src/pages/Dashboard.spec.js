@@ -40,7 +40,10 @@ describe('Dashboard.vue Integration', () => {
     appApi.getAppEnv.mockResolvedValue({ env: 'dev' })
     appApi.getProfiles.mockResolvedValue({ profiles: [{ id: 'prof-1', name: 'John Doe' }] })
     appApi.getUserSettings.mockResolvedValue({
-      daily_study_minutes: 60,
+      max_flashcards_per_session: 30,
+      study_start_time: '17:00',
+      study_end_time: '18:00',
+      reminders_enabled: true,
       active_profile_id: 'prof-1',
       skip_to_reading_active: false
     })
@@ -84,7 +87,10 @@ describe('Dashboard.vue Integration', () => {
 
     await toggleBtn.trigger('click')
     expect(appApi.updateUserSettings).toHaveBeenCalledWith(
-      60,
+      30,
+      '17:00',
+      '18:00',
+      true,
       'prof-1',
       true,
       undefined,

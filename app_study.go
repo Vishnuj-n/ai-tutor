@@ -46,32 +46,43 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}
 		}
-		dailyStudyMinutes, err := repo.GetDailyStudyMinutes()
+		settings, err := repo.GetUserSettings()
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}
 		}
-		if dailyStudyMinutes <= 0 {
-			dailyStudyMinutes = scheduler.DefaultDailyStudyMinutes
+		maxFlashcards := settings.MaxFlashcardsPerSession
+		if maxFlashcards <= 0 {
+			maxFlashcards = 30
+		}
+
+		studyStart := settings.StudyStartTime
+		studyEnd := settings.StudyEndTime
+		dailyStudyMinutes := 60 // default fallback
+		var sh, sm, eh, em int
+		if _, errS := fmt.Sscanf(studyStart, "%d:%d", &sh, &sm); errS == nil {
+			if _, errE := fmt.Sscanf(studyEnd, "%d:%d", &eh, &em); errE == nil {
+				startMins := sh*60 + sm
+				endMins := eh*60 + em
+				diff := endMins - startMins
+				if diff < 0 {
+					diff += 1440
+				}
+				if diff > 0 {
+					dailyStudyMinutes = diff
+				}
+			}
 		}
 
 		totalDueCards := dueCards
-		reviewBudget := int(math.Ceil(float64(dueCards) * scheduler.ReviewMinutesPerCard))
-		proportionalCap := int(float64(dailyStudyMinutes) * scheduler.MaxReviewMinutesRatio)
-		safeReviewBudget := reviewBudget
-		if safeReviewBudget > proportionalCap {
-			safeReviewBudget = proportionalCap
-		}
-		if safeReviewBudget > scheduler.MaxReviewMinutesSession {
-			safeReviewBudget = scheduler.MaxReviewMinutesSession
-		}
-		materializedCards := int(float64(safeReviewBudget) / scheduler.ReviewMinutesPerCard)
-		if materializedCards > dueCards {
-			materializedCards = dueCards
+		materializedCards := dueCards
+		if materializedCards > maxFlashcards {
+			materializedCards = maxFlashcards
 		}
 		deferredCards := totalDueCards - materializedCards
 		if deferredCards < 0 {
 			deferredCards = 0
 		}
+		safeReviewBudget := int(math.Ceil(float64(materializedCards) * scheduler.ReviewMinutesPerCard))
 
 		queueTasks := make([]models.ScheduledTask, 0, len(activeQueueTasks)+len(pendingQueueTasks))
 		actionCounts := make(map[string]int)

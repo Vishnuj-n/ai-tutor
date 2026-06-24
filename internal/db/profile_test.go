@@ -30,8 +30,8 @@ func TestProfileAndSettingsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserSettings failed: %v", err)
 	}
-	if s.DailyStudyMinutes != 90 {
-		t.Errorf("expected default 90 minutes, got %d", s.DailyStudyMinutes)
+	if s.MaxFlashcardsPerSession != 30 {
+		t.Errorf("expected default 30 cards, got %d", s.MaxFlashcardsPerSession)
 	}
 	if s.ActiveProfileID != "" {
 		t.Errorf("expected empty active profile, got %q", s.ActiveProfileID)
@@ -62,7 +62,7 @@ func TestProfileAndSettingsLifecycle(t *testing.T) {
 
 	// 4. Test UpdateUserSettings with active profile
 	s.ActiveProfileID = "prof-1"
-	s.DailyStudyMinutes = 120
+	s.MaxFlashcardsPerSession = 50
 	s.SkipToReadingActive = true
 	s.CloudSyncURL = "http://localhost/sync"
 	s.CloudAPIToken = "secret-token"
@@ -75,8 +75,8 @@ func TestProfileAndSettingsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserSettings failed: %v", err)
 	}
-	if sUpdated.DailyStudyMinutes != 120 {
-		t.Errorf("expected 120 minutes, got %d", sUpdated.DailyStudyMinutes)
+	if sUpdated.MaxFlashcardsPerSession != 50 {
+		t.Errorf("expected 50 cards, got %d", sUpdated.MaxFlashcardsPerSession)
 	}
 	if sUpdated.ActiveProfileID != "prof-1" {
 		t.Errorf("expected active profile prof-1, got %q", sUpdated.ActiveProfileID)

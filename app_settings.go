@@ -13,31 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func (a *App) GetDailyStudySettings() map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
-	}
-	minutes, err := repo.GetDailyStudyMinutes()
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"daily_study_minutes": minutes}
-}
 
-func (a *App) UpdateDailyStudyMinutes(minutes int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
-	}
-	if minutes < 15 || minutes > 480 {
-		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
-	}
-	if err := repo.UpsertDailyStudyMinutes(minutes); err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
-	return map[string]interface{}{"ok": true, "daily_study_minutes": minutes}
-}
 func (a *App) GetUserSettings() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -48,38 +24,44 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{
-		"daily_study_minutes":    s.DailyStudyMinutes,
-		"active_profile_id":      s.ActiveProfileID,
-		"skip_to_reading_active": s.SkipToReadingActive,
-		"cloud_sync_url":         s.CloudSyncURL,
-		"cloud_api_token":        s.CloudAPIToken,
-		"theme":                  s.Theme,
-		"rag_enabled":            s.RAGEnabled,
-		"rag_notebook_chapter":   s.RAGNotebookChapter,
-		"rag_entire_notebook":    s.RAGEntireNotebook,
-		"rag_queue_study":        s.RAGQueueStudy,
+		"max_flashcards_per_session": s.MaxFlashcardsPerSession,
+		"study_start_time":           s.StudyStartTime,
+		"study_end_time":             s.StudyEndTime,
+		"reminders_enabled":          s.RemindersEnabled,
+		"active_profile_id":          s.ActiveProfileID,
+		"skip_to_reading_active":     s.SkipToReadingActive,
+		"cloud_sync_url":             s.CloudSyncURL,
+		"cloud_api_token":            s.CloudAPIToken,
+		"theme":                      s.Theme,
+		"rag_enabled":                s.RAGEnabled,
+		"rag_notebook_chapter":       s.RAGNotebookChapter,
+		"rag_entire_notebook":        s.RAGEntireNotebook,
+		"rag_queue_study":            s.RAGQueueStudy,
 	}
 }
 
-func (a *App) UpdateUserSettings(minutes int, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool) map[string]interface{} {
+func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
 	}
-	if minutes < 15 || minutes > 480 {
-		return map[string]interface{}{"error": "daily study minutes must be between 15 and 480"}
+	if maxFlashcards < 5 || maxFlashcards > 200 {
+		return map[string]interface{}{"error": "max flashcards per session must be between 5 and 200"}
 	}
 	s := models.UserSettings{
-		DailyStudyMinutes:   minutes,
-		ActiveProfileID:     activeProfileID,
-		SkipToReadingActive: skipToReading,
-		CloudSyncURL:        syncURL,
-		CloudAPIToken:       apiToken,
-		Theme:               theme,
-		RAGEnabled:          ragEnabled,
-		RAGNotebookChapter:  ragNotebookChapter,
-		RAGEntireNotebook:   ragEntireNotebook,
-		RAGQueueStudy:       ragQueueStudy,
+		MaxFlashcardsPerSession: maxFlashcards,
+		StudyStartTime:          startTime,
+		StudyEndTime:            endTime,
+		RemindersEnabled:        remindersEnabled,
+		ActiveProfileID:         activeProfileID,
+		SkipToReadingActive:     skipToReading,
+		CloudSyncURL:            syncURL,
+		CloudAPIToken:           apiToken,
+		Theme:                   theme,
+		RAGEnabled:              ragEnabled,
+		RAGNotebookChapter:      ragNotebookChapter,
+		RAGEntireNotebook:       ragEntireNotebook,
+		RAGQueueStudy:           ragQueueStudy,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {

@@ -11,7 +11,9 @@ import (
 func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }), // 10 cards * 0.5m = 5 min review
-		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
+		WithQueryUserSettings(func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 30, StudyStartTime: "17:00", StudyEndTime: "18:30", RemindersEnabled: true}, nil
+		}),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
 				ID:                "ch1",
@@ -66,7 +68,9 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
+		WithQueryUserSettings(func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 30, StudyStartTime: "17:00", StudyEndTime: "18:30", RemindersEnabled: true}, nil
+		}),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
 				ID:                "ocr1",
@@ -110,7 +114,9 @@ func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
 	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
+		WithQueryUserSettings(func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 30, StudyStartTime: "17:00", StudyEndTime: "18:30", RemindersEnabled: true}, nil
+		}),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
 				ID:                "ch2",
@@ -150,7 +156,9 @@ func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
 func TestBuildTodayPlanNoReadingTopic(t *testing.T) {
 	svc := New(nil,
 		WithQueryDueReviewCards(func(int64) (int, error) { return 20, nil }), // 20 cards * 0.5 = 10 mins
-		WithQueryDailyStudyMinutes(func() (int, error) { return 30, nil }),
+		WithQueryUserSettings(func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 20, StudyStartTime: "17:00", StudyEndTime: "17:30", RemindersEnabled: true}, nil
+		}),
 		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{}, false, nil // No topic found
 		}),

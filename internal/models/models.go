@@ -532,9 +532,12 @@ type StudyProfile struct {
 
 // UserSettings represents the application settings.
 type UserSettings struct {
-	DailyStudyMinutes   int    `json:"daily_study_minutes"`
-	ActiveProfileID     string `json:"active_profile_id"`
-	SkipToReadingActive bool   `json:"skip_to_reading_active"`
+	MaxFlashcardsPerSession int    `json:"max_flashcards_per_session"`
+	StudyStartTime          string `json:"study_start_time"`
+	StudyEndTime            string `json:"study_end_time"`
+	RemindersEnabled        bool   `json:"reminders_enabled"`
+	ActiveProfileID         string `json:"active_profile_id"`
+	SkipToReadingActive     bool   `json:"skip_to_reading_active"`
 	CloudSyncURL        string `json:"cloud_sync_url"`
 	CloudAPIToken       string `json:"cloud_api_token"`
 	Theme               string `json:"theme"`
