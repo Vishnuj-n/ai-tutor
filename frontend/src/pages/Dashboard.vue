@@ -268,7 +268,7 @@ const activeProfilePace = ref(null)
 const lastPersistedProfile = ref('')
 
 const flashcardsJustCreated = computed(() => {
-  const created = parseInt(route.query.flashcardsCreated, 10)
+  const created = Number.parseInt(route.query.flashcardsCreated, 10)
   return isNaN(created) || created <= 0 ? 0 : created
 })
 

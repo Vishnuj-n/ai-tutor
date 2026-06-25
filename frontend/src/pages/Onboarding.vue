@@ -1,13 +1,6 @@
 <template>
-  <div class="onboarding-overlay" :style="{ color: getTextColor() }">
-    <div
-      class="onboarding-card"
-      :style="{
-        background: getCardStyle().bg,
-        borderColor: getCardStyle().border,
-        backdropFilter: getCardStyle().blur,
-      }"
-    >
+  <div class="onboarding-overlay">
+    <div class="onboarding-card">
       <div class="header-section">
         <div class="logo-orb">{{ appInitials }}</div>
         <h1>Welcome to {{ BRANDING.appName }}</h1>
@@ -138,12 +131,23 @@
 
         <div class="form-group">
           <label for="llm-api-key">API Key</label>
-          <input
-            id="llm-api-key"
-            v-model="llmFastKey"
-            type="password"
-            placeholder="Paste key to save in OS credential manager"
-          />
+          <div class="password-wrapper">
+            <input
+              id="llm-api-key"
+              v-model="llmFastKey"
+              :type="showFastKey ? 'text' : 'password'"
+              placeholder="Paste key to save in OS credential manager"
+            />
+            <button
+              v-if="llmFastKey"
+              type="button"
+              class="toggle-password"
+              @click="showFastKey = !showFastKey"
+              :title="showFastKey ? 'Hide' : 'Show'"
+            >
+              {{ showFastKey ? '🙈' : '👁️' }}
+            </button>
+          </div>
         </div>
 
         <label class="inline-check">
@@ -175,12 +179,23 @@
           </div>
           <div class="form-group">
             <label for="heavy-api-key">Heavy API Key</label>
-            <input
-              id="heavy-api-key"
-              v-model="llmHeavyKey"
-              type="password"
-              placeholder="Leave blank to use the fast key"
-            />
+            <div class="password-wrapper">
+              <input
+                id="heavy-api-key"
+                v-model="llmHeavyKey"
+                :type="showHeavyKey ? 'text' : 'password'"
+                placeholder="Leave blank to use the fast key"
+              />
+              <button
+                v-if="llmHeavyKey"
+                type="button"
+                class="toggle-password"
+                @click="showHeavyKey = !showHeavyKey"
+                :title="showHeavyKey ? 'Hide' : 'Show'"
+              >
+                {{ showHeavyKey ? '🙈' : '👁️' }}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -243,12 +258,23 @@
 
         <div class="form-group">
           <label for="api-token">Authorization API Token</label>
-          <input
-            id="api-token"
-            v-model="apiToken"
-            type="password"
-            placeholder="Enter your auth token"
-          />
+          <div class="password-wrapper">
+            <input
+              id="api-token"
+              v-model="apiToken"
+              :type="showApiToken ? 'text' : 'password'"
+              placeholder="Enter your auth token"
+            />
+            <button
+              v-if="apiToken"
+              type="button"
+              class="toggle-password"
+              @click="showApiToken = !showApiToken"
+              :title="showApiToken ? 'Hide' : 'Show'"
+            >
+              {{ showApiToken ? '🙈' : '👁️' }}
+            </button>
+          </div>
         </div>
 
         <div class="button-row">
@@ -337,9 +363,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label" :style="{ color: getLabelColor('light-classic') }"
-              >Light Classic</span
-            >
+            <span class="theme-label">Light Classic</span>
           </button>
 
           <button
@@ -352,9 +376,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label" :style="{ color: getLabelColor('light-warm') }"
-              >Warm Sepia</span
-            >
+            <span class="theme-label">Warm Sepia</span>
           </button>
 
           <button
@@ -367,9 +389,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label" :style="{ color: getLabelColor('dark-indigo') }"
-              >Deep Indigo</span
-            >
+            <span class="theme-label">Deep Indigo</span>
           </button>
 
           <button
@@ -382,9 +402,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label" :style="{ color: getLabelColor('dark-nord') }"
-              >Nord Frost</span
-            >
+            <span class="theme-label">Nord Frost</span>
           </button>
 
           <button
@@ -397,9 +415,7 @@
               <span class="preview-dot primary"></span>
               <span class="preview-dot surface"></span>
             </div>
-            <span class="theme-label" :style="{ color: getLabelColor('dark-emerald') }"
-              >Forest Emerald</span
-            >
+            <span class="theme-label">Forest Emerald</span>
           </button>
         </div>
 
@@ -457,31 +473,15 @@ const remindersEnabled = ref(true)
 const cloudSyncURL = ref('')
 const apiToken = ref('')
 const selectedTheme = ref('light-classic')
-const overlayBackground = ref('#f9f9fb')
-const themeCardStyles = {
-  'light-classic': { bg: 'rgba(255,255,255,0.85)', border: 'rgba(0,0,0,0.08)', blur: 'blur(20px)' },
-  'light-warm': { bg: 'rgba(255,255,255,0.85)', border: 'rgba(0,0,0,0.08)', blur: 'blur(20px)' },
-  'dark-indigo': {
-    bg: 'rgba(255,255,255,0.03)',
-    border: 'rgba(255,255,255,0.08)',
-    blur: 'blur(20px)',
-  },
-  'dark-nord': {
-    bg: 'rgba(255,255,255,0.03)',
-    border: 'rgba(255,255,255,0.08)',
-    blur: 'blur(20px)',
-  },
-  'dark-emerald': {
-    bg: 'rgba(255,255,255,0.03)',
-    border: 'rgba(255,255,255,0.08)',
-    blur: 'blur(20px)',
-  },
-}
+// Theme selection states (background handled automatically via css custom variables)
 const llmSaving = ref(false)
 const presetLoading = ref(false)
 const useSameLLMForHeavy = ref(true)
 const llmFastKey = ref('')
 const llmHeavyKey = ref('')
+const showFastKey = ref(false)
+const showHeavyKey = ref(false)
+const showApiToken = ref(false)
 const llmFast = ref({
   tier: 'fast',
   provider: 'groq',
@@ -605,46 +605,9 @@ async function saveLLMAndContinue() {
   }
 }
 
-const themeBackgrounds = {
-  'light-classic': '#f9f9fb',
-  'light-warm': '#fdfaf6',
-  'dark-indigo': '#0b0d16',
-  'dark-nord': '#2e3440',
-  'dark-emerald': '#0a120d',
-}
-
-const themeLabelColors = {
-  'light-classic': '#2d3338',
-  'light-warm': '#433422',
-  'dark-indigo': '#e2e8f0',
-  'dark-nord': '#eceff4',
-  'dark-emerald': '#e6f4ea',
-}
-
-const themeTextColors = {
-  'light-classic': '#2d3338',
-  'light-warm': '#433422',
-  'dark-indigo': '#ffffff',
-  'dark-nord': '#ffffff',
-  'dark-emerald': '#ffffff',
-}
-
 function selectTheme(theme) {
   selectedTheme.value = theme
   document.documentElement.setAttribute('data-theme', theme)
-  overlayBackground.value = themeBackgrounds[theme] || '#0c0d14'
-}
-
-function getCardStyle() {
-  return themeCardStyles[selectedTheme.value] || themeCardStyles['dark-indigo']
-}
-
-function getTextColor() {
-  return themeTextColors[selectedTheme.value] || '#ffffff'
-}
-
-function getLabelColor(theme) {
-  return themeLabelColors[theme] || '#e0e0e0'
 }
 
 function startRagSetup() {
@@ -748,12 +711,12 @@ onMounted(() => {
 .onboarding-overlay {
   position: fixed;
   inset: 0;
-  background: v-bind(overlayBackground);
+  background: var(--background);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
-  padding: 20px;
+  padding: 24px; /* 8px grid */
   color: var(--on-surface);
   font-family: 'Inter', sans-serif;
 }
@@ -761,43 +724,48 @@ onMounted(() => {
 .onboarding-card {
   width: 100%;
   max-width: 500px;
-  border-radius: 24px;
-  padding: 40px;
-  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.08);
+  border-radius: 24px; /* 3 * 8px */
+  padding: 40px; /* 5 * 8px */
+  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.06);
   box-sizing: border-box;
+  background: var(--surface-bright);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   transition:
     background 0.3s ease,
-    border-color 0.3s ease;
-  border: 1px solid var(--outline-variant);
+    backdrop-filter 0.3s ease;
+  border: none; /* No-line rule */
 }
 
 .header-section {
   text-align: center;
-  margin-bottom: 30px;
+  margin-bottom: 32px; /* 8px grid */
 }
 
 .logo-orb {
-  width: 60px;
-  height: 60px;
-  margin: 0 auto 16px;
+  width: 64px; /* 8px grid */
+  height: 64px; /* 8px grid */
+  margin: 0 auto 16px; /* 8px grid */
   background: linear-gradient(135deg, var(--primary-dim), var(--primary));
   color: var(--on-primary);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: 'Manrope', sans-serif;
   font-weight: 800;
   font-size: 20px;
   letter-spacing: -0.05em;
-  box-shadow: 0 0 30px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 32px rgba(99, 102, 241, 0.2); /* 8px grid shadow size */
 }
 
 h1 {
+  font-family: 'Manrope', sans-serif; /* Display font */
   font-size: 28px;
   font-weight: 800;
-  margin: 0 0 8px;
-  letter-spacing: -0.03em;
-  color: v-bind(getTextColor());
+  margin: 0 0 8px; /* 8px grid */
+  letter-spacing: -0.02em; /* Spec: -2% tracking */
+  color: var(--on-surface);
 }
 
 .subtitle {
@@ -807,10 +775,10 @@ h1 {
 }
 
 .progress-bar {
-  height: 4px;
+  height: 8px; /* 8px grid */
   background: var(--outline-variant);
-  border-radius: 2px;
-  margin-bottom: 30px;
+  border-radius: 4px;
+  margin-bottom: 32px; /* 8px grid */
   overflow: hidden;
 }
 
@@ -823,26 +791,63 @@ h1 {
 .step-container {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px; /* 8px grid */
 }
 
 h2 {
-  font-size: 18px;
+  font-family: 'Manrope', sans-serif; /* Display font */
+  font-size: 20px; /* 8px scale */
   font-weight: 700;
   margin: 0;
+  letter-spacing: -0.02em; /* Spec: -2% tracking */
 }
 
 .description {
   font-size: 13px;
   color: var(--muted-text);
   line-height: 1.5;
-  margin: -10px 0 10px;
+  margin: -16px 0 8px; /* 8px grid */
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 8px; /* 8px grid */
+}
+
+.form-group:focus-within label {
+  color: var(--primary); /* Spec focus shift */
+}
+
+.password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-wrapper input {
+  width: 100%;
+  padding-right: 48px; /* 8px grid */
+}
+
+.toggle-password {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 8px; /* 8px grid */
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.toggle-password:hover {
+  opacity: 1;
 }
 
 label {
@@ -851,13 +856,15 @@ label {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted-text);
+  transition: color 0.2s ease;
 }
 
-input {
+input,
+select {
   background: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
-  border-radius: 12px;
-  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent); /* Spec ghost border */
+  border-radius: 12px; /* xl: 12px/0.75rem */
+  padding: 12px 16px; /* 8px grid friendly */
   color: var(--on-surface);
   font-size: 14px;
   font-family: inherit;
@@ -871,21 +878,6 @@ input {
 input::placeholder {
   color: var(--muted-text);
   opacity: 0.6;
-}
-
-select {
-  background: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
-  border-radius: 12px;
-  padding: 12px 16px;
-  color: var(--on-surface);
-  font-size: 14px;
-  font-family: inherit;
-  box-sizing: border-box;
-  width: 100%;
-  transition:
-    border-color 0.2s,
-    background-color 0.2s;
 }
 
 select option {
@@ -903,7 +895,7 @@ select:focus {
 .inline-check {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px; /* 8px grid */
   text-transform: none;
   letter-spacing: 0;
   color: var(--on-surface);
@@ -916,19 +908,20 @@ select:focus {
 .advanced-box {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid var(--outline-variant);
-  border-radius: 12px;
+  gap: 16px; /* 8px grid */
+  padding: 16px; /* 8px grid */
+  border: none; /* No-line rule */
+  border-radius: 12px; /* xl: 12px */
   background: var(--surface-container-low);
 }
 
 .action-button {
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   border: none;
-  border-radius: 12px;
-  padding: 14px;
+  border-radius: 12px; /* xl: 12px */
+  padding: 16px; /* 8px grid */
   color: var(--on-primary);
+  font-family: 'Manrope', sans-serif;
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
@@ -936,7 +929,7 @@ select:focus {
     opacity 0.2s,
     transform 0.2s;
   width: 100%;
-  margin-top: 10px;
+  margin-top: 8px; /* 8px grid */
   text-align: center;
 }
 
@@ -952,16 +945,17 @@ select:focus {
 
 .button-row {
   display: flex;
-  gap: 12px;
-  margin-top: 10px;
+  gap: 16px; /* 8px grid */
+  margin-top: 8px; /* 8px grid */
 }
 
 .secondary-button {
   background: var(--surface-container-highest);
   border: none;
-  border-radius: 12px;
-  padding: 14px;
+  border-radius: 12px; /* xl: 12px */
+  padding: 16px; /* 8px grid */
   color: var(--primary);
+  font-family: 'Manrope', sans-serif;
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
@@ -975,12 +969,13 @@ select:focus {
 }
 
 .error-banner {
-  background: rgba(235, 94, 85, 0.1);
-  border: 1px solid rgba(235, 94, 85, 0.2);
-  color: #eb5e55;
-  padding: 12px;
-  border-radius: 12px;
+  background: rgba(159, 64, 61, 0.06); /* Soft red tinted using spec error color */
+  border: none; /* No-line rule */
+  color: #9f403d; /* SPEC: error (#9f403d) */
+  padding: 16px; /* 8px grid */
+  border-radius: 12px; /* xl: 12px */
   font-size: 13px;
+  font-weight: 600;
   text-align: center;
 }
 
@@ -988,19 +983,19 @@ select:focus {
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 12px;
-  margin: 10px 0;
+  gap: 16px; /* 8px grid */
+  margin: 8px 0; /* 8px grid */
 }
 
 .theme-card {
   background: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
-  border-radius: 14px;
-  padding: 12px;
+  border: none; /* No-line rule */
+  border-radius: 12px; /* xl: 12px */
+  padding: 16px; /* 8px grid */
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 8px; /* 8px grid */
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   width: 100%;
@@ -1008,14 +1003,13 @@ select:focus {
 }
 
 .theme-card:hover {
-  background: var(--surface-container);
-  border-color: var(--outline-variant);
-  transform: translateY(-2px);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 8px 16px color-mix(in srgb, var(--on-surface) 6%, transparent);
 }
 
 .theme-card.active {
-  border-color: var(--primary);
-  box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 0 0 2px var(--primary);
 }
 
 .theme-preview {
@@ -1025,8 +1019,8 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  border: 1px solid var(--outline-variant);
+  gap: 8px; /* 8px grid */
+  border: none; /* No-line rule */
 }
 
 .preview-dot {
@@ -1038,6 +1032,13 @@ select:focus {
 .theme-label {
   font-size: 12px;
   font-weight: 600;
+  color: var(--muted-text);
+  transition: color 0.2s ease, font-weight 0.2s ease;
+}
+
+.theme-card.active .theme-label {
+  color: var(--on-surface);
+  font-weight: 700;
 }
 
 /* Theme Previews */
@@ -1095,8 +1096,8 @@ select:focus {
 .rag-options {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin: 20px 0;
+  gap: 16px; /* 8px grid */
+  margin: 24px 0; /* 8px grid */
 }
 
 .rag-option-card {
@@ -1104,22 +1105,22 @@ select:focus {
   align-items: flex-start;
   gap: 16px;
   padding: 16px;
-  border-radius: 8px;
+  border-radius: 12px; /* xl: 12px */
   background: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
+  border: none; /* No-line rule */
   cursor: pointer;
   transition: all 0.2s ease;
   color: var(--on-surface);
 }
 
 .rag-option-card:hover {
-  background: var(--surface-container);
-  border-color: var(--outline-variant);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 8px 16px color-mix(in srgb, var(--on-surface) 6%, transparent);
 }
 
 .rag-option-card.active {
   background: var(--surface-container-lowest);
-  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary);
 }
 
 .rag-option-card input[type='radio'] {
@@ -1142,24 +1143,24 @@ select:focus {
 
 .rag-setup-box {
   background: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
+  border: none; /* No-line rule */
+  border-radius: 12px; /* xl: 12px */
   padding: 16px;
-  margin: 20px 0;
+  margin: 24px 0; /* 8px grid */
   color: var(--on-surface);
 }
 
 .setup-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px; /* 8px grid */
+  margin-bottom: 8px; /* 8px grid */
 }
 
 .status-badge {
   font-size: 10px;
   font-weight: 700;
-  padding: 2px 6px;
+  padding: 2px 8px; /* 8px grid */
   border-radius: 4px;
   background: #a0a0a0;
   color: #121212;
@@ -1201,22 +1202,22 @@ select:focus {
 }
 
 .progress-bar-mini {
-  height: 6px;
+  height: 8px; /* 8px grid */
   background: var(--outline-variant);
-  border-radius: 3px;
+  border-radius: 4px;
   overflow: hidden;
   margin-bottom: 8px;
 }
 
 .progress-fill-mini {
   height: 100%;
-  background: #6366f1;
+  background: var(--primary);
   transition: width 0.3s ease;
 }
 
 .setup-detail {
   font-size: 11px;
-  color: #888888;
+  color: var(--muted-text);
   margin: 0;
 }
 </style>

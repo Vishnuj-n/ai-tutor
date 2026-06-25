@@ -495,8 +495,8 @@ onMounted(async () => {
     const taskQuery = {
       notebookId: route.query.notebookId || route.query.notebook_id,
       topicId: route.query.topicId || route.query.topic_id,
-      startPage: parseInt(route.query.startPage || route.query.start_page) || 0,
-      endPage: parseInt(route.query.endPage || route.query.end_page) || 0,
+      startPage: Number.parseInt(route.query.startPage || route.query.start_page) || 0,
+      endPage: Number.parseInt(route.query.endPage || route.query.end_page) || 0,
     }
     await resolveTaskContext(taskQuery)
   } else {
@@ -636,7 +636,7 @@ function setupIntersectionObserver(viewportEl) {
   intersectionObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
-        const page = parseInt(entry.target.dataset.page)
+        const page = Number.parseInt(entry.target.dataset.page)
         if (Number.isNaN(page)) return
         if (entry.isIntersecting) {
           renderedPages.value[page] = true
@@ -719,7 +719,7 @@ function getVisiblePageFromScroll() {
     const overlap = Math.min(viewBottom, elBottom) - Math.max(viewTop, elTop)
     if (overlap > bestOverlap) {
       bestOverlap = overlap
-      bestPage = parseInt(el.dataset.page)
+      bestPage = Number.parseInt(el.dataset.page)
     }
   }
   return bestPage
