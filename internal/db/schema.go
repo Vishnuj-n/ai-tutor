@@ -379,7 +379,7 @@ func columnExists(tx *sql.Tx, table, column string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var cid int
 		var name, typeStr string

@@ -1138,7 +1138,7 @@ func (r *Repository) ResolveFlashcardSyncTasks() error {
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		type taskInfo struct {
 			id     string

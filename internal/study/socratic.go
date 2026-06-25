@@ -185,7 +185,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 			if msg["role"] == "assistant" {
 				role = "Tutor"
 			}
-			histBuilder.WriteString(fmt.Sprintf("%s: %s\n", role, msg["content"]))
+			fmt.Fprintf(&histBuilder, "%s: %s\n", role, msg["content"])
 		}
 		historyBlock = histBuilder.String()
 	}
@@ -216,12 +216,10 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		"Hint Progression:",
 		"Observation → Pattern → Concept → Near Answer → Full Explanation",
 		"",
-		"Response Format:",
-		"Question:",
-		"[A short probing question]",
-		"",
-		"Hint:",
-		"[A concise hint grounded only in the retrieved material]",
+		"Response Format Guidelines:",
+		"- Respond in a natural, conversational manner.",
+		"- Directly respond to the student's input: validate if they are correct, partially correct, or incorrect, and explain why briefly using the retrieved material. If they ask a question, answer it directly and clearly.",
+		"- End your response with exactly one short probing question to guide them further. If helpful, you may add a hint below the question labeled 'Hint:'.",
 		"",
 		historyBlock,
 		"Student question: " + question,
@@ -307,12 +305,10 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		"Hint Progression:",
 		"Observation → Pattern → Concept → Near Answer → Full Explanation",
 		"",
-		"Response Format:",
-		"Question:",
-		"[A short probing question]",
-		"",
-		"Hint:",
-		"[A concise hint grounded only in the retrieved material]",
+		"Response Format Guidelines:",
+		"- Respond in a natural, conversational manner.",
+		"- Directly respond to the student's input: validate if they are correct, partially correct, or incorrect, and explain why briefly using the retrieved material. If they ask a question, answer it directly and clearly.",
+		"- End your response with exactly one short probing question to guide them further. If helpful, you may add a hint below the question labeled 'Hint:'.",
 		"",
 		historyBlock,
 		"Retrieved material:",

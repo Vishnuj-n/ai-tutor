@@ -2118,7 +2118,7 @@ func TestTriggerCloudSyncRetriesAndFailSafe(t *testing.T) {
 		}
 		// Succeed on 3rd attempt
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"new_notebooks": []interface{}{},
 		})
 	}))
@@ -2182,7 +2182,7 @@ func TestTriggerCloudSyncRetriesAndFailSafe(t *testing.T) {
 	// 3. Verify sync resolution: make server succeed again
 	serverSuccess := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"new_notebooks": []interface{}{},
 		})
 	}))
@@ -2212,6 +2212,118 @@ func TestTriggerCloudSyncRetriesAndFailSafe(t *testing.T) {
 	}
 }
 
+
+// ============================================================================
+// HELPER FUNCTION UNIT TESTS
+// ============================================================================
+
+func TestCalculateDailyStudyMinutes(t *testing.T) {
+	tests := []struct {
+		name     string
+		start    string
+		end      string
+		expected int
+	}{
+		{"normal range", "9:00", "11:30", 150},
+		{"same hour", "10:00", "10:30", 30},
+		{"midnight wrap", "22:00", "2:00", 240},
+		{"full day", "0:00", "23:59", 1439},
+		{"invalid start", "bad", "10:00", 60},
+		{"invalid end", "9:00", "bad", 60},
+		{"both invalid", "x", "y", 60},
+		{"zero diff", "10:00", "10:00", 60},
+		{"single minute", "9:00", "9:01", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calculateDailyStudyMinutes(tt.start, tt.end)
+			if got != tt.expected {
+				t.Errorf("calculateDailyStudyMinutes(%q, %q) = %d, want %d", tt.start, tt.end, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCalculateFlashcardBudgets(t *testing.T) {
+	tests := []struct {
+		name                string
+		dueCards            int
+		maxFlashcards       int
+		wantMaterialized    int
+		wantDeferred        int
+		wantSafeReviewBudget int
+	}{
+		{"under max", 5, 20, 5, 0, 3},
+		{"at max", 10, 10, 10, 0, 5},
+		{"over max", 30, 20, 20, 10, 10},
+		{"zero cards", 0, 10, 0, 0, 0},
+		{"zero max", 5, 0, 0, 5, 0},
+		{"both zero", 0, 0, 0, 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mat, deferred, budget := calculateFlashcardBudgets(tt.dueCards, tt.maxFlashcards)
+			if mat != tt.wantMaterialized || deferred != tt.wantDeferred || budget != tt.wantSafeReviewBudget {
+				t.Errorf("calculateFlashcardBudgets(%d, %d) = (%d, %d, %d), want (%d, %d, %d)",
+					tt.dueCards, tt.maxFlashcards, mat, deferred, budget,
+					tt.wantMaterialized, tt.wantDeferred, tt.wantSafeReviewBudget)
+			}
+		})
+	}
+}
+
+func TestAggregateQueueTasks(t *testing.T) {
+	t.Run("empty inputs", func(t *testing.T) {
+		tasks, topics, minutes, actions := aggregateQueueTasks(nil, nil)
+		if len(tasks) != 0 {
+			t.Errorf("expected 0 tasks, got %d", len(tasks))
+		}
+		if len(topics) != 0 {
+			t.Errorf("expected 0 topics, got %d", len(topics))
+		}
+		if minutes != 0 {
+			t.Errorf("expected 0 minutes, got %d", minutes)
+		}
+		if len(actions) != 0 {
+			t.Errorf("expected 0 actions, got %d", len(actions))
+		}
+	})
+
+	t.Run("active and pending combined", func(t *testing.T) {
+		active := []models.StudyQueueTask{
+			{ID: "a1", TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusActive, Title: "Topic A", StartPage: 1, EndPage: 5},
+		}
+		pending := []models.StudyQueueTask{
+			{ID: "p1", TaskType: models.StudyTaskTypeQuiz, Status: models.StudyTaskStatusPending, Title: "Topic B", StartPage: 1, EndPage: 3},
+		}
+		tasks, topics, minutes, actions := aggregateQueueTasks(active, pending)
+
+		if len(tasks) != 2 {
+			t.Fatalf("expected 2 tasks, got %d", len(tasks))
+		}
+		if len(topics) != 2 {
+			t.Errorf("expected 2 active topics, got %d", len(topics))
+		}
+		if minutes == 0 {
+			t.Errorf("expected non-zero learning minutes")
+		}
+		if actions["reading"] != 1 || actions["quiz"] != 1 {
+			t.Errorf("expected reading=1, quiz=1, got %v", actions)
+		}
+	})
+
+	t.Run("empty title defaults to Task", func(t *testing.T) {
+		active := []models.StudyQueueTask{
+			{ID: "a1", TaskType: models.StudyTaskTypeReading, Status: models.StudyTaskStatusActive, Title: "", StartPage: 1, EndPage: 5},
+		}
+		tasks, _, _, _ := aggregateQueueTasks(active, nil)
+		if tasks[0].Title != "Read: Task" {
+			t.Errorf("expected 'Read: Task', got %q", tasks[0].Title)
+		}
+	})
+}
 
 // ============================================================================
 // LIGHTWEIGHT TEST BUILDERS
