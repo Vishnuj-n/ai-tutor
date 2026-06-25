@@ -342,6 +342,10 @@ func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 	if theme == "" {
 		theme = "light-classic"
 	}
+	strategy := s.DefaultRemedialStrategy
+	if strategy == "" {
+		strategy = "CLASSIC"
+	}
 	_, err := r.db.Exec(`
 		INSERT INTO user_settings (id, max_flashcards_per_session, study_start_time, study_end_time, reminders_enabled, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled, rag_notebook_chapter, rag_entire_notebook, rag_queue_study, default_remedial_strategy)
 		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -361,7 +365,7 @@ func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 			rag_queue_study = excluded.rag_queue_study,
 			default_remedial_strategy = excluded.default_remedial_strategy,
 			updated_at = CURRENT_TIMESTAMP
-	`, s.MaxFlashcardsPerSession, s.StudyStartTime, s.StudyEndTime, s.RemindersEnabled, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy, s.DefaultRemedialStrategy)
+	`, s.MaxFlashcardsPerSession, s.StudyStartTime, s.StudyEndTime, s.RemindersEnabled, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy, strategy)
 	return err
 }
 
@@ -758,6 +762,9 @@ func (r *Repository) GetRemedialStrategy() (string, error) {
 		`SELECT COALESCE(default_remedial_strategy, 'CLASSIC') FROM user_settings WHERE id = 1`,
 	).Scan(&strategy)
 	if err == sql.ErrNoRows {
+		return "CLASSIC", nil
+	}
+	if strategy == "" {
 		return "CLASSIC", nil
 	}
 	return strategy, err

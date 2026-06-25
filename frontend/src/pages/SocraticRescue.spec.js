@@ -11,6 +11,7 @@ vi.mock('../services/appApi', () => ({
   getTopicSectionsContent: vi.fn(),
   completeSocraticRescue: vi.fn(),
   GetTaskContext: vi.fn(),
+  activateTask: vi.fn(),
 }))
 
 // Mock vue-router hooks
@@ -50,6 +51,8 @@ describe('SocraticRescue.vue Integration', () => {
         end_page: 10,
       },
     })
+
+    appApi.activateTask.mockResolvedValue({ error: null })
   })
 
   it('loads source material and displays generated socratic prompt', async () => {
@@ -61,6 +64,7 @@ describe('SocraticRescue.vue Integration', () => {
     await flushPromises()
 
     expect(appApi.GetTaskContext).toHaveBeenCalledWith('task-456')
+    expect(appApi.activateTask).toHaveBeenCalledWith('task-456')
     expect(appApi.getTopicSectionsContent).toHaveBeenCalledWith('topic-123', 'notebook-789')
     expect(wrapper.find('.source-text').text()).toBe('DeepMind builds AI agents.')
     expect(wrapper.find('.prompt-textarea').element.value).toContain('DeepMind builds AI agents.')

@@ -22,308 +22,239 @@
 
     <!-- General Settings Tab -->
     <div v-if="activeTab === 'settings'" class="tab-content">
-      <article class="panel form-grid">
-        <h2>Study Budget & Routine</h2>
+      <div class="settings-panels">
+        <!-- Panel 1: Study Routine -->
+        <article class="panel form-grid">
+          <h2>Study Budget & Routine</h2>
 
-        <div class="form-group">
-          <label for="max-flashcards">Max Flashcards per Session</label>
-          <input
-            id="max-flashcards"
-            v-model.number="settings.max_flashcards_per_session"
-            type="number"
-            min="5"
-            max="200"
-            step="5"
-            :disabled="loading || saving"
-            required
-          />
-          <p class="hint">Caps the number of FSRS reviews active in any single study session.</p>
-        </div>
-
-        <div style="display: flex; gap: 16px; margin-bottom: 20px">
-          <div class="form-group" style="flex: 1; margin-bottom: 0">
-            <label for="study-start-time">Study Start Time</label>
-            <input
-              id="study-start-time"
-              v-model="settings.study_start_time"
-              type="time"
-              :disabled="loading || saving"
-              required
-            />
-          </div>
-          <div class="form-group" style="flex: 1; margin-bottom: 0">
-            <label for="study-end-time">Study End Time</label>
-            <input
-              id="study-end-time"
-              v-model="settings.study_end_time"
-              type="time"
-              :disabled="loading || saving"
-              required
-            />
-          </div>
-        </div>
-
-        <div
-          class="form-group check-group"
-          style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
-        >
-          <label
-            class="checkbox-container"
-            style="display: flex; align-items: center; gap: 10px; cursor: pointer"
-          >
-            <input
-              id="reminders-enabled"
-              v-model="settings.reminders_enabled"
-              type="checkbox"
-              :disabled="loading || saving"
-              style="width: 18px; height: 18px; cursor: pointer"
-            />
-            <div class="check-label">
-              <strong>Enable Study Reminders</strong>
-              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
-                Notify when daily study time starts and ends.
-              </p>
-            </div>
-          </label>
-        </div>
-
-        <div class="form-group check-group">
-          <label class="checkbox-container">
-            <input
-              v-model="settings.skip_to_reading_active"
-              type="checkbox"
-              :disabled="loading || saving"
-            />
-            <span class="checkmark"></span>
-            <div class="check-label">
-              <strong>Enable "Skip to Reading" (Escape Hatch)</strong>
-              <p class="hint">
-                Temporarily deprioritizes review backlogs, letting you read new material first. FSRS
-                records remain safe.
-              </p>
-            </div>
-          </label>
-        </div>
-
-        <hr class="divider" />
-
-        <h2>Quiz Failure Rescue</h2>
-        <p class="hint" style="margin-top: -10px; margin-bottom: 20px">
-          Choose what happens when you fail a quiz. Customize the remediation track to match your
-          study style.
-        </p>
-
-        <div class="form-group">
-          <div class="strategy-options">
-            <label
-              class="strategy-option"
-              :class="{ active: settings.default_remedial_strategy === 'CLASSIC' }"
-            >
-              <input
-                v-model="settings.default_remedial_strategy"
-                type="radio"
-                value="CLASSIC"
-                :disabled="loading || saving"
-                style="margin-top: 4px; cursor: pointer"
-              />
-              <div class="option-content">
-                <span class="option-title">Classic Track</span>
-                <span class="option-desc"
-                  >Reread first, then Socratic tutor if you fail again (dense text, sequential
-                  learning)</span
-                >
-              </div>
-            </label>
-
-            <label
-              class="strategy-option"
-              :class="{ active: settings.default_remedial_strategy === 'FAST' }"
-            >
-              <input
-                v-model="settings.default_remedial_strategy"
-                type="radio"
-                value="FAST"
-                :disabled="loading || saving"
-                style="margin-top: 4px; cursor: pointer"
-              />
-              <div class="option-content">
-                <span class="option-title">Fast Track</span>
-                <span class="option-desc"
-                  >Go directly to Socratic AI tutor (deeper encoding, conceptual topics)</span
-                >
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <div class="form-group check-group">
-          <label class="checkbox-container">
-            <input
-              v-model="settings.rag_enabled"
-              type="checkbox"
-              :disabled="loading || saving"
-              @change="onRagToggle"
-            />
-            <span class="checkmark"></span>
-            <div class="check-label">
-              <strong>Enable Local AI Retrieval (RAG)</strong>
-              <p class="hint">
-                Preloads local ONNX embeddings for context-rich Q&A. Unticking unloads RAG from
-                memory instantly.
-              </p>
-            </div>
-          </label>
-        </div>
-
-        <div
-          v-if="settings.rag_enabled"
-          class="rag-sub-settings"
-          style="
-            margin-left: 28px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-bottom: 24px;
-          "
-        >
-          <div class="form-group check-group" style="margin-bottom: 0">
-            <label class="checkbox-container">
-              <input
-                v-model="settings.rag_notebook_chapter"
-                type="checkbox"
-                :disabled="loading || saving"
-              />
-              <span class="checkmark"></span>
-              <div class="check-label">
-                <strong>Enable Tutor from Notebook Chapters</strong>
-                <p class="hint">
-                  Allows accessing Socratic RAG directly from notebook chapter details.
-                </p>
-              </div>
-            </label>
-          </div>
-
-          <div class="form-group check-group" style="margin-bottom: 0">
-            <label class="checkbox-container">
-              <input
-                v-model="settings.rag_entire_notebook"
-                type="checkbox"
-                :disabled="loading || saving"
-              />
-              <span class="checkmark"></span>
-              <div class="check-label">
-                <strong>Enable RAG for Entire Book</strong>
-                <p class="hint">
-                  Allows general queries scoped to the selected notebook in the Tutor interface.
-                </p>
-              </div>
-            </label>
-          </div>
-
-          <div class="form-group check-group" style="margin-bottom: 0">
-            <label class="checkbox-container">
-              <input
-                v-model="settings.rag_queue_study"
-                type="checkbox"
-                :disabled="loading || saving"
-              />
-              <span class="checkmark"></span>
-              <div class="check-label">
-                <strong>Enable Tutor in Queue Study Sessions</strong>
-                <p class="hint">Shows an optional Tutor panel inside active reading tasks.</p>
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <hr class="divider" />
-
-        <h2>AI Provider</h2>
-        <p class="hint">
-          Provider settings are saved in SQLite. API keys are saved in the OS credential manager
-          through the backend.
-        </p>
-
-        <div class="form-group">
-          <label for="settings-llm-provider">Provider</label>
-          <select
-            id="settings-llm-provider"
-            v-model="llmSettings.fast.provider"
-            :disabled="loading || savingLLM"
-            @change="applyProviderPreset('fast')"
-          >
-            <option value="groq">Groq</option>
-            <option value="openai">ChatGPT / OpenAI</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="custom">Custom OpenAI-compatible</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label for="settings-llm-base-url">Base URL</label>
-          <input
-            id="settings-llm-base-url"
-            v-model="llmSettings.fast.base_url"
-            type="url"
-            :disabled="loading || savingLLM"
-          />
-        </div>
-
-        <div class="form-group">
-          <label for="settings-llm-model">Fast Model</label>
-          <input
-            id="settings-llm-model"
-            v-model="llmSettings.fast.model"
-            type="text"
-            :disabled="loading || savingLLM"
-          />
-          <p class="hint">Used for quizzes, flashcards, short scoring, and small reader help.</p>
-        </div>
-
-        <div class="form-group">
-          <label for="settings-llm-key">Fast API Key</label>
-          <input
-            id="settings-llm-key"
-            v-model="llmFastKey"
-            type="password"
-            placeholder="Leave blank to keep existing key"
-            :disabled="loading || savingLLM"
-          />
-          <p class="hint">
-            {{
-              llmSettings.fast.has_api_key
-                ? 'A fast-tier key is stored.'
-                : 'No fast-tier key stored yet.'
-            }}
-          </p>
-        </div>
-
-        <div class="form-group check-group">
-          <label class="checkbox-container">
-            <input
-              v-model="llmSettings.use_same_for_heavy"
-              type="checkbox"
-              :disabled="loading || savingLLM"
-            />
-            <span class="checkmark"></span>
-            <div class="check-label">
-              <strong>Use same provider and model for heavy AI tasks</strong>
-              <p class="hint">
-                Heavy tasks include syllabus drafting, Socratic responses, and large-context
-                generation.
-              </p>
-            </div>
-          </label>
-        </div>
-
-        <div v-if="!llmSettings.use_same_for_heavy" class="llm-advanced">
           <div class="form-group">
-            <label for="settings-heavy-provider">Heavy Provider</label>
+            <label for="max-flashcards">Max Flashcards per Session</label>
+            <input
+              id="max-flashcards"
+              v-model.number="settings.max_flashcards_per_session"
+              type="number"
+              min="5"
+              max="200"
+              step="5"
+              :disabled="loading || saving"
+              required
+            />
+            <p class="hint">Caps the number of FSRS reviews active in any single study session.</p>
+          </div>
+
+          <div style="display: flex; gap: 16px; margin-bottom: 20px">
+            <div class="form-group" style="flex: 1; margin-bottom: 0">
+              <label for="study-start-time">Study Start Time</label>
+              <input
+                id="study-start-time"
+                v-model="settings.study_start_time"
+                type="time"
+                :disabled="loading || saving"
+                required
+              />
+            </div>
+            <div class="form-group" style="flex: 1; margin-bottom: 0">
+              <label for="study-end-time">Study End Time</label>
+              <input
+                id="study-end-time"
+                v-model="settings.study_end_time"
+                type="time"
+                :disabled="loading || saving"
+                required
+              />
+            </div>
+          </div>
+
+          <div
+            class="form-group check-group"
+            style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
+          >
+            <label
+              class="checkbox-container"
+              style="display: flex; align-items: center; gap: 10px; cursor: pointer"
+            >
+              <input
+                id="reminders-enabled"
+                v-model="settings.reminders_enabled"
+                type="checkbox"
+                :disabled="loading || saving"
+                style="width: 18px; height: 18px; cursor: pointer"
+              />
+              <div class="check-label">
+                <strong>Enable Study Reminders</strong>
+                <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
+                  Notify when daily study time starts and ends.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div class="form-group check-group">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.skip_to_reading_active"
+                type="checkbox"
+                :disabled="loading || saving"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable "Skip to Reading" (Escape Hatch)</strong>
+                <p class="hint">
+                  Temporarily deprioritizes review backlogs, letting you read new material first. FSRS
+                  records remain safe.
+                </p>
+              </div>
+            </label>
+          </div>
+        </article>
+
+        <!-- Panel 2: Quiz Failure Rescue -->
+        <article class="panel form-grid">
+          <h2>Quiz Failure Rescue</h2>
+          <p class="hint" style="margin-top: -10px; margin-bottom: 8px">
+            Choose what happens when you fail a quiz. Customize the remediation track to match your
+            study style.
+          </p>
+
+          <div class="form-group">
+            <div class="strategy-options">
+              <label
+                class="strategy-option"
+                :class="{ active: settings.default_remedial_strategy === 'CLASSIC' }"
+              >
+                <input
+                  v-model="settings.default_remedial_strategy"
+                  type="radio"
+                  value="CLASSIC"
+                  :disabled="loading || saving"
+                  style="cursor: pointer"
+                />
+                <div class="option-content">
+                  <span class="option-title">Classic Track</span>
+                  <span class="option-desc"
+                    >Reread first, then Socratic tutor if you fail again (dense text, sequential
+                    learning)</span
+                  >
+                </div>
+              </label>
+
+              <label
+                class="strategy-option"
+                :class="{ active: settings.default_remedial_strategy === 'FAST' }"
+              >
+                <input
+                  v-model="settings.default_remedial_strategy"
+                  type="radio"
+                  value="FAST"
+                  :disabled="loading || saving"
+                  style="cursor: pointer"
+                />
+                <div class="option-content">
+                  <span class="option-title">Fast Track</span>
+                  <span class="option-desc"
+                    >Go directly to Socratic AI tutor (deeper encoding, conceptual topics)</span
+                  >
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group check-group">
+            <label class="checkbox-container">
+              <input
+                v-model="settings.rag_enabled"
+                type="checkbox"
+                :disabled="loading || saving"
+                @change="onRagToggle"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Enable Local AI Retrieval (RAG)</strong>
+                <p class="hint">
+                  Preloads local ONNX embeddings for context-rich Q&A. Unticking unloads RAG from
+                  memory instantly.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div
+            v-if="settings.rag_enabled"
+            class="rag-sub-settings"
+            style="
+              margin-left: 28px;
+              display: flex;
+              flex-direction: column;
+              gap: 12px;
+              margin-bottom: 8px;
+            "
+          >
+            <div class="form-group check-group" style="margin-bottom: 0">
+              <label class="checkbox-container">
+                <input
+                  v-model="settings.rag_notebook_chapter"
+                  type="checkbox"
+                  :disabled="loading || saving"
+                />
+                <span class="checkmark"></span>
+                <div class="check-label">
+                  <strong>Enable Tutor from Notebook Chapters</strong>
+                  <p class="hint">
+                    Allows accessing Socratic RAG directly from notebook chapter details.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div class="form-group check-group" style="margin-bottom: 0">
+              <label class="checkbox-container">
+                <input
+                  v-model="settings.rag_entire_notebook"
+                  type="checkbox"
+                  :disabled="loading || saving"
+                />
+                <span class="checkmark"></span>
+                <div class="check-label">
+                  <strong>Enable RAG for Entire Book</strong>
+                  <p class="hint">
+                    Allows general queries scoped to the selected notebook in the Tutor interface.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div class="form-group check-group" style="margin-bottom: 0">
+              <label class="checkbox-container">
+                <input
+                  v-model="settings.rag_queue_study"
+                  type="checkbox"
+                  :disabled="loading || saving"
+                />
+                <span class="checkmark"></span>
+                <div class="check-label">
+                  <strong>Enable Tutor in Queue Study Sessions</strong>
+                  <p class="hint">Shows an optional Tutor panel inside active reading tasks.</p>
+                </div>
+              </label>
+            </div>
+          </div>
+        </article>
+
+        <!-- Panel 3: AI Provider -->
+        <article class="panel form-grid">
+          <h2>AI Provider</h2>
+          <p class="hint" style="margin-top: -10px; margin-bottom: 8px">
+            Provider settings are saved in SQLite. API keys are saved in the OS credential manager
+            through the backend.
+          </p>
+
+          <div class="form-group">
+            <label for="settings-llm-provider">Provider</label>
             <select
-              id="settings-heavy-provider"
-              v-model="llmSettings.heavy.provider"
+              id="settings-llm-provider"
+              v-model="llmSettings.fast.provider"
               :disabled="loading || savingLLM"
-              @change="applyProviderPreset('heavy')"
+              @change="applyProviderPreset('fast')"
             >
               <option value="groq">Groq</option>
               <option value="openai">ChatGPT / OpenAI</option>
@@ -331,115 +262,177 @@
               <option value="custom">Custom OpenAI-compatible</option>
             </select>
           </div>
+
           <div class="form-group">
-            <label for="settings-heavy-base-url">Heavy Base URL</label>
+            <label for="settings-llm-base-url">Base URL</label>
             <input
-              id="settings-heavy-base-url"
-              v-model="llmSettings.heavy.base_url"
+              id="settings-llm-base-url"
+              v-model="llmSettings.fast.base_url"
               type="url"
               :disabled="loading || savingLLM"
             />
           </div>
+
           <div class="form-group">
-            <label for="settings-heavy-model">Heavy Model</label>
+            <label for="settings-llm-model">Fast Model</label>
             <input
-              id="settings-heavy-model"
-              v-model="llmSettings.heavy.model"
+              id="settings-llm-model"
+              v-model="llmSettings.fast.model"
               type="text"
               :disabled="loading || savingLLM"
             />
+            <p class="hint">Used for quizzes, flashcards, short scoring, and small reader help.</p>
           </div>
+
           <div class="form-group">
-            <label for="settings-heavy-key">Heavy API Key</label>
+            <label for="settings-llm-key">Fast API Key</label>
             <input
-              id="settings-heavy-key"
-              v-model="llmHeavyKey"
+              id="settings-llm-key"
+              v-model="llmFastKey"
               type="password"
               placeholder="Leave blank to keep existing key"
               :disabled="loading || savingLLM"
             />
             <p class="hint">
               {{
-                llmSettings.heavy.has_api_key
-                  ? 'A heavy-tier key is stored.'
-                  : 'No heavy-tier key stored yet.'
+                llmSettings.fast.has_api_key
+                  ? 'A fast-tier key is stored.'
+                  : 'No fast-tier key stored yet.'
               }}
             </p>
           </div>
-        </div>
 
+          <div class="form-group check-group">
+            <label class="checkbox-container">
+              <input
+                v-model="llmSettings.use_same_for_heavy"
+                type="checkbox"
+                :disabled="loading || savingLLM"
+              />
+              <span class="checkmark"></span>
+              <div class="check-label">
+                <strong>Use same provider and model for heavy AI tasks</strong>
+                <p class="hint">
+                  Heavy tasks include syllabus drafting, Socratic responses, and large-context
+                  generation.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div v-if="!llmSettings.use_same_for_heavy" class="llm-advanced">
+            <div class="form-group">
+              <label for="settings-heavy-provider">Heavy Provider</label>
+              <select
+                id="settings-heavy-provider"
+                v-model="llmSettings.heavy.provider"
+                :disabled="loading || savingLLM"
+                @change="applyProviderPreset('heavy')"
+              >
+                <option value="groq">Groq</option>
+                <option value="openai">ChatGPT / OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="custom">Custom OpenAI-compatible</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="settings-heavy-base-url">Heavy Base URL</label>
+              <input
+                id="settings-heavy-base-url"
+                v-model="llmSettings.heavy.base_url"
+                type="url"
+                :disabled="loading || savingLLM"
+              />
+            </div>
+            <div class="form-group">
+              <label for="settings-heavy-model">Heavy Model</label>
+              <input
+                id="settings-heavy-model"
+                v-model="llmSettings.heavy.model"
+                type="text"
+                :disabled="loading || savingLLM"
+              />
+            </div>
+            <div class="form-group">
+              <label for="settings-heavy-key">Heavy API Key</label>
+              <input
+                id="settings-heavy-key"
+                v-model="llmHeavyKey"
+                type="password"
+                placeholder="Leave blank to keep existing key"
+                :disabled="loading || savingLLM"
+              />
+              <p class="hint">
+                {{
+                  llmSettings.heavy.has_api_key
+                    ? 'A heavy-tier key is stored.'
+                    : 'No heavy-tier key stored yet.'
+                }}
+              </p>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button
+              type="button"
+              class="sync-btn"
+              :disabled="loading || savingLLM"
+              @click="removeLLMKeys"
+            >
+              Remove Stored Keys
+            </button>
+          </div>
+        </article>
+
+        <!-- Panel 4: Workspace Aesthetics -->
+        <article class="panel form-grid">
+          <h2>Workspace Aesthetics</h2>
+          <div class="form-group">
+            <label for="theme-select">Aesthetic Theme</label>
+            <select id="theme-select" v-model="settings.theme" :disabled="loading || saving">
+              <option value="light-classic">Light Classic</option>
+              <option value="light-warm">Warm Sepia (Reader)</option>
+              <option value="dark-indigo">Deep Indigo Night (Dark Mode)</option>
+              <option value="dark-nord">Nord Frost (Cool Dark Mode)</option>
+              <option value="dark-emerald">Forest Emerald</option>
+            </select>
+            <p class="hint">
+              Select a visual theme. Changing themes alters the colors of your study desk instantly.
+            </p>
+          </div>
+        </article>
+
+        <!-- Panel 5: Teacher Cloud Synchronization -->
+        <article class="panel form-grid">
+          <h2>Teacher Cloud Synchronization</h2>
+
+          <div class="form-group">
+            <label for="cloud-url">Sync Server URL</label>
+            <input
+              id="cloud-url"
+              v-model="settings.cloud_sync_url"
+              type="url"
+              placeholder="https://example.com/api/sync"
+              :disabled="loading || saving"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="cloud-token">Access Token</label>
+            <input
+              id="cloud-token"
+              v-model="settings.cloud_api_token"
+              type="password"
+              placeholder="Enter authorization token"
+              :disabled="loading || saving"
+            />
+          </div>
+        </article>
+      </div>
+
+      <!-- Global Actions (Sync actions) -->
+      <div class="global-actions">
         <div class="button-row">
-          <button
-            type="button"
-            class="save-btn"
-            :disabled="loading || savingLLM || presetLoading"
-            @click="saveLLMProviderSettings"
-          >
-            {{ savingLLM ? 'Saving AI Provider...' : 'Save AI Provider' }}
-          </button>
-          <button
-            type="button"
-            class="sync-btn"
-            :disabled="loading || savingLLM"
-            @click="removeLLMKeys"
-          >
-            Remove Stored Keys
-          </button>
-        </div>
-
-        <hr class="divider" />
-
-        <h2>Workspace Aesthetics</h2>
-        <div class="form-group">
-          <label for="theme-select">Aesthetic Theme</label>
-          <select id="theme-select" v-model="settings.theme" :disabled="loading || saving">
-            <option value="light-classic">Light Classic</option>
-            <option value="light-warm">Warm Sepia (Reader)</option>
-            <option value="dark-indigo">Deep Indigo Night (Dark Mode)</option>
-            <option value="dark-nord">Nord Frost (Cool Dark Mode)</option>
-            <option value="dark-emerald">Forest Emerald</option>
-          </select>
-          <p class="hint">
-            Select a visual theme. Changing themes alters the colors of your study desk instantly.
-          </p>
-        </div>
-
-        <hr class="divider" />
-
-        <h2>Teacher Cloud Synchronization</h2>
-
-        <div class="form-group">
-          <label for="cloud-url">Sync Server URL</label>
-          <input
-            id="cloud-url"
-            v-model="settings.cloud_sync_url"
-            type="url"
-            placeholder="https://example.com/api/sync"
-            :disabled="loading || saving"
-          />
-        </div>
-
-        <div class="form-group">
-          <label for="cloud-token">Access Token</label>
-          <input
-            id="cloud-token"
-            v-model="settings.cloud_api_token"
-            type="password"
-            placeholder="Enter authorization token"
-            :disabled="loading || saving"
-          />
-        </div>
-
-        <div class="button-row">
-          <button
-            type="button"
-            class="save-btn"
-            :disabled="loading || saving"
-            @click="saveUserSettings"
-          >
-            {{ saving ? 'Saving Settings...' : 'Save Settings' }}
-          </button>
-
           <button
             v-if="settings.cloud_sync_url"
             type="button"
@@ -453,7 +446,7 @@
 
         <p v-if="error" class="error-text">{{ error }}</p>
         <p v-if="success" class="success-text">{{ success }}</p>
-      </article>
+      </div>
     </div>
 
     <!-- Study Profiles Tab -->
@@ -723,6 +716,34 @@ watch(
   }
 )
 
+// Auto-save general settings with debounce
+let saveSettingsTimer = null
+watch(
+  settings,
+  () => {
+    if (loading.value || showRagModal.value) return
+    clearTimeout(saveSettingsTimer)
+    saveSettingsTimer = setTimeout(() => {
+      saveUserSettings()
+    }, 800)
+  },
+  { deep: true }
+)
+
+// Auto-save LLM provider settings with debounce (excluding API keys)
+let saveLLMTimer = null
+watch(
+  llmSettings,
+  () => {
+    if (loading.value || savingLLM.value) return
+    clearTimeout(saveLLMTimer)
+    saveLLMTimer = setTimeout(() => {
+      saveLLMProviderSettings()
+    }, 800)
+  },
+  { deep: true }
+)
+
 const profiles = ref([])
 const notebooks = ref([])
 
@@ -756,8 +777,6 @@ function onRagToggle() {
     ragMessage.value = 'Ready to initialize local AI'
     ragDetail.value = ''
     ragStatus.value = ''
-  } else {
-    saveUserSettings()
   }
 }
 
@@ -817,7 +836,6 @@ function handleRagModalDismiss() {
 function closeRagModal() {
   showRagModal.value = false
   settings.value.rag_enabled = true
-  saveUserSettings()
 }
 
 async function applyProviderPreset(tier) {
@@ -841,6 +859,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   EventsOff('rag-setup-progress')
+  clearTimeout(saveSettingsTimer)
+  clearTimeout(saveLLMTimer)
 })
 
 async function loadAllData() {
@@ -853,6 +873,9 @@ async function loadAllData() {
     if (settingsRes.error) {
       error.value = settingsRes.error
       return
+    }
+    if (!settingsRes.default_remedial_strategy) {
+      settingsRes.default_remedial_strategy = 'CLASSIC'
     }
     settings.value = settingsRes
 
@@ -1025,7 +1048,6 @@ async function runManualSync() {
 
 async function setActiveProfile(profileID) {
   settings.value.active_profile_id = profileID
-  await saveUserSettings()
 }
 
 async function handleAddProfile() {
@@ -1152,40 +1174,48 @@ h2 {
 
 .tabs {
   display: flex;
-  gap: 12px;
-  border-bottom: 1px solid var(--outline-variant);
-  padding-bottom: 8px;
+  gap: 8px;
+  background: var(--surface-container-low);
+  padding: 6px;
+  border-radius: 12px;
+  width: fit-content;
+  margin-bottom: 8px;
 }
 
 .tab-btn {
   background: none;
   border: none;
   color: var(--muted-text);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   padding: 8px 16px;
   cursor: pointer;
   border-radius: 8px;
-  transition:
-    background 0.2s,
-    color 0.2s;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .tab-btn:hover {
-  background: var(--surface-container-low);
   color: var(--on-surface);
 }
 
 .tab-btn.active {
   color: var(--primary);
-  background: var(--surface-container-low);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.settings-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
 .panel {
   background: var(--surface-container-lowest);
   border-radius: 16px;
   padding: 28px;
-  border: 1px solid var(--outline-variant);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
+  box-shadow: 0 4px 20px color-mix(in srgb, var(--on-surface) 3%, transparent);
 }
 
 .form-grid {
@@ -1212,18 +1242,20 @@ input[type='url'],
 input[type='password'],
 input[type='date'],
 select {
-  border: 1px solid var(--outline-variant);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
   border-radius: 12px;
   background: var(--surface-container-low);
   color: var(--on-surface);
   padding: 12px 14px;
   font-size: 14px;
   font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 input:focus,
 select:focus {
   border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 15%, transparent);
   outline: none;
 }
 
@@ -1247,15 +1279,17 @@ select:focus {
   width: 20px;
   height: 20px;
   background-color: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
   border-radius: 6px;
   flex-shrink: 0;
   position: relative;
   margin-top: 2px;
+  transition: all 0.2s ease;
 }
 
 .checkbox-container:hover input ~ .checkmark {
-  background-color: var(--surface-container-high);
+  background-color: var(--surface-container);
+  border-color: color-mix(in srgb, var(--outline-variant) 40%, transparent);
 }
 
 .checkbox-container input:checked ~ .checkmark {
@@ -1291,21 +1325,29 @@ select:focus {
 
 .divider {
   border: none;
-  border-top: 1px solid var(--outline-variant);
-  margin: 8px 0;
+  height: 0;
+  margin: 0;
 }
 
 .llm-advanced {
   display: grid;
   gap: 16px;
   padding: 16px;
-  border: 1px solid var(--outline-variant);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
   border-radius: 12px;
   background: var(--surface-container-low);
 }
 
 .button-row {
   display: flex;
+  gap: 12px;
+}
+
+.global-actions {
+  padding: 8px 0;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -1317,21 +1359,31 @@ select:focus {
   font-weight: 700;
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.save-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+.save-btn:active {
+  transform: translateY(0);
 }
 
 .sync-btn {
-  border: 1px solid var(--outline-variant);
+  border: none;
   border-radius: 12px;
   padding: 12px 24px;
-  color: var(--on-surface);
+  color: var(--primary);
   font-weight: 700;
-  background: var(--surface-container-low);
+  background: var(--surface-container-highest);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s ease;
 }
 
 .sync-btn:hover {
-  background: var(--surface-container-high);
+  background: var(--surface-container-low);
 }
 
 .hint {
@@ -1673,22 +1725,28 @@ select:focus {
   align-items: flex-start;
   gap: 12px;
   padding: 16px;
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
+  border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
   background: var(--surface-container-low);
+  border: none;
+  color: var(--on-surface);
 }
 
 .strategy-option:hover {
-  border-color: var(--primary);
-  background: var(--surface-container-high);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 8px 16px color-mix(in srgb, var(--on-surface) 6%, transparent);
 }
 
 .strategy-option.active {
-  border-color: var(--primary);
-  background: var(--surface-container-high);
-  box-shadow: 0 0 0 1px var(--primary);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.strategy-option input[type='radio'] {
+  margin-top: 4px;
+  accent-color: var(--primary);
+  cursor: pointer;
 }
 
 .option-title {

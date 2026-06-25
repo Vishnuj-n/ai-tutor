@@ -196,9 +196,33 @@
         <p class="muted">You've completed all tasks for today. Great work!</p>
       </div>
 
-      <div v-else class="card state-card">
-        <h2>No textbooks active</h2>
-        <p class="muted">Go to Notebooks to upload and activate textbooks.</p>
+      <div v-else class="card onboarding-card">
+        <div class="onboarding-content">
+          <h2>Your study queue is empty</h2>
+          <p class="onboarding-desc">
+            Upload a PDF textbook and the app builds a study queue of reading tasks, quizzes, and
+            flashcards for you.
+          </p>
+          <div class="onboarding-steps">
+            <div class="onboarding-step">
+              <span class="step-number">1</span>
+              <span class="step-label">Upload a PDF</span>
+            </div>
+            <div class="onboarding-divider"></div>
+            <div class="onboarding-step">
+              <span class="step-number">2</span>
+              <span class="step-label">Read chapters</span>
+            </div>
+            <div class="onboarding-divider"></div>
+            <div class="onboarding-step">
+              <span class="step-number">3</span>
+              <span class="step-label">Quiz & review</span>
+            </div>
+          </div>
+          <button class="primary-btn onboarding-cta" @click="goToNotebooks">
+            Upload your first textbook
+          </button>
+        </div>
       </div>
     </template>
 
@@ -538,6 +562,10 @@ async function forceSyncTask() {
   }
 }
 
+function goToNotebooks() {
+  router.push('/notebooks')
+}
+
 function startTask(task) {
   let routePath = '/dashboard'
   const query = {
@@ -736,6 +764,80 @@ function startTask(task) {
 
 .muted {
   color: var(--muted-text);
+}
+
+/* Onboarding empty state */
+.onboarding-card {
+  padding: 48px 40px;
+  text-align: center;
+}
+
+.onboarding-content {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.onboarding-card h2 {
+  margin: 0 0 12px;
+  font-size: 26px;
+  font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-desc {
+  margin: 0 0 32px;
+  font-size: 15px;
+  color: var(--muted-text);
+  line-height: 1.6;
+}
+
+.onboarding-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 36px;
+}
+
+.onboarding-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-number {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(108, 92, 231, 0.1);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.onboarding-divider {
+  width: 40px;
+  height: 1px;
+  background: var(--outline-variant);
+  margin: 0 12px;
+  margin-bottom: 20px;
+}
+
+.onboarding-cta {
+  padding: 14px 32px;
+  font-size: 15px;
+  border-radius: 14px;
 }
 
 /* Telemetry styles */

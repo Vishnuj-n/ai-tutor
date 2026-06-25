@@ -512,6 +512,14 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	_ = repo.UpdateNotebookStatus(notebookID, status)
 
+	// Auto-activate the notebook if the active profile currently has less than 4 active notebooks
+	if nb.StudyStatus == "dormant" || nb.StudyStatus == "" {
+		activeCount, err := repo.CountActiveNotebooksForActiveProfile(nb.ProfileID)
+		if err == nil && activeCount < 4 {
+			_ = repo.UpdateNotebookStudyStatus(notebookID, "active")
+		}
+	}
+
 	ragEnabled, err := repo.GetRAGEnabled()
 	if err == nil && ragEnabled && a.indexQueue != nil {
 		a.indexQueue.Enqueue(notebookID)

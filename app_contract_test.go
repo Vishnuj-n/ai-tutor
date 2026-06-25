@@ -1174,6 +1174,124 @@ func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) 
 	}
 }
 
+func TestConfirmNotebookSyllabus_AutoActivatesIfLessThansFourActive(t *testing.T) {
+	initTestDB(t)
+	uploadDir := t.TempDir()
+	service := notebook.NewService(uploadDir)
+	app := &App{repo: testRepo, notebookService: service}
+
+	profileID := "test-profile-auto"
+	err := testRepo.CreateProfile(models.StudyProfile{ID: profileID, Name: "Test Profile Auto", DeadlineAt: 0})
+	if err != nil {
+		t.Fatalf("CreateProfile failed: %v", err)
+	}
+	err = testRepo.UpdateUserSettings(models.UserSettings{ActiveProfileID: profileID})
+	if err != nil {
+		t.Fatalf("UpdateUserSettings failed: %v", err)
+	}
+
+	uploadResult, err := service.SaveUploadedFile([]byte("# Intro\n\nSome book content here"), "book1.md")
+	if err != nil {
+		t.Fatalf("SaveUploadedFile failed: %v", err)
+	}
+
+	doc, err := service.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	if err != nil {
+		t.Fatalf("ExtractDocument failed: %v", err)
+	}
+
+	if err := testRepo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := testRepo.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
+		t.Fatalf("AssignNotebookToProfile failed: %v", err)
+	}
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, []models.SyllabusChapterDraft{{
+		Title:     "Chapter 1",
+		StartPage: 1,
+		EndPage:   doc.PageCount,
+	}})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected confirm success, got error: %v", resp["error"])
+	}
+
+	nb, err := testRepo.GetNotebookByID(uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetNotebookByID failed: %v", err)
+	}
+	if nb.StudyStatus != "active" {
+		t.Fatalf("expected study status to be auto-activated to 'active', got %q", nb.StudyStatus)
+	}
+}
+
+func TestConfirmNotebookSyllabus_DoesNotAutoActivateIfFourOrMoreActive(t *testing.T) {
+	initTestDB(t)
+	uploadDir := t.TempDir()
+	service := notebook.NewService(uploadDir)
+	app := &App{repo: testRepo, notebookService: service}
+
+	profileID := "test-profile-limit"
+	err := testRepo.CreateProfile(models.StudyProfile{ID: profileID, Name: "Test Profile Limit", DeadlineAt: 0})
+	if err != nil {
+		t.Fatalf("CreateProfile failed: %v", err)
+	}
+	err = testRepo.UpdateUserSettings(models.UserSettings{ActiveProfileID: profileID})
+	if err != nil {
+		t.Fatalf("UpdateUserSettings failed: %v", err)
+	}
+
+	for i := 1; i <= 4; i++ {
+		id := fmt.Sprintf("nb-active-%d", i)
+		err = testRepo.CreateNotebook(id, fmt.Sprintf("Active %d", i), "dummy", "md", "", 1)
+		if err != nil {
+			t.Fatalf("CreateNotebook failed: %v", err)
+		}
+		err = testRepo.AssignNotebookToProfile(id, profileID)
+		if err != nil {
+			t.Fatalf("AssignNotebookToProfile failed: %v", err)
+		}
+		err = testRepo.UpdateNotebookStudyStatus(id, "active")
+		if err != nil {
+			t.Fatalf("UpdateNotebookStudyStatus failed: %v", err)
+		}
+	}
+
+	uploadResult, err := service.SaveUploadedFile([]byte("# Intro\n\nSome book content here"), "book5.md")
+	if err != nil {
+		t.Fatalf("SaveUploadedFile failed: %v", err)
+	}
+
+	doc, err := service.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	if err != nil {
+		t.Fatalf("ExtractDocument failed: %v", err)
+	}
+
+	if err := testRepo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := testRepo.AssignNotebookToProfile(uploadResult.ID, profileID); err != nil {
+		t.Fatalf("AssignNotebookToProfile failed: %v", err)
+	}
+
+	resp := app.ConfirmNotebookSyllabus(uploadResult.ID, []models.SyllabusChapterDraft{{
+		Title:     "Chapter 1",
+		StartPage: 1,
+		EndPage:   doc.PageCount,
+	}})
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected confirm success, got error: %v", resp["error"])
+	}
+
+	nb, err := testRepo.GetNotebookByID(uploadResult.ID)
+	if err != nil {
+		t.Fatalf("GetNotebookByID failed: %v", err)
+	}
+	if nb.StudyStatus == "active" {
+		t.Fatalf("expected study status to remain dormant/empty, got %q", nb.StudyStatus)
+	}
+}
+
 func TestConfirmNotebookSyllabus_MetadataOnlySkipsExtraction(t *testing.T) {
 	app, uploadResult, chapters := setupConfirmedChunkedNotebook(t, "confirm-metadata-only.md")
 
