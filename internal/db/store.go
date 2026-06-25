@@ -234,6 +234,53 @@ func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
 	return count, err
 }
 
+// QueryDueReviewCardsForRange counts cards due within a specific time range (start, end], scoped to the active profile.
+// Excludes cards already linked to pending/active review tasks to avoid double-counting.
+func (r *Repository) QueryDueReviewCardsForRange(start int64, end int64) (int, error) {
+	var activeProfileID sql.NullString
+	if err := r.db.QueryRow(`
+		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
+	`).Scan(&activeProfileID); err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("QueryDueReviewCardsForRange: reading active_profile_id: %w", err)
+	}
+
+	activeProfileStr := ""
+	if activeProfileID.Valid {
+		activeProfileStr = activeProfileID.String
+	}
+
+	var count int
+	query := `
+		SELECT COUNT(DISTINCT fc.id)
+		FROM fsrs_cards fc
+		JOIN topics t ON t.id = fc.topic_id
+		LEFT JOIN notebook_topics nt ON nt.topic_id = t.id
+		LEFT JOIN notebooks n ON n.id = nt.notebook_id
+		WHERE fc.suspended = 0
+		  AND fc.due_at IS NOT NULL
+		  AND fc.due_at > ?
+		  AND fc.due_at <= ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM review_task_cards rtc
+			JOIN study_queue sq ON sq.id = rtc.task_id
+			WHERE rtc.card_id = fc.id
+			  AND sq.task_type = 'FLASHCARD_REVIEW'
+			  AND sq.status IN ('PENDING', 'ACTIVE')
+		  )
+	`
+	var args []interface{}
+	args = append(args, start, end)
+	if activeProfileStr != "" {
+		query += ` AND (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
+		args = append(args, activeProfileStr)
+	}
+
+	err := r.db.QueryRow(query, args...).Scan(&count)
+	return count, err
+}
+
+
 
 
 // GetRAGEnabled returns the status of RAG flag.

@@ -972,3 +972,66 @@ func (a *App) DevForceFlashcardSync(notebookID string) map[string]interface{} {
 	return map[string]interface{}{"ok": true}
 }
 
+type FlashcardDuePoint struct {
+	Date      string `json:"date"`
+	DayLabel  string `json:"day_label"`
+	CardCount int    `json:"card_count"`
+}
+
+// GetFlashcardDueTimeline returns the review card load over the next 7 days.
+func (a *App) GetFlashcardDueTimeline() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+
+	now := time.Now()
+	y, m, d := now.Date()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	endOfToday := midnight.Add(24 * time.Hour).Unix()
+
+	timeline := make([]FlashcardDuePoint, 7)
+
+	// Day 0: Today (everything due up to end of today)
+	count, err := repo.QueryDueReviewCardsForRange(0, endOfToday)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	timeline[0] = FlashcardDuePoint{
+		Date:      midnight.Format("2006-01-02"),
+		DayLabel:  "Today",
+		CardCount: count,
+	}
+
+	// Days 1 to 6
+	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	for i := 1; i < 7; i++ {
+		dayStart := endOfToday + int64(i-1)*24*3600
+		dayEnd := endOfToday + int64(i)*24*3600
+
+		count, err := repo.QueryDueReviewCardsForRange(dayStart, dayEnd)
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+
+		targetDay := midnight.Add(time.Duration(i*24) * time.Hour)
+		dayLabel := ""
+		if i == 1 {
+			dayLabel = "Tomorrow"
+		} else {
+			dayLabel = dayNames[targetDay.Weekday()]
+		}
+
+		timeline[i] = FlashcardDuePoint{
+			Date:      targetDay.Format("2006-01-02"),
+			DayLabel:  dayLabel,
+			CardCount: count,
+		}
+	}
+
+	return map[string]interface{}{
+		"timeline": timeline,
+	}
+}
+
+

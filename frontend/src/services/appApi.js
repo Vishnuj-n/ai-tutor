@@ -264,6 +264,10 @@ export function completeSocraticRescue(taskID) {
   return appBridge().CompleteSocraticRescue(taskID)
 }
 
+export function getFlashcardDueTimeline() {
+  return appBridge().GetFlashcardDueTimeline()
+}
+
 export function getAppEnv() {
   return appBridge().GetAppEnv()
 }
