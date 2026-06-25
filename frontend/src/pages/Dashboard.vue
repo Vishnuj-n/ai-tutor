@@ -258,16 +258,37 @@
                     </linearGradient>
                   </defs>
 
-                  <!-- Grid Lines -->
-                  <line x1="0" y1="75" x2="400" y2="75" class="chart-grid-line" />
-                  <line x1="0" y1="150" x2="400" y2="150" class="chart-grid-line" />
-                  <line x1="0" y1="225" x2="400" y2="225" class="chart-grid-line" />
+                  <!-- Axis Lines -->
+                  <line x1="30" y1="50" x2="30" y2="250" class="axis-line" />
+                  <line x1="30" y1="250" x2="370" y2="250" class="axis-line" />
+
+                  <!-- Y Axis Labels & Grid Lines -->
+                  <g v-for="tick in yTicks" :key="tick.value" class="chart-y-tick">
+                    <!-- Grid line -->
+                    <line
+                      v-if="tick.value !== 0"
+                      x1="30"
+                      :y1="tick.y"
+                      x2="370"
+                      :y2="tick.y"
+                      class="chart-grid-line"
+                    />
+                    <!-- Text label -->
+                    <text
+                      x="22"
+                      :y="tick.y + 3.5"
+                      class="y-axis-label"
+                      text-anchor="end"
+                    >
+                      {{ tick.value }}
+                    </text>
+                  </g>
 
                   <!-- Horizontal Limit Line -->
                   <line
-                    x1="0"
+                    x1="30"
                     :y1="limitLineY"
-                    x2="400"
+                    x2="370"
                     :y2="limitLineY"
                     class="limit-line"
                     :class="{ active: isThresholdExceeded }"
@@ -397,17 +418,36 @@ const isThresholdExceeded = computed(() => {
   return timelineData.value.some((d) => d.card_count > maxFlashcardsLimit.value)
 })
 
-const chartPoints = computed(() => {
-  if (!timelineData.value || timelineData.value.length === 0) return []
-
+const yAxisMax = computed(() => {
+  if (!timelineData.value || timelineData.value.length === 0) return 40
   const counts = timelineData.value.map((d) => d.card_count)
   const rawMax = Math.max(...counts, maxFlashcardsLimit.value, 10)
-  const yAxisMax = rawMax * 1.25
+  let maxVal = Math.ceil(rawMax * 1.2)
+  if (maxVal % 4 !== 0) {
+    maxVal += 4 - (maxVal % 4)
+  }
+  return maxVal
+})
+
+const yTicks = computed(() => {
+  const maxVal = yAxisMax.value
+  const steps = [0, 0.25, 0.5, 0.75, 1]
+  return steps.map((pct) => {
+    return {
+      value: Math.round(maxVal * pct),
+      y: 250 - pct * 200,
+    }
+  })
+})
+
+const chartPoints = computed(() => {
+  if (!timelineData.value || timelineData.value.length === 0) return []
+  const maxVal = yAxisMax.value
 
   return timelineData.value.map((d, i) => {
     // scale to 400x300 viewport
     const x = 30 + (i / (timelineData.value.length - 1)) * 340
-    const y = 250 - (d.card_count / yAxisMax) * 200
+    const y = 250 - (d.card_count / maxVal) * 200
     const exceeds = d.card_count > maxFlashcardsLimit.value
     return {
       x,
@@ -439,10 +479,7 @@ const areaPathData = computed(() => {
 
 const limitLineY = computed(() => {
   if (!timelineData.value || timelineData.value.length === 0) return 150
-  const counts = timelineData.value.map((d) => d.card_count)
-  const rawMax = Math.max(...counts, maxFlashcardsLimit.value, 10)
-  const yAxisMax = rawMax * 1.25
-  return 250 - (maxFlashcardsLimit.value / yAxisMax) * 200
+  return 250 - (maxFlashcardsLimit.value / yAxisMax.value) * 200
 })
 
 const flashcardsJustCreated = computed(() => {
@@ -1411,6 +1448,19 @@ function startTask(task) {
   stroke-width: 1px;
   stroke-opacity: 0.6;
   stroke-dasharray: 2 4;
+}
+
+.axis-line {
+  stroke: var(--outline-variant);
+  stroke-width: 1px;
+  stroke-opacity: 0.8;
+}
+
+.y-axis-label {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--muted-text);
+  font-family: inherit;
 }
 
 .limit-line {
