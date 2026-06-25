@@ -214,6 +214,7 @@ import {
   getNotebooks as fetchNotebooks,
   getUserSettings,
   completeSocraticRescue,
+  activateTask,
 } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
@@ -309,6 +310,14 @@ const selectionHint = computed(() => {
 })
 
 onMounted(async () => {
+  if (taskId.value) {
+    const activate = await activateTask(taskId.value)
+    if (activate?.error && activate.error !== 'ErrTaskNotPending') {
+      globalError.value = activate.error
+      return
+    }
+  }
+
   try {
     const res = await getUserSettings()
     if (res && typeof res.rag_entire_notebook !== 'undefined') {
