@@ -598,7 +598,8 @@ async function finishRescue() {
       completingRescue.value = false
       return
     }
-    router.push('/dashboard')
+    const nextRoute = res?.quiz_task_id ? `/quiz?taskId=${res.quiz_task_id}` : '/dashboard'
+    router.push(nextRoute)
   } catch (err) {
     globalError.value = 'Failed to complete session: ' + (err.message || err)
     completingRescue.value = false
