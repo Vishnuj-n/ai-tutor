@@ -5,8 +5,20 @@ import Reader from './Reader.vue'
 import * as appApi from '../services/appApi'
 
 // Mock JSDOM missing browser features
-global.ResizeObserver = class ResizeObserver {
+globalThis.ResizeObserver = class ResizeObserver {
   observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.IntersectionObserver = class IntersectionObserver {
+  constructor(callback) {
+    this.callback = callback
+  }
+  observe(el) {
+    if (typeof this.callback === 'function') {
+      this.callback([{ target: el, isIntersecting: true }])
+    }
+  }
   unobserve() {}
   disconnect() {}
 }

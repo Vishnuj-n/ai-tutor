@@ -124,12 +124,13 @@
             :style="{ width: `${Math.round(BASE_PAGE_WIDTH * zoomScale)}px`, margin: '0 auto' }"
           >
             <div
-              v-for="pageNum in visiblePages"
+              v-for="pageNum in reader.pageCount.value"
               :key="pageNum"
               :data-page="pageNum"
               class="pdf-page-wrapper"
             >
               <vue-pdf-embed
+                v-if="renderedPages[pageNum]"
                 :source="reader.notebookUrl.value"
                 :page="pageNum"
                 :text-layer="false"
@@ -147,7 +148,6 @@
 Scroll Status:  {{ scrollState.status }}
 Target Page:    {{ scrollState.targetPage }}
 Visible Page:   {{ currentVisiblePage }}
-Virtual Center: {{ virtualWindowCenter }}
 Programmatic:   {{ isProgrammaticScroll }}
         </pre>
 
@@ -292,9 +292,12 @@ const scrollState = ref({
 })
 let scrollTimeoutId = null
 
-// Decouple visible page tracking from virtualization window center
+// Track currently centered page in the viewport
 const currentVisiblePage = ref(1)
-const virtualWindowCenter = ref(1)
+
+// Append-only page rendering visibility flags
+const renderedPages = ref({})
+let intersectionObserver = null
 
 // isProgrammaticScroll: true while a programmatic scrollIntoView is in flight.
 // The scroll handler ignores events while this is set to prevent cascade.
@@ -307,7 +310,6 @@ function logScroll(event, data = {}) {
     status: scrollState.value.status,
     target: scrollState.value.targetPage,
     visible: currentVisiblePage.value,
-    virtualCenter: virtualWindowCenter.value,
     isProgrammatic: isProgrammaticScroll,
     ...data,
   }
@@ -340,7 +342,6 @@ function setScrollStatus(status, targetPage = null) {
   scrollState.value.targetPage = targetPage
 
   if (targetPage !== null) {
-    virtualWindowCenter.value = targetPage
     currentVisiblePage.value = targetPage
   }
 
@@ -368,8 +369,7 @@ const viewMode = ref('raw')
 const themeMenuOpen = ref(false)
 const containerWidth = ref(800)
 
-const VISIBLE_BUFFER = 5
-const BUFFER_SHIFT_THRESHOLD = 3
+// Virtualization constants removed for native-scroll aspect-ratio pattern
 
 // Synchronize programmatic changes of reader.currentPage back to our refs
 watch(
@@ -389,7 +389,7 @@ watch(
       // Attempt scroll immediately in case the page wrapper is already rendered
       nextTick(() => {
         const scrolled = scrollToPage(newVal)
-        if (scrolled && checkAllPrecedingAndTargetRendered(newVal)) {
+        if (scrolled) {
           logScroll('watchCurrentPage_synchronous_scroll', { page: newVal })
           setTimeout(() => {
             setScrollStatus('ready')
@@ -419,43 +419,11 @@ const isTaskFlow = computed(() => {
 // Trust-based completion: user decides when reading is complete.
 // Page navigation is for UI only and does not gate completion.
 
-const visiblePages = computed(() => {
-  const target = scrollState.value.targetPage ?? virtualWindowCenter.value
-  const total = reader.pageCount.value
-  if (!total || !target) return []
-  const start = Math.max(1, target - VISIBLE_BUFFER)
-  const end = Math.min(total, target + VISIBLE_BUFFER)
-  const pages = []
-  for (let i = start; i <= end; i++) pages.push(i)
-  return pages
-})
-
-function checkAllPrecedingAndTargetRendered(targetPage) {
-  const targetPageWrapper = pdfViewportRef.value?.querySelector(`[data-page="${targetPage}"]`)
-  const targetRendered = !!(targetPageWrapper && targetPageWrapper.querySelector('canvas'))
-  if (!targetRendered) return false
-
-  return visiblePages.value
-    .filter((p) => p < targetPage)
-    .every((p) => {
-      const wrapper = pdfViewportRef.value?.querySelector(`[data-page="${p}"]`)
-      return !!(wrapper && wrapper.querySelector('canvas'))
-    })
-}
-
 function onPageRendered(pageNum) {
   logScroll('onPageRendered', { pageNum })
   if (scrollState.value.status === 'loading' || scrollState.value.status === 'scrolling') {
     const targetPage = scrollState.value.targetPage || reader.currentPage.value
-
-    // Scroll dynamically when any page <= targetPage in the visible range renders,
-    // to compensate for preceding page heights changing.
-    if (visiblePages.value.includes(pageNum) && pageNum <= targetPage) {
-      scrollToPage(targetPage)
-    }
-
-    if (checkAllPrecedingAndTargetRendered(targetPage)) {
-      scrollToPage(targetPage)
+    if (pageNum === targetPage) {
       setTimeout(() => {
         setScrollStatus('ready')
         logScroll('onPageRendered_scroll_complete', { targetPage })
@@ -495,9 +463,11 @@ async function resolveTaskContext(taskQuery) {
     logScroll('resolveTaskContext_start_scroll', { targetPage })
     await nextTick()
     const scrolled = scrollToPage(targetPage)
-    if (scrolled && checkAllPrecedingAndTargetRendered(targetPage)) {
+    if (scrolled) {
       logScroll('resolveTaskContext_immediate_scroll_success', { targetPage })
       setTimeout(() => setScrollStatus('ready'), 150)
+    } else {
+      setScrollStatus('ready')
     }
   } else {
     setScrollStatus('ready')
@@ -545,7 +515,7 @@ watch(
       // Immediately attempt scroll for cached PDFs where @rendered never re-fires
       await nextTick()
       const scrolled = scrollToPage(targetPage)
-      if (scrolled && checkAllPrecedingAndTargetRendered(targetPage)) {
+      if (scrolled) {
         logScroll('watchNotebookUrl_immediate_scroll_success', { targetPage })
         setTimeout(() => {
           setScrollStatus('ready')
@@ -658,6 +628,48 @@ watch(pdfViewportRef, (el, oldEl, onCleanup) => {
   }
 })
 
+function setupIntersectionObserver(viewportEl) {
+  if (intersectionObserver) {
+    intersectionObserver.disconnect()
+  }
+
+  intersectionObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        const page = parseInt(entry.target.dataset.page)
+        if (Number.isNaN(page)) return
+        if (entry.isIntersecting) {
+          renderedPages.value[page] = true
+        } else {
+          renderedPages.value[page] = false
+        }
+      })
+    },
+    {
+      root: viewportEl,
+      rootMargin: '1000px 0px 1000px 0px', // preload pages 1000px before/after they enter viewport
+      threshold: 0.01,
+    }
+  )
+
+  const wrappers = viewportEl.querySelectorAll('.pdf-page-wrapper')
+  wrappers.forEach((w) => intersectionObserver.observe(w))
+}
+
+// Watch pageCount, notebookUrl, and the viewport ref to dynamically update the intersection observer target elements
+watch(
+  [() => reader.pageCount.value, () => reader.notebookUrl.value, pdfViewportRef],
+  () => {
+    nextTick(() => {
+      const el = pdfViewportRef.value
+      if (el) {
+        setupIntersectionObserver(el)
+      }
+    })
+  },
+  { immediate: true }
+)
+
 function zoomIn() {
   zoomScale.value = Math.min(2.5, Math.round((zoomScale.value + 0.1) * 100) / 100)
 }
@@ -680,6 +692,10 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
+  }
+  if (intersectionObserver) {
+    intersectionObserver.disconnect()
+    intersectionObserver = null
   }
   if (scrollDebounceId) clearTimeout(scrollDebounceId)
   if (programmaticScrollTimeoutId) clearTimeout(programmaticScrollTimeoutId)
@@ -719,14 +735,6 @@ function handleViewportScroll() {
     if (page !== currentVisiblePage.value) {
       currentVisiblePage.value = page
       reader.updateCurrentPage(page)
-    }
-    // Shift virtual window center only when approaching the buffer edge
-    const diff = page - virtualWindowCenter.value
-    if (
-      diff + VISIBLE_BUFFER <= BUFFER_SHIFT_THRESHOLD ||
-      VISIBLE_BUFFER - diff <= BUFFER_SHIFT_THRESHOLD
-    ) {
-      virtualWindowCenter.value = page
     }
   }, 80)
 }
@@ -926,6 +934,13 @@ h3 {
   display: block;
   margin: 0 auto;
   margin-bottom: 20px;
+  width: 100%;
+  aspect-ratio: 8.5 / 11;
+  background: var(--surface-container-lowest, #ffffff);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .pdf-viewport {
@@ -947,19 +962,17 @@ h3 {
   padding: 0 !important;
   border: none !important;
   width: 100% !important;
+  height: 100% !important;
 }
 
 .pdf-viewport :deep(.vue-pdf-embed__page) {
   display: block;
   margin: 0 auto !important;
   padding: 0 !important;
-  margin-bottom: 20px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
-  content-visibility: auto;
-  contain-intrinsic-size: 800px 1100px;
   width: 100% !important;
-  border: 1px solid rgba(0, 0, 0, 0.08) !important;
-  border-radius: 4px;
+  height: 100% !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
