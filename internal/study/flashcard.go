@@ -155,6 +155,12 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 		return nil, "", fmt.Errorf("invalid page range: start=%d end=%d", startPage, endPage)
 	}
 
+	notebookTitle := notebookID
+	nb, err := s.repo.GetNotebookByID(notebookID)
+	if err == nil && nb != nil && nb.Title != "" {
+		notebookTitle = nb.Title
+	}
+
 	contextChunks, tokenCount, err := s.buildPageBoundedContext(notebookID, startPage, endPage)
 	if err != nil {
 		return nil, "", err
@@ -183,7 +189,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	}
 
 	// Build prompt with token budgeting
-	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookID, startPage, endPage, contextChunks, targetCount, maxInputTokens)
+	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookID, notebookTitle, startPage, endPage, contextChunks, targetCount, maxInputTokens)
 
 	// Log token estimates before generation
 	utils.Warnf("[FLASHCARD_PIPELINE] token_budget_estimate prompt_tokens=%d max_input=%d budget_used_pct=%.2f", promptTokenCount, maxInputTokens, float64(promptTokenCount)/float64(maxInputTokens)*100)
@@ -204,6 +210,13 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	parsed, err := parseFlashcardLLMResponse(raw)
 	if err != nil {
 		return nil, "", fmt.Errorf("flashcard parsing failed: %w", err)
+	}
+
+	// Apply "Hard Slice" (The Array Truncation Trick) to prevent flashcard avalanche.
+	const MaxCardsPerReadingTask = 6
+	if len(parsed.Cards) > MaxCardsPerReadingTask {
+		parsed.Cards = parsed.Cards[:MaxCardsPerReadingTask]
+		utils.Warnf("[FLASHCARD_PIPELINE] hard_slice applied original_count=%d capped_to=%d", len(parsed.Cards), MaxCardsPerReadingTask)
 	}
 
 	now := time.Now().Unix()
@@ -243,7 +256,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	return cards, tier, nil
 }
 
-func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {
+func buildMarathonFlashcardPromptWithBudget(notebookID, notebookTitle string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {
 	// Base prompt overhead (instructions, format, etc.)
 	const baseOverheadTokens = 300
 	const safetyMarginTokens = 500 // Reserve for output tokens and safety margin
@@ -255,11 +268,13 @@ func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPag
 	}
 
 	var b strings.Builder
-	b.WriteString("You are an AI tutor flashcard generator optimized for spaced repetition (FSRS).\n")
+	b.WriteString("You are an expert academic tutor creating study materials for spaced repetition (FSRS).\n")
+	b.WriteString("You are strictly limited to generating a maximum of 5 flashcards. Do not test minor details. If the text is short, generate fewer.\n")
 	b.WriteString("CRITICAL: Return ONLY valid JSON. No markdown. No code blocks. No explanations.\n")
 	b.WriteString("Output must start with { and end with }. No prefix or suffix text.\n")
-	fmt.Fprintf(&b, "Generate exactly %d flashcards covering pages %d-%d of notebook '%s'.\n",
-		targetCount, startPage, endPage, notebookID)
+	fmt.Fprintf(&b, "Notebook: \"%s\"\n", notebookTitle)
+	fmt.Fprintf(&b, "Generate exactly %d flashcards covering pages %d-%d.\n",
+		targetCount, startPage, endPage)
 	b.WriteString("\n=== JSON FORMAT (FOLLOW EXACTLY) ===\n")
 	b.WriteString(`{"cards":[{"source_chunk_id":"chunk_123","prompt":"What is X?","answer":"X is..."},{"source_chunk_id":"chunk_456","prompt":"How does Y work?","answer":"Y works by..."}]}` + "\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
@@ -270,6 +285,11 @@ func buildMarathonFlashcardPromptWithBudget(notebookID string, startPage, endPag
 	b.WriteString("\n=== ANSWER QUALITY ===\n")
 	b.WriteString("- Answers must be short (1-2 sentences max, grounded in source).\n")
 	b.WriteString("- source_chunk_id must exactly match one chunk_id from the provided chunk list.\n")
+	b.WriteString("\n=== ADAPTIVE CONTENT RULES ===\n")
+	b.WriteString("Before generating flashcards, classify the text type:\n")
+	b.WriteString("- FACTUAL/TECHNICAL (exam prep, current affairs, engineering, history): Extract specific facts, dates, definitions, formulas, and concrete data points.\n")
+	b.WriteString("- CONCEPTUAL/NARRATIVE (philosophy, self-help, psychology, business): Extract core frameworks, mindset shifts, actionable rules, and key ideas.\n")
+	b.WriteString("Use the notebook title as context for the user's study goals and the text type.\n")
 	b.WriteString("\n=== SOURCE CHUNKS ===\n")
 
 	// Trim chunks based on token budget
