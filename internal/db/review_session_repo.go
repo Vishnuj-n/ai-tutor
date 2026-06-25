@@ -53,7 +53,65 @@ func (r *Repository) fetchExistingReviewTask(q querier, notebookID string) (*mod
 
 func (r *Repository) GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
 	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan notebookID=%s now=%d limit=%d", notebookID, now, limit)
-	rows, err := r.db.Query(`
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	// Calculate target budgets: 70% old reviews, 30% brand new cards.
+	reviewLimit := (limit * 7) / 10
+	if reviewLimit <= 0 && limit > 0 {
+		reviewLimit = 1
+	}
+	newLimit := limit - reviewLimit
+
+	// 1. Fetch old (reviewed) cards
+	oldCards, err := r.getDueCardsWithLogOption(notebookID, now, reviewLimit, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Fetch new (unreviewed) cards
+	newCards, err := r.getDueCardsWithLogOption(notebookID, now, newLimit, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. Dynamic fill: if either pool is under-allocated, fill from the other
+	if len(oldCards) < reviewLimit && len(newCards) == newLimit {
+		extraNeeded := reviewLimit - len(oldCards)
+		moreNewCards, err := r.getDueCardsWithLogOption(notebookID, now, newLimit+extraNeeded, false)
+		if err == nil {
+			newCards = moreNewCards
+		}
+	} else if len(newCards) < newLimit && len(oldCards) == reviewLimit {
+		extraNeeded := newLimit - len(newCards)
+		moreOldCards, err := r.getDueCardsWithLogOption(notebookID, now, reviewLimit+extraNeeded, true)
+		if err == nil {
+			oldCards = moreOldCards
+		}
+	}
+
+	combined := append(oldCards, newCards...)
+	if len(combined) > limit {
+		combined = combined[:limit]
+	}
+
+	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan result notebookID=%s oldCards=%d newCards=%d total=%d",
+		notebookID, len(oldCards), len(newCards), len(combined))
+	return combined, nil
+}
+
+func (r *Repository) getDueCardsWithLogOption(notebookID string, now int64, limit int, mustHaveLogs bool) ([]models.Flashcard, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	logCondition := "NOT EXISTS"
+	if mustHaveLogs {
+		logCondition = "EXISTS"
+	}
+
+	query := fmt.Sprintf(`
 		SELECT
 			fc.id,
 			fc.topic_id,
@@ -86,9 +144,16 @@ func (r *Repository) GetDueReviewCardsForNotebook(notebookID string, now int64, 
 			  AND sq.task_type = 'FLASHCARD_REVIEW'
 			  AND sq.status IN ('PENDING', 'ACTIVE')
 		  )
+		  AND %s (
+			SELECT 1
+			FROM fsrs_review_log frl
+			WHERE frl.reference_id = fc.id
+		  )
 		ORDER BY fc.due_at ASC, fc.created_at ASC, fc.id ASC
 		LIMIT ?
-	`, notebookID, now, limit)
+	`, logCondition)
+
+	rows, err := r.db.Query(query, notebookID, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +172,6 @@ func (r *Repository) GetDueReviewCardsForNotebook(notebookID string, now int64, 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan result notebookID=%s dueCards=%d", notebookID, len(cards))
 	return cards, nil
 }
 
@@ -180,8 +244,16 @@ func (r *Repository) CreateReviewSession(notebookID string) (*models.StudyQueueT
 		utils.Warnf("[FLASHCARD_PIPELINE] review_task_creation reused_existing notebookID=%s taskID=%s status=%s", notebookID, existing.ID, existing.Status)
 		return existing, true, nil
 	}
+	settings, err := r.GetUserSettings()
+	if err != nil {
+		return nil, false, err
+	}
+	limit := settings.MaxFlashcardsPerSession
+	if limit <= 0 {
+		limit = 30
+	}
 
-	cards, err := r.GetDueReviewCardsForNotebook(notebookID, now, maxReviewSessionCards)
+	cards, err := r.GetDueReviewCardsForNotebook(notebookID, now, limit)
 	if err != nil {
 		return nil, false, err
 	}
