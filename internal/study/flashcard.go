@@ -189,7 +189,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	}
 
 	// Build prompt with token budgeting
-	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookID, notebookTitle, startPage, endPage, contextChunks, targetCount, maxInputTokens)
+	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookTitle, startPage, endPage, contextChunks, targetCount, maxInputTokens)
 
 	// Log token estimates before generation
 	utils.Warnf("[FLASHCARD_PIPELINE] token_budget_estimate prompt_tokens=%d max_input=%d budget_used_pct=%.2f", promptTokenCount, maxInputTokens, float64(promptTokenCount)/float64(maxInputTokens)*100)
@@ -256,7 +256,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	return cards, tier, nil
 }
 
-func buildMarathonFlashcardPromptWithBudget(notebookID, notebookTitle string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {
+func buildMarathonFlashcardPromptWithBudget(notebookTitle string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {
 	// Base prompt overhead (instructions, format, etc.)
 	const baseOverheadTokens = 300
 	const safetyMarginTokens = 500 // Reserve for output tokens and safety margin
@@ -268,7 +268,7 @@ func buildMarathonFlashcardPromptWithBudget(notebookID, notebookTitle string, st
 	}
 
 	var b strings.Builder
-	b.WriteString("You are an expert academic tutor creating study materials for spaced repetition (FSRS).\n")
+	b.WriteString("You are an expert academic tutor and flashcard generator creating study materials for spaced repetition (FSRS).\n")
 	b.WriteString("You are strictly limited to generating a maximum of 5 flashcards. Do not test minor details. If the text is short, generate fewer.\n")
 	b.WriteString("CRITICAL: Return ONLY valid JSON. No markdown. No code blocks. No explanations.\n")
 	b.WriteString("Output must start with { and end with }. No prefix or suffix text.\n")
