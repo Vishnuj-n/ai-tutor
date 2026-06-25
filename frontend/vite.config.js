@@ -6,7 +6,22 @@ import { resolve } from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    {
+      name: 'bypass-notebooks-middleware',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url && req.url.startsWith('/notebooks/')) {
+            res.statusCode = 404
+            res.end('Not Found')
+            return
+          }
+          next()
+        })
+      }
+    }
+  ],
   server: {
     watch: {
       ignored: ['**/wailsjs/**']
