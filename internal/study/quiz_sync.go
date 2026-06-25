@@ -110,6 +110,13 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		return models.QuizTaskPayload{}, fmt.Errorf("FAST_LLM provider not initialized")
 	}
 
+	notebookTitle := topicID
+	if nbID, err := s.repo.GetNotebookIDByTopic(topicID); err == nil && nbID != "" {
+		if nb, err := s.repo.GetNotebookByID(nbID); err == nil && nb != nil && nb.Title != "" {
+			notebookTitle = nb.Title
+		}
+	}
+
 	normalizedChunkIDs := make([]string, 0, len(chunkIDs))
 	seen := make(map[string]struct{}, len(chunkIDs))
 	for _, id := range chunkIDs {
@@ -199,11 +206,21 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 	targetCount := scaledQuizQuestionCount(totalWordCount)
 
 	prompt := strings.Join([]string{
-		"You are an AI tutor quiz generator.",
+		"You are an expert academic tutor and quiz generator creating a quiz for spaced repetition study.",
 		"Return STRICT JSON only.",
+		fmt.Sprintf("Notebook: \"%s\"", notebookTitle),
 		fmt.Sprintf("Generate exactly %d multiple-choice questions from the provided chunks.", targetCount),
+		"",
+		"=== ADAPTIVE CONTENT RULES ===",
+		"Before generating questions, classify the text type using the notebook title as context:",
+		"- FACTUAL/TECHNICAL (exam prep, current affairs, engineering, history): Test specific facts, dates, definitions, formulas, and concrete data points.",
+		"- CONCEPTUAL/NARRATIVE (philosophy, self-help, psychology, business): Test core frameworks, mindset shifts, actionable rules, and key ideas.",
+		"",
+		"=== QUESTION RULES ===",
 		"Each question must have exactly 4 options.",
 		"correct_answer must match one option exactly.",
+		"AVOID yes/no questions. PREFER 'why', 'how', 'what is', 'explain' questions.",
+		"",
 		"JSON schema: {\"questions\":[{\"source_chunk_id\":string,\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string}]}",
 		"Chunks:",
 		strings.Join(contextParts, "\n"),
