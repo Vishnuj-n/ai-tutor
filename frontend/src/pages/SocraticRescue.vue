@@ -122,7 +122,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getTopicSectionsContent, completeSocraticRescue, GetTaskContext } from '../services/appApi'
+import { getTopicSectionsContent, completeSocraticRescue, GetTaskContext, activateTask } from '../services/appApi'
 
 const route = useRoute()
 const router = useRouter()
@@ -176,6 +176,14 @@ onMounted(async () => {
     notebookID.value = task.notebook_id || ''
     startPage.value = Number.parseInt(task.start_page, 10) || 1
     endPage.value = Number.parseInt(task.end_page, 10) || 10
+
+    // Activate the task on mount to transition from PENDING to ACTIVE
+    const activate = await activateTask(taskID.value)
+    if (activate?.error && activate.error !== 'ErrTaskNotPending') {
+      error.value = `Failed to activate task: ${activate.error}`
+      loading.value = false
+      return
+    }
   } catch (err) {
     error.value = `Failed to fetch task context: ${err.message || err}`
     loading.value = false

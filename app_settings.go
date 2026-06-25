@@ -49,6 +49,9 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	if maxFlashcards < 5 || maxFlashcards > 200 {
 		return map[string]interface{}{"error": "max flashcards per session must be between 5 and 200"}
 	}
+	if defaultRemedialStrategy == "" {
+		defaultRemedialStrategy = "CLASSIC"
+	}
 	s := models.UserSettings{
 		MaxFlashcardsPerSession: maxFlashcards,
 		StudyStartTime:          startTime,

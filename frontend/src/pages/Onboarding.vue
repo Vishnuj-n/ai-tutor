@@ -131,23 +131,12 @@
 
         <div class="form-group">
           <label for="llm-api-key">API Key</label>
-          <div class="password-wrapper">
-            <input
-              id="llm-api-key"
-              v-model="llmFastKey"
-              :type="showFastKey ? 'text' : 'password'"
-              placeholder="Paste key to save in OS credential manager"
-            />
-            <button
-              v-if="llmFastKey"
-              type="button"
-              class="toggle-password"
-              @click="showFastKey = !showFastKey"
-              :title="showFastKey ? 'Hide' : 'Show'"
-            >
-              {{ showFastKey ? '🙈' : '👁️' }}
-            </button>
-          </div>
+          <input
+            id="llm-api-key"
+            v-model="llmFastKey"
+            type="password"
+            placeholder="Paste key to save in OS credential manager"
+          />
         </div>
 
         <label class="inline-check">
@@ -179,23 +168,12 @@
           </div>
           <div class="form-group">
             <label for="heavy-api-key">Heavy API Key</label>
-            <div class="password-wrapper">
-              <input
-                id="heavy-api-key"
-                v-model="llmHeavyKey"
-                :type="showHeavyKey ? 'text' : 'password'"
-                placeholder="Leave blank to use the fast key"
-              />
-              <button
-                v-if="llmHeavyKey"
-                type="button"
-                class="toggle-password"
-                @click="showHeavyKey = !showHeavyKey"
-                :title="showHeavyKey ? 'Hide' : 'Show'"
-              >
-                {{ showHeavyKey ? '🙈' : '👁️' }}
-              </button>
-            </div>
+            <input
+              id="heavy-api-key"
+              v-model="llmHeavyKey"
+              type="password"
+              placeholder="Leave blank to use the fast key"
+            />
           </div>
         </div>
 
@@ -258,23 +236,12 @@
 
         <div class="form-group">
           <label for="api-token">Authorization API Token</label>
-          <div class="password-wrapper">
-            <input
-              id="api-token"
-              v-model="apiToken"
-              :type="showApiToken ? 'text' : 'password'"
-              placeholder="Enter your auth token"
-            />
-            <button
-              v-if="apiToken"
-              type="button"
-              class="toggle-password"
-              @click="showApiToken = !showApiToken"
-              :title="showApiToken ? 'Hide' : 'Show'"
-            >
-              {{ showApiToken ? '🙈' : '👁️' }}
-            </button>
-          </div>
+          <input
+            id="api-token"
+            v-model="apiToken"
+            type="password"
+            placeholder="Enter your auth token"
+          />
         </div>
 
         <div class="button-row">
@@ -479,9 +446,7 @@ const presetLoading = ref(false)
 const useSameLLMForHeavy = ref(true)
 const llmFastKey = ref('')
 const llmHeavyKey = ref('')
-const showFastKey = ref(false)
-const showHeavyKey = ref(false)
-const showApiToken = ref(false)
+// Password visibility state handled natively by browser
 const llmFast = ref({
   tier: 'fast',
   provider: 'groq',
@@ -685,7 +650,11 @@ async function completeOnboarding() {
       cloudSyncURL.value.trim(),
       apiToken.value.trim(),
       selectedTheme.value,
-      wantRag.value && ragSetupCompleted.value
+      wantRag.value && ragSetupCompleted.value,
+      true, // default for ragNotebookChapter
+      true, // default for ragEntireNotebook
+      true, // default for ragQueueStudy
+      'CLASSIC' // default defaultRemedialStrategy
     )
 
     if (settingsRes.error) {
@@ -723,29 +692,41 @@ onMounted(() => {
 
 .onboarding-card {
   width: 100%;
-  max-width: 500px;
-  border-radius: 24px; /* 3 * 8px */
-  padding: 40px; /* 5 * 8px */
-  box-shadow: 0 20px 40px rgba(45, 51, 56, 0.06);
+  max-width: 480px; /* slightly narrower */
+  max-height: calc(100vh - 48px); /* Keep 24px margin top and bottom */
+  overflow-y: auto;
+  border-radius: 16px; /* 2 * 8px - more compact */
+  padding: 24px; /* 3 * 8px - reduced padding for a tighter fit */
+  box-shadow: 0 16px 32px rgba(45, 51, 56, 0.08);
   box-sizing: border-box;
-  background: var(--surface-bright);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  transition:
-    background 0.3s ease,
-    backdrop-filter 0.3s ease;
+  background: var(--surface-container-lowest);
+  transition: background 0.3s ease;
   border: none; /* No-line rule */
+}
+
+/* Custom scrollbar for premium look */
+.onboarding-card::-webkit-scrollbar {
+  width: 6px;
+}
+
+.onboarding-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.onboarding-card::-webkit-scrollbar-thumb {
+  background: var(--outline-variant);
+  border-radius: 3px;
 }
 
 .header-section {
   text-align: center;
-  margin-bottom: 32px; /* 8px grid */
+  margin-bottom: 16px; /* 8px grid */
 }
 
 .logo-orb {
-  width: 64px; /* 8px grid */
-  height: 64px; /* 8px grid */
-  margin: 0 auto 16px; /* 8px grid */
+  width: 48px; /* 8px grid */
+  height: 48px; /* 8px grid */
+  margin: 0 auto 8px; /* 8px grid */
   background: linear-gradient(135deg, var(--primary-dim), var(--primary));
   color: var(--on-primary);
   border-radius: 50%;
@@ -754,16 +735,16 @@ onMounted(() => {
   justify-content: center;
   font-family: 'Manrope', sans-serif;
   font-weight: 800;
-  font-size: 20px;
+  font-size: 16px;
   letter-spacing: -0.05em;
-  box-shadow: 0 0 32px rgba(99, 102, 241, 0.2); /* 8px grid shadow size */
+  box-shadow: 0 0 24px rgba(99, 102, 241, 0.15); /* 8px grid shadow size */
 }
 
 h1 {
   font-family: 'Manrope', sans-serif; /* Display font */
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 800;
-  margin: 0 0 8px; /* 8px grid */
+  margin: 0 0 4px; /* 8px grid */
   letter-spacing: -0.02em; /* Spec: -2% tracking */
   color: var(--on-surface);
 }
@@ -775,10 +756,10 @@ h1 {
 }
 
 .progress-bar {
-  height: 8px; /* 8px grid */
+  height: 6px; /* 8px grid */
   background: var(--outline-variant);
-  border-radius: 4px;
-  margin-bottom: 32px; /* 8px grid */
+  border-radius: 3px;
+  margin-bottom: 16px; /* 8px grid */
   overflow: hidden;
 }
 
@@ -791,12 +772,12 @@ h1 {
 .step-container {
   display: flex;
   flex-direction: column;
-  gap: 24px; /* 8px grid */
+  gap: 16px; /* 8px grid */
 }
 
 h2 {
   font-family: 'Manrope', sans-serif; /* Display font */
-  font-size: 20px; /* 8px scale */
+  font-size: 16px; /* 8px scale */
   font-weight: 700;
   margin: 0;
   letter-spacing: -0.02em; /* Spec: -2% tracking */
@@ -806,7 +787,7 @@ h2 {
   font-size: 13px;
   color: var(--muted-text);
   line-height: 1.5;
-  margin: -16px 0 8px; /* 8px grid */
+  margin: -8px 0 8px; /* 8px grid */
 }
 
 .form-group {
@@ -819,36 +800,7 @@ h2 {
   color: var(--primary); /* Spec focus shift */
 }
 
-.password-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.password-wrapper input {
-  width: 100%;
-  padding-right: 48px; /* 8px grid */
-}
-
-.toggle-password {
-  position: absolute;
-  right: 8px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 18px;
-  padding: 8px; /* 8px grid */
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.6;
-  transition: opacity 0.15s;
-}
-
-.toggle-password:hover {
-  opacity: 1;
-}
+/* Password wrapper styles removed in favor of native browser toggles */
 
 label {
   font-size: 12px;
@@ -864,7 +816,7 @@ select {
   background: var(--surface-container-low);
   border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent); /* Spec ghost border */
   border-radius: 12px; /* xl: 12px/0.75rem */
-  padding: 12px 16px; /* 8px grid friendly */
+  padding: 10px 14px; /* 8px grid friendly - slightly more compact */
   color: var(--on-surface);
   font-size: 14px;
   font-family: inherit;
@@ -919,7 +871,7 @@ select:focus {
   background: linear-gradient(15deg, var(--primary-dim), var(--primary));
   border: none;
   border-radius: 12px; /* xl: 12px */
-  padding: 16px; /* 8px grid */
+  padding: 12px; /* 8px grid - reduced padding */
   color: var(--on-primary);
   font-family: 'Manrope', sans-serif;
   font-weight: 700;
@@ -929,7 +881,7 @@ select:focus {
     opacity 0.2s,
     transform 0.2s;
   width: 100%;
-  margin-top: 8px; /* 8px grid */
+  margin-top: 4px; /* 8px grid */
   text-align: center;
 }
 
@@ -953,7 +905,7 @@ select:focus {
   background: var(--surface-container-highest);
   border: none;
   border-radius: 12px; /* xl: 12px */
-  padding: 16px; /* 8px grid */
+  padding: 12px; /* 8px grid - reduced padding */
   color: var(--primary);
   font-family: 'Manrope', sans-serif;
   font-weight: 700;
