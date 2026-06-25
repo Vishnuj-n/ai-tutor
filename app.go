@@ -250,7 +250,7 @@ func (a *App) checkNotebookIndexingStatus(notebookID, topicID string) (map[strin
 	return nil, false
 }
 
-func (a *App) AskSocratic(notebookID string, topicID string, question string) map[string]interface{} {
+func (a *App) AskSocratic(notebookID string, topicID string, question string, conversationHistory []map[string]string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
@@ -273,7 +273,7 @@ func (a *App) AskSocratic(notebookID string, topicID string, question string) ma
 	}
 	svc := a.studyService
 	a.aiMutex.Unlock()
-	res, err := svc.AskSocratic(notebookID, topicID, question)
+	res, err := svc.AskSocratic(notebookID, topicID, question, conversationHistory)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}

@@ -143,12 +143,40 @@
               "
               class="citations"
             >
-              <p class="citation-label">Citations</p>
-              <ul>
-                <li v-for="(citation, citationIdx) in message.citations" :key="citationIdx">
-                  {{ citation }}
-                </li>
-              </ul>
+              <button
+                type="button"
+                class="citation-info-btn"
+                @click.stop="toggleCitationPopover(idx)"
+                @mouseenter="showCitationPopover = idx"
+                @mouseleave="scheduleHideCitationPopover"
+              >
+                ℹ
+              </button>
+              <div
+                v-if="showCitationPopover === idx"
+                class="citation-popover"
+                @mouseenter="cancelHideCitationPopover"
+                @mouseleave="hideCitationPopover"
+              >
+                <p class="citation-popover-title">Source Chunks</p>
+                <div
+                  v-for="(chunk, cIdx) in (message.chunkTexts || [])"
+                  :key="cIdx"
+                  class="citation-chunk"
+                >
+                  <span class="citation-chunk-label">{{ message.citations[cIdx] || '' }}</span>
+                  <p class="citation-chunk-text">{{ chunk }}</p>
+                </div>
+                <div v-if="!message.chunkTexts || message.chunkTexts.length === 0">
+                  <p
+                    v-for="(citation, cIdx) in message.citations"
+                    :key="cIdx"
+                    class="citation-chunk-label"
+                  >
+                    {{ citation }}
+                  </p>
+                </div>
+              </div>
             </div>
           </article>
         </div>
@@ -237,6 +265,8 @@ const isRescueMode = computed(() => !!taskId.value)
 const completingRescue = ref(false)
 const copiedMessageId = ref(null)
 const retryingMessageId = ref(null)
+const showCitationPopover = ref(null)
+let hideCitationPopoverTimer = null
 
 const selectedNotebook = computed(() =>
   notebooks.value.find((notebook) => notebook.id === selectedNotebookID.value)
@@ -386,6 +416,29 @@ function clearConversation() {
   messages.value = []
   inputQuestion.value = ''
   globalError.value = ''
+  showCitationPopover.value = null
+}
+
+function toggleCitationPopover(idx) {
+  showCitationPopover.value = showCitationPopover.value === idx ? null : idx
+}
+
+function scheduleHideCitationPopover() {
+  hideCitationPopoverTimer = setTimeout(() => {
+    showCitationPopover.value = null
+  }, 300)
+}
+
+function cancelHideCitationPopover() {
+  if (hideCitationPopoverTimer) {
+    clearTimeout(hideCitationPopoverTimer)
+    hideCitationPopoverTimer = null
+  }
+}
+
+function hideCitationPopover() {
+  cancelHideCitationPopover()
+  showCitationPopover.value = null
 }
 
 async function submitQuestion() {
@@ -405,8 +458,12 @@ async function submitQuestion() {
   isLoading.value = true
   await scrollToBottom()
 
+  const conversationHistory = messages.value
+    .filter((m) => !m.error)
+    .map((m) => ({ role: m.role, content: m.text }))
+
   try {
-    const result = await askSocratic(selectedNotebookID.value, topicID, question)
+    const result = await askSocratic(selectedNotebookID.value, topicID, question, conversationHistory)
 
     if (result.error) {
       const isNetworkError =
@@ -427,6 +484,7 @@ async function submitQuestion() {
         role: 'assistant',
         text: result.answer || 'No response generated.',
         citations: result.cited_sections || [],
+        chunkTexts: result.chunk_texts || [],
       })
     }
   } catch (err) {
@@ -472,6 +530,7 @@ async function initiateSocraticSession() {
         role: 'assistant',
         text: result.answer || 'No response generated.',
         citations: result.cited_sections || [],
+        chunkTexts: result.chunk_texts || [],
       })
     }
   } catch (err) {
@@ -545,9 +604,13 @@ async function retrySocraticMessage(messageIdx) {
   isLoading.value = true
   await scrollToBottom()
 
+  const conversationHistory = messages.value
+    .filter((m) => !m.error)
+    .map((m) => ({ role: m.role, content: m.text }))
+
   try {
     const topicID = effectiveTopicID.value
-    const result = await askSocratic(selectedNotebookID.value, topicID, prompt)
+    const result = await askSocratic(selectedNotebookID.value, topicID, prompt, conversationHistory)
 
     if (result.error) {
       const isNetworkError =
@@ -568,6 +631,7 @@ async function retrySocraticMessage(messageIdx) {
         role: 'assistant',
         text: result.answer || 'No response generated.',
         citations: result.cited_sections || [],
+        chunkTexts: result.chunk_texts || [],
       })
     }
   } catch (err) {
@@ -930,10 +994,50 @@ h1 {
   margin-top: 9px;
   border-top: 1px solid rgba(45, 51, 56, 0.12);
   padding-top: 8px;
+  position: relative;
 }
 
-.citation-label {
-  margin: 0;
+.citation-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+  color: var(--muted-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  line-height: 1;
+}
+
+.citation-info-btn:hover {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+
+.citation-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  padding: 10px 12px;
+  width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.citation-popover-title {
+  margin: 0 0 8px;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -941,14 +1045,35 @@ h1 {
   color: var(--muted-text);
 }
 
-.citations ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
+.citation-chunk {
+  margin-bottom: 8px;
 }
-.citations li {
-  margin: 4px 0;
-  font-size: 12px;
-  line-height: 1.4;
+
+.citation-chunk:last-child {
+  margin-bottom: 0;
+}
+
+.citation-chunk-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--primary);
+  background: rgba(0, 91, 193, 0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-bottom: 2px;
+}
+
+.citation-chunk-text {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--on-surface);
+  opacity: 0.85;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .composer {

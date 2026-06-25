@@ -137,7 +137,7 @@ func (s *StudyService) resolveSocraticLineage(topicID string, chunkIDs []string)
 	return sourceHeading, sourcePageStart, sourcePageEnd
 }
 
-func (s *StudyService) AskSocratic(notebookID string, topicID string, question string) (map[string]interface{}, error) {
+func (s *StudyService) AskSocratic(notebookID string, topicID string, question string, conversationHistory []map[string]string) (map[string]interface{}, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	topicID = strings.TrimSpace(topicID)
 	question = strings.TrimSpace(question)
@@ -161,8 +161,8 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		return nil, fmt.Errorf("retrieval failed: %w", err)
 	}
 
-	// 2. Build retrieved material context blocks and citations
-	blocks, citations := buildReaderContextBlocks(results)
+	// 2. Build retrieved material context blocks, citations, and chunk texts
+	blocks, citations, chunkTexts := buildReaderContextBlocksWithText(results)
 
 	// 3. Generate answer using heavy LLM provider (to ensure high quality guiding responses)
 	llm := s.heavyLLMProvider
@@ -175,7 +175,22 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	// and the student question.
 	limits := llm.GetLimits()
 
-	// Compute tokens for prompt overhead (instructions + student question + fixed labels)
+	// Build conversation history block for the prompt
+	historyBlock := ""
+	if len(conversationHistory) > 0 {
+		var histBuilder strings.Builder
+		histBuilder.WriteString("Previous conversation:\n")
+		for _, msg := range conversationHistory {
+			role := "Student"
+			if msg["role"] == "assistant" {
+				role = "Tutor"
+			}
+			histBuilder.WriteString(fmt.Sprintf("%s: %s\n", role, msg["content"]))
+		}
+		historyBlock = histBuilder.String()
+	}
+
+	// Compute tokens for prompt overhead (instructions + history + student question + fixed labels)
 	overheadText := strings.Join([]string{
 		"You are an adaptive Socratic tutor helping a student understand material from the retrieved content.",
 		"Act like a human tutor talking to a confused student.",
@@ -196,6 +211,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
 		"- Do not provide the final answer unless asked or the student is clearly stuck.",
 		"- Keep responses concise and focused.",
+		"- Continue the conversation naturally. Reference what the student said before.",
 		"",
 		"Hint Progression:",
 		"Observation → Pattern → Concept → Near Answer → Full Explanation",
@@ -207,6 +223,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		"Hint:",
 		"[A concise hint grounded only in the retrieved material]",
 		"",
+		historyBlock,
 		"Student question: " + question,
 	}, "\n")
 
@@ -222,12 +239,14 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	// the final block if necessary. Keep citations aligned to included blocks.
 	newBlocks := make([]string, 0, len(blocks))
 	newCitations := make([]string, 0, len(citations))
+	newChunkTexts := make([]string, 0, len(chunkTexts))
 	usedTokens := 0
 	for i, blk := range blocks {
 		blkTokens := embeddings.CountTokensFallback(blk)
 		if usedTokens+blkTokens <= available {
 			newBlocks = append(newBlocks, blk)
 			newCitations = append(newCitations, citations[i])
+			newChunkTexts = append(newChunkTexts, chunkTexts[i])
 			usedTokens += blkTokens
 			continue
 		}
@@ -237,6 +256,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 			if truncated, err := embeddings.TruncateToTokens(blk, remaining); err == nil && strings.TrimSpace(truncated) != "" {
 				newBlocks = append(newBlocks, truncated)
 				newCitations = append(newCitations, citations[i])
+				newChunkTexts = append(newChunkTexts, chunkTexts[i])
 			}
 		}
 		break
@@ -252,12 +272,14 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 			if truncated, err := embeddings.TruncateToTokens(blocks[0], safeLimit); err == nil && strings.TrimSpace(truncated) != "" {
 				newBlocks = append(newBlocks, truncated)
 				newCitations = append(newCitations, citations[0])
+				newChunkTexts = append(newChunkTexts, chunkTexts[0])
 			}
 		}
 	}
 
 	contextText := strings.TrimSpace(strings.Join(newBlocks, "\n\n"))
 	citations = newCitations
+	chunkTexts = newChunkTexts
 
 	// Rebuild the final prompt now that contextText may have been truncated
 	socraticPrompt := strings.Join([]string{
@@ -280,6 +302,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
 		"- Do not provide the final answer unless asked or the student is clearly stuck.",
 		"- Keep responses concise and focused.",
+		"- Continue the conversation naturally. Reference what the student said before.",
 		"",
 		"Hint Progression:",
 		"Observation → Pattern → Concept → Near Answer → Full Explanation",
@@ -291,6 +314,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		"Hint:",
 		"[A concise hint grounded only in the retrieved material]",
 		"",
+		historyBlock,
 		"Retrieved material:",
 		contextText,
 		"",
@@ -305,6 +329,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	return map[string]interface{}{
 		"answer":         answer,
 		"cited_sections": citations,
+		"chunk_texts":    chunkTexts,
 	}, nil
 }
 

@@ -15,8 +15,8 @@ export function getAvailableTopics() {
   return appBridge().GetAvailableTopics()
 }
 
-export function askSocratic(notebookID, topicID, question) {
-  return appBridge().AskSocratic(notebookID, topicID, question)
+export function askSocratic(notebookID, topicID, question, conversationHistory = []) {
+  return appBridge().AskSocratic(notebookID, topicID, question, conversationHistory)
 }
 
 export function askReaderAI(
