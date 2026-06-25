@@ -1704,9 +1704,9 @@ func mustInsertMockChunk(t *testing.T, notebookID, topicID, chunkID string, page
 	t.Helper()
 	// Ensure chunk exists in chunks table
 	if _, err := testRepo.ExecForTest(`
-		INSERT OR IGNORE INTO chunks (id, topic_id, chunk_text)
-		VALUES (?, ?, 'Mock chunk text for calibration test')
-	`, chunkID, topicID); err != nil {
+		INSERT OR IGNORE INTO chunks (id, topic_id, chunk_text, page_num)
+		VALUES (?, ?, 'Mock chunk text for calibration test', ?)
+	`, chunkID, topicID, pageNum); err != nil {
 		t.Fatalf("failed to insert chunk: %v", err)
 	}
 
@@ -1728,6 +1728,7 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 	if err := testRepo.CreateNotebook("nb-test", "NB Test", "/tmp/nb-test.pdf", "pdf", "topic-test", 12); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
+	mustInsertMockChunk(t, "nb-test", "topic-test", "chunk-socratic-test-1", 1)
 
 	// Seed a pending/active SOCRATIC_REMEDIAL task
 	task := models.StudyQueueTask{
@@ -1745,6 +1746,10 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 	res := app.CompleteSocraticRescue("task-socratic-test")
 	if errVal, ok := res["error"]; ok && errVal != nil {
 		t.Fatalf("CompleteSocraticRescue failed: %v", errVal)
+	}
+	returnedQuizTaskID, ok := res["quiz_task_id"].(string)
+	if !ok || returnedQuizTaskID == "" {
+		t.Fatalf("expected completeSocraticRescue to return quiz_task_id")
 	}
 
 	// Verify SOCRATIC_REMEDIAL task status is COMPLETED
@@ -1770,9 +1775,8 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 	err = testRepo.QueryRowForTest(`
 		SELECT payload_json
 		FROM study_queue
-		WHERE topic_id = ? AND task_type = 'QUIZ' AND status = 'PENDING'
-		LIMIT 1
-	`, "topic-test").Scan(&payloadJSON)
+		WHERE id = ? AND status = 'PENDING'
+	`, returnedQuizTaskID).Scan(&payloadJSON)
 	if err != nil {
 		t.Fatalf("failed to retrieve quiz task payload: %v", err)
 	}
@@ -1784,6 +1788,12 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 
 	if source, ok := payloadMap["source"].(string); !ok || source != "socratic_rescue_requiz" {
 		t.Fatalf("expected payload source to be %q, got %q", "socratic_rescue_requiz", payloadMap["source"])
+	}
+
+	// Assert that questions were generated and stored in the payload
+	questions, ok := payloadMap["questions"].([]interface{})
+	if !ok || len(questions) == 0 {
+		t.Fatalf("expected generated questions in payload, got none")
 	}
 }
 

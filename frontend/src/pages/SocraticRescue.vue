@@ -245,8 +245,9 @@ async function finishRescueSession() {
       completing.value = false
       return
     }
-    // Successfully completed! Route back to dashboard where a new QUIZ task awaits.
-    router.push('/dashboard')
+    // Successfully completed! Route directly to the quiz if task id is returned, else fallback to dashboard
+    const nextRoute = res?.quiz_task_id ? `/quiz?taskId=${res.quiz_task_id}` : '/dashboard'
+    router.push(nextRoute)
   } catch (err) {
     error.value = 'Failed to complete session: ' + (err.message || err)
     completing.value = false

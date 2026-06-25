@@ -888,10 +888,11 @@ func (a *App) CompleteSocraticRescue(taskID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	if err := a.studyService.CompleteSocraticRescue(taskID); err != nil {
+	quizTaskID, err := a.studyService.CompleteSocraticRescue(taskID)
+	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	return map[string]interface{}{"ok": true}
+	return map[string]interface{}{"ok": true, "quiz_task_id": quizTaskID}
 }
 
 // GetAppEnv returns the current value of the APP_ENV environment variable.
