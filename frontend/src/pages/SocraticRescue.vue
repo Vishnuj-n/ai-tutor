@@ -174,8 +174,8 @@ onMounted(async () => {
     }
     topicID.value = task.topic_id || ''
     notebookID.value = task.notebook_id || ''
-    startPage.value = parseInt(task.start_page, 10) || 1
-    endPage.value = parseInt(task.end_page, 10) || 10
+    startPage.value = Number.parseInt(task.start_page, 10) || 1
+    endPage.value = Number.parseInt(task.end_page, 10) || 10
   } catch (err) {
     error.value = `Failed to fetch task context: ${err.message || err}`
     loading.value = false

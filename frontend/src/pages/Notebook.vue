@@ -110,7 +110,7 @@
             <select
               :value="notebook.priority || 5"
               class="priority-select"
-              @change="(e) => updatePriority(notebook.id, parseInt(e.target.value))"
+              @change="(e) => updatePriority(notebook.id, Number.parseInt(e.target.value))"
             >
               <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
             </select>
@@ -196,7 +196,7 @@
             <select
               :value="notebook.priority || 5"
               class="priority-select"
-              @change="(e) => updatePriority(notebook.id, parseInt(e.target.value))"
+              @change="(e) => updatePriority(notebook.id, Number.parseInt(e.target.value))"
             >
               <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
             </select>

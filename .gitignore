@@ -24,3 +24,4 @@ graphify-out/*
 doc/NOTES/
 .tmp
 .exe
+.scannerwork/
