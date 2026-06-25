@@ -265,3 +265,55 @@ func TestGetNextDueReviewNotebookUsesPriorityAndLegacyTopicLink(t *testing.T) {
 		t.Fatalf("expected dueCount=2, got %d", dueCount)
 	}
 }
+
+func TestQueryDueReviewCardsForRange(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "topic-range"
+	if err := testRepo.EnsureTopic(topicID, "Range Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	err := testRepo.CreateFlashcards(topicID, []models.Flashcard{
+		{ID: "card-1", TopicID: topicID, Prompt: "Q1", Answer: "A1", DueAt: 50, Suspended: false},
+		{ID: "card-2", TopicID: topicID, Prompt: "Q2", Answer: "A2", DueAt: 150, Suspended: false},
+		{ID: "card-3", TopicID: topicID, Prompt: "Q3", Answer: "A3", DueAt: 250, Suspended: false},
+		{ID: "card-4", TopicID: topicID, Prompt: "Q4", Answer: "A4", DueAt: 150, Suspended: true}, // Suspended
+	}, map[string]models.FlashcardState{
+		"card-1": {},
+		"card-2": {},
+		"card-3": {},
+		"card-4": {},
+	})
+	if err != nil {
+		t.Fatalf("CreateFlashcards failed: %v", err)
+	}
+
+	// 1. Verify query within (0, 100] -> should find card-1 only
+	count, err := testRepo.QueryDueReviewCardsForRange(0, 100)
+	if err != nil {
+		t.Fatalf("QueryDueReviewCardsForRange failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 card due in (0, 100], got %d", count)
+	}
+
+	// 2. Verify query within (100, 200] -> should find card-2 only (card-4 is suspended)
+	count, err = testRepo.QueryDueReviewCardsForRange(100, 200)
+	if err != nil {
+		t.Fatalf("QueryDueReviewCardsForRange failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 active card due in (100, 200], got %d", count)
+	}
+
+	// 3. Verify query within (0, 300] -> should find card-1, card-2, card-3 (suspended ignored)
+	count, err = testRepo.QueryDueReviewCardsForRange(0, 300)
+	if err != nil {
+		t.Fatalf("QueryDueReviewCardsForRange failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected 3 cards due in (0, 300], got %d", count)
+	}
+}
+
