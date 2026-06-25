@@ -415,7 +415,6 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Re-initialize DB, this time with the staged vec0.dll
 		newRepo, err := db.Init(dbPath, am.Vec0DllPath())
 		if err != nil {
 			fbRepo, fbErr := db.Init(dbPath, "")
@@ -423,8 +422,11 @@ func (a *App) InitializeRAG() map[string]interface{} {
 				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v, and fallback non-vector initialization also failed: %v", err, fbErr))
 			} else {
 				a.repoMutex.Lock()
-				_ = repo.Close()
-				a.repo = fbRepo
+				oldDB := repo.SwapDB(fbRepo)
+				if oldDB != nil {
+					_ = oldDB.Close()
+				}
+				a.scheduler = scheduler.New(repo, scheduler.Dependencies{})
 				a.repoMutex.Unlock()
 				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
 			}
@@ -438,8 +440,11 @@ func (a *App) InitializeRAG() map[string]interface{} {
 				emitRagSetupFailed(a, fmt.Sprintf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary), and fallback non-vector initialization also failed: %v", fbErr))
 			} else {
 				a.repoMutex.Lock()
-				_ = repo.Close()
-				a.repo = fbRepo
+				oldDB := repo.SwapDB(fbRepo)
+				if oldDB != nil {
+					_ = oldDB.Close()
+				}
+				a.scheduler = scheduler.New(repo, scheduler.Dependencies{})
 				a.repoMutex.Unlock()
 				emitRagSetupFailed(a, "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
 			}
@@ -461,14 +466,17 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Success loading vec0 extension! Close old repo connection, set new repo under lock.
+		// Success loading vec0 extension! Swap the underlying database connection, close old connection.
 		a.repoMutex.Lock()
-		_ = repo.Close()
-		a.repo = newRepo
+		oldDB := repo.SwapDB(newRepo)
+		if oldDB != nil {
+			_ = oldDB.Close()
+		}
+		a.scheduler = scheduler.New(repo, scheduler.Dependencies{})
 		a.repoMutex.Unlock()
 
 		// Set dimensions
-		if err := newRepo.InitWithVectorDimension(emb.GetDimension()); err != nil {
+		if err := repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
 			utils.Warnf("could not initialize vector table: %v", err)
 		}
 
@@ -490,10 +498,10 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		}
 
 		// Save settings in DB to reflect RAG is enabled
-		settings, err := newRepo.GetUserSettings()
+		settings, err := repo.GetUserSettings()
 		if err == nil {
 			settings.RAGEnabled = true
-			_ = newRepo.UpdateUserSettings(*settings)
+			_ = repo.UpdateUserSettings(*settings)
 		}
 
 		// Emit indexing-in-progress event before starting vector indexing
@@ -505,7 +513,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		})
 
 		// Index all existing topics; emit ready only after success
-		indexer := retrieval.NewVectorIndexer(newRepo, emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
+		indexer := retrieval.NewVectorIndexer(repo, emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
 		if err := indexer.IndexAllTopics(); err != nil {
 			utils.Errorf("vector indexing failed after RAG enable: %v", err)
 			a.aiMutex.Lock()
@@ -523,7 +531,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 		if a.indexQueue != nil {
 			a.indexQueue.Stop()
 		}
-		a.indexQueue = retrieval.NewVectorIndexQueue(newRepo, emb, a.ctx)
+		a.indexQueue = retrieval.NewVectorIndexQueue(repo, emb, a.ctx)
 		a.indexQueue.Start()
 		a.aiMutex.Unlock()
 

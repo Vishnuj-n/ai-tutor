@@ -39,6 +39,15 @@ func (r *Repository) Close() error {
 	return err
 }
 
+// SwapDB swaps the underlying database connection in-place and returns the old connection.
+func (r *Repository) SwapDB(newRepo *Repository) *sql.DB {
+	oldDB := r.db
+	r.db = newRepo.db
+	r.embeddingDimension = newRepo.embeddingDimension
+	return oldDB
+}
+
+
 // Begin starts a new transaction on the database.
 func (r *Repository) Begin() (*sql.Tx, error) {
 	return r.db.Begin()
