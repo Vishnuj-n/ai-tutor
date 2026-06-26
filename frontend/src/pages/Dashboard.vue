@@ -39,8 +39,8 @@
         <div class="rescue-text">
           <p class="rescue-title">Concept Rescue Active</p>
           <p class="rescue-subtitle">
-            Your study queue is locked because you failed the quiz twice on this topic.
-            You must complete the Socratic tutor rescue session to unblock your timeline.
+            Your study queue is locked because you failed the quiz twice on this topic. You must
+            complete the Socratic tutor rescue session to unblock your timeline.
           </p>
         </div>
       </div>
@@ -150,49 +150,194 @@
         </div>
       </section>
 
-      <!-- Task List (Interleaved Bookshelf Tasks) -->
-      <div v-if="tasks.length > 0" class="task-list">
-        <article v-for="task in tasks" :key="task.id" class="card task-card">
-          <div class="task-header">
-            <span class="task-type" :class="task.action_type.toLowerCase()">{{ formatTaskType(task.action_type) }}</span>
-            <span v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0" class="task-estimate">{{ task.estimate_minutes }} min</span>
+      <!-- Dashboard Layout Grid -->
+      <div class="dashboard-grid">
+        <!-- Main Panel (Tasks / States) -->
+        <div class="dashboard-main">
+          <!-- Task List (Interleaved Bookshelf Tasks) -->
+          <div v-if="tasks.length > 0" class="task-list">
+            <article v-for="task in tasks" :key="task.id" class="card task-card">
+              <div class="task-header">
+                <span class="task-type" :class="task.action_type.toLowerCase()">{{
+                  formatTaskType(task.action_type)
+                }}</span>
+                <span
+                  v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0"
+                  class="task-estimate"
+                  >{{ task.estimate_minutes }} min</span
+                >
+              </div>
+              <h3>{{ task.title }}</h3>
+              <p class="task-meta">
+                {{
+                  task.meta
+                    ? task.meta
+                    : task.start_page !== undefined &&
+                        task.start_page !== null &&
+                        task.end_page !== undefined &&
+                        task.end_page !== null
+                      ? 'Pages ' + task.start_page + '-' + task.end_page
+                      : 'Pages N/A'
+                }}
+              </p>
+              <button
+                type="button"
+                class="primary-btn"
+                :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
+                :aria-label="'Start task ' + (task.title || task.id)"
+                :disabled="task.action_type === 'flashcard_sync' && isSyncing"
+                @click="startTask(task)"
+              >
+                <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
+                <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
+                <span v-else>Start</span>
+              </button>
+            </article>
           </div>
-          <h3>{{ task.title }}</h3>
-          <p class="task-meta">
-            {{
-              task.meta
-                ? task.meta
-                : task.start_page !== undefined &&
-                    task.start_page !== null &&
-                    task.end_page !== undefined &&
-                    task.end_page !== null
-                  ? 'Pages ' + task.start_page + '-' + task.end_page
-                  : 'Pages N/A'
-            }}
-          </p>
-          <button
-            type="button"
-            class="primary-btn"
-            :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
-            :aria-label="'Start task ' + (task.title || task.id)"
-            :disabled="task.action_type === 'flashcard_sync' && isSyncing"
-            @click="startTask(task)"
-          >
-            <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
-            <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
-            <span v-else>Start</span>
-          </button>
-        </article>
-      </div>
 
-      <div v-else-if="hasActiveStudyContent" class="card state-card victory-card">
-        <h2>Tasks Complete!</h2>
-        <p class="muted">You've completed all tasks for today. Great work!</p>
-      </div>
+          <div v-else-if="hasActiveStudyContent" class="card state-card victory-card">
+            <h2>Tasks Complete!</h2>
+            <p class="muted">You've completed all tasks for today. Great work!</p>
+          </div>
 
-      <div v-else class="card state-card">
-        <h2>No textbooks active</h2>
-        <p class="muted">Go to Notebooks to upload and activate textbooks.</p>
+          <div v-else class="card onboarding-card">
+            <div class="onboarding-content">
+              <h2>Your study queue is empty</h2>
+              <p class="onboarding-desc">
+                Upload a PDF textbook and the app builds a study queue of reading tasks, quizzes, and
+                flashcards for you.
+              </p>
+              <div class="onboarding-steps">
+                <div class="onboarding-step">
+                  <span class="step-number">1</span>
+                  <span class="step-label">Upload a PDF</span>
+                </div>
+                <div class="onboarding-divider"></div>
+                <div class="onboarding-step">
+                  <span class="step-number">2</span>
+                  <span class="step-label">Read chapters</span>
+                </div>
+                <div class="onboarding-divider"></div>
+                <div class="onboarding-step">
+                  <span class="step-number">3</span>
+                  <span class="step-label">Quiz & review</span>
+                </div>
+              </div>
+              <button class="primary-btn onboarding-cta" @click="goToNotebooks">
+                Upload your first textbook
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar Panel (Forecast Chart) -->
+        <div v-if="timelineData && timelineData.length > 0" class="dashboard-sidebar">
+          <section class="forecast-widget">
+            <div class="forecast-card card">
+              <div class="forecast-header-row">
+                <div>
+                  <h2 class="forecast-header">Flashcard Review Forecast</h2>
+                  <p class="forecast-subtitle">Review load by date vs daily session limit</p>
+                </div>
+                <div class="forecast-legend">
+                  <span class="legend-item"><span class="legend-dot due-dot"></span>Due Cards</span>
+                  <span class="legend-item">
+                    <span class="legend-line" :class="{ active: isThresholdExceeded }"></span>
+                    Limit ({{ maxFlashcardsLimit }})
+                  </span>
+                </div>
+              </div>
+
+              <div class="chart-container">
+                <svg class="forecast-chart" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet">
+                  <!-- Definitions for Gradients -->
+                  <defs>
+                    <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="var(--primary)" stop-opacity="0.25"/>
+                      <stop offset="100%" stop-color="var(--primary)" stop-opacity="0.0"/>
+                    </linearGradient>
+                  </defs>
+
+                  <!-- Axis Lines -->
+                  <line x1="30" y1="50" x2="30" y2="250" class="axis-line" />
+                  <line x1="30" y1="250" x2="370" y2="250" class="axis-line" />
+
+                  <!-- Y Axis Labels & Grid Lines -->
+                  <g v-for="tick in yTicks" :key="tick.value" class="chart-y-tick">
+                    <!-- Grid line -->
+                    <line
+                      v-if="tick.value !== 0"
+                      x1="30"
+                      :y1="tick.y"
+                      x2="370"
+                      :y2="tick.y"
+                      class="chart-grid-line"
+                    />
+                    <!-- Text label -->
+                    <text
+                      x="22"
+                      :y="tick.y + 3.5"
+                      class="y-axis-label"
+                      text-anchor="end"
+                    >
+                      {{ tick.value }}
+                    </text>
+                  </g>
+
+                  <!-- Horizontal Limit Line -->
+                  <line
+                    x1="30"
+                    :y1="limitLineY"
+                    x2="370"
+                    :y2="limitLineY"
+                    class="limit-line"
+                    :class="{ active: isThresholdExceeded }"
+                  />
+
+                  <!-- Shading Area under the curve -->
+                  <path :d="areaPathData" fill="url(#chartGrad)" />
+
+                  <!-- Main Line Path -->
+                  <path :d="linePathData" fill="none" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round" />
+
+                  <!-- Data Points (interactive dots) -->
+                  <g v-for="(pt, idx) in chartPoints" :key="idx">
+                    <circle
+                      :cx="pt.x"
+                      :cy="pt.y"
+                      r="5"
+                      class="chart-dot"
+                      :class="{ 'exceeds-limit': pt.exceeds }"
+                      @mouseenter="hoveredPoint = pt"
+                      @mouseleave="hoveredPoint = null"
+                    />
+                  </g>
+                </svg>
+
+                <!-- Tooltip overlay -->
+                <div
+                  v-if="hoveredPoint"
+                  class="chart-tooltip"
+                  :style="{ left: hoveredPoint.tooltipX + '%', top: hoveredPoint.percentY + '%' }"
+                >
+                  <div class="tooltip-date">{{ hoveredPoint.dayLabel }} ({{ hoveredPoint.date }})</div>
+                  <div class="tooltip-value">
+                    <strong>{{ hoveredPoint.count }}</strong> due cards
+                    <span v-if="hoveredPoint.exceeds" class="tooltip-warn">⚠️ Overload</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- X Axis Labels -->
+              <div class="chart-x-axis">
+                <div v-for="(pt, idx) in chartPoints" :key="idx" class="x-label-container" :style="{ left: pt.percentX + '%' }">
+                  <span class="x-label">{{ pt.dayLabel }}</span>
+                  <span class="x-sublabel" :class="{ exceeds: pt.exceeds }">{{ pt.count }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </template>
 
@@ -203,20 +348,10 @@
         <span class="dev-badge">APP_ENV = dev</span>
       </header>
       <div class="dev-actions">
-        <button
-          type="button"
-          class="dev-btn"
-          :disabled="forcingRescue"
-          @click="forceRescueState"
-        >
+        <button type="button" class="dev-btn" :disabled="forcingRescue" @click="forceRescueState">
           {{ forcingRescue ? 'Forcing...' : 'Force Socratic Rescue' }}
         </button>
-        <button
-          type="button"
-          class="dev-btn"
-          :disabled="forcingSync"
-          @click="forceSyncTask"
-        >
+        <button type="button" class="dev-btn" :disabled="forcingSync" @click="forceSyncTask">
           {{ forcingSync ? 'Forcing...' : 'Force Flashcard Sync' }}
         </button>
       </div>
@@ -239,6 +374,7 @@ import {
   devForceSocraticRescue,
   devForceFlashcardSync,
   getNotebooks,
+  getFlashcardDueTimeline,
 } from '../services/appApi'
 
 const router = useRouter()
@@ -253,19 +389,103 @@ const dueReviewCards = ref(0)
 
 const profiles = ref([])
 const userSettings = ref({
-  daily_study_minutes: 90,
+  max_flashcards_per_session: 30,
+  study_start_time: '17:00',
+  study_end_time: '18:00',
+  reminders_enabled: true,
   active_profile_id: '',
   skip_to_reading_active: false,
   cloud_sync_url: '',
   cloud_api_token: '',
   theme: '',
   rag_enabled: false,
+  rag_notebook_chapter: true,
+  rag_entire_notebook: true,
+  rag_queue_study: true,
+  default_remedial_strategy: 'CLASSIC',
 })
 const activeProfilePace = ref(null)
 const lastPersistedProfile = ref('')
 
+const timelineData = ref([])
+const hoveredPoint = ref(null)
+
+const maxFlashcardsLimit = computed(() => {
+  return userSettings.value.max_flashcards_per_session || 30
+})
+
+const isThresholdExceeded = computed(() => {
+  return timelineData.value.some((d) => d.card_count > maxFlashcardsLimit.value)
+})
+
+const yAxisMax = computed(() => {
+  if (!timelineData.value || timelineData.value.length === 0) return 40
+  const counts = timelineData.value.map((d) => d.card_count)
+  const rawMax = Math.max(...counts, maxFlashcardsLimit.value, 10)
+  let maxVal = Math.ceil(rawMax * 1.2)
+  if (maxVal % 4 !== 0) {
+    maxVal += 4 - (maxVal % 4)
+  }
+  return maxVal
+})
+
+const yTicks = computed(() => {
+  const maxVal = yAxisMax.value
+  const steps = [0, 0.25, 0.5, 0.75, 1]
+  return steps.map((pct) => {
+    return {
+      value: Math.round(maxVal * pct),
+      y: 250 - pct * 200,
+    }
+  })
+})
+
+const chartPoints = computed(() => {
+  if (!timelineData.value || timelineData.value.length === 0) return []
+  const maxVal = yAxisMax.value
+  const len = timelineData.value.length
+
+  return timelineData.value.map((d, i) => {
+    // scale to 400x300 viewport
+    const x = len === 1 ? 200 : 30 + (i / (len - 1)) * 340
+    const y = 250 - (d.card_count / maxVal) * 200
+    const exceeds = d.card_count > maxFlashcardsLimit.value
+    const px = len === 1 ? 50 : 7 + (i / (len - 1)) * 86
+    return {
+      x,
+      y,
+      percentX: px,
+      tooltipX: px,
+      tooltipY: y,
+      percentY: (y / 300) * 100,
+      dayLabel: d.day_label,
+      date: d.date,
+      count: d.card_count,
+      exceeds,
+    }
+  })
+})
+
+const linePathData = computed(() => {
+  const pts = chartPoints.value
+  if (pts.length === 0) return ''
+  return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+})
+
+const areaPathData = computed(() => {
+  const pts = chartPoints.value
+  if (pts.length === 0) return ''
+  const linePath = linePathData.value
+  return `${linePath} L ${pts[pts.length - 1].x} 250 L ${pts[0].x} 250 Z`
+})
+
+const limitLineY = computed(() => {
+  if (!timelineData.value || timelineData.value.length === 0) return 150
+  return 250 - (maxFlashcardsLimit.value / yAxisMax.value) * 200
+})
+
 const flashcardsJustCreated = computed(() => {
-  const created = parseInt(route.query.flashcardsCreated, 10)
+  const created = Number.parseInt(route.query.flashcardsCreated, 10)
   return isNaN(created) || created <= 0 ? 0 : created
 })
 
@@ -363,6 +583,19 @@ async function loadAgenda() {
     } else {
       activeProfilePace.value = null
     }
+
+    // 5. Fetch flashcard review forecast timeline
+    try {
+      const timelineRes = await getFlashcardDueTimeline()
+      if (timelineRes && !timelineRes.error) {
+        timelineData.value = timelineRes.timeline || []
+      } else {
+        timelineData.value = []
+      }
+    } catch (err) {
+      console.error('Failed to get flashcard due timeline', err)
+      timelineData.value = []
+    }
   } catch (err) {
     error.value = err.message || 'Failed to load tasks'
   } finally {
@@ -376,13 +609,20 @@ async function changeActiveProfile(event) {
   try {
     loading.value = true
     const res = await updateUserSettings(
-      userSettings.value.daily_study_minutes,
+      userSettings.value.max_flashcards_per_session,
+      userSettings.value.study_start_time,
+      userSettings.value.study_end_time,
+      userSettings.value.reminders_enabled,
       newProfileID,
       userSettings.value.skip_to_reading_active,
       userSettings.value.cloud_sync_url,
       userSettings.value.cloud_api_token,
       userSettings.value.theme || '',
-      userSettings.value.rag_enabled || false
+      userSettings.value.rag_enabled || false,
+      userSettings.value.rag_notebook_chapter,
+      userSettings.value.rag_entire_notebook,
+      userSettings.value.rag_queue_study,
+      userSettings.value.default_remedial_strategy
     )
     if (res && res.error) {
       userSettings.value.active_profile_id = oldProfileID
@@ -390,6 +630,7 @@ async function changeActiveProfile(event) {
       return
     }
     lastPersistedProfile.value = newProfileID
+    window.dispatchEvent(new CustomEvent('settings-updated'))
     await loadAgenda()
   } catch (err) {
     userSettings.value.active_profile_id = oldProfileID
@@ -405,19 +646,27 @@ async function toggleEscapeHatch() {
     loading.value = true
     userSettings.value.skip_to_reading_active = !userSettings.value.skip_to_reading_active
     const res = await updateUserSettings(
-      userSettings.value.daily_study_minutes,
+      userSettings.value.max_flashcards_per_session,
+      userSettings.value.study_start_time,
+      userSettings.value.study_end_time,
+      userSettings.value.reminders_enabled,
       userSettings.value.active_profile_id,
       userSettings.value.skip_to_reading_active,
       userSettings.value.cloud_sync_url,
       userSettings.value.cloud_api_token,
       userSettings.value.theme || '',
-      userSettings.value.rag_enabled || false
+      userSettings.value.rag_enabled || false,
+      userSettings.value.rag_notebook_chapter,
+      userSettings.value.rag_entire_notebook,
+      userSettings.value.rag_queue_study,
+      userSettings.value.default_remedial_strategy
     )
     if (res && res.error) {
       userSettings.value.skip_to_reading_active = previousSkipToReading
       actionError.value = res.error
       return
     }
+    window.dispatchEvent(new CustomEvent('settings-updated'))
     await loadAgenda()
   } catch (err) {
     userSettings.value.skip_to_reading_active = previousSkipToReading
@@ -474,7 +723,7 @@ async function forceRescueState() {
       return
     }
 
-    const validNb = notebooks.find(n => n.topic_id)
+    const validNb = notebooks.find((n) => n.topic_id)
     if (!validNb) {
       devMessage.value = 'No notebook with a linked topic found. Confirm syllabus first.'
       forcingRescue.value = false
@@ -517,6 +766,10 @@ async function forceSyncTask() {
   } finally {
     forcingSync.value = false
   }
+}
+
+function goToNotebooks() {
+  router.push('/notebooks')
 }
 
 function startTask(task) {
@@ -717,6 +970,80 @@ function startTask(task) {
 
 .muted {
   color: var(--muted-text);
+}
+
+/* Onboarding empty state */
+.onboarding-card {
+  padding: 48px 40px;
+  text-align: center;
+}
+
+.onboarding-content {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.onboarding-card h2 {
+  margin: 0 0 12px;
+  font-size: 26px;
+  font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-desc {
+  margin: 0 0 32px;
+  font-size: 15px;
+  color: var(--muted-text);
+  line-height: 1.6;
+}
+
+.onboarding-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 36px;
+}
+
+.onboarding-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-number {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(108, 92, 231, 0.1);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.onboarding-divider {
+  width: 40px;
+  height: 1px;
+  background: var(--outline-variant);
+  margin: 0 12px;
+  margin-bottom: 20px;
+}
+
+.onboarding-cta {
+  padding: 14px 32px;
+  font-size: 15px;
+  border-radius: 14px;
 }
 
 /* Telemetry styles */
@@ -1005,5 +1332,244 @@ function startTask(task) {
   font-size: 12px;
   font-weight: 600;
   color: #16a085;
+}
+
+/* Dashboard Two-Column Layout Grid */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+@media (min-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr 380px;
+    align-items: start;
+  }
+}
+
+.dashboard-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dashboard-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Forecast Widget Styles */
+.forecast-widget {
+  margin-bottom: 8px;
+}
+
+.forecast-card {
+  padding: 24px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 1 / 1.05;
+  min-height: 380px;
+}
+
+.forecast-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.forecast-header {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.forecast-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.forecast-legend {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-text);
+  margin-top: 4px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot.due-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.legend-line {
+  width: 16px;
+  height: 2px;
+  background: var(--muted-text);
+  opacity: 0.6;
+}
+
+.legend-line.active {
+  background: #ff4d4f;
+  opacity: 1;
+  box-shadow: 0 0 4px rgba(255, 77, 79, 0.4);
+}
+
+.chart-container {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 180px;
+  background: var(--surface-container-lowest);
+  border-radius: 12px;
+}
+
+.forecast-chart {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.chart-grid-line {
+  stroke: var(--outline-variant);
+  stroke-width: 1px;
+  stroke-opacity: 0.6;
+  stroke-dasharray: 2 4;
+}
+
+.axis-line {
+  stroke: var(--outline-variant);
+  stroke-width: 1px;
+  stroke-opacity: 0.8;
+}
+
+.y-axis-label {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--muted-text);
+  font-family: inherit;
+}
+
+.limit-line {
+  stroke: var(--muted-text);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 4;
+  opacity: 0.5;
+  transition: all 0.3s ease;
+}
+
+.limit-line.active {
+  stroke: #ff4d4f;
+  stroke-width: 2px;
+  stroke-dasharray: none;
+  opacity: 1;
+  filter: drop-shadow(0 0 2px rgba(255, 77, 79, 0.6));
+}
+
+.chart-dot {
+  fill: var(--surface-container-lowest);
+  stroke: var(--primary);
+  stroke-width: 2.5px;
+  cursor: pointer;
+  transition: r 0.15s ease, fill 0.15s ease;
+}
+
+.chart-dot:hover {
+  r: 7px;
+  fill: var(--primary);
+}
+
+.chart-dot.exceeds-limit {
+  stroke: #ff4d4f;
+}
+
+.chart-dot.exceeds-limit:hover {
+  fill: #ff4d4f;
+}
+
+/* Tooltip */
+.chart-tooltip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  margin-top: -12px;
+  background: var(--surface-bright);
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(8px);
+  z-index: 10;
+  pointer-events: none;
+  min-width: 120px;
+  transition: left 0.1s ease, top 0.1s ease;
+}
+
+.tooltip-date {
+  font-size: 11px;
+  color: var(--muted-text);
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.tooltip-value {
+  font-size: 13px;
+  color: var(--on-surface);
+}
+
+.tooltip-warn {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  color: #ff4d4f;
+  font-weight: 700;
+}
+
+/* X Axis */
+.chart-x-axis {
+  position: relative;
+  height: 36px;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.x-label-container {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.x-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-text);
+}
+
+.x-sublabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--on-surface);
+  margin-top: 2px;
+}
+
+.x-sublabel.exceeds {
+  color: #ff4d4f;
 }
 </style>

@@ -16,6 +16,74 @@ import (
 	"github.com/google/uuid"
 )
 
+// ---------- Helpers for GetTodayPlan ----------
+
+func calculateDailyStudyMinutes(studyStart, studyEnd string) int {
+	dailyStudyMinutes := 60 // default fallback
+	var sh, sm, eh, em int
+	if _, errS := fmt.Sscanf(studyStart, "%d:%d", &sh, &sm); errS == nil {
+		if _, errE := fmt.Sscanf(studyEnd, "%d:%d", &eh, &em); errE == nil {
+			startMins := sh*60 + sm
+			endMins := eh*60 + em
+			diff := endMins - startMins
+			if diff < 0 {
+				diff += 1440
+			}
+			if diff > 0 {
+				dailyStudyMinutes = diff
+			}
+		}
+	}
+	return dailyStudyMinutes
+}
+
+func calculateFlashcardBudgets(dueCards, maxFlashcards int) (int, int, int) {
+	materializedCards := dueCards
+	if materializedCards > maxFlashcards {
+		materializedCards = maxFlashcards
+	}
+	deferredCards := dueCards - materializedCards
+	if deferredCards < 0 {
+		deferredCards = 0
+	}
+	safeReviewBudget := int(math.Ceil(float64(materializedCards) * scheduler.ReviewMinutesPerCard))
+	return materializedCards, deferredCards, safeReviewBudget
+}
+
+func aggregateQueueTasks(active, pending []models.StudyQueueTask) ([]models.ScheduledTask, []string, int, map[string]int) {
+	queueTasks := make([]models.ScheduledTask, 0, len(active)+len(pending))
+	actionCounts := make(map[string]int)
+	activeTopicsMap := make(map[string]bool)
+
+	processTasks := func(tasks []models.StudyQueueTask) {
+		for _, q := range tasks {
+			task := queueTaskToScheduledTask(q)
+			queueTasks = append(queueTasks, task)
+			actionCounts[task.ActionType]++
+			if q.Title != "" {
+				activeTopicsMap[q.Title] = true
+			}
+		}
+	}
+
+	processTasks(active)
+	processTasks(pending)
+
+	activeTopics := make([]string, 0, len(activeTopicsMap))
+	for topicTitle := range activeTopicsMap {
+		activeTopics = append(activeTopics, topicTitle)
+	}
+
+	learningMinutes := 0
+	for _, task := range queueTasks {
+		learningMinutes += task.EstimateMinutes
+	}
+
+	return queueTasks, activeTopics, learningMinutes, actionCounts
+}
+
+// ---------- Main App Methods ----------
+
 func (a *App) GetTodayPlan() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -46,63 +114,18 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}
 		}
-		dailyStudyMinutes, err := repo.GetDailyStudyMinutes()
+		settings, err := repo.GetUserSettings()
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}
 		}
-		if dailyStudyMinutes <= 0 {
-			dailyStudyMinutes = scheduler.DefaultDailyStudyMinutes
+		maxFlashcards := settings.MaxFlashcardsPerSession
+		if maxFlashcards <= 0 {
+			maxFlashcards = 30
 		}
 
-		totalDueCards := dueCards
-		reviewBudget := int(math.Ceil(float64(dueCards) * scheduler.ReviewMinutesPerCard))
-		proportionalCap := int(float64(dailyStudyMinutes) * scheduler.MaxReviewMinutesRatio)
-		safeReviewBudget := reviewBudget
-		if safeReviewBudget > proportionalCap {
-			safeReviewBudget = proportionalCap
-		}
-		if safeReviewBudget > scheduler.MaxReviewMinutesSession {
-			safeReviewBudget = scheduler.MaxReviewMinutesSession
-		}
-		materializedCards := int(float64(safeReviewBudget) / scheduler.ReviewMinutesPerCard)
-		if materializedCards > dueCards {
-			materializedCards = dueCards
-		}
-		deferredCards := totalDueCards - materializedCards
-		if deferredCards < 0 {
-			deferredCards = 0
-		}
-
-		queueTasks := make([]models.ScheduledTask, 0, len(activeQueueTasks)+len(pendingQueueTasks))
-		actionCounts := make(map[string]int)
-		activeTopicsMap := make(map[string]bool)
-
-		for _, q := range activeQueueTasks {
-			task := queueTaskToScheduledTask(q)
-			queueTasks = append(queueTasks, task)
-			actionCounts[task.ActionType]++
-			if q.Title != "" {
-				activeTopicsMap[q.Title] = true
-			}
-		}
-		for _, q := range pendingQueueTasks {
-			task := queueTaskToScheduledTask(q)
-			queueTasks = append(queueTasks, task)
-			actionCounts[task.ActionType]++
-			if q.Title != "" {
-				activeTopicsMap[q.Title] = true
-			}
-		}
-
-		activeTopics := make([]string, 0, len(activeTopicsMap))
-		for topicTitle := range activeTopicsMap {
-			activeTopics = append(activeTopics, topicTitle)
-		}
-
-		learningMinutes := 0
-		for _, task := range queueTasks {
-			learningMinutes += task.EstimateMinutes
-		}
+		dailyStudyMinutes := calculateDailyStudyMinutes(settings.StudyStartTime, settings.StudyEndTime)
+		materializedCards, deferredCards, safeReviewBudget := calculateFlashcardBudgets(dueCards, maxFlashcards)
+		queueTasks, activeTopics, learningMinutes, actionCounts := aggregateQueueTasks(activeQueueTasks, pendingQueueTasks)
 
 		plan = &models.TodayPlan{
 			Date:                now.Format("2006-01-02"),
@@ -110,7 +133,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 			ReviewMinutes:       safeReviewBudget,
 			LearningMinutes:     learningMinutes,
 			DueReviewCards:      materializedCards,
-			TotalDueReviewCards: totalDueCards,
+			TotalDueReviewCards: dueCards,
 			DeferredReviewCards: deferredCards,
 			ActiveTopics:        activeTopics,
 			Tasks:               queueTasks,
@@ -297,32 +320,18 @@ func (a *App) GetQueueState(notebookID string) map[string]interface{} {
 	return map[string]interface{}{"queue_state": state}
 }
 
-// InitializeReadingSession consolidates task activation, reading task loading,
-// and page bounds resolution into a single canonical backend call.
-// Accepts the full routing context so scheduler-suggested tasks (not yet in study_queue)
-// can be materialized as real queue rows on first open.
-func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, startPage, endPage int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
-	}
-	taskID = strings.TrimSpace(taskID)
-	notebookID = strings.TrimSpace(notebookID)
-	topicID = strings.TrimSpace(topicID)
-	if taskID == "" {
-		return map[string]interface{}{"error": "task ID is required", "code": 400}
-	}
-	utils.Warnf("[READER_INIT] InitializeReadingSession entry taskID=%s notebookID=%s topicID=%s startPage=%d endPage=%d", taskID, notebookID, topicID, startPage, endPage)
+// ---------- Helpers for InitializeReadingSession ----------
 
+func (a *App) resolveReadingTaskIdentity(taskID, notebookID, topicID string, startPage, endPage int) (string, map[string]interface{}) {
+	repo := a.getRepo()
 	seedTaskID := taskID
 	existingTask, existingErr := repo.GetTaskByID(seedTaskID)
 
-	// If task doesn't exist yet (e.g. scheduler-generated synthetic ID),
-	// insert it as a real READING task so the queue lifecycle can proceed.
+	// If task doesn't exist yet, insert it as a real READING task.
 	if existingErr == db.ErrTaskNotFound {
 		utils.Warnf("[READER_INIT] InitializeReadingSession task missing, creating pending reading task taskID=%s notebookID=%s topicID=%s", taskID, notebookID, topicID)
 		if notebookID == "" || topicID == "" {
-			return map[string]interface{}{"error": "task not found and notebookID/topicID required to create it", "code": 400}
+			return "", map[string]interface{}{"error": "task not found and notebookID/topicID required to create it", "code": 400}
 		}
 		insertErr := repo.InsertStudyTask(models.StudyQueueTask{
 			ID:         seedTaskID,
@@ -335,19 +344,14 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			EndPage:    endPage,
 		})
 		if insertErr != nil {
-			return map[string]interface{}{"error": "failed to create reading task: " + insertErr.Error()}
+			return "", map[string]interface{}{"error": "failed to create reading task: " + insertErr.Error()}
 		}
-		existingTask = &models.StudyQueueTask{
-			ID:       seedTaskID,
-			Status:   models.StudyTaskStatusPending,
-			TaskType: models.StudyTaskTypeReading,
-		}
+		return seedTaskID, nil
 	} else if existingErr != nil {
-		return map[string]interface{}{"error": existingErr.Error()}
+		return "", map[string]interface{}{"error": existingErr.Error()}
 	}
 
-	// Never reopen terminal queue rows. If deterministic scheduler ID collides with
-	// an already completed/failed/skipped task, materialize a fresh queue row identity.
+	// Never reopen terminal queue rows.
 	if existingTask != nil && existingTask.Status != models.StudyTaskStatusPending && existingTask.Status != models.StudyTaskStatusActive {
 		if notebookID == "" {
 			notebookID = existingTask.NotebookID
@@ -356,12 +360,12 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			topicID = existingTask.TopicID
 		}
 		if notebookID == "" || topicID == "" {
-			return map[string]interface{}{"error": "terminal task cannot be reused and notebookID/topicID were not available", "code": 409}
+			return "", map[string]interface{}{"error": "terminal task cannot be reused and notebookID/topicID were not available", "code": 409}
 		}
-		taskID = uuid.NewString()
-		utils.Warnf("[READER_INIT] InitializeReadingSession task terminal, creating new queue row taskID=%s oldStatus=%s notebookID=%s topicID=%s", taskID, existingTask.Status, notebookID, topicID)
+		newTaskID := uuid.NewString()
+		utils.Warnf("[READER_INIT] InitializeReadingSession task terminal, creating new queue row taskID=%s oldStatus=%s notebookID=%s topicID=%s", newTaskID, existingTask.Status, notebookID, topicID)
 		insertErr := repo.InsertStudyTask(models.StudyQueueTask{
-			ID:         taskID,
+			ID:         newTaskID,
 			NotebookID: notebookID,
 			TopicID:    topicID,
 			TaskType:   models.StudyTaskTypeReading,
@@ -371,20 +375,26 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			EndPage:    endPage,
 		})
 		if insertErr != nil {
-			return map[string]interface{}{"error": "failed to create replacement reading task: " + insertErr.Error()}
+			return "", map[string]interface{}{"error": "failed to create replacement reading task: " + insertErr.Error()}
 		}
+		return newTaskID, nil
 	}
 
-	// Activate task (idempotent if already active)
+	return taskID, nil
+}
+
+func (a *App) activateReadingSessionTask(taskID string) map[string]interface{} {
+	repo := a.getRepo()
 	qTask, qErr := repo.GetTaskByID(taskID)
-	if qErr != nil || qTask == nil {
-		var errDetail error
-		if qErr != nil {
-			errDetail = qErr
-		} else {
-			errDetail = fmt.Errorf("nil task loaded from database")
-		}
-		utils.Errorf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, errDetail)
+
+	if qErr != nil {
+		utils.Errorf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, qErr)
+		utils.QueueLogger.Info("queue task pre-activate loading anomaly", "taskID", taskID)
+		return map[string]interface{}{"error": "failed to load task: " + qErr.Error()}
+	}
+
+	if qTask == nil {
+		utils.Errorf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, fmt.Errorf("nil task loaded from database"))
 		utils.QueueLogger.Info("queue task pre-activate loading anomaly", "taskID", taskID)
 
 		if err := repo.ActivateTask(taskID); err != nil {
@@ -410,6 +420,35 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 			utils.QueueLogger.Info("task terminal", "status", qTask.Status, "taskID", taskID)
 			return map[string]interface{}{"error": "task is in terminal status: " + string(qTask.Status), "code": 409}
 		}
+	}
+	return nil
+}
+
+// InitializeReadingSession consolidates task activation, reading task loading,
+// and page bounds resolution into a single canonical backend call.
+// Accepts the full routing context so scheduler-suggested tasks (not yet in study_queue)
+// can be materialized as real queue rows on first open.
+func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, startPage, endPage int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	taskID = strings.TrimSpace(taskID)
+	notebookID = strings.TrimSpace(notebookID)
+	topicID = strings.TrimSpace(topicID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required", "code": 400}
+	}
+	utils.Warnf("[READER_INIT] InitializeReadingSession entry taskID=%s notebookID=%s topicID=%s startPage=%d endPage=%d", taskID, notebookID, topicID, startPage, endPage)
+
+	resolvedTaskID, errMap := a.resolveReadingTaskIdentity(taskID, notebookID, topicID, startPage, endPage)
+	if errMap != nil {
+		return errMap
+	}
+	taskID = resolvedTaskID
+
+	if errMap := a.activateReadingSessionTask(taskID); errMap != nil {
+		return errMap
 	}
 
 	// Load reading task with all context
@@ -877,10 +916,11 @@ func (a *App) CompleteSocraticRescue(taskID string) map[string]interface{} {
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
-	if err := a.studyService.CompleteSocraticRescue(taskID); err != nil {
+	quizTaskID, err := a.studyService.CompleteSocraticRescue(taskID)
+	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
-	return map[string]interface{}{"ok": true}
+	return map[string]interface{}{"ok": true, "quiz_task_id": quizTaskID}
 }
 
 // GetAppEnv returns the current value of the APP_ENV environment variable.
@@ -960,3 +1000,64 @@ func (a *App) DevForceFlashcardSync(notebookID string) map[string]interface{} {
 	return map[string]interface{}{"ok": true}
 }
 
+type FlashcardDuePoint struct {
+	Date      string `json:"date"`
+	DayLabel  string `json:"day_label"`
+	CardCount int    `json:"card_count"`
+}
+
+// GetFlashcardDueTimeline returns the review card load over the next 7 days.
+func (a *App) GetFlashcardDueTimeline() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+
+	now := time.Now()
+	y, m, d := now.Date()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	endOfToday := midnight.Add(24 * time.Hour).Unix()
+
+	timeline := make([]FlashcardDuePoint, 7)
+
+	// Day 0: Today (due_at in (0, endOfToday])
+	count, err := repo.QueryDueReviewCardsForRange(-1, endOfToday)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	timeline[0] = FlashcardDuePoint{
+		Date:      midnight.Format("2006-01-02"),
+		DayLabel:  "Today",
+		CardCount: count,
+	}
+
+	// Days 1 to 6
+	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	for i := 1; i < 7; i++ {
+		dayStart := endOfToday + int64(i-1)*24*3600
+		dayEnd := endOfToday + int64(i)*24*3600
+
+		count, err := repo.QueryDueReviewCardsForRange(dayStart, dayEnd)
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+
+		targetDay := midnight.Add(time.Duration(i*24) * time.Hour)
+		dayLabel := ""
+		if i == 1 {
+			dayLabel = "Tomorrow"
+		} else {
+			dayLabel = dayNames[targetDay.Weekday()]
+		}
+
+		timeline[i] = FlashcardDuePoint{
+			Date:      targetDay.Format("2006-01-02"),
+			DayLabel:  dayLabel,
+			CardCount: count,
+		}
+	}
+
+	return map[string]interface{}{
+		"timeline": timeline,
+	}
+}

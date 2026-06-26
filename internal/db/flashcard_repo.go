@@ -162,60 +162,8 @@ func (r *Repository) GetFlashcardStatesByIDs(cardIDs []string) (map[string]model
 
 // UpdateFlashcardReview updates scheduling state after a review grade.
 func (r *Repository) UpdateFlashcardReview(cardID string, dueAt int64, expectedDueAt int64, expectedStateJSON string, state models.FlashcardState, reviewLog models.FSRSReviewLog) error {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return fmt.Errorf("flashcard id is required")
-	}
-	if dueAt <= 0 {
-		return fmt.Errorf("due time is required")
-	}
-	stateJSON, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("failed to encode flashcard state for %s: %w", cardID, err)
-	}
-
 	return r.withTx(func(tx *sql.Tx) error {
-		result, err := tx.Exec(`
-			UPDATE fsrs_cards
-			SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND due_at = ? AND state_json = ?
-		`, string(stateJSON), dueAt, cardID, expectedDueAt, expectedStateJSON)
-		if err != nil {
-			return err
-		}
-
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows != 1 {
-			return fmt.Errorf("flashcard %s was modified concurrently", cardID)
-		}
-
-		var validatedTopicID string
-		if err = tx.QueryRow(`
-			SELECT t.id
-			FROM fsrs_cards c
-			JOIN topics t ON t.id = c.topic_id
-			WHERE c.id = ?
-		`, cardID).Scan(&validatedTopicID); err != nil {
-			if err == sql.ErrNoRows {
-				return fmt.Errorf("topic not found for flashcard %s", cardID)
-			}
-			return err
-		}
-
-		if _, err = tx.Exec(`
-			INSERT INTO fsrs_review_log (
-				id, topic_id, activity_type, reference_id, reviewed_at, rating,
-				scheduled_days, state_before_json, state_after_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, reviewLog.ID, validatedTopicID, reviewLog.ActivityType, cardID,
-			reviewLog.ReviewedAt, reviewLog.Rating, reviewLog.ScheduledDays,
-			reviewLog.StateBeforeJSON, string(stateJSON)); err != nil {
-			return err
-		}
-		return nil
+		return r.UpdateFlashcardReviewTx(tx, cardID, dueAt, expectedDueAt, expectedStateJSON, state, reviewLog)
 	})
 }
 
@@ -511,26 +459,9 @@ func (r *Repository) FlashcardExistsByID(cardID string) (bool, error) {
 
 // SuspendFlashcard sets the suspended flag on a flashcard, removing it from all future review sessions.
 func (r *Repository) SuspendFlashcard(cardID string) error {
-	cardID = strings.TrimSpace(cardID)
-	if cardID == "" {
-		return fmt.Errorf("flashcard id is required")
-	}
-	result, err := r.db.Exec(`
-		UPDATE fsrs_cards
-		SET suspended = 1, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND suspended = 0
-	`, cardID)
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return fmt.Errorf("flashcard %s not found or already suspended", cardID)
-	}
-	return nil
+	return r.withTx(func(tx *sql.Tx) error {
+		return r.SuspendFlashcardTx(tx, cardID)
+	})
 }
 
 // SuspendFlashcardTx sets the suspended flag on a flashcard within a transaction.
@@ -563,7 +494,7 @@ func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
 		return fmt.Errorf("checking affected rows: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("flashcard %s already suspended or not found", cardID)
+		return fmt.Errorf("flashcard %s was not updated, potentially due to a concurrent update or missing row", cardID)
 	}
 	return nil
 }

@@ -3,6 +3,10 @@ package main
 import (
 	"embed"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -45,15 +49,44 @@ func notebookHandler(app *App) http.Handler {
 			return
 		}
 
-		// Serve only GET requests under /notebooks/.
-		// http.FileServer handles path cleaning, URL unescaping, and directory
-		// traversal prevention automatically; no manual path manipulation needed.
+		// Only handle requests under /notebooks/
+		if !strings.HasPrefix(req.URL.Path, "/notebooks/") {
+			return
+		}
+
+		// Serve only GET requests.
 		if req.Method != http.MethodGet {
 			rw.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		fs := http.FileServer(http.Dir(app.notebookUploadDir))
-		http.StripPrefix("/notebooks", fs).ServeHTTP(rw, req)
+		// Unescape the URL path to handle URL-encoded characters (like spaces %20)
+		unescapedPath, err := url.PathUnescape(req.URL.Path)
+		if err != nil {
+			http.Error(rw, "invalid URL path encoding", http.StatusBadRequest)
+			return
+		}
+
+		// Clean the path and prevent directory traversal
+		relPath := strings.TrimPrefix(unescapedPath, "/notebooks/")
+		relPath = filepath.Clean("/" + relPath)
+		
+		uploadDirClean := filepath.Clean(app.notebookUploadDir)
+		fullPath := filepath.Clean(filepath.Join(uploadDirClean, relPath))
+
+		if !strings.HasPrefix(fullPath, uploadDirClean) {
+			http.Error(rw, "access denied", http.StatusForbidden)
+			return
+		}
+
+		// Verify the file actually exists on disk to prevent Wails SPA html fallback
+		info, err := os.Stat(fullPath)
+		if err != nil || info.IsDir() {
+			http.Error(rw, "file not found", http.StatusNotFound)
+			return
+		}
+
+		// Serve the file directly using http.ServeFile which handles HTTP Range headers correctly
+		http.ServeFile(rw, req, fullPath)
 	})
 }

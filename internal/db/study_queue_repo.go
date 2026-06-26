@@ -585,8 +585,9 @@ func (r *Repository) ActivateTask(taskID string) error {
 		return fmt.Errorf("task id is required")
 	}
 	var beforeStatus string
-	if err := r.db.QueryRow(`SELECT COALESCE(status, '') FROM study_queue WHERE id = ?`, taskID).Scan(&beforeStatus); err == nil {
-		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s status=%s", taskID, beforeStatus)
+	var taskType string
+	if err := r.db.QueryRow(`SELECT COALESCE(status, ''), COALESCE(task_type, '') FROM study_queue WHERE id = ?`, taskID).Scan(&beforeStatus, &taskType); err == nil {
+		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s status=%s taskType=%s", taskID, beforeStatus, taskType)
 	} else {
 		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s statusLoadErr=%v", taskID, err)
 	}
@@ -603,7 +604,7 @@ func (r *Repository) ActivateTask(taskID string) error {
 		return err
 	}
 	if affected == 1 {
-		utils.LogQueueTransition(taskID, "", "PENDING", "ACTIVE", "task_activated")
+		utils.LogQueueTransition(taskID, taskType, "PENDING", "ACTIVE", "task_activated")
 		return nil
 	}
 	var exists int
@@ -663,7 +664,12 @@ func (r *Repository) CompleteTaskTx(tx *sql.Tx, taskID string, result models.Com
 		utils.Warnf("[QUEUE] CompleteTaskTx reading task completion task not active taskID=%s", taskID)
 		return ErrTaskNotActive
 	}
-	utils.LogQueueTransition(taskID, "", "ACTIVE", status, "task_completed")
+	var taskType string
+	if err := tx.QueryRow(`SELECT COALESCE(task_type, '') FROM study_queue WHERE id = ?`, taskID).Scan(&taskType); err != nil {
+		utils.Warnf("[QUEUE] CompleteTaskTx task_type lookup error taskID=%s err=%v", taskID, err)
+		return err
+	}
+	utils.LogQueueTransition(taskID, taskType, "ACTIVE", status, "task_completed")
 
 	for _, followUp := range result.FollowUps {
 		followUp.ID = strings.TrimSpace(followUp.ID)
@@ -1133,7 +1139,7 @@ func (r *Repository) ResolveFlashcardSyncTasks() error {
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		type taskInfo struct {
 			id     string
@@ -1166,7 +1172,7 @@ func (r *Repository) ResolveFlashcardSyncTasks() error {
 					return err
 				}
 				if affected == 1 {
-					utils.LogQueueTransition(t.id, "", "PENDING", "ACTIVE", "task_activated")
+					utils.LogQueueTransition(t.id, "FLASHCARD_SYNC", "PENDING", "ACTIVE", "task_activated")
 				}
 			}
 

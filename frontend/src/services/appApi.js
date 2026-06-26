@@ -15,8 +15,8 @@ export function getAvailableTopics() {
   return appBridge().GetAvailableTopics()
 }
 
-export function askSocratic(notebookID, topicID, question) {
-  return appBridge().AskSocratic(notebookID, topicID, question)
+export function askSocratic(notebookID, topicID, question, conversationHistory = []) {
+  return appBridge().AskSocratic(notebookID, topicID, question, conversationHistory)
 }
 
 export function askReaderAI(
@@ -89,14 +89,6 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
-export function getDailyStudySettings() {
-  return appBridge().GetDailyStudySettings()
-}
-
-export function updateDailyStudyMinutes(minutes) {
-  return appBridge().UpdateDailyStudyMinutes(minutes)
-}
-
 // Comprehensive Mode endpoints (Phase 1)
 export function generateManualFlashcards(notebookID, startPage, endPage) {
   return appBridge().GenerateManualFlashcards(notebookID, startPage, endPage)
@@ -167,7 +159,10 @@ export function getUserSettings() {
 }
 
 export function updateUserSettings(
-  minutes,
+  maxFlashcards,
+  startTime,
+  endTime,
+  remindersEnabled,
   activeProfileID,
   skipToReading,
   syncURL,
@@ -176,10 +171,14 @@ export function updateUserSettings(
   ragEnabled,
   ragNotebookChapter,
   ragEntireNotebook,
-  ragQueueStudy
+  ragQueueStudy,
+  defaultRemedialStrategy
 ) {
   return appBridge().UpdateUserSettings(
-    minutes,
+    maxFlashcards,
+    startTime,
+    endTime,
+    remindersEnabled,
     activeProfileID,
     skipToReading,
     syncURL,
@@ -188,8 +187,17 @@ export function updateUserSettings(
     ragEnabled,
     ragNotebookChapter,
     ragEntireNotebook,
-    ragQueueStudy
+    ragQueueStudy,
+    defaultRemedialStrategy
   )
+}
+
+export function getRemedialStrategy() {
+  return appBridge().GetRemedialStrategy()
+}
+
+export function setRemedialStrategy(strategy) {
+  return appBridge().SetRemedialStrategy(strategy)
 }
 
 export function getLLMSettings() {
@@ -254,6 +262,10 @@ export function getProfileDailyPace(profileID) {
 
 export function completeSocraticRescue(taskID) {
   return appBridge().CompleteSocraticRescue(taskID)
+}
+
+export function getFlashcardDueTimeline() {
+  return appBridge().GetFlashcardDueTimeline()
 }
 
 export function getAppEnv() {

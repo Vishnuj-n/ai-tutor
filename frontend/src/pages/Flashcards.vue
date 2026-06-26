@@ -93,9 +93,16 @@
                 :disabled="isSubmittingReview"
                 @click="suspendCard"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
                 </svg>
               </button>
               <p class="card-text">{{ currentCard.prompt }}</p>
@@ -112,9 +119,16 @@
                 :disabled="isSubmittingReview"
                 @click="suspendCard"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
                 </svg>
               </button>
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
@@ -135,12 +149,23 @@
         </div>
 
         <!-- Info tooltip -->
-        <div class="info-trigger" @mouseenter="showInfoTooltip = true" @mouseleave="showInfoTooltip = false">
+        <div
+          class="info-trigger"
+          @mouseenter="showInfoTooltip = true"
+          @mouseleave="showInfoTooltip = false"
+        >
           <button class="info-btn" type="button">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="16" x2="12" y2="12"/>
-              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
             </svg>
           </button>
           <Transition name="tooltip">
@@ -149,7 +174,9 @@
               <div class="tooltip-items">
                 <div class="tooltip-item">
                   <span class="tooltip-key again">Again</span>
-                  <span class="tooltip-desc">You forgot it completely. You'll see this card again soon.</span>
+                  <span class="tooltip-desc"
+                    >You forgot it completely. You'll see this card again soon.</span
+                  >
                 </div>
                 <div class="tooltip-item">
                   <span class="tooltip-key hard">Hard</span>
@@ -185,7 +212,6 @@
         <BaseButton id="fc-new-session-btn" @click="reset">New Session</BaseButton>
       </div>
     </section>
-
   </StudyPageLayout>
 </template>
 

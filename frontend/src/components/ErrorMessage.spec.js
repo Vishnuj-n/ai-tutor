@@ -6,8 +6,8 @@ describe('ErrorMessage.vue', () => {
   it('renders message when message prop is provided', () => {
     const wrapper = mount(ErrorMessage, {
       props: {
-        message: 'Something went wrong!'
-      }
+        message: 'Something went wrong!',
+      },
     })
     expect(wrapper.text()).toContain('Something went wrong!')
     expect(wrapper.find('.error-msg').exists()).toBe(true)
@@ -16,8 +16,8 @@ describe('ErrorMessage.vue', () => {
   it('does not render when message prop is empty', () => {
     const wrapper = mount(ErrorMessage, {
       props: {
-        message: ''
-      }
+        message: '',
+      },
     })
     expect(wrapper.find('.error-msg').exists()).toBe(false)
   })

@@ -9,10 +9,12 @@ import (
 )
 
 func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
-	svc := New(nil,
-		WithQueryDueReviewCards(func(int64) (int, error) { return 10, nil }), // 10 cards * 0.5m = 5 min review
-		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
-		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+	svc := New(nil, Dependencies{
+		QueryDueReviewCards: func(int64) (int, error) { return 10, nil }, // 10 cards * 0.5m = 5 min review
+		QueryUserSettings: func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 30, StudyStartTime: "17:00", StudyEndTime: "18:30", RemindersEnabled: true}, nil
+		},
+		QueryNextReadingTopic: func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
 				ID:                "ch1",
 				Title:             "Chapter 1",
@@ -21,19 +23,19 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 				CurrentPageCursor: 1,
 				NotebookID:        "nb-1",
 			}, true, nil
-		}),
-		WithQueryTokensPerPageMap(func(topicID string, start, end int) (map[int]int, error) {
+		},
+		QueryTokensPerPageMap: func(topicID string, start, end int) (map[int]int, error) {
 			// Simulate exactly 500 words per page to allow predictable math
 			result := make(map[int]int)
 			for page := start; page <= end; page++ {
 				result[page] = 500
 			}
 			return result, nil
-		}),
-		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+		},
+		QueryNextDueReviewNotebook: func(now int64) (string, int, error) {
 			return "nb-1", 10, nil
-		}),
-	)
+		},
+	})
 
 	plan, err := svc.BuildTodayPlan(time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -64,10 +66,12 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 }
 
 func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
-	svc := New(nil,
-		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
-		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+	svc := New(nil, Dependencies{
+		QueryDueReviewCards: func(int64) (int, error) { return 0, nil },
+		QueryUserSettings: func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 30, StudyStartTime: "17:00", StudyEndTime: "18:30", RemindersEnabled: true}, nil
+		},
+		QueryNextReadingTopic: func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
 				ID:                "ocr1",
 				Title:             "Scanned Document",
@@ -76,15 +80,15 @@ func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 				CurrentPageCursor: 1,
 				NotebookID:        "nb-1",
 			}, true, nil
-		}),
-		WithQueryTokensPerPageMap(func(string, int, int) (map[int]int, error) {
+		},
+		QueryTokensPerPageMap: func(string, int, int) (map[int]int, error) {
 			// Simulate token query failure (e.g., OCR-heavy pages with no text layer)
 			return nil, fmt.Errorf("no chunks found")
-		}),
-		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+		},
+		QueryNextDueReviewNotebook: func(now int64) (string, int, error) {
 			return "", 0, nil
-		}),
-	)
+		},
+	})
 
 	plan, err := svc.BuildTodayPlan(time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -108,10 +112,12 @@ func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 }
 
 func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
-	svc := New(nil,
-		WithQueryDueReviewCards(func(int64) (int, error) { return 0, nil }),
-		WithQueryDailyStudyMinutes(func() (int, error) { return 90, nil }),
-		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+	svc := New(nil, Dependencies{
+		QueryDueReviewCards: func(int64) (int, error) { return 0, nil },
+		QueryUserSettings: func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 30, StudyStartTime: "17:00", StudyEndTime: "18:30", RemindersEnabled: true}, nil
+		},
+		QueryNextReadingTopic: func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{
 				ID:                "ch2",
 				Title:             "Chapter 2",
@@ -120,18 +126,18 @@ func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
 				CurrentPageCursor: 1,
 				NotebookID:        "nb-1",
 			}, true, nil
-		}),
-		WithQueryTokensPerPageMap(func(topicID string, start, end int) (map[int]int, error) {
+		},
+		QueryTokensPerPageMap: func(topicID string, start, end int) (map[int]int, error) {
 			result := make(map[int]int)
 			for page := start; page <= end; page++ {
 				result[page] = 500
 			}
 			return result, nil
-		}),
-		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+		},
+		QueryNextDueReviewNotebook: func(now int64) (string, int, error) {
 			return "", 0, nil
-		}),
-	)
+		},
+	})
 
 	plan, err := svc.BuildTodayPlan(time.Now())
 	if err != nil {
@@ -148,19 +154,21 @@ func TestBuildTodayPlanClampWindowAbsorbsRemainingPages(t *testing.T) {
 }
 
 func TestBuildTodayPlanNoReadingTopic(t *testing.T) {
-	svc := New(nil,
-		WithQueryDueReviewCards(func(int64) (int, error) { return 20, nil }), // 20 cards * 0.5 = 10 mins
-		WithQueryDailyStudyMinutes(func() (int, error) { return 30, nil }),
-		WithQueryNextReadingTopic(func() (models.ReadingTopicCursor, bool, error) {
+	svc := New(nil, Dependencies{
+		QueryDueReviewCards: func(int64) (int, error) { return 20, nil }, // 20 cards * 0.5 = 10 mins
+		QueryUserSettings: func() (*models.UserSettings, error) {
+			return &models.UserSettings{MaxFlashcardsPerSession: 20, StudyStartTime: "17:00", StudyEndTime: "17:30", RemindersEnabled: true}, nil
+		},
+		QueryNextReadingTopic: func() (models.ReadingTopicCursor, bool, error) {
 			return models.ReadingTopicCursor{}, false, nil // No topic found
-		}),
-		WithQueryTokensPerPageMap(func(string, int, int) (map[int]int, error) {
+		},
+		QueryTokensPerPageMap: func(string, int, int) (map[int]int, error) {
 			return map[int]int{1: 1000}, nil
-		}),
-		WithQueryNextDueReviewNotebook(func(now int64) (string, int, error) {
+		},
+		QueryNextDueReviewNotebook: func(now int64) (string, int, error) {
 			return "nb-1", 20, nil
-		}),
-	)
+		},
+	})
 
 	plan, err := svc.BuildTodayPlan(time.Now())
 	if err != nil {

@@ -47,6 +47,3 @@ func HasAPIKey(tier string) bool {
 	return err == nil && key != ""
 }
 
-func InitMockKeyringForTests() {
-	keyring.MockInit()
-}

@@ -182,8 +182,14 @@ func buildReaderContext(results []retrieval.SearchResult) (string, []string) {
 // and a parallel list of citation labels. This allows callers to truncate the
 // context while keeping citations synchronized to included blocks.
 func buildReaderContextBlocks(results []retrieval.SearchResult) ([]string, []string) {
+	blocks, citations, _ := buildReaderContextBlocksWithText(results)
+	return blocks, citations
+}
+
+func buildReaderContextBlocksWithText(results []retrieval.SearchResult) ([]string, []string, []string) {
 	blocks := make([]string, 0, len(results))
 	citations := make([]string, 0, len(results))
+	chunkTexts := make([]string, 0, len(results))
 
 	for _, result := range results {
 		text := strings.TrimSpace(result.Text)
@@ -198,9 +204,10 @@ func buildReaderContextBlocks(results []retrieval.SearchResult) ([]string, []str
 			blocks = append(blocks, text)
 			citations = append(citations, "")
 		}
+		chunkTexts = append(chunkTexts, text)
 	}
 
-	return blocks, citations
+	return blocks, citations, chunkTexts
 }
 
 func (s *StudyService) resolveReaderSectionScope(sectionID string) (string, string, int, int, error) {
