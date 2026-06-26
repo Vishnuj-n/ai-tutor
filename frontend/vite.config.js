@@ -7,7 +7,20 @@ import { resolve } from 'path'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
-    vue()
+    vue(),
+    {
+      name: 'wails-notebooks-fallback',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url && req.url.startsWith('/notebooks/')) {
+            res.statusCode = 404
+            res.end('Not Found')
+            return
+          }
+          next()
+        })
+      }
+    }
   ],
   server: {
     watch: {
