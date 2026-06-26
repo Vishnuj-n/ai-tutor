@@ -722,6 +722,32 @@ watch(
   settings,
   () => {
     if (loading.value || showRagModal.value) return
+
+    // JS Validation checks
+    const val = settings.value.max_flashcards_per_session
+    const isValidMaxCards = typeof val === 'number' && !isNaN(val) && val >= 5 && val <= 200
+
+    const start = settings.value.study_start_time
+    const end = settings.value.study_end_time
+    const isValidTimeWindow = start && end && start < end
+
+    if (!isValidMaxCards) {
+      error.value = 'Max flashcards per session must be between 5 and 200.'
+      return
+    }
+    if (!isValidTimeWindow) {
+      error.value = 'Study start time must be strictly earlier than end time.'
+      return
+    }
+
+    // Clear validation error if it was set
+    if (
+      error.value === 'Max flashcards per session must be between 5 and 200.' ||
+      error.value === 'Study start time must be strictly earlier than end time.'
+    ) {
+      error.value = ''
+    }
+
     clearTimeout(saveSettingsTimer)
     saveSettingsTimer = setTimeout(() => {
       saveUserSettings()
@@ -730,10 +756,10 @@ watch(
   { deep: true }
 )
 
-// Auto-save LLM provider settings with debounce (excluding API keys)
+// Auto-save LLM provider settings and keys with debounce
 let saveLLMTimer = null
 watch(
-  llmSettings,
+  [llmSettings, llmFastKey, llmHeavyKey],
   () => {
     if (loading.value || savingLLM.value) return
     clearTimeout(saveLLMTimer)

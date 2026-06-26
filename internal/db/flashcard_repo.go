@@ -494,7 +494,7 @@ func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
 		return fmt.Errorf("checking affected rows: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("flashcard %s already suspended or not found", cardID)
+		return fmt.Errorf("flashcard %s was not updated, potentially due to a concurrent update or missing row", cardID)
 	}
 	return nil
 }

@@ -667,6 +667,7 @@ func (r *Repository) CompleteTaskTx(tx *sql.Tx, taskID string, result models.Com
 	var taskType string
 	if err := tx.QueryRow(`SELECT COALESCE(task_type, '') FROM study_queue WHERE id = ?`, taskID).Scan(&taskType); err != nil {
 		utils.Warnf("[QUEUE] CompleteTaskTx task_type lookup error taskID=%s err=%v", taskID, err)
+		return err
 	}
 	utils.LogQueueTransition(taskID, taskType, "ACTIVE", status, "task_completed")
 

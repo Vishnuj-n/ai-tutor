@@ -54,7 +54,7 @@ Once the software achieves a stable baseline, we entirely deprecate internal not
 
 This architectural model is deferred indefinitely unless enterprise or multi-tenant desktop distribution cycles genuinely demand it.
 
-```
+```text
 [Background Polling Thread] ──► (Finds New Version)
             │
             ▼

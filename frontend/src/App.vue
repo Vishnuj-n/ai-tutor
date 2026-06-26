@@ -1,7 +1,7 @@
 <script setup>
 import Sidebar from './components/Sidebar.vue'
 import { useRoute } from 'vue-router'
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { getUserSettings, updateUserSettings, getTodayPlan } from './services/appApi'
 
 const route = useRoute()
@@ -58,7 +58,7 @@ function getNextEventTimeout(startTimeStr, endTimeStr) {
 }
 
 // Fire notifications and banners based on event type
-async function fireEvent(type, settings) {
+async function fireEvent(type) {
   if (type === 'start') {
     if ('Notification' in window && Notification.permission === 'granted') {
       new Notification('Study Time Started!', {
@@ -141,7 +141,7 @@ async function syncScheduler() {
 
     // Schedule next timeout
     schedulerTimeout = setTimeout(async () => {
-      await fireEvent(next.type, settings)
+      await fireEvent(next.type)
       syncScheduler() // Queue up the next event
     }, next.delay)
   } catch (err) {
@@ -203,6 +203,14 @@ function closeBanner() {
 onMounted(() => {
   syncScheduler()
   window.addEventListener('settings-updated', syncScheduler)
+})
+
+onUnmounted(() => {
+  if (schedulerTimeout) {
+    clearTimeout(schedulerTimeout)
+    schedulerTimeout = null
+  }
+  window.removeEventListener('settings-updated', syncScheduler)
 })
 </script>
 

@@ -483,7 +483,8 @@ const isStep1Valid = computed(() => {
     maxFlashcards.value >= 5 &&
     maxFlashcards.value <= 200 &&
     studyStartTime.value !== '' &&
-    studyEndTime.value !== ''
+    studyEndTime.value !== '' &&
+    studyStartTime.value < studyEndTime.value
   )
 })
 
