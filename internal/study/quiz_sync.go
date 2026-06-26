@@ -504,15 +504,15 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		if isRescueRequiz {
 			utils.LogQuizResult(task.ID, score, false, "")
 			utils.Warnf("[QUIZ] quiz_failed_requiz_failed notebookID=%s topicID=%s — external help marked", task.NotebookID, task.TopicID)
-		} else if rereadAttemptCount <= maxAutomaticRereadAttempts {
-			if rereadTaskID != "" {
-				utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
-			}
+		} else if socraticTaskID != "" {
+			utils.LogQuizResult(task.ID, score, false, "")
+			utils.Warnf("[QUIZ] quiz_failed_socratic_rescue_created notebookID=%s topicID=%s socraticTaskID=%s", task.NotebookID, task.TopicID, socraticTaskID)
+		} else if rereadTaskID != "" {
+			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
 			utils.LogQuizResult(task.ID, score, false, rereadTaskID)
 			utils.Warnf("[QUIZ] quiz_failed_reread_created notebookID=%s topicID=%s rereadTaskID=%s", task.NotebookID, task.TopicID, rereadTaskID)
 		} else {
 			utils.LogQuizResult(task.ID, score, false, "")
-			utils.Warnf("[QUIZ] quiz_failed_socratic_rescue_created notebookID=%s topicID=%s socraticTaskID=%s", task.NotebookID, task.TopicID, socraticTaskID)
 		}
 	}
 

@@ -811,10 +811,13 @@ func (r *Repository) GetRemedialStrategy() (string, error) {
 	if err == sql.ErrNoRows {
 		return "CLASSIC", nil
 	}
+	if err != nil {
+		return "", err
+	}
 	if strategy == "" {
 		return "CLASSIC", nil
 	}
-	return strategy, err
+	return strategy, nil
 }
 
 func (r *Repository) SetRemedialStrategy(strategy string) error {

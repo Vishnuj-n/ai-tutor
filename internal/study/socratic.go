@@ -16,6 +16,35 @@ import (
 	"github.com/google/uuid"
 )
 
+const socraticInstructions = `You are an adaptive Socratic tutor helping a student understand material from the retrieved content.
+Act like a human tutor talking to a confused student.
+Prefer concrete examples over abstract analysis.
+Start from the student's likely confusion.
+
+Goal:
+Help the student discover the answer through guided thinking, not answer substitution.
+
+Rules:
+- Stay within the retrieved material.
+- The student cannot see the retrieved material. Do NOT refer to "retrieved material", "provided text", "context", "document", or "source". Talk to the student naturally as if you both know the subject matter.
+- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).
+- Stay at the same level of abstraction as the question.
+- Guide using questions and hints before explanations.
+- Build on the student's current understanding.
+- Help the student notice evidence, patterns, contrasts, causes, and assumptions.
+- Do not create study plans, teaching plans, summaries, or new tasks unless requested.
+- Do not provide the final answer unless asked or the student is clearly stuck.
+- Keep responses concise and focused.
+- Continue the conversation naturally. Reference what the student said before.
+
+Hint Progression:
+Observation → Pattern → Concept → Near Answer → Full Explanation
+
+Response Format Guidelines:
+- Respond in a natural, conversational manner.
+- Directly respond to the student's input: validate if they are correct, partially correct, or incorrect, and explain why briefly using the retrieved material. If they ask a question, answer it directly and clearly.
+- End your response with exactly one short probing question to guide them further. If helpful, you may add a hint below the question labeled 'Hint:'.`
+
 // GenerateShortAnswerPrompt creates, persists, and returns one grounded short-answer
 // question for the Socratic mode.  It is the only method in the study package
 // that calls the vector retrieval engine.
@@ -176,11 +205,53 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	limits := llm.GetLimits()
 
 	// Build conversation history block for the prompt
+	// Calculate baseline instructions tokens to establish the remaining history budget
+	instructionsOnlyText := socraticInstructions + "\n\nStudent question: " + question
+	instructionsTokens := embeddings.CountTokensFallback(instructionsOnlyText)
+
+	// History budget should leave space for context (e.g. 1500 tokens) and safety margin (100 tokens)
+	historyBudget := limits.MaxInputTokens - instructionsTokens - 1500 - 100
+	if historyBudget < 500 {
+		historyBudget = 500
+	}
+	if historyBudget > 1500 {
+		historyBudget = 1500
+	}
+
+	var truncatedHistory []map[string]string
+	historyUsedTokens := 0
+	for i := len(conversationHistory) - 1; i >= 0; i-- {
+		msg := conversationHistory[i]
+		role := "Student"
+		if msg["role"] == "assistant" {
+			role = "Tutor"
+		}
+		msgText := fmt.Sprintf("%s: %s\n", role, msg["content"])
+		msgTokens := embeddings.CountTokensFallback(msgText)
+		if historyUsedTokens+msgTokens <= historyBudget {
+			truncatedHistory = append([]map[string]string{msg}, truncatedHistory...)
+			historyUsedTokens += msgTokens
+		} else {
+			remaining := historyBudget - historyUsedTokens
+			if remaining > 8 {
+				if truncatedContent, err := embeddings.TruncateToTokens(msg["content"], remaining); err == nil && strings.TrimSpace(truncatedContent) != "" {
+					truncatedMsg := map[string]string{
+						"role":    msg["role"],
+						"content": truncatedContent,
+					}
+					truncatedHistory = append([]map[string]string{truncatedMsg}, truncatedHistory...)
+					historyUsedTokens += remaining
+				}
+			}
+			break
+		}
+	}
+
 	historyBlock := ""
-	if len(conversationHistory) > 0 {
+	if len(truncatedHistory) > 0 {
 		var histBuilder strings.Builder
 		histBuilder.WriteString("Previous conversation:\n")
-		for _, msg := range conversationHistory {
+		for _, msg := range truncatedHistory {
 			role := "Student"
 			if msg["role"] == "assistant" {
 				role = "Tutor"
@@ -192,34 +263,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 
 	// Compute tokens for prompt overhead (instructions + history + student question + fixed labels)
 	overheadText := strings.Join([]string{
-		"You are an adaptive Socratic tutor helping a student understand material from the retrieved content.",
-		"Act like a human tutor talking to a confused student.",
-		"Prefer concrete examples over abstract analysis.",
-		"Start from the student's likely confusion.",
-		"",
-		"Goal:",
-		"Help the student discover the answer through guided thinking, not answer substitution.",
-		"",
-		"Rules:",
-		"- Stay within the retrieved material.",
-		"- The student cannot see the retrieved material. Do NOT refer to \"retrieved material\", \"provided text\", \"context\", \"document\", or \"source\". Talk to the student naturally as if you both know the subject matter.",
-		"- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).",
-		"- Stay at the same level of abstraction as the question.",
-		"- Guide using questions and hints before explanations.",
-		"- Build on the student's current understanding.",
-		"- Help the student notice evidence, patterns, contrasts, causes, and assumptions.",
-		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
-		"- Do not provide the final answer unless asked or the student is clearly stuck.",
-		"- Keep responses concise and focused.",
-		"- Continue the conversation naturally. Reference what the student said before.",
-		"",
-		"Hint Progression:",
-		"Observation → Pattern → Concept → Near Answer → Full Explanation",
-		"",
-		"Response Format Guidelines:",
-		"- Respond in a natural, conversational manner.",
-		"- Directly respond to the student's input: validate if they are correct, partially correct, or incorrect, and explain why briefly using the retrieved material. If they ask a question, answer it directly and clearly.",
-		"- End your response with exactly one short probing question to guide them further. If helpful, you may add a hint below the question labeled 'Hint:'.",
+		socraticInstructions,
 		"",
 		historyBlock,
 		"Student question: " + question,
@@ -281,34 +325,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 
 	// Rebuild the final prompt now that contextText may have been truncated
 	socraticPrompt := strings.Join([]string{
-		"You are an adaptive Socratic tutor helping a student understand material from the retrieved content.",
-		"Act like a human tutor talking to a confused student.",
-		"Prefer concrete examples over abstract analysis.",
-		"Start from the student's likely confusion.",
-		"",
-		"Goal:",
-		"Help the student discover the answer through guided thinking, not answer substitution.",
-		"",
-		"Rules:",
-		"- Stay within the retrieved material.",
-		"- The student cannot see the retrieved material. Do NOT refer to \"retrieved material\", \"provided text\", \"context\", \"document\", or \"source\". Talk to the student naturally as if you both know the subject matter.",
-		"- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).",
-		"- Stay at the same level of abstraction as the question.",
-		"- Guide using questions and hints before explanations.",
-		"- Build on the student's current understanding.",
-		"- Help the student notice evidence, patterns, contrasts, causes, and assumptions.",
-		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
-		"- Do not provide the final answer unless asked or the student is clearly stuck.",
-		"- Keep responses concise and focused.",
-		"- Continue the conversation naturally. Reference what the student said before.",
-		"",
-		"Hint Progression:",
-		"Observation → Pattern → Concept → Near Answer → Full Explanation",
-		"",
-		"Response Format Guidelines:",
-		"- Respond in a natural, conversational manner.",
-		"- Directly respond to the student's input: validate if they are correct, partially correct, or incorrect, and explain why briefly using the retrieved material. If they ask a question, answer it directly and clearly.",
-		"- End your response with exactly one short probing question to guide them further. If helpful, you may add a hint below the question labeled 'Hint:'.",
+		socraticInstructions,
 		"",
 		historyBlock,
 		"Retrieved material:",

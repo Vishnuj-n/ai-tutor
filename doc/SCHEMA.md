@@ -348,7 +348,10 @@ Singleton table for global preferences.
 | Field | Type | Description |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY CHECK (id = 1) | Singleton row key |
-| `daily_study_minutes` | INTEGER NOT NULL DEFAULT 90 | Daily study target |
+| `max_flashcards_per_session` | INTEGER NOT NULL DEFAULT 30 | Max flashcards per session |
+| `study_start_time` | TEXT DEFAULT '17:00' | Study window start time (HH:MM format) |
+| `study_end_time` | TEXT DEFAULT '18:00' | Study window end time (HH:MM format) |
+| `reminders_enabled` | BOOLEAN DEFAULT 1 | Whether study reminders are enabled |
 | `active_profile_id` | TEXT | Active study profile. FK → `study_profiles(id)` ON DELETE SET NULL |
 | `skip_to_reading_active` | BOOLEAN DEFAULT 0 | Skip dashboard to active reading |
 | `cloud_sync_url` | TEXT DEFAULT '' | Remote sync endpoint URL |
@@ -363,7 +366,7 @@ Singleton table for global preferences.
 
 **Foreign keys:** `active_profile_id` → `study_profiles(id)` ON DELETE SET NULL.
 
-**Bootstrap:** A single row `(id=1, daily_study_minutes=90)` is inserted on initial schema creation.
+**Bootstrap:** A single row with default settings `(id=1, max_flashcards_per_session=30, study_start_time='17:00', study_end_time='18:00', reminders_enabled=1)` is inserted on initial schema creation.
 
 ### `llm_settings`
 

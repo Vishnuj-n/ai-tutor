@@ -49,8 +49,17 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	if maxFlashcards < 5 || maxFlashcards > 200 {
 		return map[string]interface{}{"error": "max flashcards per session must be between 5 and 200"}
 	}
+	if _, err := time.Parse("15:04", startTime); err != nil {
+		return map[string]interface{}{"error": "invalid study start time: must match format HH:MM"}
+	}
+	if _, err := time.Parse("15:04", endTime); err != nil {
+		return map[string]interface{}{"error": "invalid study end time: must match format HH:MM"}
+	}
 	if defaultRemedialStrategy == "" {
 		defaultRemedialStrategy = "CLASSIC"
+	}
+	if defaultRemedialStrategy != "CLASSIC" && defaultRemedialStrategy != "FAST" {
+		return map[string]interface{}{"error": "default remedial strategy must be CLASSIC or FAST"}
 	}
 	s := models.UserSettings{
 		MaxFlashcardsPerSession: maxFlashcards,
@@ -93,19 +102,25 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	return map[string]interface{}{"ok": true}
 }
 
-func (a *App) GetRemedialStrategy() string {
+func (a *App) GetRemedialStrategy() (string, error) {
 	repo := a.getRepo()
 	if repo == nil {
-		return "CLASSIC"
+		return "CLASSIC", fmt.Errorf("database repository not initialized")
 	}
-	strategy, _ := repo.GetRemedialStrategy()
-	return strategy
+	strategy, err := repo.GetRemedialStrategy()
+	if err != nil {
+		return "", err
+	}
+	return strategy, nil
 }
 
 func (a *App) SetRemedialStrategy(strategy string) error {
 	repo := a.getRepo()
 	if repo == nil {
 		return fmt.Errorf("database repository not initialized")
+	}
+	if strategy != "CLASSIC" && strategy != "FAST" {
+		return fmt.Errorf("invalid remedial strategy: must be CLASSIC or FAST")
 	}
 	return repo.SetRemedialStrategy(strategy)
 }

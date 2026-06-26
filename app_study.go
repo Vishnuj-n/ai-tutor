@@ -387,14 +387,14 @@ func (a *App) activateReadingSessionTask(taskID string) map[string]interface{} {
 	repo := a.getRepo()
 	qTask, qErr := repo.GetTaskByID(taskID)
 
-	if qErr != nil || qTask == nil {
-		var errDetail error
-		if qErr != nil {
-			errDetail = qErr
-		} else {
-			errDetail = fmt.Errorf("nil task loaded from database")
-		}
-		utils.Errorf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, errDetail)
+	if qErr != nil {
+		utils.Errorf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, qErr)
+		utils.QueueLogger.Info("queue task pre-activate loading anomaly", "taskID", taskID)
+		return map[string]interface{}{"error": "failed to load task: " + qErr.Error()}
+	}
+
+	if qTask == nil {
+		utils.Errorf("InitializeReadingSession loading anomaly: taskID=%s err=%v", taskID, fmt.Errorf("nil task loaded from database"))
 		utils.QueueLogger.Info("queue task pre-activate loading anomaly", "taskID", taskID)
 
 		if err := repo.ActivateTask(taskID); err != nil {
@@ -1020,9 +1020,8 @@ func (a *App) GetFlashcardDueTimeline() map[string]interface{} {
 
 	timeline := make([]FlashcardDuePoint, 7)
 
-	// Day 0: Today (due_at in (midnight, endOfToday])
-	midnightUnix := midnight.Unix()
-	count, err := repo.QueryDueReviewCardsForRange(midnightUnix, endOfToday)
+	// Day 0: Today (due_at in (0, endOfToday])
+	count, err := repo.QueryDueReviewCardsForRange(-1, endOfToday)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}

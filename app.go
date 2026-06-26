@@ -411,7 +411,15 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		a.applyVectorDBAndEmbedder(newRepo, emb)
+		if err := a.applyVectorDBAndEmbedder(newRepo, emb); err != nil {
+			_ = newRepo.Close()
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to apply vector DB: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
+			return
+		}
 
 		if err := a.reloadRetrievalEngine(); err != nil {
 			a.aiMutex.Lock()
@@ -422,16 +430,31 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		if settings, err := a.getRepo().GetUserSettings(); err == nil {
-			settings.RAGEnabled = true
-			_ = a.getRepo().UpdateUserSettings(*settings)
-		}
-
 		if err := a.buildVectorIndex(emb); err != nil {
 			utils.Errorf("vector indexing failed after RAG enable: %v", err)
 			a.aiMutex.Lock()
 			a.aiReady = false
 			a.aiInitError = fmt.Sprintf("vector indexing failed: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
+			return
+		}
+
+		settings, err := a.getRepo().GetUserSettings()
+		if err != nil {
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to read user settings: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
+			return
+		}
+
+		settings.RAGEnabled = true
+		if err := a.getRepo().UpdateUserSettings(*settings); err != nil {
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to update user settings: %v", err)
 			a.aiMutex.Unlock()
 			emitRagSetupFailed(a, a.aiInitError)
 			return
@@ -495,6 +518,22 @@ func (a *App) fallbackToNonVectorDB(dbPath string, originalErrMsg string) error 
 	a.scheduler = scheduler.New(repo, scheduler.Dependencies{})
 	a.repoMutex.Unlock()
 
+	a.aiMutex.Lock()
+	a.aiReady = false
+	if a.indexQueue != nil {
+		a.indexQueue.Stop()
+		a.indexQueue = nil
+	}
+	a.embedder = nil
+	a.retrievalEngine = nil
+	a.studyService = study.NewStudyService(study.Config{
+		Repo:             repo,
+		FastLLMProvider:  a.fastLLMProvider,
+		HeavyLLMProvider: a.heavyLLMProvider,
+		RetrievalEngine:  nil,
+	})
+	a.aiMutex.Unlock()
+
 	return fmt.Errorf("%s", originalErrMsg)
 }
 
@@ -512,7 +551,7 @@ func (a *App) initEmbedder(am *runtime.AssetManager) (*embeddings.OnnxEmbedder, 
 	return emb, nil
 }
 
-func (a *App) applyVectorDBAndEmbedder(newRepo *db.Repository, emb *embeddings.OnnxEmbedder) {
+func (a *App) applyVectorDBAndEmbedder(newRepo *db.Repository, emb *embeddings.OnnxEmbedder) error {
 	repo := a.getRepo()
 	a.repoMutex.Lock()
 	oldDB := repo.SwapDB(newRepo)
@@ -523,7 +562,7 @@ func (a *App) applyVectorDBAndEmbedder(newRepo *db.Repository, emb *embeddings.O
 	a.repoMutex.Unlock()
 
 	if err := repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
-		utils.Warnf("could not initialize vector table: %v", err)
+		return fmt.Errorf("could not initialize vector table: %w", err)
 	}
 
 	a.aiMutex.Lock()
@@ -531,6 +570,7 @@ func (a *App) applyVectorDBAndEmbedder(newRepo *db.Repository, emb *embeddings.O
 	a.aiReady = false
 	a.aiInitError = ""
 	a.aiMutex.Unlock()
+	return nil
 }
 
 func (a *App) buildVectorIndex(emb *embeddings.OnnxEmbedder) error {

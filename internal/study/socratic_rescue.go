@@ -55,12 +55,15 @@ func (s *StudyService) CompleteSocraticRescue(taskID string) (string, error) {
 
 	// Generate a fresh QUIZ for the same topic with the generated questions
 	quizTaskID := uuid.NewString()
-	quizPayload, _ := json.Marshal(map[string]interface{}{
+	quizPayload, err := json.Marshal(map[string]interface{}{
 		"source":        "socratic_rescue_requiz",
 		"topic_id":      task.TopicID,
 		"questions":     generatedQuiz.Questions,
 		"passing_score": generatedQuiz.PassingScore,
 	})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal quiz payload: %w", err)
+	}
 
 	followUps := []models.StudyQueueTask{
 		{
