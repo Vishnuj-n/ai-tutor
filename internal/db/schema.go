@@ -371,6 +371,10 @@ var alterStatements = []struct {
 	Column string
 	SQL    string
 }{
+	{"user_settings", "max_flashcards_per_session", "ALTER TABLE user_settings ADD COLUMN max_flashcards_per_session INTEGER NOT NULL DEFAULT 30"},
+	{"user_settings", "study_start_time", "ALTER TABLE user_settings ADD COLUMN study_start_time TEXT DEFAULT '17:00'"},
+	{"user_settings", "study_end_time", "ALTER TABLE user_settings ADD COLUMN study_end_time TEXT DEFAULT '18:00'"},
+	{"user_settings", "reminders_enabled", "ALTER TABLE user_settings ADD COLUMN reminders_enabled BOOLEAN DEFAULT 1"},
 	{"user_settings", "default_remedial_strategy", "ALTER TABLE user_settings ADD COLUMN default_remedial_strategy TEXT DEFAULT 'CLASSIC'"},
 }
 

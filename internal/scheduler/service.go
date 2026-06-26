@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	DefaultDailyStudyMinutes = 90
 	ReviewMinutesPerCard     = 0.5
 
 	// Legacy fallback only
@@ -95,6 +94,10 @@ func New(repo *db.Repository, deps Dependencies) Service {
 
 // BuildTodayPlan calculates review budget, reading budget, and one context-locked reading task.
 func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
+	if s.queryDueReviewCards == nil || s.queryUserSettings == nil || s.queryNextReadingTopic == nil || s.queryTokensPerPageMap == nil || s.queryNextDueReviewNotebook == nil {
+		return nil, fmt.Errorf("scheduler service missing required dependencies")
+	}
+
 	dueCards, err := s.queryDueReviewCards(now.Unix())
 	if err != nil {
 		return nil, err
@@ -112,10 +115,17 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 
 	dailyStudyMinutes := calculateDurationMinutes(settings.StudyStartTime, settings.StudyEndTime)
 
+	// Cap review minutes to a fraction of the daily study minutes
+	maxReviewMinutes := int(math.Min(float64(dailyStudyMinutes)*MaxReviewMinutesRatio, float64(MaxReviewMinutesSession)))
+	maxReviewCards := int(float64(maxReviewMinutes) / ReviewMinutesPerCard)
+
 	totalDueCards := dueCards
 	materializedCards := dueCards
 	if materializedCards > maxFlashcards {
 		materializedCards = maxFlashcards
+	}
+	if materializedCards > maxReviewCards {
+		materializedCards = maxReviewCards
 	}
 	deferredCards := totalDueCards - materializedCards
 	if deferredCards < 0 {
@@ -128,8 +138,21 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	utils.Warnf("[SCHEDULER] workload_audit total_due_cards=%d review_cards_materialized=%d estimated_review_minutes=%d deferred_review_cards=%d max_flashcards=%d daily_mins=%d",
 		totalDueCards, materializedCards, finalReviewMinutes, deferredCards, maxFlashcards, dailyStudyMinutes)
 
-	// Keep sessions near intended workload size
+	// Calculate remaining reading minutes
+	remainingReadingMinutes := dailyStudyMinutes - finalReviewMinutes
+	if remainingReadingMinutes < 0 {
+		remainingReadingMinutes = 0
+	}
+
+	// Adjust reading token budget based on remaining time
 	tokenBudget := TargetSessionWords
+	maxReadingWords := remainingReadingMinutes * WordsPerMinute
+	if tokenBudget > maxReadingWords {
+		tokenBudget = maxReadingWords
+	}
+	if tokenBudget < 0 {
+		tokenBudget = 0
+	}
 
 	readingTopic, foundReadingTopic, err := s.queryNextReadingTopic()
 	if err != nil {
