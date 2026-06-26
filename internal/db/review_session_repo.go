@@ -13,9 +13,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-const maxReviewSessionCards = 60
-
 var (
 	ErrReviewLinkNotPending  = errors.New("review task card link is not pending")
 	ErrReviewSessionComplete = errors.New("review session already complete")

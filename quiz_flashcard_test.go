@@ -1,15 +1,13 @@
 package main
 
 import (
+	"ai-tutor/internal/models"
+	"ai-tutor/internal/study"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
-
-	"ai-tutor/internal/llm"
-	"ai-tutor/internal/models"
-	"ai-tutor/internal/study"
 )
 
 // ============================================================================
@@ -570,10 +568,10 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 		t.Fatalf("LinkChunksToNotebook failed: %v", err)
 	}
 	app.retrievalEngine.AddChunk(models.Chunk{
-		ID:       chunkID,
-		TopicID:  topicID,
-		Text:     "Round robin stays fair by rotating time slices.",
-		PageNum:  3,
+		ID:      chunkID,
+		TopicID: topicID,
+		Text:    "Round robin stays fair by rotating time slices.",
+		PageNum: 3,
 	})
 
 	resp := app.AskReaderAI(topicID, notebookID, "Why is round robin fair?", "current_page", 3, 2, 4)
@@ -616,13 +614,13 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 	mustInsertMockChunk(t, "nb-test", "topic-test", "chunk-socratic-test-1", 1)
 
 	task := models.StudyQueueTask{
-		ID:          "task-socratic-test",
-		NotebookID:  "nb-test",
-		TopicID:     "topic-test",
-		TaskType:    models.StudyTaskTypeSocraticRemedial,
-		Status:      models.StudyTaskStatusActive,
-		StartPage:   1,
-		EndPage:     2,
+		ID:         "task-socratic-test",
+		NotebookID: "nb-test",
+		TopicID:    "topic-test",
+		TaskType:   models.StudyTaskTypeSocraticRemedial,
+		Status:     models.StudyTaskStatusActive,
+		StartPage:  1,
+		EndPage:    2,
 	}
 	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("failed to insert socratic task: %v", err)
@@ -852,25 +850,4 @@ func TestFSRSCalibrationEasyAndDoubleGood(t *testing.T) {
 	if cardState2.Reps != 2 || cardState2.Stability != 2.3065 {
 		t.Fatalf("expected Pass card state to be calibrated to Double Good, got reps=%d stability=%f", cardState2.Reps, cardState2.Stability)
 	}
-}
-
-// Mock used by ScoreShortAnswer contract tests.
-type mockLLMProviderForQuiz struct {
-	answer string
-	err    error
-}
-
-func (m *mockLLMProviderForQuiz) GenerateAnswer(prompt string) (string, error) {
-	if m.err != nil {
-		return "", m.err
-	}
-	return m.answer, nil
-}
-
-func (m *mockLLMProviderForQuiz) ModelName() string {
-	return "mock-model"
-}
-
-func (m *mockLLMProviderForQuiz) GetLimits() llm.ModelLimits {
-	return llm.ModelLimits{MaxInputTokens: 30000, MaxOutputTokens: 3000}
 }

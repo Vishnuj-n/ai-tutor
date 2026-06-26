@@ -240,7 +240,6 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 						"content": truncatedContent,
 					}
 					truncatedHistory = append([]map[string]string{truncatedMsg}, truncatedHistory...)
-					historyUsedTokens += remaining
 				}
 			}
 			break
