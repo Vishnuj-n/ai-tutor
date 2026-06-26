@@ -12,10 +12,18 @@
           <span class="rescue-alert-icon">🛡️</span>
           <div class="rescue-alert-text">
             <strong>Concept Rescue Active</strong>
-            <p>Chat with the Socratic tutor about this topic. When you feel ready, click the button to retry your quiz.</p>
+            <p>
+              Chat with the Socratic tutor about this topic. When you feel ready, click the button
+              to retry your quiz.
+            </p>
           </div>
         </div>
-        <button type="button" class="rescue-complete-btn" :disabled="completingRescue" @click="finishRescue">
+        <button
+          type="button"
+          class="rescue-complete-btn"
+          :disabled="completingRescue"
+          @click="finishRescue"
+        >
           {{ completingRescue ? 'Completing...' : 'Complete Session & Retry Quiz' }}
         </button>
       </div>
@@ -24,7 +32,12 @@
         <div class="selector-pills">
           <div class="selector-pill">
             <span class="pill-icon">📖</span>
-            <select id="notebook-select" v-model="selectedNotebookID" @change="handleNotebookChange" :disabled="isRescueMode">
+            <select
+              id="notebook-select"
+              v-model="selectedNotebookID"
+              :disabled="isRescueMode"
+              @change="handleNotebookChange"
+            >
               <option value="" disabled>Choose notebook</option>
               <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
                 {{ formatNotebookLabel(notebook) }}
@@ -34,8 +47,15 @@
 
           <div class="selector-pill">
             <span class="pill-icon">🎯</span>
-            <select id="topic-select" v-model="selectedTopicID" @change="handleTopicChange" :disabled="isRescueMode">
-              <option v-if="ragEntireNotebookEnabled" value="">Entire book (No topic filter)</option>
+            <select
+              id="topic-select"
+              v-model="selectedTopicID"
+              :disabled="isRescueMode"
+              @change="handleTopicChange"
+            >
+              <option v-if="ragEntireNotebookEnabled" value="">
+                Entire book (No topic filter)
+              </option>
               <option v-else value="" disabled>Choose topic</option>
               <option v-for="topic in availableTopics" :key="topic.id" :value="topic.id">
                 {{ topic.title }}
@@ -44,7 +64,13 @@
           </div>
         </div>
 
-        <button type="button" class="clear-btn-slim" @click="clearConversation" :disabled="isRescueMode" title="Clear chat history">
+        <button
+          type="button"
+          class="clear-btn-slim"
+          :disabled="isRescueMode"
+          title="Clear chat history"
+          @click="clearConversation"
+        >
           <span class="clear-icon">🧹</span> Clear Chat
         </button>
       </div>
@@ -55,27 +81,35 @@
             <div class="welcome-icon">🧠</div>
             <h3 v-if="isRescueMode">Concept Rescue Session</h3>
             <h3 v-else>Socratic Tutor</h3>
-            
+
             <p v-if="isRescueMode" class="welcome-desc">
-              Let's clarify your understanding before retaking the quiz. Ask questions or start a guided session with the tutor.
+              Let's clarify your understanding before retaking the quiz. Ask questions or start a
+              guided session with the tutor.
             </p>
             <p v-else class="welcome-desc">
-              Select a notebook and topic above, then start a guided session or type a specific question below to begin.
+              Select a notebook and topic above, then start a guided session or type a specific
+              question below to begin.
             </p>
 
             <p v-if="selectionHint" class="selection-status-hint">
               {{ selectionHint }}
             </p>
 
-            <button 
-              type="button" 
-              class="start-session-btn" 
-              :disabled="!canStart || isLoading" 
+            <button
+              type="button"
+              class="start-session-btn"
+              :disabled="!canStart || isLoading"
               @click="initiateSocraticSession"
             >
               <span v-if="isLoading" class="spinner"></span>
               <span v-else class="start-icon">▶</span>
-              {{ isLoading ? 'Initializing...' : (isRescueMode ? 'Start Concept Rescue' : 'Start Socratic Session') }}
+              {{
+                isLoading
+                  ? 'Initializing...'
+                  : isRescueMode
+                    ? 'Start Concept Rescue'
+                    : 'Start Socratic Session'
+              }}
             </button>
           </div>
         </div>
@@ -109,12 +143,40 @@
               "
               class="citations"
             >
-              <p class="citation-label">Citations</p>
-              <ul>
-                <li v-for="(citation, citationIdx) in message.citations" :key="citationIdx">
-                  {{ citation }}
-                </li>
-              </ul>
+              <button
+                type="button"
+                class="citation-info-btn"
+                @click.stop="toggleCitationPopover(idx)"
+                @mouseenter="showCitationPopover = idx"
+                @mouseleave="scheduleHideCitationPopover"
+              >
+                ℹ
+              </button>
+              <div
+                v-if="showCitationPopover === idx"
+                class="citation-popover"
+                @mouseenter="cancelHideCitationPopover"
+                @mouseleave="hideCitationPopover"
+              >
+                <p class="citation-popover-title">Source Chunks</p>
+                <div
+                  v-for="(chunk, cIdx) in (message.chunkTexts || [])"
+                  :key="cIdx"
+                  class="citation-chunk"
+                >
+                  <span class="citation-chunk-label">{{ message.citations[cIdx] || '' }}</span>
+                  <p class="citation-chunk-text">{{ chunk }}</p>
+                </div>
+                <div v-if="!message.chunkTexts || message.chunkTexts.length === 0">
+                  <p
+                    v-for="(citation, cIdx) in message.citations"
+                    :key="cIdx"
+                    class="citation-chunk-label"
+                  >
+                    {{ citation }}
+                  </p>
+                </div>
+              </div>
             </div>
           </article>
         </div>
@@ -139,9 +201,22 @@
             @keydown="handleComposerKeydown"
           ></textarea>
 
-          <button type="submit" class="composer-send-btn" :disabled="!canSend || isLoading" title="Send message">
-            <svg v-if="!isLoading" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="send-svg">
-              <path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" />
+          <button
+            type="submit"
+            class="composer-send-btn"
+            :disabled="!canSend || isLoading"
+            title="Send message"
+          >
+            <svg
+              v-if="!isLoading"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              class="send-svg"
+            >
+              <path
+                d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z"
+              />
             </svg>
             <span v-else class="thinking-dot-loader">
               <span></span><span></span><span></span>
@@ -167,6 +242,8 @@ import {
   getNotebooks as fetchNotebooks,
   getUserSettings,
   completeSocraticRescue,
+  activateTask,
+  GetTaskContext,
 } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
@@ -189,6 +266,8 @@ const isRescueMode = computed(() => !!taskId.value)
 const completingRescue = ref(false)
 const copiedMessageId = ref(null)
 const retryingMessageId = ref(null)
+const showCitationPopover = ref(null)
+let hideCitationPopoverTimer = null
 
 const selectedNotebook = computed(() =>
   notebooks.value.find((notebook) => notebook.id === selectedNotebookID.value)
@@ -262,6 +341,30 @@ const selectionHint = computed(() => {
 })
 
 onMounted(async () => {
+  if (taskId.value) {
+    try {
+      const activate = await activateTask(taskId.value)
+      if (activate?.error && activate.error !== 'ErrTaskNotPending') {
+        globalError.value = activate.error
+        return
+      }
+      const context = await GetTaskContext(taskId.value)
+      if (context?.error) {
+        globalError.value = context.error
+        return
+      }
+      if (context?.notebook?.id) {
+        selectedNotebookID.value = context.notebook.id
+      }
+      if (context?.topic?.id) {
+        selectedTopicID.value = context.topic.id
+      }
+    } catch (err) {
+      globalError.value = `Failed to initialize Socratic task: ${err.message || err}`
+      return
+    }
+  }
+
   try {
     const res = await getUserSettings()
     if (res && typeof res.rag_entire_notebook !== 'undefined') {
@@ -330,6 +433,29 @@ function clearConversation() {
   messages.value = []
   inputQuestion.value = ''
   globalError.value = ''
+  showCitationPopover.value = null
+}
+
+function toggleCitationPopover(idx) {
+  showCitationPopover.value = showCitationPopover.value === idx ? null : idx
+}
+
+function scheduleHideCitationPopover() {
+  hideCitationPopoverTimer = setTimeout(() => {
+    showCitationPopover.value = null
+  }, 300)
+}
+
+function cancelHideCitationPopover() {
+  if (hideCitationPopoverTimer) {
+    clearTimeout(hideCitationPopoverTimer)
+    hideCitationPopoverTimer = null
+  }
+}
+
+function hideCitationPopover() {
+  cancelHideCitationPopover()
+  showCitationPopover.value = null
 }
 
 async function submitQuestion() {
@@ -339,6 +465,10 @@ async function submitQuestion() {
 
   const question = inputQuestion.value.trim()
   const topicID = effectiveTopicID.value
+
+  const conversationHistory = messages.value
+    .filter((m) => !m.error)
+    .map((m) => ({ role: m.role, content: m.text }))
 
   messages.value.push({
     role: 'user',
@@ -350,13 +480,14 @@ async function submitQuestion() {
   await scrollToBottom()
 
   try {
-    const result = await askSocratic(selectedNotebookID.value, topicID, question)
+    const result = await askSocratic(selectedNotebookID.value, topicID, question, conversationHistory)
 
     if (result.error) {
-      const isNetworkError = result.error.includes('network') || 
-                             result.error.includes('fetch') ||
-                             result.error.includes('Failed to fetch') ||
-                             result.error.includes('NetworkError')
+      const isNetworkError =
+        result.error.includes('network') ||
+        result.error.includes('fetch') ||
+        result.error.includes('Failed to fetch') ||
+        result.error.includes('NetworkError')
       messages.value.push({
         role: 'assistant',
         text: 'Unable to answer this query right now.',
@@ -370,6 +501,7 @@ async function submitQuestion() {
         role: 'assistant',
         text: result.answer || 'No response generated.',
         citations: result.cited_sections || [],
+        chunkTexts: result.chunk_texts || [],
       })
     }
   } catch (err) {
@@ -397,10 +529,11 @@ async function initiateSocraticSession() {
     const result = await askSocratic(selectedNotebookID.value, topicID, startPrompt)
 
     if (result.error) {
-      const isNetworkError = result.error.includes('network') || 
-                             result.error.includes('fetch') ||
-                             result.error.includes('Failed to fetch') ||
-                             result.error.includes('NetworkError')
+      const isNetworkError =
+        result.error.includes('network') ||
+        result.error.includes('fetch') ||
+        result.error.includes('Failed to fetch') ||
+        result.error.includes('NetworkError')
       messages.value.push({
         role: 'assistant',
         text: 'Unable to answer this query right now.',
@@ -414,6 +547,7 @@ async function initiateSocraticSession() {
         role: 'assistant',
         text: result.answer || 'No response generated.',
         citations: result.cited_sections || [],
+        chunkTexts: result.chunk_texts || [],
       })
     }
   } catch (err) {
@@ -450,7 +584,7 @@ function formatNotebookLabel(notebook) {
 async function copyPromptToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text)
-    const msgIndex = messages.value.findIndex(m => m.promptText === text)
+    const msgIndex = messages.value.findIndex((m) => m.promptText === text)
     if (msgIndex !== -1) {
       copiedMessageId.value = msgIndex
       setTimeout(() => {
@@ -465,7 +599,7 @@ async function copyPromptToClipboard(text) {
     textarea.select()
     document.execCommand('copy')
     document.body.removeChild(textarea)
-    const msgIndex = messages.value.findIndex(m => m.promptText === text)
+    const msgIndex = messages.value.findIndex((m) => m.promptText === text)
     if (msgIndex !== -1) {
       copiedMessageId.value = msgIndex
       setTimeout(() => {
@@ -487,15 +621,20 @@ async function retrySocraticMessage(messageIdx) {
   isLoading.value = true
   await scrollToBottom()
 
+  const conversationHistory = messages.value
+    .filter((m, idx) => !m.error && idx !== messageIdx - 1)
+    .map((m) => ({ role: m.role, content: m.text }))
+
   try {
     const topicID = effectiveTopicID.value
-    const result = await askSocratic(selectedNotebookID.value, topicID, prompt)
+    const result = await askSocratic(selectedNotebookID.value, topicID, prompt, conversationHistory)
 
     if (result.error) {
-      const isNetworkError = result.error.includes('network') || 
-                             result.error.includes('fetch') ||
-                             result.error.includes('Failed to fetch') ||
-                             result.error.includes('NetworkError')
+      const isNetworkError =
+        result.error.includes('network') ||
+        result.error.includes('fetch') ||
+        result.error.includes('Failed to fetch') ||
+        result.error.includes('NetworkError')
       messages.value.push({
         role: 'assistant',
         text: 'Unable to answer this query right now.',
@@ -509,6 +648,7 @@ async function retrySocraticMessage(messageIdx) {
         role: 'assistant',
         text: result.answer || 'No response generated.',
         citations: result.cited_sections || [],
+        chunkTexts: result.chunk_texts || [],
       })
     }
   } catch (err) {
@@ -539,7 +679,8 @@ async function finishRescue() {
       completingRescue.value = false
       return
     }
-    router.push('/dashboard')
+    const nextRoute = res?.quiz_task_id ? `/quiz?taskId=${res.quiz_task_id}` : '/dashboard'
+    router.push(nextRoute)
   } catch (err) {
     globalError.value = 'Failed to complete session: ' + (err.message || err)
     completingRescue.value = false
@@ -821,9 +962,19 @@ h1 {
   line-height: 1.6;
 }
 
-.markdown-body :first-child { margin-top: 0; }
-.markdown-body :last-child { margin-bottom: 0; }
-.markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body pre, .markdown-body blockquote { margin: 0 0 8px; }
+.markdown-body :first-child {
+  margin-top: 0;
+}
+.markdown-body :last-child {
+  margin-bottom: 0;
+}
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body pre,
+.markdown-body blockquote {
+  margin: 0 0 8px;
+}
 
 .markdown-body code {
   background: rgba(45, 51, 56, 0.08);
@@ -839,7 +990,10 @@ h1 {
   overflow-x: auto;
 }
 
-.markdown-body pre code { background: transparent; padding: 0; }
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
 
 .message-error {
   margin-top: 8px;
@@ -857,10 +1011,50 @@ h1 {
   margin-top: 9px;
   border-top: 1px solid rgba(45, 51, 56, 0.12);
   padding-top: 8px;
+  position: relative;
 }
 
-.citation-label {
-  margin: 0;
+.citation-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+  color: var(--muted-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  line-height: 1;
+}
+
+.citation-info-btn:hover {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+
+.citation-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  padding: 10px 12px;
+  width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.citation-popover-title {
+  margin: 0 0 8px;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -868,8 +1062,37 @@ h1 {
   color: var(--muted-text);
 }
 
-.citations ul { margin: 6px 0 0; padding-left: 18px; }
-.citations li { margin: 4px 0; font-size: 12px; line-height: 1.4; }
+.citation-chunk {
+  margin-bottom: 8px;
+}
+
+.citation-chunk:last-child {
+  margin-bottom: 0;
+}
+
+.citation-chunk-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--primary);
+  background: rgba(0, 91, 193, 0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-bottom: 2px;
+}
+
+.citation-chunk-text {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--on-surface);
+  opacity: 0.85;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 .composer {
   display: flex;
@@ -982,27 +1205,61 @@ h1 {
   animation: pulse 1.1s infinite ease-in-out;
 }
 
-.thinking-dot-loader span:nth-child(2) { animation-delay: 0.12s; }
-.thinking-dot-loader span:nth-child(3) { animation-delay: 0.24s; }
+.thinking-dot-loader span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.thinking-dot-loader span:nth-child(3) {
+  animation-delay: 0.24s;
+}
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 @keyframes pulse-slow {
-  0%, 100% { transform: scale(1); opacity: 0.9; }
-  50% { transform: scale(1.04); opacity: 1; }
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
 }
 
 @keyframes pulse {
-  0%, 80%, 100% { opacity: 0.32; }
-  40% { opacity: 1; }
+  0%,
+  80%,
+  100% {
+    opacity: 0.32;
+  }
+  40% {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 980px) {
-  .socratic-page { height: auto; overflow: visible; }
-  h1 { font-size: 30px; }
-  .chat-header-row { flex-direction: column; align-items: stretch; }
-  .clear-btn-slim { width: 100%; justify-content: center; }
-  .bubble { max-width: 94%; }
+  .socratic-page {
+    height: auto;
+    overflow: visible;
+  }
+  h1 {
+    font-size: 30px;
+  }
+  .chat-header-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .clear-btn-slim {
+    width: 100%;
+    justify-content: center;
+  }
+  .bubble {
+    max-width: 94%;
+  }
 }
 
 .rescue-alert-banner {

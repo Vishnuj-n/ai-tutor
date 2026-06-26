@@ -16,6 +16,35 @@ import (
 	"github.com/google/uuid"
 )
 
+const socraticInstructions = `You are an adaptive Socratic tutor helping a student understand material from the retrieved content.
+Act like a human tutor talking to a confused student.
+Prefer concrete examples over abstract analysis.
+Start from the student's likely confusion.
+
+Goal:
+Help the student discover the answer through guided thinking, not answer substitution.
+
+Rules:
+- Stay within the retrieved material.
+- The student cannot see the retrieved material. Do NOT refer to "retrieved material", "provided text", "context", "document", or "source". Talk to the student naturally as if you both know the subject matter.
+- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).
+- Stay at the same level of abstraction as the question.
+- Guide using questions and hints before explanations.
+- Build on the student's current understanding.
+- Help the student notice evidence, patterns, contrasts, causes, and assumptions.
+- Do not create study plans, teaching plans, summaries, or new tasks unless requested.
+- Do not provide the final answer unless asked or the student is clearly stuck.
+- Keep responses concise and focused.
+- Continue the conversation naturally. Reference what the student said before.
+
+Hint Progression:
+Observation → Pattern → Concept → Near Answer → Full Explanation
+
+Response Format Guidelines:
+- Respond in a natural, conversational manner.
+- Directly respond to the student's input: validate if they are correct, partially correct, or incorrect, and explain why briefly using the retrieved material. If they ask a question, answer it directly and clearly.
+- End your response with exactly one short probing question to guide them further. If helpful, you may add a hint below the question labeled 'Hint:'.`
+
 // GenerateShortAnswerPrompt creates, persists, and returns one grounded short-answer
 // question for the Socratic mode.  It is the only method in the study package
 // that calls the vector retrieval engine.
@@ -137,7 +166,7 @@ func (s *StudyService) resolveSocraticLineage(topicID string, chunkIDs []string)
 	return sourceHeading, sourcePageStart, sourcePageEnd
 }
 
-func (s *StudyService) AskSocratic(notebookID string, topicID string, question string) (map[string]interface{}, error) {
+func (s *StudyService) AskSocratic(notebookID string, topicID string, question string, conversationHistory []map[string]string) (map[string]interface{}, error) {
 	notebookID = strings.TrimSpace(notebookID)
 	topicID = strings.TrimSpace(topicID)
 	question = strings.TrimSpace(question)
@@ -161,8 +190,8 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		return nil, fmt.Errorf("retrieval failed: %w", err)
 	}
 
-	// 2. Build retrieved material context blocks and citations
-	blocks, citations := buildReaderContextBlocks(results)
+	// 2. Build retrieved material context blocks, citations, and chunk texts
+	blocks, citations, chunkTexts := buildReaderContextBlocksWithText(results)
 
 	// 3. Generate answer using heavy LLM provider (to ensure high quality guiding responses)
 	llm := s.heavyLLMProvider
@@ -175,38 +204,67 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	// and the student question.
 	limits := llm.GetLimits()
 
-	// Compute tokens for prompt overhead (instructions + student question + fixed labels)
+	// Build conversation history block for the prompt
+	// Calculate baseline instructions tokens to establish the remaining history budget
+	instructionsOnlyText := socraticInstructions + "\n\nStudent question: " + question
+	instructionsTokens := embeddings.CountTokensFallback(instructionsOnlyText)
+
+	// History budget should leave space for context (e.g. 1500 tokens) and safety margin (100 tokens)
+	historyBudget := limits.MaxInputTokens - instructionsTokens - 1500 - 100
+	if historyBudget < 500 {
+		historyBudget = 500
+	}
+	if historyBudget > 1500 {
+		historyBudget = 1500
+	}
+
+	var truncatedHistory []map[string]string
+	historyUsedTokens := 0
+	for i := len(conversationHistory) - 1; i >= 0; i-- {
+		msg := conversationHistory[i]
+		role := "Student"
+		if msg["role"] == "assistant" {
+			role = "Tutor"
+		}
+		msgText := fmt.Sprintf("%s: %s\n", role, msg["content"])
+		msgTokens := embeddings.CountTokensFallback(msgText)
+		if historyUsedTokens+msgTokens <= historyBudget {
+			truncatedHistory = append([]map[string]string{msg}, truncatedHistory...)
+			historyUsedTokens += msgTokens
+		} else {
+			remaining := historyBudget - historyUsedTokens
+			if remaining > 8 {
+				if truncatedContent, err := embeddings.TruncateToTokens(msg["content"], remaining); err == nil && strings.TrimSpace(truncatedContent) != "" {
+					truncatedMsg := map[string]string{
+						"role":    msg["role"],
+						"content": truncatedContent,
+					}
+					truncatedHistory = append([]map[string]string{truncatedMsg}, truncatedHistory...)
+				}
+			}
+			break
+		}
+	}
+
+	historyBlock := ""
+	if len(truncatedHistory) > 0 {
+		var histBuilder strings.Builder
+		histBuilder.WriteString("Previous conversation:\n")
+		for _, msg := range truncatedHistory {
+			role := "Student"
+			if msg["role"] == "assistant" {
+				role = "Tutor"
+			}
+			fmt.Fprintf(&histBuilder, "%s: %s\n", role, msg["content"])
+		}
+		historyBlock = histBuilder.String()
+	}
+
+	// Compute tokens for prompt overhead (instructions + history + student question + fixed labels)
 	overheadText := strings.Join([]string{
-		"You are an adaptive Socratic tutor helping a student understand material from the retrieved content.",
-		"Act like a human tutor talking to a confused student.",
-		"Prefer concrete examples over abstract analysis.",
-		"Start from the student's likely confusion.",
+		socraticInstructions,
 		"",
-		"Goal:",
-		"Help the student discover the answer through guided thinking, not answer substitution.",
-		"",
-		"Rules:",
-		"- Stay within the retrieved material.",
-		"- The student cannot see the retrieved material. Do NOT refer to \"retrieved material\", \"provided text\", \"context\", \"document\", or \"source\". Talk to the student naturally as if you both know the subject matter.",
-		"- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).",
-		"- Stay at the same level of abstraction as the question.",
-		"- Guide using questions and hints before explanations.",
-		"- Build on the student's current understanding.",
-		"- Help the student notice evidence, patterns, contrasts, causes, and assumptions.",
-		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
-		"- Do not provide the final answer unless asked or the student is clearly stuck.",
-		"- Keep responses concise and focused.",
-		"",
-		"Hint Progression:",
-		"Observation → Pattern → Concept → Near Answer → Full Explanation",
-		"",
-		"Response Format:",
-		"Question:",
-		"[A short probing question]",
-		"",
-		"Hint:",
-		"[A concise hint grounded only in the retrieved material]",
-		"",
+		historyBlock,
 		"Student question: " + question,
 	}, "\n")
 
@@ -222,12 +280,14 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	// the final block if necessary. Keep citations aligned to included blocks.
 	newBlocks := make([]string, 0, len(blocks))
 	newCitations := make([]string, 0, len(citations))
+	newChunkTexts := make([]string, 0, len(chunkTexts))
 	usedTokens := 0
 	for i, blk := range blocks {
 		blkTokens := embeddings.CountTokensFallback(blk)
 		if usedTokens+blkTokens <= available {
 			newBlocks = append(newBlocks, blk)
 			newCitations = append(newCitations, citations[i])
+			newChunkTexts = append(newChunkTexts, chunkTexts[i])
 			usedTokens += blkTokens
 			continue
 		}
@@ -237,6 +297,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 			if truncated, err := embeddings.TruncateToTokens(blk, remaining); err == nil && strings.TrimSpace(truncated) != "" {
 				newBlocks = append(newBlocks, truncated)
 				newCitations = append(newCitations, citations[i])
+				newChunkTexts = append(newChunkTexts, chunkTexts[i])
 			}
 		}
 		break
@@ -252,45 +313,20 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 			if truncated, err := embeddings.TruncateToTokens(blocks[0], safeLimit); err == nil && strings.TrimSpace(truncated) != "" {
 				newBlocks = append(newBlocks, truncated)
 				newCitations = append(newCitations, citations[0])
+				newChunkTexts = append(newChunkTexts, chunkTexts[0])
 			}
 		}
 	}
 
 	contextText := strings.TrimSpace(strings.Join(newBlocks, "\n\n"))
 	citations = newCitations
+	chunkTexts = newChunkTexts
 
 	// Rebuild the final prompt now that contextText may have been truncated
 	socraticPrompt := strings.Join([]string{
-		"You are an adaptive Socratic tutor helping a student understand material from the retrieved content.",
-		"Act like a human tutor talking to a confused student.",
-		"Prefer concrete examples over abstract analysis.",
-		"Start from the student's likely confusion.",
+		socraticInstructions,
 		"",
-		"Goal:",
-		"Help the student discover the answer through guided thinking, not answer substitution.",
-		"",
-		"Rules:",
-		"- Stay within the retrieved material.",
-		"- The student cannot see the retrieved material. Do NOT refer to \"retrieved material\", \"provided text\", \"context\", \"document\", or \"source\". Talk to the student naturally as if you both know the subject matter.",
-		"- First identify what the student is being asked to do (theme identification, concept understanding, comparison, argument analysis, application, etc.).",
-		"- Stay at the same level of abstraction as the question.",
-		"- Guide using questions and hints before explanations.",
-		"- Build on the student's current understanding.",
-		"- Help the student notice evidence, patterns, contrasts, causes, and assumptions.",
-		"- Do not create study plans, teaching plans, summaries, or new tasks unless requested.",
-		"- Do not provide the final answer unless asked or the student is clearly stuck.",
-		"- Keep responses concise and focused.",
-		"",
-		"Hint Progression:",
-		"Observation → Pattern → Concept → Near Answer → Full Explanation",
-		"",
-		"Response Format:",
-		"Question:",
-		"[A short probing question]",
-		"",
-		"Hint:",
-		"[A concise hint grounded only in the retrieved material]",
-		"",
+		historyBlock,
 		"Retrieved material:",
 		contextText,
 		"",
@@ -305,6 +341,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	return map[string]interface{}{
 		"answer":         answer,
 		"cited_sections": citations,
+		"chunk_texts":    chunkTexts,
 	}, nil
 }
 

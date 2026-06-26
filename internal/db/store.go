@@ -39,6 +39,15 @@ func (r *Repository) Close() error {
 	return err
 }
 
+// SwapDB swaps the underlying database connection in-place and returns the old connection.
+func (r *Repository) SwapDB(newRepo *Repository) *sql.DB {
+	oldDB := r.db
+	r.db = newRepo.db
+	r.embeddingDimension = newRepo.embeddingDimension
+	return oldDB
+}
+
+
 // Begin starts a new transaction on the database.
 func (r *Repository) Begin() (*sql.Tx, error) {
 	return r.db.Begin()
@@ -180,14 +189,12 @@ func (r *Repository) InitWithVectorDimension(embeddingDim int32) error {
 	return r.createVectorTable()
 }
 
-// QueryDueReviewCards counts cards due by the given time, scoped to existing topics.
-// Excludes cards already linked to pending/active review tasks to avoid double-counting.
-func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
+func (r *Repository) queryDueReviewCardsHelper(dueCondition string, dueArgs ...interface{}) (int, error) {
 	var activeProfileID sql.NullString
 	if err := r.db.QueryRow(`
 		SELECT COALESCE(active_profile_id, '') FROM user_settings WHERE id = 1
 	`).Scan(&activeProfileID); err != nil && err != sql.ErrNoRows {
-		return 0, fmt.Errorf("QueryDueReviewCards: reading active_profile_id: %w", err)
+		return 0, err
 	}
 
 	activeProfileStr := ""
@@ -204,7 +211,7 @@ func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
 		LEFT JOIN notebooks n ON n.id = nt.notebook_id
 		WHERE fc.suspended = 0
 		  AND fc.due_at IS NOT NULL
-		  AND fc.due_at <= ?
+		  ` + dueCondition + `
 		  AND NOT EXISTS (
 			SELECT 1
 			FROM review_task_cards rtc
@@ -214,8 +221,7 @@ func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
 			  AND sq.status IN ('PENDING', 'ACTIVE')
 		  )
 	`
-	var args []interface{}
-	args = append(args, now)
+	args := append([]interface{}{}, dueArgs...)
 	if activeProfileStr != "" {
 		query += ` AND (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
 		args = append(args, activeProfileStr)
@@ -225,35 +231,28 @@ func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
 	return count, err
 }
 
-// GetDailyStudyMinutes returns the persisted global daily study budget.
-func (r *Repository) GetDailyStudyMinutes() (int, error) {
-	var minutes int
-	err := r.db.QueryRow(`
-		SELECT daily_study_minutes
-		FROM user_settings
-		WHERE id = 1
-	`).Scan(&minutes)
-	if err == sql.ErrNoRows {
-		return 90, nil
+// QueryDueReviewCards counts cards due by the given time, scoped to existing topics.
+// Excludes cards already linked to pending/active review tasks to avoid double-counting.
+func (r *Repository) QueryDueReviewCards(now int64) (int, error) {
+	count, err := r.queryDueReviewCardsHelper("AND fc.due_at <= ?", now)
+	if err != nil {
+		return 0, fmt.Errorf("QueryDueReviewCards: reading active_profile_id: %w", err)
 	}
-	return minutes, err
+	return count, nil
 }
 
-// UpsertDailyStudyMinutes stores the global daily study budget.
-func (r *Repository) UpsertDailyStudyMinutes(minutes int) error {
-	if minutes <= 0 {
-		return fmt.Errorf("daily study minutes must be positive")
+// QueryDueReviewCardsForRange counts cards due within a specific time range (start, end], scoped to the active profile.
+// Excludes cards already linked to pending/active review tasks to avoid double-counting.
+func (r *Repository) QueryDueReviewCardsForRange(start int64, end int64) (int, error) {
+	count, err := r.queryDueReviewCardsHelper("AND fc.due_at > ? AND fc.due_at <= ?", start, end)
+	if err != nil {
+		return 0, fmt.Errorf("QueryDueReviewCardsForRange: reading active_profile_id: %w", err)
 	}
-
-	_, err := r.db.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes)
-		VALUES (1, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			daily_study_minutes = excluded.daily_study_minutes,
-			updated_at = CURRENT_TIMESTAMP
-	`, minutes)
-	return err
+	return count, nil
 }
+
+
+
 
 // GetRAGEnabled returns the status of RAG flag.
 func (r *Repository) GetRAGEnabled() (bool, error) {
@@ -286,18 +285,22 @@ func (r *Repository) GetUserSettings() (*models.UserSettings, error) {
 	var s models.UserSettings
 	var activeProfileID sql.NullString
 	err := r.db.QueryRow(`
-		SELECT daily_study_minutes, COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0), COALESCE(rag_notebook_chapter, 1), COALESCE(rag_entire_notebook, 1), COALESCE(rag_queue_study, 1)
+		SELECT max_flashcards_per_session, COALESCE(study_start_time, '17:00'), COALESCE(study_end_time, '18:00'), COALESCE(reminders_enabled, 1), COALESCE(active_profile_id, ''), skip_to_reading_active, COALESCE(cloud_sync_url, ''), COALESCE(cloud_api_token, ''), COALESCE(theme, 'light-classic'), COALESCE(rag_enabled, 0), COALESCE(rag_notebook_chapter, 1), COALESCE(rag_entire_notebook, 1), COALESCE(rag_queue_study, 1), COALESCE(default_remedial_strategy, 'CLASSIC')
 		FROM user_settings
 		WHERE id = 1
-	`).Scan(&s.DailyStudyMinutes, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled, &s.RAGNotebookChapter, &s.RAGEntireNotebook, &s.RAGQueueStudy)
+	`).Scan(&s.MaxFlashcardsPerSession, &s.StudyStartTime, &s.StudyEndTime, &s.RemindersEnabled, &activeProfileID, &s.SkipToReadingActive, &s.CloudSyncURL, &s.CloudAPIToken, &s.Theme, &s.RAGEnabled, &s.RAGNotebookChapter, &s.RAGEntireNotebook, &s.RAGQueueStudy, &s.DefaultRemedialStrategy)
 	if err == sql.ErrNoRows {
 		s = models.UserSettings{
-			DailyStudyMinutes:  90,
-			Theme:              "light-classic",
-			RAGEnabled:         false,
-			RAGNotebookChapter: true,
-			RAGEntireNotebook:  true,
-			RAGQueueStudy:      true,
+			MaxFlashcardsPerSession: 30,
+			StudyStartTime:          "17:00",
+			StudyEndTime:            "18:00",
+			RemindersEnabled:        true,
+			Theme:                   "light-classic",
+			RAGEnabled:              false,
+			RAGNotebookChapter:     true,
+			RAGEntireNotebook:      true,
+			RAGQueueStudy:          true,
+			DefaultRemedialStrategy: "CLASSIC",
 		}
 	} else if err != nil {
 		return nil, err
@@ -357,11 +360,18 @@ func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 	if theme == "" {
 		theme = "light-classic"
 	}
+	strategy := s.DefaultRemedialStrategy
+	if strategy == "" {
+		strategy = "CLASSIC"
+	}
 	_, err := r.db.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled, rag_notebook_chapter, rag_entire_notebook, rag_queue_study)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO user_settings (id, max_flashcards_per_session, study_start_time, study_end_time, reminders_enabled, active_profile_id, skip_to_reading_active, cloud_sync_url, cloud_api_token, theme, rag_enabled, rag_notebook_chapter, rag_entire_notebook, rag_queue_study, default_remedial_strategy)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			daily_study_minutes = excluded.daily_study_minutes,
+			max_flashcards_per_session = excluded.max_flashcards_per_session,
+			study_start_time = excluded.study_start_time,
+			study_end_time = excluded.study_end_time,
+			reminders_enabled = excluded.reminders_enabled,
 			active_profile_id = excluded.active_profile_id,
 			skip_to_reading_active = excluded.skip_to_reading_active,
 			cloud_sync_url = excluded.cloud_sync_url,
@@ -371,8 +381,9 @@ func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 			rag_notebook_chapter = excluded.rag_notebook_chapter,
 			rag_entire_notebook = excluded.rag_entire_notebook,
 			rag_queue_study = excluded.rag_queue_study,
+			default_remedial_strategy = excluded.default_remedial_strategy,
 			updated_at = CURRENT_TIMESTAMP
-	`, s.DailyStudyMinutes, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy)
+	`, s.MaxFlashcardsPerSession, s.StudyStartTime, s.StudyEndTime, s.RemindersEnabled, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy, strategy)
 	return err
 }
 
@@ -762,3 +773,28 @@ func (r *Repository) GetChunkEmbeddingRefsForTopic(topicID string) (map[string]s
 
 	return refs, nil
 }
+
+func (r *Repository) GetRemedialStrategy() (string, error) {
+	var strategy string
+	err := r.db.QueryRow(
+		`SELECT COALESCE(default_remedial_strategy, 'CLASSIC') FROM user_settings WHERE id = 1`,
+	).Scan(&strategy)
+	if err == sql.ErrNoRows {
+		return "CLASSIC", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if strategy == "" {
+		return "CLASSIC", nil
+	}
+	return strategy, nil
+}
+
+func (r *Repository) SetRemedialStrategy(strategy string) error {
+	_, err := r.db.Exec(
+		`UPDATE user_settings SET default_remedial_strategy = ? WHERE id = 1`, strategy,
+	)
+	return err
+}
+

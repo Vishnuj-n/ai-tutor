@@ -105,7 +105,10 @@ func InitSchema(tx *sql.Tx) error {
 		// User settings
 		`CREATE TABLE IF NOT EXISTS user_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
-			daily_study_minutes INTEGER NOT NULL DEFAULT 90,
+			max_flashcards_per_session INTEGER NOT NULL DEFAULT 30,
+			study_start_time TEXT DEFAULT '17:00',
+			study_end_time TEXT DEFAULT '18:00',
+			reminders_enabled BOOLEAN DEFAULT 1,
 			active_profile_id TEXT,
 			skip_to_reading_active BOOLEAN DEFAULT 0,
 			cloud_sync_url TEXT DEFAULT '',
@@ -115,6 +118,7 @@ func InitSchema(tx *sql.Tx) error {
 			rag_notebook_chapter BOOLEAN DEFAULT 1,
 			rag_entire_notebook BOOLEAN DEFAULT 1,
 			rag_queue_study BOOLEAN DEFAULT 1,
+			default_remedial_strategy TEXT DEFAULT 'CLASSIC',
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (active_profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
@@ -329,8 +333,8 @@ func InitSchema(tx *sql.Tx) error {
 
 	// Initialize default user settings
 	if _, err := tx.Exec(`
-		INSERT INTO user_settings (id, daily_study_minutes)
-		VALUES (1, 90)
+		INSERT INTO user_settings (id, max_flashcards_per_session, study_start_time, study_end_time, reminders_enabled)
+		VALUES (1, 30, '17:00', '18:00', 1)
 		ON CONFLICT(id) DO NOTHING
 	`); err != nil {
 		return fmt.Errorf("failed to initialize user settings: %w", err)
@@ -346,5 +350,52 @@ func InitSchema(tx *sql.Tx) error {
 		return fmt.Errorf("failed to initialize llm settings: %w", err)
 	}
 
+	// Run alterStatements migration
+	for _, alter := range alterStatements {
+		exists, err := columnExists(tx, alter.Table, alter.Column)
+		if err != nil {
+			return fmt.Errorf("failed to check column %s in table %s: %w", alter.Column, alter.Table, err)
+		}
+		if !exists {
+			if _, err := tx.Exec(alter.SQL); err != nil {
+				return fmt.Errorf("failed to execute alter statement for %s.%s: %w", alter.Table, alter.Column, err)
+			}
+		}
+	}
+
 	return nil
+}
+
+var alterStatements = []struct {
+	Table  string
+	Column string
+	SQL    string
+}{
+	{"user_settings", "max_flashcards_per_session", "ALTER TABLE user_settings ADD COLUMN max_flashcards_per_session INTEGER NOT NULL DEFAULT 30"},
+	{"user_settings", "study_start_time", "ALTER TABLE user_settings ADD COLUMN study_start_time TEXT DEFAULT '17:00'"},
+	{"user_settings", "study_end_time", "ALTER TABLE user_settings ADD COLUMN study_end_time TEXT DEFAULT '18:00'"},
+	{"user_settings", "reminders_enabled", "ALTER TABLE user_settings ADD COLUMN reminders_enabled BOOLEAN DEFAULT 1"},
+	{"user_settings", "default_remedial_strategy", "ALTER TABLE user_settings ADD COLUMN default_remedial_strategy TEXT DEFAULT 'CLASSIC'"},
+}
+
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var cid int
+		var name, typeStr string
+		var notnull int
+		var dfltValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typeStr, &notnull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

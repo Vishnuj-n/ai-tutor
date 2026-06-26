@@ -26,8 +26,9 @@
 
         <div class="lane-content">
           <p class="option-desc">
-            Resolve this concept rescue directly within our interactive learning environment.
-            The in-app Socratic tutor will guide you through leading questions to help you master the material.
+            Resolve this concept rescue directly within our interactive learning environment. The
+            in-app Socratic tutor will guide you through leading questions to help you master the
+            material.
           </p>
 
           <div class="features-list">
@@ -35,24 +36,24 @@
               <span class="feature-icon">💬</span>
               <div>
                 <strong>Interactive Dialogue</strong>
-                <p class="feature-sub">Engage in a live, guided conversation grounded in your material.</p>
+                <p class="feature-sub">
+                  Engage in a live, guided conversation grounded in your material.
+                </p>
               </div>
             </div>
             <div class="feature-item">
               <span class="feature-icon">📖</span>
               <div>
                 <strong>Context Grounded</strong>
-                <p class="feature-sub">The tutor retrieves relevant sections dynamically from this notebook.</p>
+                <p class="feature-sub">
+                  The tutor retrieves relevant sections dynamically from this notebook.
+                </p>
               </div>
             </div>
           </div>
 
           <div class="action-box">
-            <button
-              type="button"
-              class="tutor-btn"
-              @click="startInAppTutor"
-            >
+            <button type="button" class="tutor-btn" @click="startInAppTutor">
               Start Socratic Chat In-App ➔
             </button>
           </div>
@@ -68,8 +69,8 @@
 
         <div class="lane-content">
           <p class="option-desc">
-            Prefer using a premium model (like ChatGPT, Claude, or Gemini)?
-            Copy the pre-engineered prompt containing the topic's source material below.
+            Prefer using a premium model (like ChatGPT, Claude, or Gemini)? Copy the pre-engineered
+            prompt containing the topic's source material below.
           </p>
 
           <div class="source-preview">
@@ -99,7 +100,8 @@
 
           <div class="completion-box">
             <p class="completion-instruction">
-              Once you have finished the Socratic session externally and feel confident with the material, mark this task complete.
+              Once you have finished the Socratic session externally and feel confident with the
+              material, mark this task complete.
             </p>
 
             <button
@@ -108,7 +110,7 @@
               :disabled="completing"
               @click="finishRescueSession"
             >
-              {{ completing ? 'Completing...' : 'I\'ve Completed the External Session' }}
+              {{ completing ? 'Completing...' : "I've Completed the External Session" }}
             </button>
           </div>
         </div>
@@ -120,7 +122,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getTopicSectionsContent, completeSocraticRescue, GetTaskContext } from '../services/appApi'
+import { getTopicSectionsContent, completeSocraticRescue, GetTaskContext, activateTask } from '../services/appApi'
 
 const route = useRoute()
 const router = useRouter()
@@ -172,8 +174,16 @@ onMounted(async () => {
     }
     topicID.value = task.topic_id || ''
     notebookID.value = task.notebook_id || ''
-    startPage.value = parseInt(task.start_page, 10) || 1
-    endPage.value = parseInt(task.end_page, 10) || 10
+    startPage.value = Number.parseInt(task.start_page, 10) || 1
+    endPage.value = Number.parseInt(task.end_page, 10) || 10
+
+    // Activate the task on mount to transition from PENDING to ACTIVE
+    const activate = await activateTask(taskID.value)
+    if (activate?.error && activate.error !== 'ErrTaskNotPending') {
+      error.value = `Failed to activate task: ${activate.error}`
+      loading.value = false
+      return
+    }
   } catch (err) {
     error.value = `Failed to fetch task context: ${err.message || err}`
     loading.value = false
@@ -243,8 +253,9 @@ async function finishRescueSession() {
       completing.value = false
       return
     }
-    // Successfully completed! Route back to dashboard where a new QUIZ task awaits.
-    router.push('/dashboard')
+    // Successfully completed! Route directly to the quiz if task id is returned, else fallback to dashboard
+    const nextRoute = res?.quiz_task_id ? `/quiz?taskId=${res.quiz_task_id}` : '/dashboard'
+    router.push(nextRoute)
   } catch (err) {
     error.value = 'Failed to complete session: ' + (err.message || err)
     completing.value = false
@@ -468,7 +479,9 @@ h1 {
   padding: 12px;
   font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s, transform 0.15s;
+  transition:
+    opacity 0.2s,
+    transform 0.15s;
   box-shadow: 0 4px 12px rgba(0, 91, 193, 0.2);
 }
 
@@ -584,7 +597,9 @@ h1 {
   padding: 12px;
   font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s, transform 0.15s;
+  transition:
+    opacity 0.2s,
+    transform 0.15s;
   box-shadow: 0 4px 12px rgba(211, 84, 0, 0.2);
 }
 

@@ -29,10 +29,10 @@ type llmProviderInterface interface {
 
 // App is the thin Wails bridge — no business logic lives here.
 type App struct {
-	ctx               context.Context
-	repo              *db.Repository
-	repoMutex         sync.RWMutex
-	readyChan         chan struct{}
+	ctx       context.Context
+	repo      *db.Repository
+	repoMutex sync.RWMutex
+	readyChan chan struct{}
 	// aiMutex guards aiReady, aiInitError, embedder, retrievalEngine, and studyService
 	// which are written by the InitializeRAG goroutine and read by handler methods.
 	aiMutex           sync.Mutex
@@ -250,7 +250,7 @@ func (a *App) checkNotebookIndexingStatus(notebookID, topicID string) (map[strin
 	return nil, false
 }
 
-func (a *App) AskSocratic(notebookID string, topicID string, question string) map[string]interface{} {
+func (a *App) AskSocratic(notebookID string, topicID string, question string, conversationHistory []map[string]string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
@@ -273,7 +273,7 @@ func (a *App) AskSocratic(notebookID string, topicID string, question string) ma
 	}
 	svc := a.studyService
 	a.aiMutex.Unlock()
-	res, err := svc.AskSocratic(notebookID, topicID, question)
+	res, err := svc.AskSocratic(notebookID, topicID, question, conversationHistory)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -357,7 +357,6 @@ func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
 	}
 }
 
-
 // Global state variables for RAG initialization lock
 var ragSetupMutex sync.Mutex
 var isRagSettingUp bool
@@ -388,24 +387,8 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Run simulated download
-		err = am.AcquireAssets(func(status string, percent int, msg, detail string) {
-			wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
-				"status":  status,
-				"percent": percent,
-				"message": msg,
-				"detail":  detail,
-			})
-		})
-
-		if err != nil {
-			emitRagSetupFailed(a, fmt.Sprintf("acquisition failed: %v", err))
-			return
-		}
-
-		// Stage DLLs and re-init DB with vector support
-		if _, err := am.StageDLLs(); err != nil {
-			emitRagSetupFailed(a, fmt.Sprintf("failed to stage DLLs: %v", err))
+		if err := a.acquireAndStageAssets(am); err != nil {
+			emitRagSetupFailed(a, err.Error())
 			return
 		}
 
@@ -415,71 +398,29 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Re-initialize DB, this time with the staged vec0.dll
-		newRepo, err := db.Init(dbPath, am.Vec0DllPath())
+		newRepo, err := a.loadVectorDBWithFallback(dbPath, am.Vec0DllPath())
 		if err != nil {
-			fbRepo, fbErr := db.Init(dbPath, "")
-			if fbErr != nil {
-				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v, and fallback non-vector initialization also failed: %v", err, fbErr))
-			} else {
-				a.repoMutex.Lock()
-				_ = repo.Close()
-				a.repo = fbRepo
-				a.repoMutex.Unlock()
-				emitRagSetupFailed(a, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
-			}
+			emitRagSetupFailed(a, err.Error())
 			return
 		}
 
-		if !newRepo.IsVecExtensionLoaded() {
-			_ = newRepo.Close()
-			fbRepo, fbErr := db.Init(dbPath, "")
-			if fbErr != nil {
-				emitRagSetupFailed(a, fmt.Sprintf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary), and fallback non-vector initialization also failed: %v", fbErr))
-			} else {
-				a.repoMutex.Lock()
-				_ = repo.Close()
-				a.repo = fbRepo
-				a.repoMutex.Unlock()
-				emitRagSetupFailed(a, "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
-			}
-			return
-		}
-
-		// Init ONNX embedder using paths from AssetManager
-		emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+		emb, err := a.initEmbedder(am)
 		if err != nil {
 			_ = newRepo.Close()
-			emitRagSetupFailed(a, fmt.Sprintf("failed to load ONNX embedder: %v", err))
+			emitRagSetupFailed(a, err.Error())
 			return
 		}
 
-		if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
-			_ = emb.Close()
+		if err := a.applyVectorDBAndEmbedder(newRepo, emb); err != nil {
 			_ = newRepo.Close()
-			emitRagSetupFailed(a, fmt.Sprintf("could not initialize prompt tokenizer: %v", err))
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to apply vector DB: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
 			return
 		}
 
-		// Success loading vec0 extension! Close old repo connection, set new repo under lock.
-		a.repoMutex.Lock()
-		_ = repo.Close()
-		a.repo = newRepo
-		a.repoMutex.Unlock()
-
-		// Set dimensions
-		if err := newRepo.InitWithVectorDimension(emb.GetDimension()); err != nil {
-			utils.Warnf("could not initialize vector table: %v", err)
-		}
-
-		// Update app fields with embedder (under lock); readiness waits for full bootstrap.
-		a.aiMutex.Lock()
-		a.embedder = emb
-		a.aiReady = false
-		a.aiInitError = ""
-		a.aiMutex.Unlock()
-
-		// Rebuild engine and study service
 		if err := a.reloadRetrievalEngine(); err != nil {
 			a.aiMutex.Lock()
 			a.aiReady = false
@@ -489,24 +430,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Save settings in DB to reflect RAG is enabled
-		settings, err := newRepo.GetUserSettings()
-		if err == nil {
-			settings.RAGEnabled = true
-			_ = newRepo.UpdateUserSettings(*settings)
-		}
-
-		// Emit indexing-in-progress event before starting vector indexing
-		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
-			"status":  "indexing",
-			"percent": 98,
-			"message": "Indexing topics for AI retrieval...",
-			"detail":  "Building vector index",
-		})
-
-		// Index all existing topics; emit ready only after success
-		indexer := retrieval.NewVectorIndexer(newRepo, emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
-		if err := indexer.IndexAllTopics(); err != nil {
+		if err := a.buildVectorIndex(emb); err != nil {
 			utils.Errorf("vector indexing failed after RAG enable: %v", err)
 			a.aiMutex.Lock()
 			a.aiReady = false
@@ -516,28 +440,176 @@ func (a *App) InitializeRAG() map[string]interface{} {
 			return
 		}
 
-		// Mark ready only after all bootstrap steps succeed.
-		a.aiMutex.Lock()
-		a.aiReady = true
-		a.aiInitError = ""
-		if a.indexQueue != nil {
-			a.indexQueue.Stop()
+		settings, err := a.getRepo().GetUserSettings()
+		if err != nil {
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to read user settings: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
+			return
 		}
-		a.indexQueue = retrieval.NewVectorIndexQueue(newRepo, emb, a.ctx)
-		a.indexQueue.Start()
-		a.aiMutex.Unlock()
 
-		// Emit final ready event only after indexing succeeds
-		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
-			"status":  "ready",
-			"percent": 100,
-			"message": "Local AI retrieval is fully ready!",
-			"detail":  "RAG engine active",
-		})
+		settings.RAGEnabled = true
+		if err := a.getRepo().UpdateUserSettings(*settings); err != nil {
+			a.aiMutex.Lock()
+			a.aiReady = false
+			a.aiInitError = fmt.Sprintf("failed to update user settings: %v", err)
+			a.aiMutex.Unlock()
+			emitRagSetupFailed(a, a.aiInitError)
+			return
+		}
+
+		a.finalizeRAGSetup()
 	}()
 
 	return map[string]interface{}{"ok": true}
 }
+
+// -----------------------------------------------------------------------------
+// RAG Setup Sub-Routines (Helpers for InitializeRAG)
+// -----------------------------------------------------------------------------
+
+func (a *App) acquireAndStageAssets(am *runtime.AssetManager) error {
+	err := am.AcquireAssets(func(status string, percent int, msg, detail string) {
+		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+			"status":  status,
+			"percent": percent,
+			"message": msg,
+			"detail":  detail,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("acquisition failed: %v", err)
+	}
+
+	if _, err := am.StageDLLs(); err != nil {
+		return fmt.Errorf("failed to stage DLLs: %v", err)
+	}
+	return nil
+}
+
+func (a *App) loadVectorDBWithFallback(dbPath, vecDllPath string) (*db.Repository, error) {
+	newRepo, err := db.Init(dbPath, vecDllPath)
+	if err != nil {
+		return nil, a.fallbackToNonVectorDB(dbPath, fmt.Sprintf("failed to reload DB with vector extension: %v", err))
+	}
+
+	if !newRepo.IsVecExtensionLoaded() {
+		_ = newRepo.Close()
+		return nil, a.fallbackToNonVectorDB(dbPath, "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
+	}
+
+	return newRepo, nil
+}
+
+func (a *App) fallbackToNonVectorDB(dbPath string, originalErrMsg string) error {
+	repo := a.getRepo()
+	fbRepo, fbErr := db.Init(dbPath, "")
+	if fbErr != nil {
+		return fmt.Errorf("%s, and fallback non-vector initialization also failed: %v", originalErrMsg, fbErr)
+	}
+
+	a.repoMutex.Lock()
+	oldDB := repo.SwapDB(fbRepo)
+	if oldDB != nil {
+		_ = oldDB.Close()
+	}
+	a.scheduler = scheduler.New(repo, scheduler.Dependencies{})
+	a.repoMutex.Unlock()
+
+	a.aiMutex.Lock()
+	a.aiReady = false
+	if a.indexQueue != nil {
+		a.indexQueue.Stop()
+		a.indexQueue = nil
+	}
+	a.embedder = nil
+	a.retrievalEngine = nil
+	a.studyService = study.NewStudyService(study.Config{
+		Repo:             repo,
+		FastLLMProvider:  a.fastLLMProvider,
+		HeavyLLMProvider: a.heavyLLMProvider,
+		RetrievalEngine:  nil,
+	})
+	a.aiMutex.Unlock()
+
+	return fmt.Errorf("%s", originalErrMsg)
+}
+
+func (a *App) initEmbedder(am *runtime.AssetManager) (*embeddings.OnnxEmbedder, error) {
+	emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ONNX embedder: %v", err)
+	}
+
+	if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
+		_ = emb.Close()
+		return nil, fmt.Errorf("could not initialize prompt tokenizer: %v", err)
+	}
+
+	return emb, nil
+}
+
+func (a *App) applyVectorDBAndEmbedder(newRepo *db.Repository, emb *embeddings.OnnxEmbedder) error {
+	repo := a.getRepo()
+	a.repoMutex.Lock()
+	oldDB := repo.SwapDB(newRepo)
+	if oldDB != nil {
+		_ = oldDB.Close()
+	}
+	a.scheduler = scheduler.New(repo, scheduler.Dependencies{})
+	a.repoMutex.Unlock()
+
+	if err := repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
+		return fmt.Errorf("could not initialize vector table: %w", err)
+	}
+
+	a.aiMutex.Lock()
+	a.embedder = emb
+	a.aiReady = false
+	a.aiInitError = ""
+	a.aiMutex.Unlock()
+	return nil
+}
+
+func (a *App) buildVectorIndex(emb *embeddings.OnnxEmbedder) error {
+	wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+		"status":  "indexing",
+		"percent": 98,
+		"message": "Indexing topics for AI retrieval...",
+		"detail":  "Building vector index",
+	})
+
+	indexer := retrieval.NewVectorIndexer(a.getRepo(), emb, retrieval.IndexerConfig{RecomputeOnHashMismatch: true}, a.ctx)
+	if err := indexer.IndexAllTopics(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *App) finalizeRAGSetup() {
+	a.aiMutex.Lock()
+	a.aiReady = true
+	a.aiInitError = ""
+	if a.indexQueue != nil {
+		a.indexQueue.Stop()
+	}
+	a.indexQueue = retrieval.NewVectorIndexQueue(a.getRepo(), a.embedder, a.ctx)
+	a.indexQueue.Start()
+	a.aiMutex.Unlock()
+
+	wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+		"status":  "ready",
+		"percent": 100,
+		"message": "Local AI retrieval is fully ready!",
+		"detail":  "RAG engine active",
+	})
+}
+
+// -----------------------------------------------------------------------------
+// Existing Retrieval & Error Methods
+// -----------------------------------------------------------------------------
 
 func (a *App) reloadRetrievalEngine() error {
 	a.aiMutex.Lock()

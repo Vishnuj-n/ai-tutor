@@ -66,6 +66,26 @@ Refer doc/future_plan/cross_platform_asset_delivery.md
 
 - Added in onboarding and settings
 
+---
+
+### Sprint 14: User-Configurable Remediation Strategy [DONE]
+**Goal:** Allow users to choose between a standard reread-first remediation and a direct Socratic rescue intervention.
+
+**Implementation:** Added `default_remedial_strategy` to `user_settings` with `CLASSIC` (default) and `FAST` options.
+
+- [x] **Task 14.1: Database & Settings**
+  - Added `default_remedial_strategy` column to `user_settings`.
+  - Created `GetRemedialStrategy` and `SetRemedialStrategy` DB helpers.
+  - Added corresponding Wails bindings.
+- [x] **Task 14.2: Quiz Logic Branching**
+  - Updated `SubmitQuizAttempt` to check the strategy before starting the transaction.
+  - Implemented "Fast Track" to skip reread and insert `SOCRATIC_REMEDIAL` directly on first failure.
+- [x] **Task 14.3: Frontend Settings UI**
+  - Added "Quiz Failure Rescue" toggle (Classic/Fast Track) in General Settings.
+  - Integrated with existing profile change logic to prevent settings resets.
+- [x] **Task 14.4: Testing**
+  - Added `TestFastTrackSkipsReread`, `TestClassicTrackInsertsReread`, and `TestDefaultIsClassic` tests.
+
 ## Archive / Historical Completed Sprints
 
 <details>

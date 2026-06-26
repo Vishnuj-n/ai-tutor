@@ -1,6 +1,7 @@
 package study
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -110,6 +111,13 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		return models.QuizTaskPayload{}, fmt.Errorf("FAST_LLM provider not initialized")
 	}
 
+	notebookTitle := topicID
+	if nbID, err := s.repo.GetNotebookIDByTopic(topicID); err == nil && nbID != "" {
+		if nb, err := s.repo.GetNotebookByID(nbID); err == nil && nb != nil && nb.Title != "" {
+			notebookTitle = nb.Title
+		}
+	}
+
 	normalizedChunkIDs := make([]string, 0, len(chunkIDs))
 	seen := make(map[string]struct{}, len(chunkIDs))
 	for _, id := range chunkIDs {
@@ -199,11 +207,21 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 	targetCount := scaledQuizQuestionCount(totalWordCount)
 
 	prompt := strings.Join([]string{
-		"You are an AI tutor quiz generator.",
+		"You are an expert academic tutor and quiz generator creating a quiz for spaced repetition study.",
 		"Return STRICT JSON only.",
+		fmt.Sprintf("Notebook: \"%s\"", notebookTitle),
 		fmt.Sprintf("Generate exactly %d multiple-choice questions from the provided chunks.", targetCount),
+		"",
+		"=== ADAPTIVE CONTENT RULES ===",
+		"Before generating questions, classify the text type using the notebook title as context:",
+		"- FACTUAL/TECHNICAL (exam prep, current affairs, engineering, history): Test specific facts, dates, definitions, formulas, and concrete data points.",
+		"- CONCEPTUAL/NARRATIVE (philosophy, self-help, psychology, business): Test core frameworks, mindset shifts, actionable rules, and key ideas.",
+		"",
+		"=== QUESTION RULES ===",
 		"Each question must have exactly 4 options.",
 		"correct_answer must match one option exactly.",
+		"AVOID yes/no questions. PREFER 'why', 'how', 'what is', 'explain' questions.",
+		"",
 		"JSON schema: {\"questions\":[{\"source_chunk_id\":string,\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string}]}",
 		"Chunks:",
 		strings.Join(contextParts, "\n"),
@@ -240,6 +258,43 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 	}
 
 	return models.QuizTaskPayload{Questions: questions, PassingScore: 70}, nil
+}
+
+func (s *StudyService) triggerSocraticRescueHandoffTx(
+	tx *sql.Tx,
+	task *models.StudyQueueTask,
+	attempt *models.QuizAttemptRecord,
+) (string, string, models.StudyTaskStatus, bool, models.StudyQueueTask, error) {
+	feedback := "Concept rescue activated. Complete the Socratic session to retry."
+	attempt.Feedback = feedback
+	completionStatus := models.StudyTaskStatusCompleted
+	manualReviewRecommended := true
+
+	// Safety transaction: Delete FSRS cards to protect purity from rote clutter
+	if err := s.repo.DeleteFSRSCardsByTopicIDTx(tx, task.TopicID); err != nil {
+		return "", "", models.StudyTaskStatusCompleted, false, models.StudyQueueTask{}, fmt.Errorf("failed to delete FSRS cards: %w", err)
+	}
+
+	// Shift session into Socratic Rescue Lane by generating a SOCRATIC_REMEDIAL task
+	socraticTaskID := uuid.NewString()
+	socraticPayload, _ := json.Marshal(map[string]string{
+		"feedback": feedback,
+		"lane":     "socratic_rescue",
+		"mode":     "external_prompt",
+	})
+	followUp := models.StudyQueueTask{
+		ID:          socraticTaskID,
+		NotebookID:  task.NotebookID,
+		TopicID:     task.TopicID,
+		TaskType:    models.StudyTaskTypeSocraticRemedial,
+		Status:      models.StudyTaskStatusPending,
+		Priority:    0,
+		PayloadJSON: string(socraticPayload),
+		StartPage:   task.StartPage,
+		EndPage:     task.EndPage,
+	}
+
+	return socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, nil
 }
 
 func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) (models.QuizResult, error) {
@@ -316,6 +371,8 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	completionStatus := models.StudyTaskStatusCompleted
 	var resultPayload []byte
 
+	strategy, _ := s.repo.GetRemedialStrategy()
+
 	tx, err := s.repo.Begin()
 	if err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to begin quiz transaction: %w", err)
@@ -363,54 +420,41 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			}
 			utils.Warnf("[SOCRATIC_RESCUE] requiz_failed topicID=%s — external help required", task.TopicID)
 		} else {
-			rereadAttemptCount, err = s.repo.IncrementRereadAttemptCountTx(tx, task.TopicID)
-			if err != nil {
-				return models.QuizResult{}, fmt.Errorf("failed to increment reread attempts: %w", err)
-			}
-			if rereadAttemptCount <= maxAutomaticRereadAttempts {
-				rereadTaskID = uuid.NewString()
-				feedbackPayload, _ := json.Marshal(map[string]string{"feedback": feedback})
-				followUps = append(followUps, models.StudyQueueTask{
-					ID:          rereadTaskID,
-					NotebookID:  task.NotebookID,
-					TopicID:     task.TopicID,
-					TaskType:    models.StudyTaskTypeReread,
-					Status:      models.StudyTaskStatusPending,
-					Priority:    0,
-					PayloadJSON: string(feedbackPayload),
-					StartPage:   task.StartPage,
-					EndPage:     task.EndPage,
-				})
-			} else {
-				// Strike 3: SOCRATIC_REMEDIAL rescue
-				manualReviewRecommended = true
-				feedback = "Concept rescue activated. Complete the Socratic session to retry."
-				attempt.Feedback = feedback
-				completionStatus = models.StudyTaskStatusCompleted // Mark QUIZ as COMPLETED
-
-				// Safety transaction: Delete FSRS cards to protect purity from rote clutter
-				if err := s.repo.DeleteFSRSCardsByTopicIDTx(tx, task.TopicID); err != nil {
-					return models.QuizResult{}, fmt.Errorf("failed to delete FSRS cards: %w", err)
+			if strategy == "FAST" {
+				var followUp models.StudyQueueTask
+				socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt)
+				if err != nil {
+					return models.QuizResult{}, err
 				}
-
-				// Shift session into Socratic Rescue Lane by generating a SOCRATIC_REMEDIAL task
-				socraticTaskID = uuid.NewString()
-				socraticPayload, _ := json.Marshal(map[string]string{
-					"feedback": feedback,
-					"lane":     "socratic_rescue",
-					"mode":     "external_prompt",
-				})
-				followUps = append(followUps, models.StudyQueueTask{
-					ID:          socraticTaskID,
-					NotebookID:  task.NotebookID,
-					TopicID:     task.TopicID,
-					TaskType:    models.StudyTaskTypeSocraticRemedial,
-					Status:      models.StudyTaskStatusPending,
-					Priority:    0,
-					PayloadJSON: string(socraticPayload),
-					StartPage:   task.StartPage,
-					EndPage:     task.EndPage,
-				})
+				followUps = append(followUps, followUp)
+			} else {
+				rereadAttemptCount, err = s.repo.IncrementRereadAttemptCountTx(tx, task.TopicID)
+				if err != nil {
+					return models.QuizResult{}, fmt.Errorf("failed to increment reread attempts: %w", err)
+				}
+				if rereadAttemptCount <= maxAutomaticRereadAttempts {
+					rereadTaskID = uuid.NewString()
+					feedbackPayload, _ := json.Marshal(map[string]string{"feedback": feedback})
+					followUps = append(followUps, models.StudyQueueTask{
+						ID:          rereadTaskID,
+						NotebookID:  task.NotebookID,
+						TopicID:     task.TopicID,
+						TaskType:    models.StudyTaskTypeReread,
+						Status:      models.StudyTaskStatusPending,
+						Priority:    0,
+						PayloadJSON: string(feedbackPayload),
+						StartPage:   task.StartPage,
+						EndPage:     task.EndPage,
+					})
+				} else {
+					// Strike 3: SOCRATIC_REMEDIAL rescue
+					var followUp models.StudyQueueTask
+					socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt)
+					if err != nil {
+						return models.QuizResult{}, err
+					}
+					followUps = append(followUps, followUp)
+				}
 			}
 		}
 	}
@@ -454,15 +498,15 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		if isRescueRequiz {
 			utils.LogQuizResult(task.ID, score, false, "")
 			utils.Warnf("[QUIZ] quiz_failed_requiz_failed notebookID=%s topicID=%s — external help marked", task.NotebookID, task.TopicID)
-		} else if rereadAttemptCount <= maxAutomaticRereadAttempts {
-			if rereadTaskID != "" {
-				utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
-			}
+		} else if socraticTaskID != "" {
+			utils.LogQuizResult(task.ID, score, false, "")
+			utils.Warnf("[QUIZ] quiz_failed_socratic_rescue_created notebookID=%s topicID=%s socraticTaskID=%s", task.NotebookID, task.TopicID, socraticTaskID)
+		} else if rereadTaskID != "" {
+			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
 			utils.LogQuizResult(task.ID, score, false, rereadTaskID)
 			utils.Warnf("[QUIZ] quiz_failed_reread_created notebookID=%s topicID=%s rereadTaskID=%s", task.NotebookID, task.TopicID, rereadTaskID)
 		} else {
 			utils.LogQuizResult(task.ID, score, false, "")
-			utils.Warnf("[QUIZ] quiz_failed_socratic_rescue_created notebookID=%s topicID=%s socraticTaskID=%s", task.NotebookID, task.TopicID, socraticTaskID)
 		}
 	}
 

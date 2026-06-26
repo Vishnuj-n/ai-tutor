@@ -10,17 +10,18 @@ const routeQuery = ref({})
 vi.mock('../services/appApi', () => ({
   getTopicSectionsContent: vi.fn(),
   completeSocraticRescue: vi.fn(),
-  GetTaskContext: vi.fn()
+  GetTaskContext: vi.fn(),
+  activateTask: vi.fn(),
 }))
 
 // Mock vue-router hooks
 vi.mock('vue-router', () => ({
   useRoute: () => ({
-    query: routeQuery.value
+    query: routeQuery.value,
   }),
   useRouter: () => ({
-    push: vi.fn()
-  })
+    push: vi.fn(),
+  }),
 }))
 
 describe('SocraticRescue.vue Integration', () => {
@@ -30,14 +31,14 @@ describe('SocraticRescue.vue Integration', () => {
       topicId: 'topic-123',
       taskId: 'task-456',
       startPage: '1',
-      endPage: '10'
+      endPage: '10',
     }
 
     // Mock clipboard
     Object.assign(navigator, {
       clipboard: {
-        writeText: vi.fn().mockResolvedValue()
-      }
+        writeText: vi.fn().mockResolvedValue(),
+      },
     })
 
     // Mock GetTaskContext
@@ -47,20 +48,23 @@ describe('SocraticRescue.vue Integration', () => {
         topic_id: 'topic-123',
         notebook_id: 'notebook-789',
         start_page: 1,
-        end_page: 10
-      }
+        end_page: 10,
+      },
     })
+
+    appApi.activateTask.mockResolvedValue({ error: null })
   })
 
   it('loads source material and displays generated socratic prompt', async () => {
     appApi.getTopicSectionsContent.mockResolvedValue({
-      content: 'DeepMind builds AI agents.'
+      content: 'DeepMind builds AI agents.',
     })
 
     const wrapper = mount(SocraticRescue)
     await flushPromises()
 
     expect(appApi.GetTaskContext).toHaveBeenCalledWith('task-456')
+    expect(appApi.activateTask).toHaveBeenCalledWith('task-456')
     expect(appApi.getTopicSectionsContent).toHaveBeenCalledWith('topic-123', 'notebook-789')
     expect(wrapper.find('.source-text').text()).toBe('DeepMind builds AI agents.')
     expect(wrapper.find('.prompt-textarea').element.value).toContain('DeepMind builds AI agents.')

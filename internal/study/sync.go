@@ -115,7 +115,7 @@ func TriggerCloudSync(repo *db.Repository) error {
 
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("sync server returned status %d: %s", resp.StatusCode, string(bodyBytes))
 			continue
 		}
@@ -123,7 +123,7 @@ func TriggerCloudSync(repo *db.Repository) error {
 		// Decode response body inside loop to catch decode failures as errors
 		var syncResp SyncResponse
 		decodeErr := json.NewDecoder(resp.Body).Decode(&syncResp)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if decodeErr != nil {
 			lastErr = fmt.Errorf("failed to decode sync response: %w", decodeErr)
 			continue
