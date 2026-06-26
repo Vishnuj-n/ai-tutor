@@ -274,6 +274,10 @@ func (p *Provider) GenerateAnswer(prompt string) (string, error) {
 		},
 	}
 
+	// Debug: write prompt to file for inspection
+	debugLog := fmt.Sprintf("\n--- PROMPT @ %s [model: %s] ---\n%s\n--- END PROMPT ---\n", time.Now().Format("2006-01-02 15:04:05"), p.config.Model, prompt)
+	_ = os.WriteFile("dev_data/logs/llm_prompt.log", append(mustReadFile("dev_data/logs/llm_prompt.log"), []byte(debugLog)...), 0644)
+
 	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return "", err
@@ -321,4 +325,9 @@ func (p *Provider) GenerateAnswer(prompt string) (string, error) {
 	}
 
 	return apiResp.Choices[0].Message.Content, nil
+}
+
+func mustReadFile(path string) []byte {
+	data, _ := os.ReadFile(path)
+	return data
 }
