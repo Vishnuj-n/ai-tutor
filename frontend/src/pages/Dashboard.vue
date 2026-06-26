@@ -443,17 +443,19 @@ const yTicks = computed(() => {
 const chartPoints = computed(() => {
   if (!timelineData.value || timelineData.value.length === 0) return []
   const maxVal = yAxisMax.value
+  const len = timelineData.value.length
 
   return timelineData.value.map((d, i) => {
     // scale to 400x300 viewport
-    const x = 30 + (i / (timelineData.value.length - 1)) * 340
+    const x = len === 1 ? 200 : 30 + (i / (len - 1)) * 340
     const y = 250 - (d.card_count / maxVal) * 200
     const exceeds = d.card_count > maxFlashcardsLimit.value
+    const px = len === 1 ? 50 : 7 + (i / (len - 1)) * 86
     return {
       x,
       y,
-      percentX: 7 + (i / (timelineData.value.length - 1)) * 86,
-      tooltipX: 7 + (i / (timelineData.value.length - 1)) * 86,
+      percentX: px,
+      tooltipX: px,
       tooltipY: y,
       percentY: (y / 300) * 100,
       dayLabel: d.day_label,
@@ -474,7 +476,7 @@ const areaPathData = computed(() => {
   const pts = chartPoints.value
   if (pts.length === 0) return ''
   const linePath = linePathData.value
-  return `${linePath} L ${pts[pts.length - 1].x} 270 L ${pts[0].x} 270 Z`
+  return `${linePath} L ${pts[pts.length - 1].x} 250 L ${pts[0].x} 250 Z`
 })
 
 const limitLineY = computed(() => {

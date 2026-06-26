@@ -215,8 +215,9 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	// Apply "Hard Slice" (The Array Truncation Trick) to prevent flashcard avalanche.
 	const MaxCardsPerReadingTask = 6
 	if len(parsed.Cards) > MaxCardsPerReadingTask {
+		originalCount := len(parsed.Cards)
 		parsed.Cards = parsed.Cards[:MaxCardsPerReadingTask]
-		utils.Warnf("[FLASHCARD_PIPELINE] hard_slice applied original_count=%d capped_to=%d", len(parsed.Cards), MaxCardsPerReadingTask)
+		utils.Warnf("[FLASHCARD_PIPELINE] hard_slice applied original_count=%d capped_to=%d", originalCount, MaxCardsPerReadingTask)
 	}
 
 	now := time.Now().Unix()
@@ -269,7 +270,7 @@ func buildMarathonFlashcardPromptWithBudget(notebookTitle string, startPage, end
 
 	var b strings.Builder
 	b.WriteString("You are an expert academic tutor and flashcard generator creating study materials for spaced repetition (FSRS).\n")
-	b.WriteString("You are strictly limited to generating a maximum of 5 flashcards. Do not test minor details. If the text is short, generate fewer.\n")
+	b.WriteString("Do not test minor details. If the text is short, generate fewer.\n")
 	b.WriteString("CRITICAL: Return ONLY valid JSON. No markdown. No code blocks. No explanations.\n")
 	b.WriteString("Output must start with { and end with }. No prefix or suffix text.\n")
 	fmt.Fprintf(&b, "Notebook: \"%s\"\n", notebookTitle)

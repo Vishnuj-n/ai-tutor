@@ -243,6 +243,7 @@ import {
   getUserSettings,
   completeSocraticRescue,
   activateTask,
+  GetTaskContext,
 } from '../services/appApi'
 import { renderMarkdown } from '../services/markdown'
 
@@ -341,9 +342,25 @@ const selectionHint = computed(() => {
 
 onMounted(async () => {
   if (taskId.value) {
-    const activate = await activateTask(taskId.value)
-    if (activate?.error && activate.error !== 'ErrTaskNotPending') {
-      globalError.value = activate.error
+    try {
+      const activate = await activateTask(taskId.value)
+      if (activate?.error && activate.error !== 'ErrTaskNotPending') {
+        globalError.value = activate.error
+        return
+      }
+      const context = await GetTaskContext(taskId.value)
+      if (context?.error) {
+        globalError.value = context.error
+        return
+      }
+      if (context?.notebook?.id) {
+        selectedNotebookID.value = context.notebook.id
+      }
+      if (context?.topic?.id) {
+        selectedTopicID.value = context.topic.id
+      }
+    } catch (err) {
+      globalError.value = `Failed to initialize Socratic task: ${err.message || err}`
       return
     }
   }
@@ -449,6 +466,10 @@ async function submitQuestion() {
   const question = inputQuestion.value.trim()
   const topicID = effectiveTopicID.value
 
+  const conversationHistory = messages.value
+    .filter((m) => !m.error)
+    .map((m) => ({ role: m.role, content: m.text }))
+
   messages.value.push({
     role: 'user',
     text: question,
@@ -457,10 +478,6 @@ async function submitQuestion() {
   inputQuestion.value = ''
   isLoading.value = true
   await scrollToBottom()
-
-  const conversationHistory = messages.value
-    .filter((m) => !m.error)
-    .map((m) => ({ role: m.role, content: m.text }))
 
   try {
     const result = await askSocratic(selectedNotebookID.value, topicID, question, conversationHistory)
@@ -605,7 +622,7 @@ async function retrySocraticMessage(messageIdx) {
   await scrollToBottom()
 
   const conversationHistory = messages.value
-    .filter((m) => !m.error)
+    .filter((m, idx) => !m.error && idx !== messageIdx - 1)
     .map((m) => ({ role: m.role, content: m.text }))
 
   try {

@@ -80,13 +80,17 @@ func (r *Repository) GetDueReviewCardsForNotebook(notebookID string, now int64, 
 	if len(oldCards) < reviewLimit && len(newCards) == newLimit {
 		extraNeeded := reviewLimit - len(oldCards)
 		moreNewCards, err := r.getDueCardsWithLogOption(notebookID, now, newLimit+extraNeeded, false)
-		if err == nil {
+		if err != nil {
+			utils.Warnf("[FLASHCARD_PIPELINE] dynamic fill top-up for new cards failed: %v", err)
+		} else {
 			newCards = moreNewCards
 		}
 	} else if len(newCards) < newLimit && len(oldCards) == reviewLimit {
 		extraNeeded := newLimit - len(newCards)
 		moreOldCards, err := r.getDueCardsWithLogOption(notebookID, now, reviewLimit+extraNeeded, true)
-		if err == nil {
+		if err != nil {
+			utils.Warnf("[FLASHCARD_PIPELINE] dynamic fill top-up for old cards failed: %v", err)
+		} else {
 			oldCards = moreOldCards
 		}
 	}

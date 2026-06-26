@@ -640,8 +640,6 @@ function setupIntersectionObserver(viewportEl) {
         if (Number.isNaN(page)) return
         if (entry.isIntersecting) {
           renderedPages.value[page] = true
-        } else {
-          renderedPages.value[page] = false
         }
       })
     },
@@ -702,8 +700,9 @@ onUnmounted(() => {
 })
 
 // ─── Scroll-based page tracking ───────────────────────────────────────────────
-// Replaces IntersectionObserver. Reads geometry directly on scroll — no
-// observer rebuild cycles, no feedback loops, no cascade.
+// Works alongside the IntersectionObserver. Reads geometry directly on scroll
+// to determine the primary active visible page, while the IntersectionObserver
+// manages lazy-loading/rendering of adjacent pages.
 
 function getVisiblePageFromScroll() {
   const viewport = pdfViewportRef.value
