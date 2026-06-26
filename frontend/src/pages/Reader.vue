@@ -105,7 +105,6 @@
           ref="pdfViewportRef"
           class="pdf-viewport"
           tabindex="0"
-          :data-view-mode="viewMode"
           :style="{
             opacity:
               (scrollState.status !== 'initializing' && scrollState.status !== 'loading') ||
@@ -174,28 +173,13 @@ Programmatic:   {{ isProgrammaticScroll }}
             +
           </button>
           <div class="edge-sep"></div>
-          <div class="theme-trigger-wrap">
-            <button
-              class="edge-btn dots-btn"
-              title="Change theme"
-              :aria-expanded="themeMenuOpen"
-              @click="themeMenuOpen = !themeMenuOpen"
-            >
-              ···
-            </button>
-            <div v-if="themeMenuOpen" class="theme-flyout" role="menu">
-              <button
-                v-for="mode in ['raw', 'light', 'dark', 'sync']"
-                :key="mode"
-                class="flyout-item"
-                role="menuitem"
-                :class="{ active: viewMode === mode }"
-                @click="setViewMode(mode)"
-              >
-                {{ mode.charAt(0).toUpperCase() + mode.slice(1) }}
-              </button>
-            </div>
-          </div>
+          <button
+            class="edge-btn info-btn"
+            title="Keyboard Zoom: Ctrl + '+' / '-'"
+            aria-label="Keyboard shortcuts info"
+          >
+            i
+          </button>
         </div>
 
         <p v-if="isTaskFlow && completionMessage" class="completion-message">
@@ -365,8 +349,6 @@ function setScrollStatus(status, targetPage = null) {
   }
 }
 
-const viewMode = ref('raw')
-const themeMenuOpen = ref(false)
 const containerWidth = ref(800)
 
 // Virtualization constants removed for native-scroll aspect-ratio pattern
@@ -403,10 +385,7 @@ watch(
   }
 )
 
-function setViewMode(mode) {
-  viewMode.value = mode
-  themeMenuOpen.value = false
-}
+
 
 const isTaskFlow = computed(() => {
   // Once context is settled, read mode from the context object.
@@ -541,56 +520,6 @@ watch(pdfViewportRef, (el, oldEl, onCleanup) => {
     resizeObserver = null
   }
 
-  let startTouchDist = 0
-  let startZoomScale = 1.0
-
-  function handleTouchStart(e) {
-    if (e.touches.length === 2) {
-      const t1 = e.touches[0]
-      const t2 = e.touches[1]
-      startTouchDist = Math.sqrt(
-        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
-      )
-      startZoomScale = zoomScale.value
-    }
-  }
-
-  function handleTouchMove(e) {
-    if (e.touches.length === 2 && startTouchDist > 0) {
-      e.preventDefault()
-
-      const t1 = e.touches[0]
-      const t2 = e.touches[1]
-      const currentTouchDist = Math.sqrt(
-        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
-      )
-      const delta = currentTouchDist / startTouchDist
-
-      if (delta > 1.05 || delta < 0.95) {
-        let newScale = startZoomScale * delta
-        newScale = Math.round(newScale * 100) / 100
-        zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
-      }
-    }
-  }
-
-  function handleTouchEnd(e) {
-    if (e.touches.length < 2) {
-      startTouchDist = 0
-    }
-  }
-
-  function handleWheel(e) {
-    if (e.ctrlKey) {
-      e.preventDefault()
-
-      const factor = 1 - e.deltaY * 0.005
-      let newScale = zoomScale.value * factor
-      newScale = Math.round(newScale * 100) / 100
-      zoomScale.value = Math.max(0.5, Math.min(2.5, newScale))
-    }
-  }
-
   if (el) {
     containerWidth.value = el.clientWidth || 800
 
@@ -608,10 +537,6 @@ watch(pdfViewportRef, (el, oldEl, onCleanup) => {
     })
     resizeObserver.observe(el)
 
-    el.addEventListener('touchstart', handleTouchStart, { passive: true })
-    el.addEventListener('touchmove', handleTouchMove, { passive: false })
-    el.addEventListener('touchend', handleTouchEnd, { passive: true })
-    el.addEventListener('wheel', handleWheel, { passive: false })
     el.addEventListener('scroll', handleViewportScroll, { passive: true })
 
     onCleanup(() => {
@@ -619,10 +544,6 @@ watch(pdfViewportRef, (el, oldEl, onCleanup) => {
         resizeObserver.disconnect()
         resizeObserver = null
       }
-      el.removeEventListener('touchstart', handleTouchStart)
-      el.removeEventListener('touchmove', handleTouchMove)
-      el.removeEventListener('touchend', handleTouchEnd)
-      el.removeEventListener('wheel', handleWheel)
       el.removeEventListener('scroll', handleViewportScroll)
     })
   }
@@ -986,22 +907,7 @@ h3 {
   will-change: filter;
 }
 
-/* Theme filters */
-[data-theme='light-warm'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
-  filter: sepia(0.4) contrast(1.05) brightness(0.95);
-}
 
-[data-theme='dark-indigo'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
-  filter: invert(0.9) hue-rotate(190deg) brightness(0.9) contrast(1.1);
-}
-
-[data-theme='dark-nord'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
-  filter: invert(0.9) hue-rotate(160deg) saturate(0.8) brightness(0.9) contrast(1.1);
-}
-
-[data-theme='dark-emerald'] .pdf-viewport :deep(.vue-pdf-embed__page canvas) {
-  filter: invert(0.9) hue-rotate(90deg) saturate(0.7) brightness(0.9) contrast(1.1);
-}
 
 .completion-message {
   margin: 0;
@@ -1178,34 +1084,7 @@ button:disabled {
   }
 }
 
-/* Custom View Mode Overrides */
-.pdf-viewport[data-view-mode='raw'] :deep(.vue-pdf-embed__page canvas) {
-  filter: none !important;
-}
 
-.pdf-viewport[data-view-mode='raw'] {
-  background: #ffffff !important;
-}
-
-.pdf-viewport[data-view-mode='light'] :deep(.vue-pdf-embed__page canvas) {
-  filter: sepia(0.5) contrast(1.1) brightness(0.95) !important;
-}
-
-.pdf-viewport[data-view-mode='light'] {
-  background: #f8f1e3 !important;
-}
-
-.pdf-viewport[data-view-mode='dark'] :deep(.vue-pdf-embed__page canvas) {
-  filter: invert(1) hue-rotate(180deg) !important;
-}
-
-.pdf-viewport[data-view-mode='dark'] {
-  background: #121214 !important;
-}
-
-.pdf-viewport[data-view-mode='sync'] {
-  background: var(--background) !important;
-}
 
 /* Right-edge PDF Controls */
 .pdf-edge-controls {
@@ -1262,90 +1141,17 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.dots-btn {
-  font-size: 18px;
-  letter-spacing: 1px;
+.info-btn {
+  font-family: serif;
+  font-style: italic;
+  font-weight: bold;
+  font-size: 14px;
   color: var(--muted-text);
 }
 
-.dots-btn:hover {
+.info-btn:hover {
   color: var(--on-surface);
-}
-
-.edge-zoom-val {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted-text);
-  min-width: 30px;
-  text-align: center;
-  user-select: none;
-}
-
-.edge-sep {
-  width: 18px;
-  height: 1px;
-  background: color-mix(in srgb, var(--outline-variant) 35%, transparent);
-  margin: 2px 0;
-}
-
-/* Theme flyout */
-.theme-trigger-wrap {
-  position: relative;
-}
-
-.theme-flyout {
-  position: absolute;
-  right: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: color-mix(in srgb, var(--surface-bright) 90%, transparent);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid color-mix(in srgb, var(--outline-variant) 25%, transparent);
-  border-radius: 14px;
-  padding: 8px 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.13);
-  z-index: 20;
-  min-width: 80px;
-  animation: flyout-in 0.18s ease;
-}
-
-@keyframes flyout-in {
-  from {
-    opacity: 0;
-    transform: translateY(-50%) translateX(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(-50%) translateX(0);
-  }
-}
-
-.flyout-item {
-  background: transparent;
-  color: var(--muted-text);
-  border: none;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 10px;
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.15s ease;
-  width: 100%;
-}
-
-.flyout-item:hover {
-  background: color-mix(in srgb, var(--surface-container-low) 60%, transparent);
-  color: var(--on-surface);
-}
-
-.flyout-item.active {
-  background: var(--primary);
-  color: var(--on-primary);
+  background: color-mix(in srgb, var(--surface-container-low) 70%, transparent);
 }
 
 .chat-disabled {
