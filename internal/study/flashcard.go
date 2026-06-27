@@ -8,7 +8,6 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/models"
-	"ai-tutor/internal/scheduler"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
@@ -76,50 +75,25 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 		return nil, nil, false, "", fmt.Errorf("failed to link topic to notebook: %w", err)
 	}
 
-	// FSRS math calibration (Easy vs Double Good) based on latest quiz attempt score
-	initialState := models.FlashcardState{}
+	// Start cards in Review state (bypass learning phase) with day-based offsets
+	initialState := models.FlashcardState{
+		StateCode: 2, // 2 = Review state in models.go
+	}
 	now := time.Now().Unix()
-	dueAt := now + 24*60*60 // Default fallback: exactly tomorrow
+	dueAt := now + 24*60*60 // Default fallback: tomorrow
 
 	score, passedAttempt, err := s.repo.GetLatestQuizAttemptScoreByTopic(topicID)
 	if err == nil && passedAttempt {
-		if score == 100 {
-			// Ace -> Simulate Easy rating
-			simState, simErr := scheduler.NextFSRSState(models.FlashcardState{}, scheduler.Easy, time.Now(), 0, 0)
-			if simErr == nil {
-				initialState = simState
-				if initialState.ScheduledDays > 0 {
-					dueAt = now + int64(initialState.ScheduledDays)*24*3600
-				} else {
-					dueAt = now + 24*60*60
-				}
-				utils.Warnf("[FSRS_CALIBRATION] Ace detected for topicID=%s score=%d. Simulated Easy scheduled_days=%d dueAt=%d", topicID, score, initialState.ScheduledDays, dueAt)
-			} else {
-				utils.Warnf("[FSRS_CALIBRATION] Failed to simulate Easy rating: %v", simErr)
-			}
-		} else {
-			// Pass -> Simulate Double Good ratings
-			state1, simErr1 := scheduler.NextFSRSState(models.FlashcardState{}, scheduler.Good, time.Now(), 0, 0)
-			if simErr1 == nil {
-				dueAt1 := time.Now().Unix() + int64(state1.ScheduledDays)*24*3600
-				state2, simErr2 := scheduler.NextFSRSState(state1, scheduler.Good, time.Now(), dueAt1, time.Now().Unix())
-				if simErr2 == nil {
-					initialState = state2
-					if initialState.ScheduledDays > 0 {
-						dueAt = now + int64(initialState.ScheduledDays)*24*3600
-					} else {
-						dueAt = now + 24*60*60
-					}
-					utils.Warnf("[FSRS_CALIBRATION] Pass detected for topicID=%s score=%d. Simulated Double Good scheduled_days=%d dueAt=%d", topicID, score, initialState.ScheduledDays, dueAt)
-				} else {
-					utils.Warnf("[FSRS_CALIBRATION] Failed to simulate second Good rating: %v", simErr2)
-				}
-			} else {
-				utils.Warnf("[FSRS_CALIBRATION] Failed to simulate first Good rating: %v", simErr1)
-			}
+		switch {
+		case score == 100:
+			dueAt = now + 3*24*60*60 // Ace: 3 days
+			utils.Warnf("[FSRS_CALIBRATION] Ace detected (score=100) for topicID=%s. Scheduled in 3 days.", topicID)
+		default:
+			dueAt = now + 24*60*60 // Pass: tomorrow (1 day)
+			utils.Warnf("[FSRS_CALIBRATION] Pass detected (score=%d) for topicID=%s. Scheduled in 1 day.", score, topicID)
 		}
 	} else {
-		utils.Warnf("[FSRS_CALIBRATION] Using default new card state for topicID=%s (no passed quiz attempt found, err=%v)", topicID, err)
+		utils.Warnf("[FSRS_CALIBRATION] Using default tomorrow offset for topicID=%s (no passed quiz attempt found, err=%v)", topicID, err)
 	}
 
 	states := make(map[string]models.FlashcardState, len(cards))

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ============================================================================
@@ -817,8 +818,14 @@ func TestFSRSCalibrationEasyAndDoubleGood(t *testing.T) {
 	if err := json.Unmarshal([]byte(stateJSON.String), &cardState); err != nil {
 		t.Fatalf("failed to unmarshal state: %v", err)
 	}
-	if cardState.Reps != 1 || cardState.Difficulty != 1.0 || cardState.Stability < 8.0 {
-		t.Fatalf("expected Ace card state to be calibrated to Easy, got reps=%d diff=%f stability=%f", cardState.Reps, cardState.Difficulty, cardState.Stability)
+	// Check clean Review state (StateCode: 2, Reps: 0) and ~3 days due_at
+	now := time.Now().Unix()
+	if cardState.StateCode != 2 || cardState.Reps != 0 {
+		t.Fatalf("expected Ace card state to be clean Review state, got reps=%d StateCode=%d", cardState.Reps, cardState.StateCode)
+	}
+	diffDays := float64(dueAt-now) / (24 * 60 * 60)
+	if diffDays < 2.9 || diffDays > 3.1 {
+		t.Fatalf("expected Ace dueAt offset to be ~3 days, got %f days", diffDays)
 	}
 
 	mustInsertActiveQuizTask(t, "nb-calibration-2", "topic-calibration-2", "task-quiz-pass", 50)
@@ -847,7 +854,12 @@ func TestFSRSCalibrationEasyAndDoubleGood(t *testing.T) {
 	if err := json.Unmarshal([]byte(stateJSON2.String), &cardState2); err != nil {
 		t.Fatalf("failed to unmarshal state: %v", err)
 	}
-	if cardState2.Reps != 2 || cardState2.Stability != 2.3065 {
-		t.Fatalf("expected Pass card state to be calibrated to Double Good, got reps=%d stability=%f", cardState2.Reps, cardState2.Stability)
+	// Check clean Review state (StateCode: 2, Reps: 0) and ~1 day due_at
+	if cardState2.StateCode != 2 || cardState2.Reps != 0 {
+		t.Fatalf("expected Pass card state to be clean Review state, got reps=%d StateCode=%d", cardState2.Reps, cardState2.StateCode)
+	}
+	diffDays2 := float64(dueAt2-now) / (24 * 60 * 60)
+	if diffDays2 < 0.9 || diffDays2 > 1.1 {
+		t.Fatalf("expected Pass dueAt offset to be ~1 day, got %f days", diffDays2)
 	}
 }
