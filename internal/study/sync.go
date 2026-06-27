@@ -33,10 +33,18 @@ func ResolveCloudAPIToken(storedToken string) string {
 	return os.Getenv("CLOUD_API_TOKEN")
 }
 
+// NotebookSyncRecord is the minimal notebook identity the server needs.
+// filepath.Base strips the local path — only the filename crosses the wire.
+type NotebookSyncRecord struct {
+	Filename    string `json:"filename"`
+	Title       string `json:"title"`
+	StudyStatus string `json:"study_status"`
+}
+
 type SyncPayload struct {
 	UserToken     string                 `json:"user_token"`
 	ClassroomCode string                 `json:"classroom_code"`
-	Notebooks     []models.Notebook      `json:"notebooks"`
+	Notebooks     []NotebookSyncRecord   `json:"notebooks"`
 	Logs          []models.FSRSReviewLog `json:"logs"`
 }
 
@@ -84,23 +92,32 @@ func TriggerCloudSync(repo *db.Repository) error {
 
 	utils.Warnf("[SYNC] Running cloud sync to: %s", syncURL)
 
-	// Gather notebooks and logs from DB (all notebooks for sync)
+	// Build slim notebook records — filename only, no local paths or internal IDs
 	notebooks, err := repo.GetNotebooks("", "")
 	if err != nil {
 		return fmt.Errorf("failed to fetch notebooks: %w", err)
 	}
+	notebookRecords := make([]NotebookSyncRecord, 0, len(notebooks))
+	for _, nb := range notebooks {
+		notebookRecords = append(notebookRecords, NotebookSyncRecord{
+			Filename:    filepath.Base(nb.FilePath),
+			Title:       nb.Title,
+			StudyStatus: nb.StudyStatus,
+		})
+	}
 
-	// For simplicity, fetch recent review logs (e.g., last 100)
-	logs, err := repo.GetRecentReviewLogs(100)
+	// Delta: only logs newer than the last successful sync
+	logs, err := repo.GetReviewLogsSince(settings.LastSyncedAt)
 	if err != nil {
-		utils.Warnf("[SYNC] failed to fetch recent review logs: %v", err)
+		utils.Warnf("[SYNC] failed to fetch delta review logs: %v", err)
 		return err
 	}
+	utils.Warnf("[SYNC] delta logs to send: %d (since %d)", len(logs), settings.LastSyncedAt)
 
 	payload := SyncPayload{
 		UserToken:     apiToken,
 		ClassroomCode: settings.ClassroomCode,
-		Notebooks:     notebooks,
+		Notebooks:     notebookRecords,
 		Logs:          logs,
 	}
 
@@ -166,6 +183,11 @@ func TriggerCloudSync(repo *db.Repository) error {
 					}
 				}(assigned)
 			}
+		}
+
+		// Advance the delta cursor so next sync only sends new events
+		if setErr := repo.SetLastSyncedAt(time.Now().Unix()); setErr != nil {
+			utils.Warnf("[SYNC] failed to persist last_synced_at: %v", setErr)
 		}
 
 		// Sync completed successfully. Clear any pending FLASHCARD_SYNC tasks.
