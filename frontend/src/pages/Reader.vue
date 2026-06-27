@@ -73,6 +73,11 @@
 
     <div v-else class="layout" :class="{ collapsed: chat.chatCollapsed.value }">
       <article class="panel stage">
+        <!-- Scroll Progress Bar -->
+        <div class="scroll-progress-bar" aria-hidden="true">
+          <div class="scroll-progress-fill" :style="{ width: `${progressPercentage}%` }"></div>
+        </div>
+
         <div class="stage-head">
           <div class="stage-head-left">
             <span class="page-indicator"
@@ -254,6 +259,21 @@ const resolvedTaskID = computed(() => {
     route.query.task_id ||
     ''
   )
+})
+
+const progressPercentage = computed(() => {
+  const current = reader.currentPage.value || 1
+  if (reader.hasNavigationBounds.value) {
+    const min = reader.navigationMinPage.value || 1
+    const max = reader.navigationMaxPage.value || 1
+    if (max <= min) return 100
+    if (current < min) return 0
+    if (current > max) return 100
+    return Math.min(100, Math.max(0, ((current - min) / (max - min)) * 100))
+  } else {
+    const total = reader.pageCount.value || 1
+    return Math.min(100, Math.max(0, (current / total) * 100))
+  }
 })
 
 watch(resolvedTaskID, (next, prev) => {
@@ -1182,5 +1202,24 @@ button:disabled {
   margin: 0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(0, 255, 0, 0.3);
+}
+
+.scroll-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--surface-container-low, rgba(0, 0, 0, 0.05));
+  z-index: 10;
+  overflow: hidden;
+  border-top-left-radius: 13px;
+  border-top-right-radius: 13px;
+}
+
+.scroll-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-dim), var(--primary));
+  transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 </style>
