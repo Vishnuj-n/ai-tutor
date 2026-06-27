@@ -127,6 +127,28 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		materializedCards, deferredCards, safeReviewBudget := calculateFlashcardBudgets(dueCards, maxFlashcards)
 		queueTasks, activeTopics, learningMinutes, actionCounts := aggregateQueueTasks(activeQueueTasks, pendingQueueTasks)
 
+		if materializedCards > 0 {
+			bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
+			if err == nil && bestNotebookID != "" {
+				reviewCardsForTask := materializedCards
+				if selectedDueCards < reviewCardsForTask {
+					reviewCardsForTask = selectedDueCards
+				}
+
+				reviewTask := models.ScheduledTask{
+					ID:              models.ReviewTaskDailyID,
+					ActionType:      "flashcard_review",
+					Title:           fmt.Sprintf("Flashcard Review: %d cards", reviewCardsForTask),
+					EstimateMinutes: safeReviewBudget,
+					Priority:        1,
+					NotebookID:      bestNotebookID,
+					Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", reviewCardsForTask),
+				}
+				queueTasks = append([]models.ScheduledTask{reviewTask}, queueTasks...)
+				actionCounts["flashcard_review"]++
+			}
+		}
+
 		plan = &models.TodayPlan{
 			Date:                now.Format("2006-01-02"),
 			TotalMinutes:        dailyStudyMinutes,

@@ -48,7 +48,7 @@ sections = [header]
 
 doc_files = []
 
-for path in DOCS_DIR.rglob("*"):
+for path in DOCS_DIR.glob("*"):
 
     if not path.is_file():
         continue
