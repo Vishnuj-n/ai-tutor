@@ -538,14 +538,15 @@ type UserSettings struct {
 	RemindersEnabled        bool   `json:"reminders_enabled"`
 	ActiveProfileID         string `json:"active_profile_id"`
 	SkipToReadingActive     bool   `json:"skip_to_reading_active"`
-	CloudSyncURL        string `json:"cloud_sync_url"`
-	CloudAPIToken       string `json:"cloud_api_token"`
-	Theme               string `json:"theme"`
-	RAGEnabled          bool   `json:"rag_enabled"`
-	RAGNotebookChapter  bool   `json:"rag_notebook_chapter"`
-	RAGEntireNotebook   bool   `json:"rag_entire_notebook"`
-	RAGQueueStudy       bool   `json:"rag_queue_study"`
+	CloudSyncURL            string `json:"cloud_sync_url"`
+	CloudAPIToken           string `json:"cloud_api_token"`
+	Theme                   string `json:"theme"`
+	RAGEnabled              bool   `json:"rag_enabled"`
+	RAGNotebookChapter      bool   `json:"rag_notebook_chapter"`
+	RAGEntireNotebook       bool   `json:"rag_entire_notebook"`
+	RAGQueueStudy           bool   `json:"rag_queue_study"`
 	DefaultRemedialStrategy string `json:"default_remedial_strategy"`
+	ClassroomCode           string `json:"classroom_code"`
 }
 
 // LLMTierSettings stores non-secret OpenAI-compatible provider config.

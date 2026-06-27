@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 
@@ -38,10 +39,11 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"rag_entire_notebook":        s.RAGEntireNotebook,
 		"rag_queue_study":            s.RAGQueueStudy,
 		"default_remedial_strategy":  s.DefaultRemedialStrategy,
+		"classroom_code":             s.ClassroomCode,
 	}
 }
 
-func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string) map[string]interface{} {
+func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
@@ -76,6 +78,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 		RAGEntireNotebook:       ragEntireNotebook,
 		RAGQueueStudy:           ragQueueStudy,
 		DefaultRemedialStrategy: defaultRemedialStrategy,
+		ClassroomCode:           classroomCode,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {
@@ -446,3 +449,33 @@ func (a *App) TriggerCloudSync() map[string]interface{} {
 }
 
 // app_settings.go end
+
+// OpenAuthBrowser opens the Clerk hosted sign-in page in the user's default
+// system browser. The URL is read from the CLERK_SIGN_IN_URL environment
+// variable. If the variable is not set, this is a no-op.
+func (a *App) OpenAuthBrowser() {
+	clerkURL := os.Getenv("CLERK_SIGN_IN_URL")
+	if clerkURL == "" {
+		return
+	}
+	wailsruntime.BrowserOpenURL(a.ctx, clerkURL)
+}
+
+// GetCloudConfig returns whether cloud sync is currently configured (either
+// via the stored SQLite setting or the CLOUD_SYNC_URL env var). It does NOT
+// expose the actual URL, so the frontend can use this to decide whether to show
+// the "Sync with Cloud Now" button without leaking the server address.
+func (a *App) GetCloudConfig() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"configured": false}
+	}
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"configured": false}
+	}
+	resolved := study.ResolveCloudSyncURL(settings.CloudSyncURL)
+	return map[string]interface{}{
+		"configured": resolved != "",
+	}
+}

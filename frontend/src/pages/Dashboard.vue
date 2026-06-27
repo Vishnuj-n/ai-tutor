@@ -622,7 +622,8 @@ async function changeActiveProfile(event) {
       userSettings.value.rag_notebook_chapter,
       userSettings.value.rag_entire_notebook,
       userSettings.value.rag_queue_study,
-      userSettings.value.default_remedial_strategy
+      userSettings.value.default_remedial_strategy,
+      userSettings.value.classroom_code || ''
     )
     if (res && res.error) {
       userSettings.value.active_profile_id = oldProfileID
@@ -659,7 +660,8 @@ async function toggleEscapeHatch() {
       userSettings.value.rag_notebook_chapter,
       userSettings.value.rag_entire_notebook,
       userSettings.value.rag_queue_study,
-      userSettings.value.default_remedial_strategy
+      userSettings.value.default_remedial_strategy,
+      userSettings.value.classroom_code || ''
     )
     if (res && res.error) {
       userSettings.value.skip_to_reading_active = previousSkipToReading

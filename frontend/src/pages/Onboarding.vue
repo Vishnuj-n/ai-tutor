@@ -655,7 +655,8 @@ async function completeOnboarding() {
       true, // default for ragNotebookChapter
       true, // default for ragEntireNotebook
       true, // default for ragQueueStudy
-      'CLASSIC' // default defaultRemedialStrategy
+      'CLASSIC', // default defaultRemedialStrategy
+      '' // classroom_code — set later from Settings
     )
 
     if (settingsRes.error) {
