@@ -172,7 +172,8 @@ export function updateUserSettings(
   ragNotebookChapter,
   ragEntireNotebook,
   ragQueueStudy,
-  defaultRemedialStrategy
+  defaultRemedialStrategy,
+  classroomCode
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -188,7 +189,8 @@ export function updateUserSettings(
     ragNotebookChapter,
     ragEntireNotebook,
     ragQueueStudy,
-    defaultRemedialStrategy
+    defaultRemedialStrategy,
+    classroomCode
   )
 }
 
@@ -270,6 +272,14 @@ export function getFlashcardDueTimeline() {
 
 export function getAppEnv() {
   return appBridge().GetAppEnv()
+}
+
+export function openAuthBrowser() {
+  return appBridge().OpenAuthBrowser()
+}
+
+export function getCloudConfig() {
+  return appBridge().GetCloudConfig()
 }
 
 export function getTopicSectionsContent(topicID, notebookID) {

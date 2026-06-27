@@ -402,28 +402,59 @@
           </div>
         </article>
 
-        <!-- Panel 5: Teacher Cloud Synchronization -->
+        <!-- Panel 5: Account & Cloud -->
         <article class="panel form-grid">
-          <h2>Teacher Cloud Synchronization</h2>
+          <h2>Account &amp; Cloud</h2>
 
+          <!-- Classroom Code -->
           <div class="form-group">
-            <label for="cloud-url">Sync Server URL</label>
+            <label for="classroom-code">Classroom Code</label>
+            <p class="field-hint">Enter the code your teacher gave you (e.g. VTU-6SEM-CS-A).</p>
             <input
-              id="cloud-url"
-              v-model="settings.cloud_sync_url"
-              type="url"
-              placeholder="https://example.com/api/sync"
+              id="classroom-code"
+              v-model="settings.classroom_code"
+              type="text"
+              placeholder="e.g. VTU-6SEM-CS-A"
               :disabled="loading || saving"
             />
           </div>
 
+          <!-- Clerk auth hand-off -->
+          <div class="form-group">
+            <label>Authenticate Account</label>
+            <p class="field-hint">Opens the sign-in page in your browser. Copy your access token and paste it below.</p>
+            <button
+              type="button"
+              class="sync-btn"
+              @click="openAuthBrowser"
+            >
+              🔐 Sign In with Clerk
+            </button>
+          </div>
+
+          <!-- Access Token (always visible so users can paste from browser) -->
           <div class="form-group">
             <label for="cloud-token">Access Token</label>
             <input
               id="cloud-token"
               v-model="settings.cloud_api_token"
               type="password"
-              placeholder="Enter authorization token"
+              placeholder="Paste token from sign-in page"
+              :disabled="loading || saving"
+            />
+          </div>
+
+          <!-- Sync Server URL — dev only -->
+          <div v-if="isDev" class="form-group">
+            <label for="cloud-url">
+              Sync Server URL
+              <span class="dev-badge">DEV</span>
+            </label>
+            <input
+              id="cloud-url"
+              v-model="settings.cloud_sync_url"
+              type="url"
+              placeholder="https://example.com/api/sync"
               :disabled="loading || saving"
             />
           </div>
@@ -434,7 +465,7 @@
       <div class="global-actions">
         <div class="button-row">
           <button
-            v-if="settings.cloud_sync_url"
+            v-if="cloudConfigured"
             type="button"
             class="sync-btn"
             :disabled="syncing"
@@ -653,6 +684,9 @@ import {
   saveLLMAPIKey,
   deleteLLMAPIKey,
   getLLMProviderPreset,
+  getAppEnv,
+  openAuthBrowser,
+  getCloudConfig,
 } from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
@@ -664,6 +698,8 @@ const presetLoading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const success = ref('')
+const isDev = ref(false)
+const cloudConfigured = ref(false)
 
 const settings = ref({
   max_flashcards_per_session: 30,
@@ -680,6 +716,7 @@ const settings = ref({
   rag_entire_notebook: true,
   rag_queue_study: true,
   default_remedial_strategy: 'CLASSIC',
+  classroom_code: '',
 })
 
 const llmFastKey = ref('')
@@ -880,6 +917,19 @@ async function applyProviderPreset(tier) {
 }
 
 onMounted(async () => {
+  // Detect dev mode and cloud config state
+  try {
+    const envRes = await getAppEnv()
+    isDev.value = envRes?.env === 'dev'
+  } catch (_) {
+    isDev.value = false
+  }
+  try {
+    const cfgRes = await getCloudConfig()
+    cloudConfigured.value = cfgRes?.configured === true
+  } catch (_) {
+    cloudConfigured.value = false
+  }
   await loadAllData()
 })
 
@@ -1036,7 +1086,8 @@ async function saveUserSettings() {
       settings.value.rag_notebook_chapter,
       settings.value.rag_entire_notebook,
       settings.value.rag_queue_study,
-      settings.value.default_remedial_strategy
+      settings.value.default_remedial_strategy,
+      settings.value.classroom_code || ''
     )
     if (res.error) {
       error.value = res.error
@@ -1417,6 +1468,26 @@ select:focus {
   color: var(--muted-text);
   font-size: 13px;
   line-height: 1.4;
+}
+
+.field-hint {
+  margin: 2px 0 8px;
+  color: var(--muted-text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.dev-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: color-mix(in srgb, var(--warning, #f0a000) 20%, transparent);
+  color: var(--warning, #f0a000);
+  vertical-align: middle;
 }
 
 .error-text {

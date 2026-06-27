@@ -15,10 +15,29 @@ import (
 	"ai-tutor/internal/utils"
 )
 
+// ResolveCloudSyncURL returns the effective sync URL.
+// Priority: stored SQLite value → CLOUD_SYNC_URL env var → empty (sync skipped).
+func ResolveCloudSyncURL(storedURL string) string {
+	if storedURL != "" {
+		return storedURL
+	}
+	return os.Getenv("CLOUD_SYNC_URL")
+}
+
+// ResolveCloudAPIToken returns the effective API token.
+// Priority: stored SQLite value → CLOUD_API_TOKEN env var → empty.
+func ResolveCloudAPIToken(storedToken string) string {
+	if storedToken != "" {
+		return storedToken
+	}
+	return os.Getenv("CLOUD_API_TOKEN")
+}
+
 type SyncPayload struct {
-	UserToken string                 `json:"user_token"`
-	Notebooks []models.Notebook      `json:"notebooks"`
-	Logs      []models.FSRSReviewLog `json:"logs"`
+	UserToken     string                 `json:"user_token"`
+	ClassroomCode string                 `json:"classroom_code"`
+	Notebooks     []models.Notebook      `json:"notebooks"`
+	Logs          []models.FSRSReviewLog `json:"logs"`
 }
 
 type SyncResponse struct {
@@ -52,14 +71,18 @@ func TriggerCloudSync(repo *db.Repository) error {
 	if err != nil {
 		return err
 	}
-	if settings.CloudSyncURL == "" {
+
+	syncURL := ResolveCloudSyncURL(settings.CloudSyncURL)
+	apiToken := ResolveCloudAPIToken(settings.CloudAPIToken)
+
+	if syncURL == "" {
 		if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
 			utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
 		}
 		return nil // Cloud sync not configured
 	}
 
-	utils.Warnf("[SYNC] Running cloud sync to: %s", settings.CloudSyncURL)
+	utils.Warnf("[SYNC] Running cloud sync to: %s", syncURL)
 
 	// Gather notebooks and logs from DB (all notebooks for sync)
 	notebooks, err := repo.GetNotebooks("", "")
@@ -75,9 +98,10 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 
 	payload := SyncPayload{
-		UserToken: settings.CloudAPIToken,
-		Notebooks: notebooks,
-		Logs:      logs,
+		UserToken:     apiToken,
+		ClassroomCode: settings.ClassroomCode,
+		Notebooks:     notebooks,
+		Logs:          logs,
 	}
 
 	jsonBytes, err := json.Marshal(payload)
@@ -97,14 +121,14 @@ func TriggerCloudSync(repo *db.Repository) error {
 		}
 
 		var req *http.Request
-		req, lastErr = http.NewRequest("POST", settings.CloudSyncURL, bytes.NewBuffer(jsonBytes))
+		req, lastErr = http.NewRequest("POST", syncURL, bytes.NewBuffer(jsonBytes))
 		if lastErr != nil {
 			lastErr = fmt.Errorf("failed to create http request: %w", lastErr)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		if settings.CloudAPIToken != "" {
-			req.Header.Set("Authorization", "Bearer "+settings.CloudAPIToken)
+		if apiToken != "" {
+			req.Header.Set("Authorization", "Bearer "+apiToken)
 		}
 
 		resp, lastErr = client.Do(req)
