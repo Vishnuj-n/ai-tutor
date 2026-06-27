@@ -409,9 +409,45 @@ async function suspendCard() {
 
 function handleKeydown(e) {
   if (!reviewing.value || !currentCard.value) return
+
+  // Prevent hotkeys when typing in inputs/textareas
+  if (
+    e.target &&
+    (e.target.tagName === 'INPUT' ||
+      e.target.tagName === 'TEXTAREA' ||
+      e.target.isContentEditable)
+  ) {
+    return
+  }
+
+  // Shift+S to suspend
   if (queueMode.value && e.key === 'S' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     suspendCard()
+    return
+  }
+
+  // Space or Enter to reveal answer if not flipped
+  if (!flipped.value) {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault()
+      flipped.value = true
+    }
+  } else {
+    // 1-4 keys to rate
+    if (e.key === '1') {
+      e.preventDefault()
+      rate('again')
+    } else if (e.key === '2') {
+      e.preventDefault()
+      rate('hard')
+    } else if (e.key === '3') {
+      e.preventDefault()
+      rate('good')
+    } else if (e.key === '4') {
+      e.preventDefault()
+      rate('easy')
+    }
   }
 }
 
