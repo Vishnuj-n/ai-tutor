@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 )
+const maxReviewSessionCards = 60
+
 var (
 	ErrReviewLinkNotPending  = errors.New("review task card link is not pending")
 	ErrReviewSessionComplete = errors.New("review session already complete")
@@ -50,69 +52,7 @@ func (r *Repository) fetchExistingReviewTask(q querier, notebookID string) (*mod
 
 func (r *Repository) GetDueReviewCardsForNotebook(notebookID string, now int64, limit int) ([]models.Flashcard, error) {
 	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan notebookID=%s now=%d limit=%d", notebookID, now, limit)
-	if limit <= 0 {
-		return nil, nil
-	}
-
-	// Calculate target budgets: 70% old reviews, 30% brand new cards.
-	reviewLimit := (limit * 7) / 10
-	if reviewLimit <= 0 && limit > 0 {
-		reviewLimit = 1
-	}
-	newLimit := limit - reviewLimit
-
-	// 1. Fetch old (reviewed) cards
-	oldCards, err := r.getDueCardsWithLogOption(notebookID, now, reviewLimit, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// 2. Fetch new (unreviewed) cards
-	newCards, err := r.getDueCardsWithLogOption(notebookID, now, newLimit, false)
-	if err != nil {
-		return nil, err
-	}
-
-	// 3. Dynamic fill: if either pool is under-allocated, fill from the other
-	if len(oldCards) < reviewLimit && len(newCards) == newLimit {
-		extraNeeded := reviewLimit - len(oldCards)
-		moreNewCards, err := r.getDueCardsWithLogOption(notebookID, now, newLimit+extraNeeded, false)
-		if err != nil {
-			utils.Warnf("[FLASHCARD_PIPELINE] dynamic fill top-up for new cards failed: %v", err)
-		} else {
-			newCards = moreNewCards
-		}
-	} else if len(newCards) < newLimit && len(oldCards) == reviewLimit {
-		extraNeeded := newLimit - len(newCards)
-		moreOldCards, err := r.getDueCardsWithLogOption(notebookID, now, reviewLimit+extraNeeded, true)
-		if err != nil {
-			utils.Warnf("[FLASHCARD_PIPELINE] dynamic fill top-up for old cards failed: %v", err)
-		} else {
-			oldCards = moreOldCards
-		}
-	}
-
-	combined := append(oldCards, newCards...)
-	if len(combined) > limit {
-		combined = combined[:limit]
-	}
-
-	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan result notebookID=%s oldCards=%d newCards=%d total=%d",
-		notebookID, len(oldCards), len(newCards), len(combined))
-	return combined, nil
-}
-
-func (r *Repository) getDueCardsWithLogOption(notebookID string, now int64, limit int, mustHaveLogs bool) ([]models.Flashcard, error) {
-	if limit <= 0 {
-		return nil, nil
-	}
-
-	logCondition := "NOT EXISTS"
-	if mustHaveLogs {
-		logCondition = "EXISTS"
-	}
-
-	query := fmt.Sprintf(`
+	rows, err := r.db.Query(`
 		SELECT
 			fc.id,
 			fc.topic_id,
@@ -145,16 +85,9 @@ func (r *Repository) getDueCardsWithLogOption(notebookID string, now int64, limi
 			  AND sq.task_type = 'FLASHCARD_REVIEW'
 			  AND sq.status IN ('PENDING', 'ACTIVE')
 		  )
-		  AND %s (
-			SELECT 1
-			FROM fsrs_review_log frl
-			WHERE frl.reference_id = fc.id
-		  )
 		ORDER BY fc.due_at ASC, fc.created_at ASC, fc.id ASC
 		LIMIT ?
-	`, logCondition)
-
-	rows, err := r.db.Query(query, notebookID, now, limit)
+	`, notebookID, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +106,7 @@ func (r *Repository) getDueCardsWithLogOption(notebookID string, now int64, limi
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	utils.Warnf("[FLASHCARD_PIPELINE] due_card_scan result notebookID=%s dueCards=%d", notebookID, len(cards))
 	return cards, nil
 }
 
