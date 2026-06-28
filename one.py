@@ -8,7 +8,7 @@ VALID_EXTENSIONS = {
     ".py", ".go", ".js", ".ts", ".tsx", ".jsx",
     ".java", ".cpp", ".c", ".cs", ".rs",
     ".html", ".css", ".scss", ".sql", ".json",
-    ".yaml", ".yml", ".sh"
+    ".yaml", ".yml", ".sh",".vue"
 }
 
 # folders to ignore anywhere in path

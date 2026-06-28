@@ -325,14 +325,10 @@
               <div class="forecast-header-row">
                 <div>
                   <h2 class="forecast-header">Flashcard Review Forecast</h2>
-                  <p class="forecast-subtitle">Review load by date vs daily session limit</p>
+                  <p class="forecast-subtitle">Review load forecast by date</p>
                 </div>
                 <div class="forecast-legend">
                   <span class="legend-item"><span class="legend-dot due-dot"></span>Due Cards</span>
-                  <span class="legend-item">
-                    <span class="legend-line" :class="{ active: isThresholdExceeded }"></span>
-                    Limit ({{ maxFlashcardsLimit }})
-                  </span>
                 </div>
               </div>
 
@@ -372,16 +368,6 @@
                     </text>
                   </g>
 
-                  <!-- Horizontal Limit Line -->
-                  <line
-                    x1="30"
-                    :y1="limitLineY"
-                    x2="370"
-                    :y2="limitLineY"
-                    class="limit-line"
-                    :class="{ active: isThresholdExceeded }"
-                  />
-
                   <!-- Shading Area under the curve -->
                   <path :d="areaPathData" fill="url(#chartGrad)" />
 
@@ -395,7 +381,6 @@
                       :cy="pt.y"
                       r="5"
                       class="chart-dot"
-                      :class="{ 'exceeds-limit': pt.exceeds }"
                       @mouseenter="hoveredPoint = pt"
                       @mouseleave="hoveredPoint = null"
                     />
@@ -411,7 +396,6 @@
                   <div class="tooltip-date">{{ hoveredPoint.dayLabel }} ({{ hoveredPoint.date }})</div>
                   <div class="tooltip-value">
                     <strong>{{ hoveredPoint.count }}</strong> due cards
-                    <span v-if="hoveredPoint.exceeds" class="tooltip-warn">⚠️ Overload</span>
                   </div>
                 </div>
               </div>
@@ -420,7 +404,7 @@
               <div class="chart-x-axis">
                 <div v-for="(pt, idx) in chartPoints" :key="idx" class="x-label-container" :style="{ left: pt.percentX + '%' }">
                   <span class="x-label">{{ pt.dayLabel }}</span>
-                  <span class="x-sublabel" :class="{ exceeds: pt.exceeds }">{{ pt.count }}</span>
+                  <span class="x-sublabel">{{ pt.count }}</span>
                 </div>
               </div>
             </div>
