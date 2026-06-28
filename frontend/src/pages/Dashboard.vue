@@ -108,91 +108,86 @@
     </template>
 
     <template v-else>
-      <!-- Telemetry Widget for active profile — only show when a deadline is set -->
-      <section v-if="activeProfilePace && activeProfilePace.has_deadline" class="telemetry-widget">
-        <div class="telemetry-card card">
-          <h2 class="telemetry-header">Profile Study Pacing ({{ activeProfileName }})</h2>
-          <div class="telemetry-grid">
-            <div class="telemetry-item">
-              <div class="telemetry-title-row">
-                <span class="telemetry-doc-title"
-                  >Target Exam Deadline: {{ activeProfilePace.deadline }}</span
-                >
-                <span
-                  class="telemetry-days-left"
-                  :class="{ warning: activeProfilePace.days_remaining <= 3 }"
-                >
-                  ({{ formatDaysRemaining(activeProfilePace.days_remaining) }})
-                </span>
-              </div>
-              <div class="telemetry-metric-row">
-                <div class="telemetry-metric">
-                  <span class="metric-value">{{ activeProfilePace.daily_pace }}</span>
-                  <span class="metric-label">words / day</span>
-                </div>
-                <div class="telemetry-metric">
-                  <span class="metric-value">{{
-                    activeProfilePace.sessions_per_day.toFixed(1)
-                  }}</span>
-                  <span class="metric-label">sessions / day</span>
-                </div>
-                <div class="telemetry-progress-info">
-                  <div class="progress-details">
-                    <span
-                      >Remaining words:
-                      <strong>{{ activeProfilePace.remaining_words }}</strong></span
-                    >
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <!-- Dashboard Layout Grid -->
       <div class="dashboard-grid">
         <!-- Main Panel (Tasks / States) -->
         <div class="dashboard-main">
-          <!-- Task List (Interleaved Bookshelf Tasks) -->
-          <div v-if="tasks.length > 0" class="task-list">
-            <article v-for="task in tasks" :key="task.id" class="card task-card">
-              <div class="task-header">
-                <span class="task-type" :class="task.action_type.toLowerCase()">{{
-                  formatTaskType(task.action_type)
-                }}</span>
-                <span
-                  v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0"
-                  class="task-estimate"
-                  >{{ task.estimate_minutes }} min</span
-                >
+          <!-- Task List & Custom Hero Review Card -->
+          <div v-if="tasks.length > 0" class="tasks-container" style="display: flex; flex-direction: column; gap: 16px;">
+            <!-- High-Priority Today's Reviews Card -->
+            <article v-if="reviewTask" class="card review-hero-card">
+              <div class="review-hero-header">
+                <span class="review-hero-tag">HIGH PRIORITY</span>
+                <span class="review-hero-estimate">{{ reviewTask.estimate_minutes }} min review</span>
               </div>
-              <h3>{{ task.title }}</h3>
-              <p class="task-meta">
-                {{
-                  task.meta
-                    ? task.meta
-                    : task.start_page !== undefined &&
-                        task.start_page !== null &&
-                        task.end_page !== undefined &&
-                        task.end_page !== null
-                      ? 'Pages ' + task.start_page + '-' + task.end_page
-                      : 'Pages N/A'
-                }}
-              </p>
+              <div class="review-hero-body">
+                <h2>Today's Reviews</h2>
+                <div class="review-hero-stats">
+                  <div class="review-hero-stat">
+                    <span class="stat-num">{{ dueReviewCards }}</span>
+                    <span class="stat-lbl">Due Today</span>
+                  </div>
+                  <div class="review-hero-stat">
+                    <span class="stat-num">{{ totalDueReviewCards > dueReviewCards ? totalDueReviewCards - dueReviewCards : 0 }}</span>
+                    <span class="stat-lbl">Remaining Overdue</span>
+                  </div>
+                </div>
+                <p class="review-hero-meta">{{ reviewTask.meta }}</p>
+              </div>
               <button
                 type="button"
-                class="primary-btn"
-                :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
-                :aria-label="'Start task ' + (task.title || task.id)"
-                :disabled="task.action_type === 'flashcard_sync' && isSyncing"
-                @click="startTask(task)"
+                class="primary-btn review-hero-btn"
+                @click="startTask(reviewTask)"
               >
-                <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
-                <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
-                <span v-else>Start</span>
+                Start Review
               </button>
             </article>
+
+            <!-- Task List (Other Interleaved Tasks) -->
+            <div v-if="nonReviewTasks.length > 0" class="task-list">
+              <article v-for="task in nonReviewTasks" :key="task.id" class="card task-card">
+                <div class="task-header">
+                  <span class="task-type" :class="task.action_type.toLowerCase()">{{
+                    formatTaskType(task.action_type)
+                  }}</span>
+                  <span
+                    v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0"
+                    class="task-estimate"
+                    >{{ task.estimate_minutes }} min</span
+                  >
+                </div>
+                <!-- ponytail: if reading task, show Continue Reading heading prefix -->
+                <h3 v-if="task.action_type === 'READING' || task.action_type === 'REREAD'">
+                  Continue Reading: {{ task.title }}
+                </h3>
+                <h3 v-else>{{ task.title }}</h3>
+                <p class="task-meta">
+                  {{
+                    task.meta
+                      ? task.meta
+                      : task.start_page !== undefined &&
+                          task.start_page !== null &&
+                          task.end_page !== undefined &&
+                          task.end_page !== null
+                        ? 'Pages ' + task.start_page + '-' + task.end_page
+                        : 'Pages N/A'
+                  }}
+                </p>
+                <button
+                  type="button"
+                  class="primary-btn"
+                  :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
+                  :aria-label="'Start task ' + (task.title || task.id)"
+                  :disabled="task.action_type === 'flashcard_sync' && isSyncing"
+                  @click="startTask(task)"
+                >
+                  <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
+                  <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
+                  <span v-else-if="task.action_type === 'READING' || task.action_type === 'REREAD'">Resume</span>
+                  <span v-else>Start</span>
+                </button>
+              </article>
+            </div>
           </div>
 
           <div v-else-if="hasActiveStudyContent" class="card state-card victory-card">
@@ -228,6 +223,46 @@
               </button>
             </div>
           </div>
+
+          <!-- Secondary Telemetry Widget placed at the bottom of the main dashboard column -->
+          <section v-if="activeProfilePace && activeProfilePace.has_deadline" class="telemetry-widget" style="margin-top: 24px;">
+            <div class="telemetry-card card">
+              <h2 class="telemetry-header">Profile Study Pacing ({{ activeProfileName }})</h2>
+              <div class="telemetry-grid">
+                <div class="telemetry-item">
+                  <div class="telemetry-title-row">
+                    <span class="telemetry-doc-title"
+                      >Target Exam Deadline: {{ activeProfilePace.deadline }}</span
+                    >
+                    <span
+                      class="telemetry-days-left"
+                      :class="{ warning: activeProfilePace.days_remaining <= 3 }"
+                    >
+                      ({{ formatDaysRemaining(activeProfilePace.days_remaining) }})
+                    </span>
+                  </div>
+                  <div class="telemetry-metric-row">
+                    <div class="telemetry-metric">
+                      <span class="metric-value">{{ activeProfilePace.daily_pace }}</span>
+                      <span class="metric-label">words / day</span>
+                    </div>
+                    <div class="telemetry-metric">
+                      <span class="metric-value">{{
+                        activeProfilePace.sessions_per_day.toFixed(1)
+                      }}</span>
+                      <span class="metric-label">sessions / day</span>
+                    </div>
+                    <div class="telemetry-progress-info">
+                      <div class="progress-details">
+                        <span>Remaining words:
+                          <strong>{{ activeProfilePace.remaining_words }}</strong></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
 
         <!-- Sidebar Panel (Streak Calendar & Forecast Chart) -->
@@ -440,6 +475,7 @@ const actionError = ref('')
 const tasks = ref([])
 const hasActiveStudyContent = ref(false)
 const dueReviewCards = ref(0)
+const totalDueReviewCards = ref(0)
 
 const profiles = ref([])
 const userSettings = ref({
@@ -520,6 +556,14 @@ function getLocalDateString(date) {
 
 const maxFlashcardsLimit = computed(() => {
   return userSettings.value.max_flashcards_per_session || 30
+})
+
+const reviewTask = computed(() => {
+  return tasks.value.find(t => t.id === 'task-review-daily')
+})
+
+const nonReviewTasks = computed(() => {
+  return tasks.value.filter(t => t.id !== 'task-review-daily')
 })
 
 const isThresholdExceeded = computed(() => {
@@ -661,6 +705,7 @@ async function loadAgenda() {
 
     tasks.value = response.tasks || []
     dueReviewCards.value = response.due_review_cards || 0
+    totalDueReviewCards.value = response.total_due_review_cards || 0
 
     // 3. Determine if there is any active study content (drives the empty state)
     // Uses active_notebook_count from backend so "Tasks Complete!" branch
@@ -968,7 +1013,7 @@ function startTask(task) {
 .status-strip {
   display: flex;
   justify-content: space-between;
-  align-items: end;
+  align-items: center;
   gap: 12px;
   padding: 8px 2px 2px;
 }
@@ -1464,7 +1509,7 @@ function startTask(task) {
 
 @media (min-width: 1024px) {
   .dashboard-grid {
-    grid-template-columns: 1fr 380px;
+    grid-template-columns: 1fr 310px;
     align-items: start;
   }
 }
@@ -1487,12 +1532,11 @@ function startTask(task) {
 }
 
 .forecast-card {
-  padding: 24px;
+  padding: 16px;
   position: relative;
   display: flex;
   flex-direction: column;
-  aspect-ratio: 1 / 1.05;
-  min-height: 380px;
+  min-height: 250px;
 }
 
 .forecast-header-row {
@@ -1555,7 +1599,7 @@ function startTask(task) {
   position: relative;
   width: 100%;
   flex: 1;
-  min-height: 180px;
+  min-height: 130px;
   background: var(--surface-container-lowest);
   border-radius: 12px;
 }
@@ -1696,10 +1740,10 @@ function startTask(task) {
 
 /* Streak Calendar Widget Styles */
 .streak-calendar-widget {
-  padding: 20px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
   background: var(--surface-container-low);
   border: 1px solid var(--outline-variant);
   border-radius: 16px;
@@ -1777,7 +1821,7 @@ function startTask(task) {
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 8px;
+  gap: 4px;
   width: 100%;
 }
 
@@ -1892,5 +1936,111 @@ function startTask(task) {
   border-width: 5px;
   border-style: solid;
   border-color: var(--surface-container-high) transparent transparent transparent;
+}
+
+/* High-Priority Review Hero Card */
+.review-hero-card {
+  background: var(--surface-container-low);
+  border: 1px solid var(--primary);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+@media (min-width: 768px) {
+  .review-hero-card {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 32px;
+  }
+}
+
+.review-hero-header {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.review-hero-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--primary);
+  background: rgba(108, 92, 231, 0.1);
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.review-hero-estimate {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-text);
+}
+
+.review-hero-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.review-hero-body h2 {
+  margin: 0;
+  font-family: 'Manrope', sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--on-surface);
+}
+
+.review-hero-stats {
+  display: flex;
+  gap: 24px;
+  margin-top: 4px;
+}
+
+.review-hero-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-num {
+  font-family: 'Manrope', sans-serif;
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--on-surface);
+  line-height: 1;
+}
+
+.stat-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-text);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.review-hero-meta {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-text);
+}
+
+.review-hero-btn {
+  justify-self: stretch;
+  padding: 14px 28px;
+  font-size: 16px;
+  height: auto;
+}
+
+@media (min-width: 768px) {
+  .review-hero-btn {
+    justify-self: end;
+  }
 }
 </style>
