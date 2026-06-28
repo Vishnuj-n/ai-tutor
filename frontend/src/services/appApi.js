@@ -89,6 +89,10 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
+export function getStreakState(timezoneOffsetMinutes) {
+  return appBridge().GetStreakState(timezoneOffsetMinutes)
+}
+
 // Comprehensive Mode endpoints (Phase 1)
 export function generateManualFlashcards(notebookID, startPage, endPage) {
   return appBridge().GenerateManualFlashcards(notebookID, startPage, endPage)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -1245,6 +1246,55 @@ func (r *Repository) ResolveFlashcardSyncTasks() error {
 		}
 		return nil
 	})
+}
+
+// GetCompletedTaskTimes returns a list of completion times in UTC.
+func (r *Repository) GetCompletedTaskTimes() ([]time.Time, error) {
+	rows, err := r.db.Query(`
+		SELECT completed_at
+		FROM study_queue
+		WHERE status = 'COMPLETED' AND completed_at IS NOT NULL AND completed_at != ''
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("GetCompletedTaskTimes query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var times []time.Time
+	for rows.Next() {
+		var completedAtStr string
+		if err := rows.Scan(&completedAtStr); err != nil {
+			return nil, fmt.Errorf("GetCompletedTaskTimes scan: %w", err)
+		}
+		t, err := parseSQLiteTimestamp(completedAtStr)
+		if err != nil {
+			utils.Warnf("[QUEUE] GetCompletedTaskTimes failed to parse completed_at %q: %v", completedAtStr, err)
+			continue
+		}
+		times = append(times, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetCompletedTaskTimes rows error: %w", err)
+	}
+	return times, nil
+}
+
+func parseSQLiteTimestamp(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	formats := []string{
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05.999999999-07:00",
+	}
+	for _, f := range formats {
+		if t, err := time.ParseInLocation(f, s, time.UTC); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unknown timestamp format: %s", s)
 }
 
 
