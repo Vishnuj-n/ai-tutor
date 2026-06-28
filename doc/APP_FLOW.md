@@ -341,6 +341,48 @@ Prevents starvation: EXAMINER is tier 5, ensuring reviews and reading are not bl
 
 ---
 
+## 6a. Dashboard Streak Calendar (2026-06-28)
+
+### What
+
+Monthly Streak Calendar widget in the dashboard sidebar tracks study consistency and motivates daily learning.
+
+### How
+
+1. **Backend computes streaks**: `GetStreakState(timezoneOffsetMinutes)` converts UTC completion times to local days
+2. **Frontend renders calendar**: Dynamic month layout with active day highlighting
+3. **Streak metrics displayed**: Current streak, longest streak, active dates
+4. **Visual feedback**: Glowing fire icon pulses when user completes a task today
+
+**Features:**
+- Timezone-aware: aligns UTC timestamps with user's local day boundaries
+- Active days highlighted with primary container color
+- Custom tooltip overlays showing activity details on hover
+- Flashcard Reviews Hero Card shows due count and overdue deck size
+- "Continue Reading" action contexts with "Resume" buttons for active readings
+
+---
+
+## 6b. Cloud Sync with Stable Identifiers (2026-06-28)
+
+### What
+
+Cloud sync payload uses stable SHA-256 file hashes and page numbers instead of local database IDs for cross-student analytics.
+
+### How
+
+1. **Local IDs replaced**: `topic_id`, `notebook_id` → `filename` (file hash), `page_number`
+2. **Delta sync**: Only unsent review logs are included, eliminating duplicates
+3. **Classroom integration**: `classroom_code` field for teacher-student association
+4. **Clerk authentication**: Support for cloud dashboard access
+
+**Data Chain:**
+```
+review_log.reference_id → flashcards.id → chunks.id → notebook_topics.topic_id → notebooks.file_path → filepath.Base()
+```
+
+---
+
 ## 7. Navigation and Layout
 
 ### What

@@ -307,7 +307,7 @@ func InsertReadingTasks(chunks []Chunk) error
 
 **File:** `frontend/src/pages/Dashboard.vue`
 
-**Responsibility:** Display pending tasks with starvation protection
+**Responsibility:** Display pending tasks with starvation protection and streak calendar
 
 **Does:**
 - Query queue router for next task (with multi-notebook priority biasing)
@@ -317,6 +317,10 @@ func InsertReadingTasks(chunks []Chunk) error
 - Apply starvation protection (after N reviews, show reading)
 - Surface quiz generation failures explicitly
 - Regain ownership after quiz submission and evaluation
+- Display Monthly Streak Calendar widget with active day highlighting
+- Show current and longest streak metrics
+- Render Flashcard Reviews Hero Card with due count
+- Provide "Continue Reading" action contexts with "Resume" buttons
 
 **Does NOT:**
 - Calculate priorities (follows queue ordering rules)
@@ -326,11 +330,18 @@ func InsertReadingTasks(chunks []Chunk) error
 **API:**
 ```go
 func GetNextTask() (*Task, error)
+func GetStreakState(timezoneOffsetMinutes int) map[string]interface{}
 ```
 
 **Starvation Protection:**
 - After 5 review tasks, surface 1 READING task
 - Lightweight query-time bias (NOT autonomous orchestration)
+
+**Streak Calendar:**
+- Timezone-aware streak computation
+- Dynamic month layout with weekday alignment
+- Active day highlighting with tooltip overlays
+- Glowing fire icon for today's completion
 
 ---
 
