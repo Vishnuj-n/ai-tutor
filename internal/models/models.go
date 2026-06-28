@@ -194,20 +194,22 @@ type ChunkWithContext struct {
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
 type Notebook struct {
-	ID             string  `json:"id"`
-	Title          string  `json:"title"`
-	FilePath       string  `json:"file_path"`
-	FileType       string  `json:"file_type"` // "pdf", "txt", "md"
-	TopicID        string  `json:"topic_id,omitempty"`
-	Status         string  `json:"status"`
-	IndexingStatus string  `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
-	UploadedAt     string  `json:"uploaded_at"`
-	PageCount      int     `json:"page_count,omitempty"`
-	ChunkCount     int     `json:"chunk_count"`
-	Priority       int     `json:"priority"`
-	ExamDeadline   *string `json:"exam_deadline,omitempty"`
-	ProfileID      string  `json:"profile_id,omitempty"`
-	StudyStatus    string  `json:"study_status,omitempty"`
+	ID                   string  `json:"id"`
+	Title                string  `json:"title"`
+	FilePath             string  `json:"file_path"`
+	FileType             string  `json:"file_type"` // "pdf", "txt", "md"
+	TopicID              string  `json:"topic_id,omitempty"`
+	Status               string  `json:"status"`
+	IndexingStatus       string  `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
+	UploadedAt           string  `json:"uploaded_at"`
+	PageCount            int     `json:"page_count,omitempty"`
+	ChunkCount           int     `json:"chunk_count"`
+	Priority             int     `json:"priority"`
+	ExamDeadline         *string `json:"exam_deadline,omitempty"`
+	ProfileID            string  `json:"profile_id,omitempty"`
+	StudyStatus          string  `json:"study_status,omitempty"`
+	FileHash             string  `json:"file_hash"`
+	ExternalHelpRequired bool    `json:"external_help_required"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)
@@ -390,6 +392,20 @@ type FSRSReviewLog struct {
 	ScheduledDays   int    `json:"scheduled_days"`
 	StateBeforeJSON string `json:"state_before_json"`
 	StateAfterJSON  string `json:"state_after_json"`
+}
+
+// SyncLogEntry is the log entry sent to cloud with file hash and page number as identifiers.
+type SyncLogEntry struct {
+	ID             string `json:"id"`
+	FileHash       string `json:"file_hash"`
+	PageNumber     int    `json:"page_number"`
+	ActivityType   string `json:"activity_type"`
+	ReferenceID    string `json:"reference_id"`
+	ReviewedAt     int64  `json:"reviewed_at"`
+	Rating         int    `json:"rating"`
+	ScheduledDays  int    `json:"scheduled_days"`
+	StateBeforeJSON string `json:"state_before_json"`
+	StateAfterJSON string `json:"state_after_json"`
 }
 
 // FlashcardStateToCard converts our FlashcardState to go-fsrs Card

@@ -103,6 +103,11 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		}
 	}
 
+	// Compute and store file hash for cloud sync identification.
+	if fileHash, hashErr := utils.FileSHA256(uploadResult.FilePath); hashErr == nil {
+		_ = repo.SetNotebookFileHash(uploadResult.ID, fileHash)
+	}
+
 	// Auto-assign the notebook to the active profile, mirroring Chrome-style profile isolation:
 	// notebooks uploaded while a profile is active belong to that profile automatically.
 	// Only auto-assigns when an explicit ActiveProfileID is set (no fallback to oldest profile).
