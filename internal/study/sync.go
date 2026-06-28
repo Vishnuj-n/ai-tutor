@@ -36,16 +36,18 @@ func ResolveCloudAPIToken(storedToken string) string {
 // NotebookSyncRecord is the minimal notebook identity the server needs.
 // filepath.Base strips the local path — only the filename crosses the wire.
 type NotebookSyncRecord struct {
-	Filename    string `json:"filename"`
-	Title       string `json:"title"`
-	StudyStatus string `json:"study_status"`
+	FileHash             string `json:"file_hash"`
+	Filename             string `json:"filename"`
+	Title                string `json:"title"`
+	StudyStatus          string `json:"study_status"`
+	ExternalHelpRequired bool   `json:"external_help_required"` // Red Alert indicator
 }
 
 type SyncPayload struct {
-	UserToken     string                 `json:"user_token"`
-	ClassroomCode string                 `json:"classroom_code"`
-	Notebooks     []NotebookSyncRecord   `json:"notebooks"`
-	Logs          []models.FSRSReviewLog `json:"logs"`
+	UserToken     string               `json:"user_token"`
+	ClassroomCode string               `json:"classroom_code"`
+	Notebooks     []NotebookSyncRecord `json:"notebooks"`
+	Logs          []models.SyncLogEntry `json:"logs"`
 }
 
 type SyncResponse struct {
@@ -100,14 +102,16 @@ func TriggerCloudSync(repo *db.Repository) error {
 	notebookRecords := make([]NotebookSyncRecord, 0, len(notebooks))
 	for _, nb := range notebooks {
 		notebookRecords = append(notebookRecords, NotebookSyncRecord{
-			Filename:    filepath.Base(nb.FilePath),
-			Title:       nb.Title,
-			StudyStatus: nb.StudyStatus,
+			FileHash:             nb.FileHash,
+			Filename:             filepath.Base(nb.FilePath),
+			Title:                nb.Title,
+			StudyStatus:          nb.StudyStatus,
+			ExternalHelpRequired: nb.ExternalHelpRequired,
 		})
 	}
 
 	// Delta: only logs newer than the last successful sync
-	logs, err := repo.GetReviewLogsSince(settings.LastSyncedAt)
+	logs, err := repo.GetReviewLogsSinceWithFileInfo(settings.LastSyncedAt)
 	if err != nil {
 		utils.Warnf("[SYNC] failed to fetch delta review logs: %v", err)
 		return err

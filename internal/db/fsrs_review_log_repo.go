@@ -130,3 +130,49 @@ func (r *Repository) GetReviewLogsSince(since int64) ([]models.FSRSReviewLog, er
 	}
 	return logs, nil
 }
+
+// GetReviewLogsSinceWithFileInfo returns review logs joined with chunk and notebook data
+// to provide file_hash and page_number for cloud sync.
+func (r *Repository) GetReviewLogsSinceWithFileInfo(since int64) ([]models.SyncLogEntry, error) {
+	rows, err := r.db.Query(`
+		SELECT
+			r.id,
+			COALESCE(n.file_hash, '') AS file_hash,
+			COALESCE(c.page_num, 0) AS page_num,
+			r.activity_type,
+			r.reference_id,
+			r.reviewed_at,
+			r.rating,
+			r.scheduled_days,
+			r.state_before_json,
+			r.state_after_json
+		FROM fsrs_review_log r
+		LEFT JOIN fsrs_cards f ON f.id = r.reference_id AND r.activity_type = 'flashcard'
+		LEFT JOIN chunks c ON c.id = f.source_chunk_id
+		LEFT JOIN notebook_topics nt ON nt.topic_id = r.topic_id
+		LEFT JOIN notebooks n ON n.id = nt.notebook_id
+		WHERE r.reviewed_at > ?
+		ORDER BY r.reviewed_at ASC
+	`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var logs []models.SyncLogEntry
+	for rows.Next() {
+		var entry models.SyncLogEntry
+		if err := rows.Scan(
+			&entry.ID, &entry.FileHash, &entry.PageNumber, &entry.ActivityType,
+			&entry.ReferenceID, &entry.ReviewedAt, &entry.Rating,
+			&entry.ScheduledDays, &entry.StateBeforeJSON, &entry.StateAfterJSON,
+		); err != nil {
+			return nil, err
+		}
+		logs = append(logs, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return logs, nil
+}

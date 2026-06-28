@@ -142,6 +142,7 @@ func InitSchema(tx *sql.Tx) error {
 			title TEXT NOT NULL,
 			file_path TEXT NOT NULL,
 			file_type TEXT DEFAULT 'pdf',
+			file_hash TEXT DEFAULT '',
 			topic_id TEXT,
 			priority INTEGER DEFAULT 5,
 			status TEXT DEFAULT 'uploaded',
@@ -380,6 +381,7 @@ var alterStatements = []struct {
 	{"user_settings", "default_remedial_strategy", "ALTER TABLE user_settings ADD COLUMN default_remedial_strategy TEXT DEFAULT 'CLASSIC'"},
 	{"user_settings", "classroom_code", "ALTER TABLE user_settings ADD COLUMN classroom_code TEXT DEFAULT ''"},
 	{"user_settings", "last_synced_at", "ALTER TABLE user_settings ADD COLUMN last_synced_at INTEGER DEFAULT 0"},
+	{"notebooks", "file_hash", "ALTER TABLE notebooks ADD COLUMN file_hash TEXT DEFAULT ''"},
 }
 
 func columnExists(tx *sql.Tx, table, column string) (bool, error) {

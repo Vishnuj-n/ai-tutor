@@ -31,6 +31,12 @@ func (r *Repository) CreateNotebook(id, title, filePath, fileType, topicID strin
 	return err
 }
 
+// SetNotebookFileHash stores the SHA-256 hash of a notebook's file content.
+func (r *Repository) SetNotebookFileHash(notebookID, fileHash string) error {
+	_, err := r.db.Exec(`UPDATE notebooks SET file_hash = ? WHERE id = ?`, fileHash, notebookID)
+	return err
+}
+
 // NotebookChunkInput is a chunk row used by notebook ingestion transactions.
 type NotebookChunkInput struct {
 	ID         string
@@ -307,7 +313,19 @@ func (r *Repository) IngestNotebookContentByTopic(notebookID string, groups []No
 // When profileID is empty, returns all notebooks (backward compatible).
 // When profileID is set, returns only notebooks belonging to that profile or unassigned notebooks.
 func (r *Repository) GetNotebooks(topicID, profileID string) ([]models.Notebook, error) {
-	query := "SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant') FROM notebooks"
+	query := `SELECT 
+		id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), 
+		COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), 
+		exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant'),
+		COALESCE(file_hash, ''),
+		COALESCE((
+			SELECT t.external_help_required
+			FROM topics t
+			WHERE t.id = notebooks.topic_id
+			   OR t.id IN (SELECT topic_id FROM notebook_topics WHERE notebook_id = notebooks.id)
+			LIMIT 1
+		), 0) AS external_help_required
+	FROM notebooks`
 	args := []interface{}{}
 	whereClause := ""
 
@@ -345,7 +363,11 @@ func (r *Repository) GetNotebooks(topicID, profileID string) ([]models.Notebook,
 	var notebooks []models.Notebook
 	for rows.Next() {
 		var nb models.Notebook
-		if err := rows.Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt, &nb.ProfileID, &nb.StudyStatus); err != nil {
+		if err := rows.Scan(
+			&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus,
+			&nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt, &nb.ProfileID, &nb.StudyStatus,
+			&nb.FileHash, &nb.ExternalHelpRequired,
+		); err != nil {
 			return nil, err
 		}
 		notebooks = append(notebooks, nb)
@@ -360,10 +382,25 @@ func (r *Repository) GetNotebooks(topicID, profileID string) ([]models.Notebook,
 func (r *Repository) GetNotebookByID(notebookID string) (*models.Notebook, error) {
 	var nb models.Notebook
 	err := r.db.QueryRow(`
-		SELECT id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant')
+		SELECT 
+			id, title, file_path, file_type, COALESCE(topic_id, ''), COALESCE(status, 'uploaded'), 
+			COALESCE(indexing_status, 'PENDING'), page_count, chunk_count, COALESCE(priority, 5), 
+			exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant'),
+			COALESCE(file_hash, ''),
+			COALESCE((
+				SELECT t.external_help_required
+				FROM topics t
+				WHERE t.id = notebooks.topic_id
+				   OR t.id IN (SELECT topic_id FROM notebook_topics WHERE notebook_id = notebooks.id)
+				LIMIT 1
+			), 0) AS external_help_required
 		FROM notebooks
 		WHERE id = ?
-	`, notebookID).Scan(&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus, &nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt, &nb.ProfileID, &nb.StudyStatus)
+	`, notebookID).Scan(
+		&nb.ID, &nb.Title, &nb.FilePath, &nb.FileType, &nb.TopicID, &nb.Status, &nb.IndexingStatus,
+		&nb.PageCount, &nb.ChunkCount, &nb.Priority, &nb.ExamDeadline, &nb.UploadedAt, &nb.ProfileID, &nb.StudyStatus,
+		&nb.FileHash, &nb.ExternalHelpRequired,
+	)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
