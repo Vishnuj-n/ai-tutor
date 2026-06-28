@@ -150,6 +150,7 @@ func TriggerCloudSync(repo *db.Repository) error {
 		req.Header.Set("Content-Type", "application/json")
 		if apiToken != "" {
 			req.Header.Set("Authorization", "Bearer "+apiToken)
+			req.Header.Set("apikey", apiToken)
 		}
 
 		resp, lastErr = client.Do(req)
