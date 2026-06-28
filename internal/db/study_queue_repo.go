@@ -118,9 +118,10 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 				COALESCE(sq.activated_at, ''),
 				COALESCE(sq.completed_at, ''),
 				COALESCE(sq.payload_json, ''),
-				COALESCE(sq.start_page, 0),
-				COALESCE(sq.end_page, 0),
-				COALESCE(t.title, COALESCE(n.title, 'Task')),
+				COALESCE(NULLIF(sq.start_page, 0), COALESCE(t.start_page, 0)),
+				COALESCE(NULLIF(sq.end_page, 0), COALESCE(t.end_page, 0)),
+				COALESCE(t.title, ''),
+				COALESCE(n.title, ''),
 				COALESCE(n.priority, 5)
 			FROM study_queue sq
 			JOIN notebooks n ON sq.notebook_id = n.id
@@ -154,7 +155,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 		tasks := make([]models.StudyQueueTask, 0)
 		for rows.Next() {
 			var task models.StudyQueueTask
-			var topicTitle string
+			var topicTitle, notebookTitle string
 			var notebookPriority int
 			err := rows.Scan(
 				&task.ID,
@@ -170,12 +171,23 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 				&task.StartPage,
 				&task.EndPage,
 				&topicTitle,
+				&notebookTitle,
 				&notebookPriority,
 			)
 			if err != nil {
 				return nil, err
 			}
-			task.Title = topicTitle
+			if task.TaskType == models.StudyTaskTypeFlashcardReview {
+				task.Title = notebookTitle
+			} else {
+				if topicTitle != "" {
+					task.Title = topicTitle
+				} else if notebookTitle != "" {
+					task.Title = notebookTitle
+				} else {
+					task.Title = "Task"
+				}
+			}
 			tasks = append(tasks, task)
 		}
 		if err := rows.Err(); err != nil {
@@ -185,7 +197,16 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	}
 
 	query := `
-		WITH ranked_tasks AS (
+		SELECT
+			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
+			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
+			COALESCE(payload_json, ''),
+			COALESCE(NULLIF(start_page, 0), COALESCE(topic_start_page, 0)),
+			COALESCE(NULLIF(end_page, 0), COALESCE(topic_end_page, 0)),
+			COALESCE(topic_title, ''),
+			COALESCE(notebook_title, ''),
+			COALESCE(notebook_priority, 5)
+		FROM (
 			SELECT
 				sq.id,
 				sq.notebook_id,
@@ -199,6 +220,8 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 				sq.payload_json,
 				sq.start_page,
 				sq.end_page,
+				t.start_page AS topic_start_page,
+				t.end_page AS topic_end_page,
 				t.title AS topic_title,
 				n.title AS notebook_title,
 				n.priority AS notebook_priority,
@@ -247,14 +270,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 				  OR sq.task_type = 'FLASHCARD_SYNC'
 				  OR n.study_status = 'active'
 			  )
-		)
-		SELECT
-			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
-			COALESCE(created_at, ''), COALESCE(activated_at, ''), COALESCE(completed_at, ''),
-			COALESCE(payload_json, ''), COALESCE(start_page, 0), COALESCE(end_page, 0),
-			COALESCE(topic_title, COALESCE(notebook_title, 'Task')),
-			COALESCE(notebook_priority, 5)
-		FROM ranked_tasks
+		) ranked_tasks
 		WHERE rn = 1
 		ORDER BY
 			COALESCE(notebook_priority, 5) DESC,
@@ -273,7 +289,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	tasks := make([]models.StudyQueueTask, 0)
 	for rows.Next() {
 		var task models.StudyQueueTask
-		var topicTitle string
+		var topicTitle, notebookTitle string
 		var notebookPriority int
 		err := rows.Scan(
 			&task.ID,
@@ -289,12 +305,23 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			&task.StartPage,
 			&task.EndPage,
 			&topicTitle,
+			&notebookTitle,
 			&notebookPriority,
 		)
 		if err != nil {
 			return nil, err
 		}
-		task.Title = topicTitle
+		if task.TaskType == models.StudyTaskTypeFlashcardReview {
+			task.Title = notebookTitle
+		} else {
+			if topicTitle != "" {
+				task.Title = topicTitle
+			} else if notebookTitle != "" {
+				task.Title = notebookTitle
+			} else {
+				task.Title = "Task"
+			}
+		}
 		tasks = append(tasks, task)
 	}
 
@@ -330,9 +357,10 @@ func (r *Repository) GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 			COALESCE(sq.activated_at, ''),
 			COALESCE(sq.completed_at, ''),
 			COALESCE(sq.payload_json, ''),
-			COALESCE(sq.start_page, 0),
-			COALESCE(sq.end_page, 0),
-			COALESCE(t.title, '')
+			COALESCE(NULLIF(sq.start_page, 0), COALESCE(t.start_page, 0)),
+			COALESCE(NULLIF(sq.end_page, 0), COALESCE(t.end_page, 0)),
+			COALESCE(t.title, ''),
+			COALESCE(n.title, '')
 		FROM study_queue sq
 		LEFT JOIN notebooks n ON sq.notebook_id = n.id
 		LEFT JOIN topics t ON sq.topic_id = t.id
@@ -354,7 +382,7 @@ func (r *Repository) GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 	tasks := make([]models.StudyQueueTask, 0)
 	for rows.Next() {
 		var task models.StudyQueueTask
-		var topicTitle string
+		var topicTitle, notebookTitle string
 		err := rows.Scan(
 			&task.ID,
 			&task.NotebookID,
@@ -369,12 +397,21 @@ func (r *Repository) GetAllActiveTasks() ([]models.StudyQueueTask, error) {
 			&task.StartPage,
 			&task.EndPage,
 			&topicTitle,
+			&notebookTitle,
 		)
 		if err != nil {
 			return nil, err
 		}
-		if topicTitle != "" {
-			task.Title = topicTitle
+		if task.TaskType == models.StudyTaskTypeFlashcardReview {
+			task.Title = notebookTitle
+		} else {
+			if topicTitle != "" {
+				task.Title = topicTitle
+			} else if notebookTitle != "" {
+				task.Title = notebookTitle
+			} else {
+				task.Title = "Task"
+			}
 		}
 		tasks = append(tasks, task)
 	}
@@ -422,9 +459,10 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 				COALESCE(sq.activated_at, ''),
 				COALESCE(sq.completed_at, ''),
 				COALESCE(sq.payload_json, ''),
-				COALESCE(sq.start_page, 0),
-				COALESCE(sq.end_page, 0),
-				COALESCE(t.title, COALESCE(n.title, 'Task')),
+				COALESCE(NULLIF(sq.start_page, 0), COALESCE(t.start_page, 0)),
+				COALESCE(NULLIF(sq.end_page, 0), COALESCE(t.end_page, 0)),
+				COALESCE(t.title, ''),
+				COALESCE(n.title, ''),
 				COALESCE(n.priority, 5)
 			FROM study_queue sq
 			JOIN notebooks n ON sq.notebook_id = n.id
@@ -455,7 +493,7 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 			LIMIT 1
 		`
 		task := &models.StudyQueueTask{}
-		var topicTitle string
+		var topicTitle, notebookTitle string
 		var notebookPriority int
 		err := r.db.QueryRow(query, args...).Scan(
 			&task.ID,
@@ -471,6 +509,7 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 			&task.StartPage,
 			&task.EndPage,
 			&topicTitle,
+			&notebookTitle,
 			&notebookPriority,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -479,7 +518,17 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 		if err != nil {
 			return nil, err
 		}
-		task.Title = topicTitle
+		if task.TaskType == models.StudyTaskTypeFlashcardReview {
+			task.Title = notebookTitle
+		} else {
+			if topicTitle != "" {
+				task.Title = topicTitle
+			} else if notebookTitle != "" {
+				task.Title = notebookTitle
+			} else {
+				task.Title = "Task"
+			}
+		}
 		return task, nil
 	}
 
@@ -495,9 +544,10 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 			COALESCE(sq.activated_at, ''),
 			COALESCE(sq.completed_at, ''),
 			COALESCE(sq.payload_json, ''),
-			COALESCE(sq.start_page, 0),
-			COALESCE(sq.end_page, 0),
-			COALESCE(t.title, COALESCE(n.title, 'Task')),
+			COALESCE(NULLIF(sq.start_page, 0), COALESCE(t.start_page, 0)),
+			COALESCE(NULLIF(sq.end_page, 0), COALESCE(t.end_page, 0)),
+			COALESCE(t.title, ''),
+			COALESCE(n.title, ''),
 			COALESCE(n.priority, 5)
 		FROM study_queue sq
 		JOIN notebooks n ON sq.notebook_id = n.id
@@ -550,7 +600,7 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 	args = append(args, skipVal)
 
 	task := &models.StudyQueueTask{}
-	var topicTitle string
+	var topicTitle, notebookTitle string
 	var notebookPriority int
 	err := r.db.QueryRow(query, args...).Scan(
 		&task.ID,
@@ -566,6 +616,7 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 		&task.StartPage,
 		&task.EndPage,
 		&topicTitle,
+		&notebookTitle,
 		&notebookPriority,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -574,7 +625,17 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 	if err != nil {
 		return nil, err
 	}
-	task.Title = topicTitle
+	if task.TaskType == models.StudyTaskTypeFlashcardReview {
+		task.Title = notebookTitle
+	} else {
+		if topicTitle != "" {
+			task.Title = topicTitle
+		} else if notebookTitle != "" {
+			task.Title = notebookTitle
+		} else {
+			task.Title = "Task"
+		}
+	}
 	return task, nil
 }
 

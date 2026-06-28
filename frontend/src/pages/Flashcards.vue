@@ -132,6 +132,9 @@
                 </svg>
               </button>
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
+              <button class="flip-back-btn" @click="flipped = false">
+                Show Question
+              </button>
               <div class="rating-row">
                 <button
                   v-for="r in ratings"
@@ -547,6 +550,7 @@ async function loadQueueSession(taskID, notebookID = '') {
 .tab-content {
   display: grid;
   gap: 16px;
+  position: relative;
   animation: fadeIn 0.18s ease;
 }
 
@@ -887,7 +891,10 @@ async function loadQueueSession(taskID, notebookID = '') {
 
 /* ── Info tooltip ────────────────────────────── */
 .info-trigger {
-  position: relative;
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 50;
   display: inline-flex;
 }
 
@@ -913,8 +920,7 @@ async function loadQueueSession(taskID, notebookID = '') {
 .info-tooltip {
   position: absolute;
   bottom: calc(100% + 12px);
-  left: 50%;
-  transform: translateX(-50%);
+  right: 0;
   width: 280px;
   background: var(--surface-container-lowest);
   border: 1px solid var(--outline-variant);
@@ -922,6 +928,28 @@ async function loadQueueSession(taskID, notebookID = '') {
   padding: 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   z-index: 100;
+}
+
+.flip-back-btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--surface-container-highest);
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+  margin: 4px 0;
+}
+
+.flip-back-btn:hover {
+  background: var(--surface-container-high);
+}
+
+.flip-back-btn:active {
+  transform: scale(0.97);
 }
 
 .tooltip-title {
