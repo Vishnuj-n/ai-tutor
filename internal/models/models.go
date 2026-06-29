@@ -102,6 +102,13 @@ type QuizAnswer struct {
 	Selected   string `json:"selected"`
 }
 
+type FailedQuestionDetail struct {
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	UserAnswer    string   `json:"user_answer"`
+}
+
 type QuizAttemptRecord struct {
 	ID          string `json:"id"`
 	TaskID      string `json:"task_id"`

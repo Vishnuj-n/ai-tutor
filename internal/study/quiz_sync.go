@@ -264,6 +264,7 @@ func (s *StudyService) triggerSocraticRescueHandoffTx(
 	tx *sql.Tx,
 	task *models.StudyQueueTask,
 	attempt *models.QuizAttemptRecord,
+	failedQuestions []models.FailedQuestionDetail,
 ) (string, string, models.StudyTaskStatus, bool, models.StudyQueueTask, error) {
 	feedback := "Concept rescue activated. Complete the Socratic session to retry."
 	attempt.Feedback = feedback
@@ -277,10 +278,11 @@ func (s *StudyService) triggerSocraticRescueHandoffTx(
 
 	// Shift session into Socratic Rescue Lane by generating a SOCRATIC_REMEDIAL task
 	socraticTaskID := uuid.NewString()
-	socraticPayload, _ := json.Marshal(map[string]string{
-		"feedback": feedback,
-		"lane":     "socratic_rescue",
-		"mode":     "external_prompt",
+	socraticPayload, _ := json.Marshal(map[string]interface{}{
+		"feedback":         feedback,
+		"lane":             "socratic_rescue",
+		"mode":             "external_prompt",
+		"failed_questions": failedQuestions,
 	})
 	followUp := models.StudyQueueTask{
 		ID:          socraticTaskID,
@@ -337,13 +339,18 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	}
 
 	correctCount := 0
+	var failedQuestions []models.FailedQuestionDetail
 	for _, question := range payload.Questions {
 		selected := strings.TrimSpace(selectedByQuestionID[question.ID])
-		if selected == "" {
-			continue
-		}
 		if strings.EqualFold(strings.TrimSpace(question.CorrectAnswer), selected) {
 			correctCount++
+		} else {
+			failedQuestions = append(failedQuestions, models.FailedQuestionDetail{
+				Prompt:        question.Prompt,
+				Options:       question.Options,
+				CorrectAnswer: question.CorrectAnswer,
+				UserAnswer:    selected,
+			})
 		}
 	}
 
@@ -422,7 +429,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		} else {
 			if strategy == "FAST" {
 				var followUp models.StudyQueueTask
-				socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt)
+				socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt, failedQuestions)
 				if err != nil {
 					return models.QuizResult{}, err
 				}
@@ -449,7 +456,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				} else {
 					// Strike 3: SOCRATIC_REMEDIAL rescue
 					var followUp models.StudyQueueTask
-					socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt)
+					socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt, failedQuestions)
 					if err != nil {
 						return models.QuizResult{}, err
 					}

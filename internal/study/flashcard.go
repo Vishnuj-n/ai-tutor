@@ -1,6 +1,7 @@
 package study
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 // GenerateManualFlashcards generates flashcards for a synthetic topic based on a page range (manual sandbox)
 func (s *StudyService) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
-	cards, tier, err := s.generateFlashcardsCore(notebookID, startPage, endPage)
+	cards, tier, err := s.generateFlashcardsCore(notebookID, startPage, endPage, nil)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
@@ -55,7 +56,31 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 		return nil, nil, false, "", fmt.Errorf("topic ID and notebook ID are required")
 	}
 
-	cards, tier, err := s.generateFlashcardsCore(notebookID, startPage, endPage)
+	// ponytail: lookup latest quiz attempt and extract failed questions
+	var failedQuestions []models.FailedQuestionDetail
+	if payloadJSON, answersJSON, err := s.repo.GetLatestQuizAttemptDetailsByTopic(topicID); err == nil && payloadJSON != "" && answersJSON != "" {
+		var payload models.QuizTaskPayload
+		var answers []models.QuizAnswer
+		if json.Unmarshal([]byte(payloadJSON), &payload) == nil && json.Unmarshal([]byte(answersJSON), &answers) == nil {
+			selectedByQuestionID := make(map[string]string)
+			for _, ans := range answers {
+				selectedByQuestionID[ans.QuestionID] = strings.TrimSpace(ans.Selected)
+			}
+			for _, q := range payload.Questions {
+				userAns := selectedByQuestionID[q.ID]
+				if !strings.EqualFold(strings.TrimSpace(q.CorrectAnswer), userAns) {
+					failedQuestions = append(failedQuestions, models.FailedQuestionDetail{
+						Prompt:        q.Prompt,
+						Options:       q.Options,
+						CorrectAnswer: q.CorrectAnswer,
+						UserAnswer:    userAns,
+					})
+				}
+			}
+		}
+	}
+
+	cards, tier, err := s.generateFlashcardsCore(notebookID, startPage, endPage, failedQuestions)
 	if err != nil {
 		return nil, nil, false, "", err
 	}
@@ -119,7 +144,7 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 	return cards, persistedStates, existing, tier, nil
 }
 
-func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endPage int) ([]models.Flashcard, string, error) {
+func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endPage int, failedQuestions []models.FailedQuestionDetail) ([]models.Flashcard, string, error) {
 	generationSource := "flashcard_pipeline_core"
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
@@ -163,7 +188,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	}
 
 	// Build prompt with token budgeting
-	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookTitle, startPage, endPage, contextChunks, targetCount, maxInputTokens)
+	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookTitle, startPage, endPage, contextChunks, targetCount, maxInputTokens, failedQuestions)
 
 	// Log token estimates before generation
 	utils.Warnf("[FLASHCARD_PIPELINE] token_budget_estimate prompt_tokens=%d max_input=%d budget_used_pct=%.2f", promptTokenCount, maxInputTokens, float64(promptTokenCount)/float64(maxInputTokens)*100)
@@ -231,7 +256,7 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	return cards, tier, nil
 }
 
-func buildMarathonFlashcardPromptWithBudget(notebookTitle string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int) (string, int, []string) {
+func buildMarathonFlashcardPromptWithBudget(notebookTitle string, startPage, endPage int, contextChunks []models.ChunkWithContext, targetCount, maxInputTokens int, failedQuestions []models.FailedQuestionDetail) (string, int, []string) {
 	// Base prompt overhead (instructions, format, etc.)
 	const baseOverheadTokens = 300
 	const safetyMarginTokens = 500 // Reserve for output tokens and safety margin
@@ -242,12 +267,27 @@ func buildMarathonFlashcardPromptWithBudget(notebookTitle string, startPage, end
 		availableBudget = 1000 // Minimum budget for meaningful content
 	}
 
+	// ponytail: increment target count by failed questions count to generate extra targeted corrective cards
+	if len(failedQuestions) > 0 {
+		targetCount += len(failedQuestions)
+	}
+
 	var b strings.Builder
 	b.WriteString("You are an expert academic tutor and flashcard generator creating study materials for spaced repetition (FSRS).\n")
 	b.WriteString("Do not test minor details. If the text is short, generate fewer.\n")
 	b.WriteString("CRITICAL: Return ONLY valid JSON. No markdown. No code blocks. No explanations.\n")
 	b.WriteString("Output must start with { and end with }. No prefix or suffix text.\n")
 	fmt.Fprintf(&b, "Notebook: \"%s\"\n", notebookTitle)
+
+	if len(failedQuestions) > 0 {
+		b.WriteString("\n=== TARGETED REVIEW: MISCONCEPTIONS ===\n")
+		b.WriteString("The user recently took a quiz and got these questions wrong. You MUST generate targeted corrective flashcards (at least 1 per misconception) specifically addressing the concepts, definitions, or facts tested in these incorrect questions to correct their understanding:\n")
+		for _, q := range failedQuestions {
+			fmt.Fprintf(&b, "- Quiz Question: %s | Correct Answer: %s | User's wrong selection: %s\n", q.Prompt, q.CorrectAnswer, q.UserAnswer)
+		}
+		b.WriteString("\n")
+	}
+
 	fmt.Fprintf(&b, "Generate exactly %d flashcards covering pages %d-%d.\n",
 		targetCount, startPage, endPage)
 	b.WriteString("\n=== JSON FORMAT (FOLLOW EXACTLY) ===\n")

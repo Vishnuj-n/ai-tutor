@@ -1297,4 +1297,33 @@ func parseSQLiteTimestamp(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unknown timestamp format: %s", s)
 }
 
+// GetLatestQuizAttemptDetailsByTopic retrieves the payload and answers for the latest quiz attempt of a topic.
+func (r *Repository) GetLatestQuizAttemptDetailsByTopic(topicID string) (string, string, error) {
+	var payloadJSON, answersJSON string
+	err := r.db.QueryRow(`
+		SELECT sq.payload_json, qa.answers_json
+		FROM quiz_attempts qa
+		JOIN study_queue sq ON qa.task_id = sq.id
+		WHERE sq.topic_id = ? AND sq.task_type = 'QUIZ'
+		ORDER BY qa.completed_at DESC LIMIT 1
+	`, strings.TrimSpace(topicID)).Scan(&payloadJSON, &answersJSON)
+	return payloadJSON, answersJSON, err
+}
+
+// GetActiveRemedialTaskPayloadByTopic retrieves the payload_json of the active SOCRATIC_REMEDIAL task for a topic.
+func (r *Repository) GetActiveRemedialTaskPayloadByTopic(topicID string) (string, error) {
+	var payloadJSON string
+	err := r.db.QueryRow(`
+		SELECT COALESCE(payload_json, '')
+		FROM study_queue
+		WHERE topic_id = ? AND task_type = 'SOCRATIC_REMEDIAL' AND status = 'ACTIVE' LIMIT 1
+	`, strings.TrimSpace(topicID)).Scan(&payloadJSON)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return payloadJSON, err
+}
+
+
+
 
