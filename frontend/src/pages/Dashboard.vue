@@ -550,10 +550,6 @@ const nonReviewTasks = computed(() => {
   return tasks.value.filter(t => t.id !== 'task-review-daily')
 })
 
-const isThresholdExceeded = computed(() => {
-  return timelineData.value.some((d) => d.card_count > maxFlashcardsLimit.value)
-})
-
 const yAxisMax = computed(() => {
   if (!timelineData.value || timelineData.value.length === 0) return 40
   const counts = timelineData.value.map((d) => d.card_count)
@@ -613,11 +609,6 @@ const areaPathData = computed(() => {
   if (pts.length === 0) return ''
   const linePath = linePathData.value
   return `${linePath} L ${pts[pts.length - 1].x} 250 L ${pts[0].x} 250 Z`
-})
-
-const limitLineY = computed(() => {
-  if (!timelineData.value || timelineData.value.length === 0) return 150
-  return 250 - (maxFlashcardsLimit.value / yAxisMax.value) * 200
 })
 
 const flashcardsJustCreated = computed(() => {
@@ -832,7 +823,7 @@ function formatDaysRemaining(days) {
   return `${days} days left`
 }
 
-async function runFlashcardSyncInline(task) {
+async function runFlashcardSyncInline(_task) {
   try {
     isSyncing.value = true
     actionError.value = ''
