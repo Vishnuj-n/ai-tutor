@@ -1,13 +1,13 @@
 <template>
   <div class="dashboard-container">
-    <!-- Setup Overlay (if credentials not configured) -->
+    <!-- Setup Overlay (Teacher Login) -->
     <div v-if="showSetup" class="setup-overlay">
       <div class="setup-card animate-fade-in">
         <div style="text-align: center; margin-bottom: 1.5rem;">
-          <span style="font-size: 2.5rem;">☁️</span>
-          <h2 style="margin-top: 0.5rem; margin-bottom: 0.5rem; color: #fff; letter-spacing: -0.015em;">Connect to Supabase</h2>
+          <span style="font-size: 2.5rem;">🏫</span>
+          <h2 style="margin-top: 0.5rem; margin-bottom: 0.5rem; color: #fff; letter-spacing: -0.015em;">Teacher Portal Login</h2>
           <p class="muted" style="font-size: 0.85rem; line-height: 1.4;">
-            Enter your Supabase credentials to access the teacher workspace.
+            Sign in with your teacher credentials to manage assignments and monitor student progress.
           </p>
         </div>
 
@@ -16,43 +16,32 @@
           <div style="flex: 1;">{{ setupError }}</div>
         </div>
 
-        <form @submit.prevent="saveCredentials">
+        <form @submit.prevent="loginTeacher">
           <div class="form-group">
-            <label for="setup-url">Supabase Project URL</label>
+            <label for="login-username">Email / Username</label>
             <input
-              id="setup-url"
-              v-model="setupUrl"
-              type="url"
-              required
-              placeholder="https://your-project-id.supabase.co"
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="setup-key">Supabase Anon Key</label>
-            <input
-              id="setup-key"
-              v-model="setupKey"
-              type="password"
-              required
-              placeholder="eyJhbGciOiJIUzI1NiIsIn..."
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="setup-class">Default Classroom Code</label>
-            <input
-              id="setup-class"
-              v-model="setupClassroom"
+              id="login-username"
+              v-model="loginUsername"
               type="text"
               required
-              placeholder="e.g. BIO101"
+              placeholder="e.g. teacher@school.edu"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="login-password">Password</label>
+            <input
+              id="login-password"
+              v-model="loginPassword"
+              type="password"
+              required
+              placeholder="••••••••"
             />
           </div>
 
           <button class="btn" style="width: 100%; margin-top: 1.25rem;" :disabled="connecting">
             <span v-if="connecting" class="loading-spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
-            {{ connecting ? 'Testing Connection...' : 'Connect Workspace' }}
+            {{ connecting ? 'Signing In...' : '🔑 Sign In' }}
           </button>
         </form>
       </div>
@@ -80,8 +69,8 @@
           CLASSROOM: {{ classroomCode }}
         </span>
         
-        <button class="btn btn-secondary" @click="openSettings" style="padding: 0.45rem 0.85rem; font-size: 0.8rem;">
-          ⚙️ Settings
+        <button class="btn btn-secondary" @click="logoutTeacher" style="padding: 0.45rem 0.85rem; font-size: 0.8rem;">
+          🚪 Sign Out
         </button>
       </div>
     </header>
@@ -483,17 +472,17 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 
-// Setup State
+// Setup/Login State
 const showSetup = ref(true);
 const connecting = ref(false);
 const setupError = ref('');
-const setupUrl = ref('');
-const setupKey = ref('');
-const setupClassroom = ref('');
+const loginUsername = ref('');
+const loginPassword = ref('');
 
 // Core State
-const supabaseUrl = ref('');
-const supabaseKey = ref('');
+const supabaseUrl = ref(import.meta.env.VITE_SUPABASE_URL || 'https://dkqahgkkighcpycexovi.supabase.co');
+const supabaseKey = ref(import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Gno-X5ppMB6YZza52F4Nog__7kxobfX');
+const sessionToken = ref('');
 const classroomCode = ref('');
 const error = ref('');
 const loading = ref(false);
@@ -513,7 +502,7 @@ const newTitle = ref('');
 const newUrl = ref('');
 const publishing = ref(false);
 
-// Global keyboard listeners for search bar focus (CMD+K or /)
+// Global keyboard listeners for focus
 const handleGlobalKeydown = (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
@@ -524,85 +513,90 @@ const handleGlobalKeydown = (e) => {
   }
 };
 
-// Check configuration on mount
+// Check session on mount
 onMounted(() => {
-  const url = localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || '';
-  const key = localStorage.getItem('supabase_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-  const cls = localStorage.getItem('classroom_code') || import.meta.env.VITE_CLASSROOM_CODE || '';
+  const token = sessionStorage.getItem('session_token');
+  const cls = sessionStorage.getItem('classroom_code');
 
-  if (url) setupUrl.value = url;
-  if (key) setupKey.value = key;
-  if (cls) setupClassroom.value = cls;
-
-  if (url && key && cls) {
-    supabaseUrl.value = url;
-    supabaseKey.value = key;
+  if (token && cls) {
+    sessionToken.value = token;
     classroomCode.value = cls;
-    
     showSetup.value = false;
     fetchData();
   } else {
     showSetup.value = true;
   }
 
-  // Register keydown listener
   window.addEventListener('keydown', handleGlobalKeydown);
 });
 
 onUnmounted(() => {
-  // Cleanup listener
   window.removeEventListener('keydown', handleGlobalKeydown);
 });
 
-// Save credentials from setup screen
-async function saveCredentials() {
+// loginTeacher handles teacher credentials validation via login_user RPC
+async function loginTeacher() {
   connecting.value = true;
   setupError.value = '';
   
-  // Format check
-  let url = setupUrl.value.trim();
-  if (url.endsWith('/')) {
-    url = url.slice(0, -1);
+  if (!loginUsername.value.trim() || !loginPassword.value.trim()) {
+    setupError.value = 'Username/Email and Password are required.';
+    connecting.value = false;
+    return;
   }
-  const key = setupKey.value.trim();
-  const cls = setupClassroom.value.trim().toUpperCase();
 
   try {
-    // Ping/test connection by making a quick select to teacher_assignments
-    const testRes = await fetch(`${url}/rest/v1/teacher_assignments?select=id&limit=1`, {
+    const payload = {
+      p_username: loginUsername.value.trim(),
+      p_password: loginPassword.value.trim(),
+      p_is_desktop: false // web
+    };
+
+    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/login_user`, {
+      method: 'POST',
       headers: {
-        'apikey': key,
-        'Authorization': `Bearer ${key}`
-      }
+        'Content-Type': 'application/json',
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`
+      },
+      body: JSON.stringify(payload)
     });
 
-    if (!testRes.ok) {
-      const errText = await testRes.text();
-      throw new Error(errText || `Server returned status ${testRes.status}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      let parsedErr;
+      try { parsedErr = JSON.parse(errText); } catch(_) {}
+      throw new Error(parsedErr?.message || errText || `Server returned status ${res.status}`);
     }
 
-    // Success! Save to state and storage
-    supabaseUrl.value = url;
-    supabaseKey.value = key;
-    classroomCode.value = cls;
+    const loginData = await res.json();
+    
+    if (loginData.role !== 'teacher') {
+      throw new Error('Access denied. Only teachers can access this portal.');
+    }
 
-    localStorage.setItem('supabase_url', url);
-    localStorage.setItem('supabase_key', key);
-    localStorage.setItem('classroom_code', cls);
+    sessionToken.value = loginData.session_token;
+    classroomCode.value = loginData.classroom_code;
+    
+    sessionStorage.setItem('session_token', loginData.session_token);
+    sessionStorage.setItem('classroom_code', loginData.classroom_code);
 
     showSetup.value = false;
     fetchData();
   } catch (err) {
-    console.error('Setup connection failure:', err);
-    setupError.value = `Failed to connect to Supabase: ${err.message}. Please check credentials and tables configuration.`;
+    console.error('Login failure:', err);
+    setupError.value = err.message || 'Failed to login. Please verify credentials.';
   } finally {
     connecting.value = false;
   }
 }
 
-// Reset setup configurations
-function openSettings() {
-  setupError.value = '';
+// logoutTeacher signs the teacher out by clearing session variables and redirecting to the login screen
+function logoutTeacher() {
+  sessionToken.value = '';
+  classroomCode.value = '';
+  sessionStorage.removeItem('session_token');
+  sessionStorage.removeItem('classroom_code');
   showSetup.value = true;
 }
 
@@ -620,7 +614,8 @@ async function fetchData() {
       {
         headers: {
           'apikey': supabaseKey.value,
-          'Authorization': `Bearer ${supabaseKey.value}`
+          'Authorization': `Bearer ${supabaseKey.value}`,
+          'x-session-token': sessionToken.value
         }
       }
     );
@@ -633,7 +628,8 @@ async function fetchData() {
       {
         headers: {
           'apikey': supabaseKey.value,
-          'Authorization': `Bearer ${supabaseKey.value}`
+          'Authorization': `Bearer ${supabaseKey.value}`,
+          'x-session-token': sessionToken.value
         }
       }
     );
@@ -706,7 +702,8 @@ async function fetchAssignments() {
       {
         headers: {
           'apikey': supabaseKey.value,
-          'Authorization': `Bearer ${supabaseKey.value}`
+          'Authorization': `Bearer ${supabaseKey.value}`,
+          'x-session-token': sessionToken.value
         }
       }
     );
@@ -744,6 +741,7 @@ async function publishAssignment() {
         'Content-Type': 'application/json',
         'apikey': supabaseKey.value,
         'Authorization': `Bearer ${supabaseKey.value}`,
+        'x-session-token': sessionToken.value,
         'Prefer': 'return=representation'
       },
       body: JSON.stringify(payload)
@@ -776,7 +774,8 @@ async function deleteAssignment(id) {
       method: 'DELETE',
       headers: {
         'apikey': supabaseKey.value,
-        'Authorization': `Bearer ${supabaseKey.value}`
+        'Authorization': `Bearer ${supabaseKey.value}`,
+        'x-session-token': sessionToken.value
       }
     });
 

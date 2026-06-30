@@ -278,8 +278,12 @@ export function getAppEnv() {
   return appBridge().GetAppEnv()
 }
 
-export function openAuthBrowser() {
-  return appBridge().OpenAuthBrowser()
+export function loginStudent(username, password, classroomCode) {
+  return appBridge().LoginStudent(username, password, classroomCode)
+}
+
+export function logoutStudent() {
+  return appBridge().LogoutStudent()
 }
 
 export function getCloudConfig() {
