@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func TestSchemaIncludesRereadAttemptsTable(t *testing.T) {
@@ -795,6 +796,77 @@ func TestStudyQueueNewPriorityLevels(t *testing.T) {
 		if err := testRepo.CompleteTask(next.ID, models.CompletionResult{Status: models.StudyTaskStatusCompleted}); err != nil {
 			t.Fatalf("CompleteTask failed: %v", err)
 		}
+	}
+}
+
+func TestGetCompletedTaskTimes(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-streak-test"
+	topicID := "topic-streak-test"
+	if err := testRepo.EnsureTopic(topicID, "Test Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook(notebookID, "Test Notebook", "/tmp/streak.pdf", "pdf", topicID, 5); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	// Insert active, pending and completed tasks
+	task1 := models.StudyQueueTask{
+		ID:         "task-streak-1",
+		NotebookID: notebookID,
+		TopicID:    topicID,
+		TaskType:   models.StudyTaskTypeReading,
+		Status:     models.StudyTaskStatusPending,
+	}
+	task2 := models.StudyQueueTask{
+		ID:         "task-streak-2",
+		NotebookID: notebookID,
+		TopicID:    topicID,
+		TaskType:   models.StudyTaskTypeQuiz,
+		Status:     models.StudyTaskStatusPending,
+	}
+
+	if err := testRepo.InsertStudyTask(task1); err != nil {
+		t.Fatalf("InsertStudyTask 1 failed: %v", err)
+	}
+	if err := testRepo.InsertStudyTask(task2); err != nil {
+		t.Fatalf("InsertStudyTask 2 failed: %v", err)
+	}
+
+	// Fetch initial completions (should be 0)
+	completions, err := testRepo.GetCompletedTaskTimes()
+	if err != nil {
+		t.Fatalf("GetCompletedTaskTimes initial failed: %v", err)
+	}
+	if len(completions) != 0 {
+		t.Fatalf("expected 0 completions, got %d", len(completions))
+	}
+
+	// Activate and complete task 1
+	if err := testRepo.ActivateTask(task1.ID); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+	if err := testRepo.CompleteTask(task1.ID, models.CompletionResult{Status: models.StudyTaskStatusCompleted}); err != nil {
+		t.Fatalf("CompleteTask failed: %v", err)
+	}
+
+	// Fetch completions (should be 1)
+	completions, err = testRepo.GetCompletedTaskTimes()
+	if err != nil {
+		t.Fatalf("GetCompletedTaskTimes after complete failed: %v", err)
+	}
+	if len(completions) != 1 {
+		t.Fatalf("expected 1 completion, got %d", len(completions))
+	}
+
+	// Verify that the timestamp is close to now
+	timeDiff := time.Since(completions[0])
+	if timeDiff < 0 {
+		timeDiff = -timeDiff
+	}
+	if timeDiff > 1*time.Minute {
+		t.Fatalf("expected completed time to be close to now, but diff is %v (completed time: %v, now: %v)", timeDiff, completions[0], time.Now().UTC())
 	}
 }
 

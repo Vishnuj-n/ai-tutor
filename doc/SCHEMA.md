@@ -297,6 +297,14 @@ CREATE UNIQUE INDEX idx_fsrs_cards_topic_prompt ON fsrs_cards(topic_id, prompt);
 CREATE INDEX idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at);
 ```
 
+**Initial State (Simplified Calibration):**
+- New flashcards start in clean Review state (`StateCode: 2`, `Reps: 0`)
+- Initial `due_at` is set based on quiz performance:
+  - Ace (100%): 3-day offset
+  - Pass (<100%): 1-day offset
+  - Default: Tomorrow offset (1 day)
+- This bypasses the FSRS intraday learning phase for predictable initial intervals
+
 ### `fsrs_review_log`
 
 Immutable review log for flashcards.
@@ -362,6 +370,8 @@ Singleton table for global preferences.
 | `rag_entire_notebook` | BOOLEAN DEFAULT 1 | RAG over entire notebook |
 | `rag_queue_study` | BOOLEAN DEFAULT 1 | RAG over queued study content |
 | `default_remedial_strategy` | TEXT DEFAULT 'CLASSIC' | User preference for quiz failure handling (`CLASSIC` or `FAST`) |
+| `classroom_code` | TEXT DEFAULT '' | Classroom code for teacher-student association in cloud sync |
+| `last_synced_at` | INTEGER DEFAULT 0 | Timestamp of last successful cloud sync |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
 
 **Foreign keys:** `active_profile_id` → `study_profiles(id)` ON DELETE SET NULL.

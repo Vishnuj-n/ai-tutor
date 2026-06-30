@@ -254,3 +254,25 @@ The project previously experimented with a proactive orchestration model.
 The architecture has now been simplified into a deterministic SQLite-driven Persistent Queue Architecture.
 
 Current sprint planning and implementation should follow the queue model exclusively
+
+---
+
+## Sprint 15 — Simplified FSRS Calibration & Enhanced Features
+- Completed: 2026-06-28
+- Goal: Simplify FSRS calibration with clean initial states, add cloud sync, streak tracking, and UI enhancements.
+- Outcome: FSRS flashcards now start in clean Review state with day-based offsets based on quiz performance. Cloud sync with stable identifiers implemented. Streak tracking and UI enhancements added.
+- Key files changed:
+  - internal/study/flashcard.go (simplified FSRS calibration)
+  - quiz_flashcard_test.go (updated calibration tests)
+  - doc/ARCHITECTURE.md (updated FSRS calibration documentation)
+  - doc/DATA_API.md (added GenerateFlashcardsForQuizTask API)
+  - doc/SCHEMA.md (added FSRS calibration notes)
+  - doc/SPRINT.md (added Sprint 15)
+- API / UI changes:
+  - `GenerateFlashcardsForQuizTask` now sets clean Review state with day-based offsets
+  - Added cloud sync functionality with stable identifiers
+  - Added streak tracking with calendar widget
+  - Added flip-back button to flashcards
+  - Enhanced sidebar animations and scroll progress bar
+- Tests status: All tests pass including updated `TestFSRSCalibrationEasyAndDoubleGood`
+- TODOs: Validate full cloud sync end-to-end flow

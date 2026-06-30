@@ -1212,12 +1212,6 @@ h1 {
   animation-delay: 0.24s;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes pulse-slow {
   0%,
   100% {

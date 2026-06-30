@@ -132,6 +132,9 @@
                 </svg>
               </button>
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
+              <button class="flip-back-btn" @click="flipped = false">
+                Show Question
+              </button>
               <div class="rating-row">
                 <button
                   v-for="r in ratings"
@@ -409,9 +412,45 @@ async function suspendCard() {
 
 function handleKeydown(e) {
   if (!reviewing.value || !currentCard.value) return
+
+  // Prevent hotkeys when typing in inputs/textareas
+  if (
+    e.target &&
+    (e.target.tagName === 'INPUT' ||
+      e.target.tagName === 'TEXTAREA' ||
+      e.target.isContentEditable)
+  ) {
+    return
+  }
+
+  // Shift+S to suspend
   if (queueMode.value && e.key === 'S' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     suspendCard()
+    return
+  }
+
+  // Space or Enter to reveal answer if not flipped
+  if (!flipped.value) {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault()
+      flipped.value = true
+    }
+  } else {
+    // 1-4 keys to rate
+    if (e.key === '1') {
+      e.preventDefault()
+      rate('again')
+    } else if (e.key === '2') {
+      e.preventDefault()
+      rate('hard')
+    } else if (e.key === '3') {
+      e.preventDefault()
+      rate('good')
+    } else if (e.key === '4') {
+      e.preventDefault()
+      rate('easy')
+    }
   }
 }
 
@@ -511,6 +550,7 @@ async function loadQueueSession(taskID, notebookID = '') {
 .tab-content {
   display: grid;
   gap: 16px;
+  position: relative;
   animation: fadeIn 0.18s ease;
 }
 
@@ -851,7 +891,10 @@ async function loadQueueSession(taskID, notebookID = '') {
 
 /* ── Info tooltip ────────────────────────────── */
 .info-trigger {
-  position: relative;
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 50;
   display: inline-flex;
 }
 
@@ -877,8 +920,7 @@ async function loadQueueSession(taskID, notebookID = '') {
 .info-tooltip {
   position: absolute;
   bottom: calc(100% + 12px);
-  left: 50%;
-  transform: translateX(-50%);
+  right: 0;
   width: 280px;
   background: var(--surface-container-lowest);
   border: 1px solid var(--outline-variant);
@@ -886,6 +928,28 @@ async function loadQueueSession(taskID, notebookID = '') {
   padding: 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   z-index: 100;
+}
+
+.flip-back-btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--surface-container-highest);
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+  margin: 4px 0;
+}
+
+.flip-back-btn:hover {
+  background: var(--surface-container-high);
+}
+
+.flip-back-btn:active {
+  transform: scale(0.97);
 }
 
 .tooltip-title {

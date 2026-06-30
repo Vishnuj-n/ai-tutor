@@ -370,6 +370,70 @@ ORDER BY
 
 4. New `FLASHCARD_REVIEW` task scheduled for future due date
 
+### FSRS Calibration (Simplified)
+
+**New flashcards start in clean Review state** with day-based offsets based on quiz performance:
+
+- **Ace (100% quiz score):** 3-day offset before first review
+- **Pass (<100% quiz score):** 1-day offset before first review
+- **Default (no quiz attempt):** Tomorrow offset (1 day)
+
+**Implementation:**
+- All new FSRS cards start with `StateCode: 2` (Review state) to bypass the FSRS intraday learning phase
+- Initial `due_at` is calculated based on latest quiz attempt score for the topic
+- Clean state ensures predictable initial review intervals without simulation overhead
+
+**Changes Made (2026-06-28):**
+- Removed `scheduler.NextFSRSState` review simulation from `internal/study/flashcard.go`
+- Initialized all flashcards with `StateCode: 2` (Review state) to bypass the FSRS intraday learning phase
+- Set initial `due_at` based on quiz score:
+  - **Ace (100%):** 3 days offset
+  - **Pass (<100%):** 1 day offset
+- Updated `TestFSRSCalibrationEasyAndDoubleGood` in `quiz_flashcard_test.go` to assert clean Review state (Reps = 0, StateCode = 2) and day-based offsets
+
+### Dashboard Streak Calendar (2026-06-28)
+
+**Monthly Streak Calendar widget** in the dashboard sidebar tracks study consistency:
+
+**Implementation:**
+- **Database Layer**: `GetCompletedTaskTimes()` in `internal/db/study_queue_repo.go` queries all completed task timestamps
+- **Backend Logic**: `GetStreakState(timezoneOffsetMinutes int)` in `app_study.go` computes streaks with timezone alignment
+- **Frontend**: Calendar widget in `Dashboard.vue` with dynamic month layout, active day highlighting, and streak metrics
+
+**Features:**
+- Highlights days with completed study tasks (reading, quiz, socratic tutor, review sessions)
+- Tracks `current_streak` and `longest_streak`
+- Timezone-aware: converts UTC timestamps to local day boundaries
+- Glowing fire icon pulses when user completes a task today
+- Custom tooltip overlays showing activity details on hover
+
+**Dashboard Layout Optimizations:**
+- Flashcard Reviews Hero Card: High-priority widget showing due count and overdue deck size
+- Action Contexts: "Continue Reading" titles with "Resume" buttons for active readings
+- Telemetry Widget Relocation: Profile Study Pacing moved to bottom of main column
+
+### Cloud Sync with Stable Identifiers (2026-06-28)
+
+**Cloud sync payload uses stable identifiers** instead of local database IDs for cross-student analytics:
+
+**Changes:**
+- **SyncPayload.Logs** now uses `[]SyncLogEntry` with `Filename` (SHA-256 file hash) and `PageNumber` fields
+- Replaces `[]FSRSReviewLog` with local IDs (`topic_id`, `reference_id`)
+- Local `FSRSReviewLog` struct unchanged for internal use
+- Server receives stable identifiers for dashboard analytics
+
+**Data Chain for File Identification:**
+`review_log.reference_id` → `flashcards.id` (get `source_chunk_id`) → `chunks.id` (get `page_num`) → `notebook_topics.topic_id` (get `notebook_id`) → `notebooks.file_path` (get `filepath.Base()`)
+
+**Delta Sync:**
+- `GetUnsentReviewLogs()` in `internal/db/fsrs_review_log_repo.go` fetches only unsent events
+- Eliminates duplicates and provides file hash + page number for cloud sync
+- `SetLastSyncedAt()` updates timestamp after successful sync
+
+**Classroom Integration:**
+- `classroom_code` field in sync payload for teacher-student association
+- Clerk authentication support for cloud dashboard access
+
 ### Task Lifecycle Semantics
 
 Explicit state transitions:
@@ -637,6 +701,13 @@ Minimal provider interface for OpenAI-compatible APIs. **All generation is synch
 **Interface operations:**
 - `generate_answer(prompt)` - RAG responses
 - `generate_quiz(topic_context)` - Quiz creation
+
+**Debug Logging (2026-06-26):**
+- All LLM calls flow through `Provider.GenerateAnswer()`
+- Single debug write at `provider.go:277-279` covers all call sites
+- Writes to `dev_data/logs/llm_prompt.log` with timestamp and model name
+- Format: `[TIMESTAMP] MODEL_NAME\nPROMPT\n---\n`
+- Enables prompt inspection for debugging and optimization
 
 **Non-goals:**
 - No LangChain

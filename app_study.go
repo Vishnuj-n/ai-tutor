@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -126,6 +127,28 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		dailyStudyMinutes := calculateDailyStudyMinutes(settings.StudyStartTime, settings.StudyEndTime)
 		materializedCards, deferredCards, safeReviewBudget := calculateFlashcardBudgets(dueCards, maxFlashcards)
 		queueTasks, activeTopics, learningMinutes, actionCounts := aggregateQueueTasks(activeQueueTasks, pendingQueueTasks)
+
+		if materializedCards > 0 {
+			bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
+			if err == nil && bestNotebookID != "" {
+				reviewCardsForTask := materializedCards
+				if selectedDueCards < reviewCardsForTask {
+					reviewCardsForTask = selectedDueCards
+				}
+
+				reviewTask := models.ScheduledTask{
+					ID:              models.ReviewTaskDailyID,
+					ActionType:      "flashcard_review",
+					Title:           fmt.Sprintf("Flashcard Review: %d cards", reviewCardsForTask),
+					EstimateMinutes: safeReviewBudget,
+					Priority:        1,
+					NotebookID:      bestNotebookID,
+					Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", reviewCardsForTask),
+				}
+				queueTasks = append([]models.ScheduledTask{reviewTask}, queueTasks...)
+				actionCounts["flashcard_review"]++
+			}
+		}
 
 		plan = &models.TodayPlan{
 			Date:                now.Format("2006-01-02"),
@@ -284,6 +307,114 @@ func (a *App) CompleteTask(taskID string, result models.CompletionResult) map[st
 		}
 	}
 	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) GetStreakState(timezoneOffsetMinutes int) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+
+	times, err := repo.GetCompletedTaskTimes()
+	if err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to get completed times: %v", err)}
+	}
+
+	// Determine user's local timezone from offset in minutes.
+	// JS getTimezoneOffset() returns difference in minutes between UTC and local time.
+	// For UTC+5:30, JS returns -330.
+	// In Go, UTC+5:30 is 19800 seconds east of UTC.
+	// Thus: secondsEastOfUTC = -timezoneOffsetMinutes * 60.
+	loc := time.FixedZone("ClientZone", -timezoneOffsetMinutes*60)
+
+	nowClient := time.Now().In(loc)
+	todayStr := nowClient.Format("2006-01-02")
+	yesterdayStr := nowClient.AddDate(0, 0, -1).Format("2006-01-02")
+
+	// Group and deduplicate by date string in user's timezone.
+	dateSet := make(map[string]bool)
+	for _, t := range times {
+		localDate := t.In(loc).Format("2006-01-02")
+		dateSet[localDate] = true
+	}
+
+	// Sort dates ascending.
+	var sortedDates []string
+	for d := range dateSet {
+		sortedDates = append(sortedDates, d)
+	}
+	sort.Strings(sortedDates)
+
+	longestStreak := 0
+	currentStreak := 0
+
+	if len(sortedDates) > 0 {
+		// Calculate longest streak
+		streakTemp := 0
+		var prevDate time.Time
+		for _, dateStr := range sortedDates {
+			d, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+			if err != nil {
+				continue
+			}
+			if streakTemp == 0 {
+				streakTemp = 1
+			} else {
+				// Calculate days difference safely
+				daysDiff := int(d.Sub(prevDate).Hours()+0.5) / 24
+				if daysDiff == 1 {
+					streakTemp++
+				} else if daysDiff > 1 {
+					if streakTemp > longestStreak {
+						longestStreak = streakTemp
+					}
+					streakTemp = 1
+				}
+			}
+			prevDate = d
+		}
+		if streakTemp > longestStreak {
+			longestStreak = streakTemp
+		}
+
+		// Calculate current streak
+		if dateSet[todayStr] {
+			currentStreak = 1
+			currDate := nowClient
+			for {
+				prevDayStr := currDate.AddDate(0, 0, -1).Format("2006-01-02")
+				if dateSet[prevDayStr] {
+					currentStreak++
+					currDate = currDate.AddDate(0, 0, -1)
+				} else {
+					break
+				}
+			}
+		} else if dateSet[yesterdayStr] {
+			currentStreak = 1
+			currDate := nowClient.AddDate(0, 0, -1)
+			for {
+				prevDayStr := currDate.AddDate(0, 0, -1).Format("2006-01-02")
+				if dateSet[prevDayStr] {
+					currentStreak++
+					currDate = currDate.AddDate(0, 0, -1)
+				} else {
+					break
+				}
+			}
+		}
+	}
+
+	// Create list of active dates
+	activeDatesList := []string{}
+	activeDatesList = append(activeDatesList, sortedDates...)
+
+	return map[string]interface{}{
+		"current_streak":  currentStreak,
+		"longest_streak":  longestStreak,
+		"active_dates":    activeDatesList,
+		"today_completed": dateSet[todayStr],
+	}
 }
 
 func (a *App) SkipTask(taskID string) map[string]interface{} {

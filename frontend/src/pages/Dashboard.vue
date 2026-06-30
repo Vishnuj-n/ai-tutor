@@ -108,91 +108,86 @@
     </template>
 
     <template v-else>
-      <!-- Telemetry Widget for active profile — only show when a deadline is set -->
-      <section v-if="activeProfilePace && activeProfilePace.has_deadline" class="telemetry-widget">
-        <div class="telemetry-card card">
-          <h2 class="telemetry-header">Profile Study Pacing ({{ activeProfileName }})</h2>
-          <div class="telemetry-grid">
-            <div class="telemetry-item">
-              <div class="telemetry-title-row">
-                <span class="telemetry-doc-title"
-                  >Target Exam Deadline: {{ activeProfilePace.deadline }}</span
-                >
-                <span
-                  class="telemetry-days-left"
-                  :class="{ warning: activeProfilePace.days_remaining <= 3 }"
-                >
-                  ({{ formatDaysRemaining(activeProfilePace.days_remaining) }})
-                </span>
-              </div>
-              <div class="telemetry-metric-row">
-                <div class="telemetry-metric">
-                  <span class="metric-value">{{ activeProfilePace.daily_pace }}</span>
-                  <span class="metric-label">words / day</span>
-                </div>
-                <div class="telemetry-metric">
-                  <span class="metric-value">{{
-                    activeProfilePace.sessions_per_day.toFixed(1)
-                  }}</span>
-                  <span class="metric-label">sessions / day</span>
-                </div>
-                <div class="telemetry-progress-info">
-                  <div class="progress-details">
-                    <span
-                      >Remaining words:
-                      <strong>{{ activeProfilePace.remaining_words }}</strong></span
-                    >
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <!-- Dashboard Layout Grid -->
       <div class="dashboard-grid">
         <!-- Main Panel (Tasks / States) -->
         <div class="dashboard-main">
-          <!-- Task List (Interleaved Bookshelf Tasks) -->
-          <div v-if="tasks.length > 0" class="task-list">
-            <article v-for="task in tasks" :key="task.id" class="card task-card">
-              <div class="task-header">
-                <span class="task-type" :class="task.action_type.toLowerCase()">{{
-                  formatTaskType(task.action_type)
-                }}</span>
-                <span
-                  v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0"
-                  class="task-estimate"
-                  >{{ task.estimate_minutes }} min</span
-                >
+          <!-- Task List & Custom Hero Review Card -->
+          <div v-if="tasks.length > 0" class="tasks-container" style="display: flex; flex-direction: column; gap: 16px;">
+            <!-- High-Priority Today's Reviews Card -->
+            <article v-if="reviewTask" class="card review-hero-card">
+              <div class="review-hero-header">
+                <span class="review-hero-tag">HIGH PRIORITY</span>
+                <span class="review-hero-estimate">{{ reviewTask.estimate_minutes }} min review</span>
               </div>
-              <h3>{{ task.title }}</h3>
-              <p class="task-meta">
-                {{
-                  task.meta
-                    ? task.meta
-                    : task.start_page !== undefined &&
-                        task.start_page !== null &&
-                        task.end_page !== undefined &&
-                        task.end_page !== null
-                      ? 'Pages ' + task.start_page + '-' + task.end_page
-                      : 'Pages N/A'
-                }}
-              </p>
+              <div class="review-hero-body">
+                <h2>Today's Reviews</h2>
+                <div class="review-hero-stats">
+                  <div class="review-hero-stat">
+                    <span class="stat-num">{{ dueReviewCards }}</span>
+                    <span class="stat-lbl">Due Today</span>
+                  </div>
+                  <div class="review-hero-stat">
+                    <span class="stat-num">{{ totalDueReviewCards > dueReviewCards ? totalDueReviewCards - dueReviewCards : 0 }}</span>
+                    <span class="stat-lbl">Remaining Overdue</span>
+                  </div>
+                </div>
+                <p class="review-hero-meta">{{ reviewTask.meta }}</p>
+              </div>
               <button
                 type="button"
-                class="primary-btn"
-                :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
-                :aria-label="'Start task ' + (task.title || task.id)"
-                :disabled="task.action_type === 'flashcard_sync' && isSyncing"
-                @click="startTask(task)"
+                class="primary-btn review-hero-btn"
+                @click="startTask(reviewTask)"
               >
-                <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
-                <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
-                <span v-else>Start</span>
+                Start Review
               </button>
             </article>
+
+            <!-- Task List (Other Interleaved Tasks) -->
+            <div v-if="nonReviewTasks.length > 0" class="task-list">
+              <article v-for="task in nonReviewTasks" :key="task.id" class="card task-card">
+                <div class="task-header">
+                  <span class="task-type" :class="task.action_type.toLowerCase()">{{
+                    formatTaskType(task.action_type)
+                  }}</span>
+                  <span
+                    v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0"
+                    class="task-estimate"
+                    >{{ task.estimate_minutes }} min</span
+                  >
+                </div>
+                <!-- ponytail: if reading task, show Continue Reading heading prefix -->
+                <h3 v-if="task.action_type === 'READING' || task.action_type === 'REREAD'">
+                  Continue Reading: {{ task.title }}
+                </h3>
+                <h3 v-else>{{ task.title }}</h3>
+                <p class="task-meta">
+                  {{
+                    task.meta
+                      ? task.meta
+                      : task.start_page !== undefined &&
+                          task.start_page !== null &&
+                          task.end_page !== undefined &&
+                          task.end_page !== null
+                        ? 'Pages ' + task.start_page + '-' + task.end_page
+                        : 'Pages N/A'
+                  }}
+                </p>
+                <button
+                  type="button"
+                  class="primary-btn"
+                  :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
+                  :aria-label="'Start task ' + (task.title || task.id)"
+                  :disabled="task.action_type === 'flashcard_sync' && isSyncing"
+                  @click="startTask(task)"
+                >
+                  <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
+                  <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
+                  <span v-else-if="task.action_type === 'READING' || task.action_type === 'REREAD'">Resume</span>
+                  <span v-else>Start</span>
+                </button>
+              </article>
+            </div>
           </div>
 
           <div v-else-if="hasActiveStudyContent" class="card state-card victory-card">
@@ -228,23 +223,112 @@
               </button>
             </div>
           </div>
+
+          <!-- Secondary Telemetry Widget placed at the bottom of the main dashboard column -->
+          <section v-if="activeProfilePace && activeProfilePace.has_deadline" class="telemetry-widget" style="margin-top: 24px;">
+            <div class="telemetry-card card">
+              <h2 class="telemetry-header">Profile Study Pacing ({{ activeProfileName }})</h2>
+              <div class="telemetry-grid">
+                <div class="telemetry-item">
+                  <div class="telemetry-title-row">
+                    <span class="telemetry-doc-title"
+                      >Target Exam Deadline: {{ activeProfilePace.deadline }}</span
+                    >
+                    <span
+                      class="telemetry-days-left"
+                      :class="{ warning: activeProfilePace.days_remaining <= 3 }"
+                    >
+                      ({{ formatDaysRemaining(activeProfilePace.days_remaining) }})
+                    </span>
+                  </div>
+                  <div class="telemetry-metric-row">
+                    <div class="telemetry-metric">
+                      <span class="metric-value">{{ activeProfilePace.daily_pace }}</span>
+                      <span class="metric-label">words / day</span>
+                    </div>
+                    <div class="telemetry-metric">
+                      <span class="metric-value">{{
+                        activeProfilePace.sessions_per_day.toFixed(1)
+                      }}</span>
+                      <span class="metric-label">sessions / day</span>
+                    </div>
+                    <div class="telemetry-progress-info">
+                      <div class="progress-details">
+                        <span>Remaining words:
+                          <strong>{{ activeProfilePace.remaining_words }}</strong></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
 
-        <!-- Sidebar Panel (Forecast Chart) -->
-        <div v-if="timelineData && timelineData.length > 0" class="dashboard-sidebar">
-          <section class="forecast-widget">
+        <!-- Sidebar Panel (Streak Calendar & Forecast Chart) -->
+        <div class="dashboard-sidebar">
+          <!-- Calendar Streak Widget -->
+          <section class="streak-calendar-widget card">
+            <header class="streak-header-row">
+              <div class="streak-title-container">
+                <span class="streak-flame-icon" :class="{ active: streakState.today_completed }">🔥</span>
+                <div class="streak-counts">
+                  <span class="streak-count-val">{{ streakState.current_streak }}</span>
+                  <span class="streak-count-label">day streak</span>
+                </div>
+              </div>
+              <div class="streak-stats-row">
+                <span class="streak-stat-item">Longest: <strong>{{ streakState.longest_streak }}d</strong></span>
+              </div>
+            </header>
+
+            <div class="calendar-month-title">{{ currentMonthLabel }}</div>
+            
+            <div class="calendar-grid">
+              <!-- Weekday Headers -->
+              <span v-for="day in ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']" :key="day" class="calendar-header-cell">
+                {{ day }}
+              </span>
+              
+              <!-- Empty Cells for Padding -->
+              <div 
+                v-for="(_, index) in calendarDays.filter(d => d.dayNum === null)" 
+                :key="'empty-' + index" 
+                class="calendar-day-cell empty"
+              ></div>
+              
+              <!-- Actual Day Cells -->
+              <div
+                v-for="day in calendarDays.filter(d => d.dayNum !== null)"
+                :key="day.dayNum"
+                class="calendar-day-cell"
+                :class="{ 
+                  active: day.active, 
+                  today: day.today,
+                  'has-hover': day.active
+                }"
+              >
+                <span class="day-number">{{ day.dayNum }}</span>
+                <span v-if="day.active" class="active-indicator"></span>
+                
+                <!-- Tooltip for active days -->
+                <div v-if="day.active" class="cell-tooltip">
+                  Activity logged! Streak kept active.
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Forecast Chart -->
+          <section v-if="timelineData && timelineData.length > 0" class="forecast-widget">
             <div class="forecast-card card">
               <div class="forecast-header-row">
                 <div>
                   <h2 class="forecast-header">Flashcard Review Forecast</h2>
-                  <p class="forecast-subtitle">Review load by date vs daily session limit</p>
+                  <p class="forecast-subtitle">Review load forecast by date</p>
                 </div>
                 <div class="forecast-legend">
                   <span class="legend-item"><span class="legend-dot due-dot"></span>Due Cards</span>
-                  <span class="legend-item">
-                    <span class="legend-line" :class="{ active: isThresholdExceeded }"></span>
-                    Limit ({{ maxFlashcardsLimit }})
-                  </span>
                 </div>
               </div>
 
@@ -284,16 +368,6 @@
                     </text>
                   </g>
 
-                  <!-- Horizontal Limit Line -->
-                  <line
-                    x1="30"
-                    :y1="limitLineY"
-                    x2="370"
-                    :y2="limitLineY"
-                    class="limit-line"
-                    :class="{ active: isThresholdExceeded }"
-                  />
-
                   <!-- Shading Area under the curve -->
                   <path :d="areaPathData" fill="url(#chartGrad)" />
 
@@ -307,7 +381,6 @@
                       :cy="pt.y"
                       r="5"
                       class="chart-dot"
-                      :class="{ 'exceeds-limit': pt.exceeds }"
                       @mouseenter="hoveredPoint = pt"
                       @mouseleave="hoveredPoint = null"
                     />
@@ -323,7 +396,6 @@
                   <div class="tooltip-date">{{ hoveredPoint.dayLabel }} ({{ hoveredPoint.date }})</div>
                   <div class="tooltip-value">
                     <strong>{{ hoveredPoint.count }}</strong> due cards
-                    <span v-if="hoveredPoint.exceeds" class="tooltip-warn">⚠️ Overload</span>
                   </div>
                 </div>
               </div>
@@ -332,7 +404,7 @@
               <div class="chart-x-axis">
                 <div v-for="(pt, idx) in chartPoints" :key="idx" class="x-label-container" :style="{ left: pt.percentX + '%' }">
                   <span class="x-label">{{ pt.dayLabel }}</span>
-                  <span class="x-sublabel" :class="{ exceeds: pt.exceeds }">{{ pt.count }}</span>
+                  <span class="x-sublabel">{{ pt.count }}</span>
                 </div>
               </div>
             </div>
@@ -375,6 +447,7 @@ import {
   devForceFlashcardSync,
   getNotebooks,
   getFlashcardDueTimeline,
+  getStreakState,
 } from '../services/appApi'
 
 const router = useRouter()
@@ -386,6 +459,7 @@ const actionError = ref('')
 const tasks = ref([])
 const hasActiveStudyContent = ref(false)
 const dueReviewCards = ref(0)
+const totalDueReviewCards = ref(0)
 
 const profiles = ref([])
 const userSettings = ref({
@@ -410,12 +484,70 @@ const lastPersistedProfile = ref('')
 const timelineData = ref([])
 const hoveredPoint = ref(null)
 
+const streakState = ref({
+  current_streak: 0,
+  longest_streak: 0,
+  active_dates: [],
+  today_completed: false
+})
+
+const currentDate = new Date()
+const currentYear = currentDate.getFullYear()
+const currentMonth = currentDate.getMonth()
+
+const monthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+]
+
+const currentMonthLabel = computed(() => {
+  return `${monthNames[currentMonth]} ${currentYear}`
+})
+
+const calendarDays = computed(() => {
+  const days = []
+  const totalDays = new Date(currentYear, currentMonth + 1, 0).getDate()
+  const firstDay = new Date(currentYear, currentMonth, 1).getDay()
+  
+  for (let i = 0; i < firstDay; i++) {
+    days.push({ dayNum: null, dateString: null, active: false, today: false })
+  }
+  
+  const todayLocalStr = getLocalDateString(new Date())
+  
+  for (let d = 1; d <= totalDays; d++) {
+    const dStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const isActive = streakState.value?.active_dates?.includes(dStr) || false
+    const isToday = dStr === todayLocalStr
+    
+    days.push({
+      dayNum: d,
+      dateString: dStr,
+      active: isActive,
+      today: isToday
+    })
+  }
+  
+  return days
+})
+
+function getLocalDateString(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const maxFlashcardsLimit = computed(() => {
   return userSettings.value.max_flashcards_per_session || 30
 })
 
-const isThresholdExceeded = computed(() => {
-  return timelineData.value.some((d) => d.card_count > maxFlashcardsLimit.value)
+const reviewTask = computed(() => {
+  return tasks.value.find(t => t.id === 'task-review-daily')
+})
+
+const nonReviewTasks = computed(() => {
+  return tasks.value.filter(t => t.id !== 'task-review-daily')
 })
 
 const yAxisMax = computed(() => {
@@ -477,11 +609,6 @@ const areaPathData = computed(() => {
   if (pts.length === 0) return ''
   const linePath = linePathData.value
   return `${linePath} L ${pts[pts.length - 1].x} 250 L ${pts[0].x} 250 Z`
-})
-
-const limitLineY = computed(() => {
-  if (!timelineData.value || timelineData.value.length === 0) return 150
-  return 250 - (maxFlashcardsLimit.value / yAxisMax.value) * 200
 })
 
 const flashcardsJustCreated = computed(() => {
@@ -553,6 +680,7 @@ async function loadAgenda() {
 
     tasks.value = response.tasks || []
     dueReviewCards.value = response.due_review_cards || 0
+    totalDueReviewCards.value = response.total_due_review_cards || 0
 
     // 3. Determine if there is any active study content (drives the empty state)
     // Uses active_notebook_count from backend so "Tasks Complete!" branch
@@ -596,6 +724,17 @@ async function loadAgenda() {
       console.error('Failed to get flashcard due timeline', err)
       timelineData.value = []
     }
+
+    // 6. Fetch streak state
+    try {
+      const tzOffset = new Date().getTimezoneOffset()
+      const streakRes = await getStreakState(tzOffset)
+      if (streakRes && !streakRes.error) {
+        streakState.value = streakRes
+      }
+    } catch (err) {
+      console.error('Failed to get streak state', err)
+    }
   } catch (err) {
     error.value = err.message || 'Failed to load tasks'
   } finally {
@@ -622,7 +761,8 @@ async function changeActiveProfile(event) {
       userSettings.value.rag_notebook_chapter,
       userSettings.value.rag_entire_notebook,
       userSettings.value.rag_queue_study,
-      userSettings.value.default_remedial_strategy
+      userSettings.value.default_remedial_strategy,
+      userSettings.value.classroom_code || ''
     )
     if (res && res.error) {
       userSettings.value.active_profile_id = oldProfileID
@@ -659,7 +799,8 @@ async function toggleEscapeHatch() {
       userSettings.value.rag_notebook_chapter,
       userSettings.value.rag_entire_notebook,
       userSettings.value.rag_queue_study,
-      userSettings.value.default_remedial_strategy
+      userSettings.value.default_remedial_strategy,
+      userSettings.value.classroom_code || ''
     )
     if (res && res.error) {
       userSettings.value.skip_to_reading_active = previousSkipToReading
@@ -682,7 +823,7 @@ function formatDaysRemaining(days) {
   return `${days} days left`
 }
 
-async function runFlashcardSyncInline(task) {
+async function runFlashcardSyncInline(_task) {
   try {
     isSyncing.value = true
     actionError.value = ''
@@ -847,7 +988,7 @@ function startTask(task) {
 .status-strip {
   display: flex;
   justify-content: space-between;
-  align-items: end;
+  align-items: center;
   gap: 12px;
   padding: 8px 2px 2px;
 }
@@ -859,15 +1000,6 @@ function startTask(task) {
   letter-spacing: -0.03em;
   line-height: 1;
   color: var(--on-surface);
-}
-
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  font-weight: 700;
 }
 
 .header-actions {
@@ -1081,10 +1213,6 @@ function startTask(task) {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 12px;
-}
-
-.telemetry-doc-icon {
-  font-size: 16px;
 }
 
 .telemetry-doc-title {
@@ -1343,7 +1471,7 @@ function startTask(task) {
 
 @media (min-width: 1024px) {
   .dashboard-grid {
-    grid-template-columns: 1fr 380px;
+    grid-template-columns: 1fr 310px;
     align-items: start;
   }
 }
@@ -1366,12 +1494,11 @@ function startTask(task) {
 }
 
 .forecast-card {
-  padding: 24px;
+  padding: 16px;
   position: relative;
   display: flex;
   flex-direction: column;
-  aspect-ratio: 1 / 1.05;
-  min-height: 380px;
+  min-height: 250px;
 }
 
 .forecast-header-row {
@@ -1417,24 +1544,11 @@ function startTask(task) {
   background: var(--primary);
 }
 
-.legend-line {
-  width: 16px;
-  height: 2px;
-  background: var(--muted-text);
-  opacity: 0.6;
-}
-
-.legend-line.active {
-  background: #ff4d4f;
-  opacity: 1;
-  box-shadow: 0 0 4px rgba(255, 77, 79, 0.4);
-}
-
 .chart-container {
   position: relative;
   width: 100%;
   flex: 1;
-  min-height: 180px;
+  min-height: 130px;
   background: var(--surface-container-lowest);
   border-radius: 12px;
 }
@@ -1465,22 +1579,6 @@ function startTask(task) {
   font-family: inherit;
 }
 
-.limit-line {
-  stroke: var(--muted-text);
-  stroke-width: 1.5px;
-  stroke-dasharray: 4 4;
-  opacity: 0.5;
-  transition: all 0.3s ease;
-}
-
-.limit-line.active {
-  stroke: #ff4d4f;
-  stroke-width: 2px;
-  stroke-dasharray: none;
-  opacity: 1;
-  filter: drop-shadow(0 0 2px rgba(255, 77, 79, 0.6));
-}
-
 .chart-dot {
   fill: var(--surface-container-lowest);
   stroke: var(--primary);
@@ -1492,14 +1590,6 @@ function startTask(task) {
 .chart-dot:hover {
   r: 7px;
   fill: var(--primary);
-}
-
-.chart-dot.exceeds-limit {
-  stroke: #ff4d4f;
-}
-
-.chart-dot.exceeds-limit:hover {
-  fill: #ff4d4f;
 }
 
 /* Tooltip */
@@ -1529,14 +1619,6 @@ function startTask(task) {
 .tooltip-value {
   font-size: 13px;
   color: var(--on-surface);
-}
-
-.tooltip-warn {
-  display: inline-block;
-  margin-left: 4px;
-  font-size: 10px;
-  color: #ff4d4f;
-  font-weight: 700;
 }
 
 /* X Axis */
@@ -1569,7 +1651,309 @@ function startTask(task) {
   margin-top: 2px;
 }
 
-.x-sublabel.exceeds {
-  color: #ff4d4f;
+/* Streak Calendar Widget Styles */
+.streak-calendar-widget {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: 16px;
+}
+
+.streak-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--outline-variant);
+  padding-bottom: 12px;
+}
+
+.streak-title-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.streak-flame-icon {
+  font-size: 24px;
+  display: inline-block;
+  transition: transform 0.3s ease;
+}
+
+.streak-flame-icon.active {
+  animation: pulse-flame 2s infinite ease-in-out;
+}
+
+@keyframes pulse-flame {
+  0% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4)); }
+  50% { transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(230, 126, 34, 0.8)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4)); }
+}
+
+.streak-counts {
+  display: flex;
+  flex-direction: column;
+}
+
+.streak-count-val {
+  font-family: 'Manrope', sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--on-surface);
+}
+
+.streak-count-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-text);
+}
+
+.streak-stats-row {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.streak-stats-row strong {
+  color: var(--on-surface);
+}
+
+.calendar-month-title {
+  font-family: 'Manrope', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-surface);
+  margin-bottom: -4px;
+  text-align: left;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  width: 100%;
+}
+
+.calendar-header-cell {
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--muted-text);
+  padding: 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.calendar-day-cell {
+  position: relative;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  cursor: default;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.calendar-day-cell.empty {
+  background: transparent;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+.day-number {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--on-surface);
+  z-index: 1;
+}
+
+.calendar-day-cell.today {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.calendar-day-cell.today .day-number {
+  color: var(--primary);
+  font-weight: 800;
+}
+
+/* Active Completed State */
+.calendar-day-cell.active {
+  background: var(--primary-container);
+  border-color: var(--primary);
+}
+
+.calendar-day-cell.active .day-number {
+  color: var(--on-primary-container);
+  font-weight: 700;
+}
+
+.active-indicator {
+  position: absolute;
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--primary);
+}
+
+/* Hover and Tooltips */
+.calendar-day-cell.has-hover:hover {
+  transform: scale(1.12);
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.cell-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.9);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--outline-variant);
+  white-space: nowrap;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  z-index: 20;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+}
+
+.calendar-day-cell.has-hover:hover .cell-tooltip {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+/* Arrow for tooltip */
+.cell-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 5px;
+  border-style: solid;
+  border-color: var(--surface-container-high) transparent transparent transparent;
+}
+
+/* High-Priority Review Hero Card */
+.review-hero-card {
+  background: var(--surface-container-low);
+  border: 1px solid var(--primary);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+@media (min-width: 768px) {
+  .review-hero-card {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 32px;
+  }
+}
+
+.review-hero-header {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.review-hero-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--primary);
+  background: rgba(108, 92, 231, 0.1);
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.review-hero-estimate {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-text);
+}
+
+.review-hero-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.review-hero-body h2 {
+  margin: 0;
+  font-family: 'Manrope', sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--on-surface);
+}
+
+.review-hero-stats {
+  display: flex;
+  gap: 24px;
+  margin-top: 4px;
+}
+
+.review-hero-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-num {
+  font-family: 'Manrope', sans-serif;
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--on-surface);
+  line-height: 1;
+}
+
+.stat-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-text);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.review-hero-meta {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-text);
+}
+
+.review-hero-btn {
+  justify-self: stretch;
+  padding: 14px 28px;
+  font-size: 16px;
+  height: auto;
+}
+
+@media (min-width: 768px) {
+  .review-hero-btn {
+    justify-self: end;
+  }
 }
 </style>

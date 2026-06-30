@@ -275,6 +275,32 @@ Records user rating and updates FSRS state.
 
 ---
 
+### GenerateFlashcardsForQuizTask
+
+Generates FSRS flashcards after a passed quiz task with simplified calibration.
+
+**Endpoint:** `GenerateFlashcardsForQuizTask(taskID string) → map`
+
+**Response:**
+```json
+{
+  "cards": [...],
+  "existing": false,
+  "card_count": 8,
+  "llm_tier": "fast"
+}
+```
+
+**Side Effects:**
+- Creates FSRS flashcards in clean Review state (StateCode: 2)
+- Sets initial `due_at` based on quiz score:
+  - Ace (100%): 3-day offset
+  - Pass (<100%): 1-day offset
+  - Default: Tomorrow offset (1 day)
+- Cards bypass FSRS intraday learning phase for predictable initial intervals
+
+---
+
 ## FSRS Service API
 
 ### CalculateNextReview
@@ -557,6 +583,80 @@ type FlashcardReviewResult struct {
   Ratings       []int
 }
 ```
+
+---
+
+## Dashboard Streak API
+
+### GetStreakState
+
+Returns streak metrics and active calendar dates for the dashboard streak calendar widget.
+
+**Endpoint:** `GetStreakState(timezoneOffsetMinutes int) → map`
+
+**Request:**
+```json
+{
+  "timezoneOffsetMinutes": -330
+}
+```
+
+**Response:**
+```json
+{
+  "current_streak": 5,
+  "longest_streak": 12,
+  "active_dates": ["2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27"]
+}
+```
+
+**Behavior:**
+- Queries all completed task timestamps from `study_queue`
+- Converts UTC timestamps to local day boundaries using provided timezone offset
+- Computes consecutive active days for current and longest streaks
+- Returns list of active dates for calendar highlighting
+
+**Implementation:**
+- Backend: `GetStreakState()` in `app_study.go`
+- Database: `GetCompletedTaskTimes()` in `internal/db/study_queue_repo.go`
+- Frontend: Calendar widget in `Dashboard.vue`
+
+---
+
+## Cloud Sync Payload
+
+### SyncPayload
+
+Cloud sync payload structure with stable identifiers for cross-student analytics.
+
+**Structure:**
+```json
+{
+  "classroom_code": "CLS101",
+  "logs": [
+    {
+      "filename": "textbook_chapter3.pdf",
+      "page_number": 15,
+      "activity_type": "review",
+      "reference_id": "card-uuid",
+      "reviewed_at": 1234567890,
+      "rating": 3,
+      "scheduled_days": 5,
+      "state_before_json": "{}",
+      "state_after_json": "{}"
+    }
+  ]
+}
+```
+
+**Key Changes:**
+- `Filename`: SHA-256 file hash (stable across installs)
+- `PageNumber`: Source page number (stable across installs)
+- Replaces local IDs (`topic_id`, `notebook_id`) for cloud analytics
+- `classroom_code`: Teacher-student association field
+
+**Data Chain:**
+`review_log.reference_id` → `flashcards.id` → `chunks.id` → `notebook_topics.topic_id` → `notebooks.file_path` → `filepath.Base()`
 
 ---
 

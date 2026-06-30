@@ -50,14 +50,65 @@
           </p>
         </div>
 
-        <div style="display: flex; gap: 16px; margin-bottom: 20px">
-          <div class="form-group" style="flex: 1; margin-bottom: 0">
-            <label for="study-start-time">Study Start Time</label>
-            <input id="study-start-time" v-model="studyStartTime" type="time" required />
+        <div class="time-range-section">
+          <div class="time-range-header">
+            <label>Study Schedule</label>
+            <span v-if="studyDuration" class="duration-badge">{{ studyDuration }}</span>
           </div>
-          <div class="form-group" style="flex: 1; margin-bottom: 0">
-            <label for="study-end-time">Study End Time</label>
-            <input id="study-end-time" v-model="studyEndTime" type="time" required />
+
+          <div class="time-range-container">
+            <div class="time-input-group">
+              <label for="study-start-time" class="time-label">Start</label>
+              <div class="time-input-wrapper">
+                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12,6 12,12 16,14"/>
+                </svg>
+                <input
+                  id="study-start-time"
+                  v-model="studyStartTime"
+                  type="time"
+                  class="time-input"
+                  required
+                />
+              </div>
+            </div>
+
+            <div class="time-connector">
+              <svg viewBox="0 0 24 8" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M0 4 L20 4 M16 1 L20 4 L16 7"/>
+              </svg>
+            </div>
+
+            <div class="time-input-group">
+              <label for="study-end-time" class="time-label">End</label>
+              <div class="time-input-wrapper">
+                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12,6 12,12 16,14"/>
+                </svg>
+                <input
+                  id="study-end-time"
+                  v-model="studyEndTime"
+                  type="time"
+                  class="time-input"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="quick-durations">
+            <button
+              v-for="preset in durationPresets"
+              :key="preset.label"
+              type="button"
+              class="duration-preset"
+              :class="{ active: studyDuration === preset.label }"
+              @click="applyDurationPreset(preset)"
+            >
+              {{ preset.label }}
+            </button>
           </div>
         </div>
 
@@ -436,6 +487,39 @@ const profileDeadline = ref('')
 const maxFlashcards = ref(30)
 const studyStartTime = ref('17:00')
 const studyEndTime = ref('18:00')
+
+const durationPresets = [
+  { label: '30 min', minutes: 30 },
+  { label: '1 hour', minutes: 60 },
+  { label: '1.5 hours', minutes: 90 },
+  { label: '2 hours', minutes: 120 },
+  { label: '3 hours', minutes: 180 },
+]
+
+const studyDuration = computed(() => {
+  if (!studyStartTime.value || !studyEndTime.value) return ''
+  const [startH, startM] = studyStartTime.value.split(':').map(Number)
+  const [endH, endM] = studyEndTime.value.split(':').map(Number)
+  const startMinutes = startH * 60 + startM
+  const endMinutes = endH * 60 + endM
+  const diff = endMinutes - startMinutes
+  if (diff <= 0) return ''
+
+  if (diff < 60) return `${diff} min`
+  const hours = Math.floor(diff / 60)
+  const mins = diff % 60
+  if (mins === 0) return hours === 1 ? '1 hour' : `${hours} hours`
+  return `${hours}h ${mins}m`
+})
+
+function applyDurationPreset(preset) {
+  const [h, m] = studyStartTime.value.split(':').map(Number)
+  const startMinutes = h * 60 + m
+  const endMinutes = startMinutes + preset.minutes
+  const endH = Math.floor(endMinutes / 60) % 24
+  const endM = endMinutes % 60
+  studyEndTime.value = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`
+}
 const remindersEnabled = ref(true)
 const cloudSyncURL = ref('')
 const apiToken = ref('')
@@ -655,7 +739,8 @@ async function completeOnboarding() {
       true, // default for ragNotebookChapter
       true, // default for ragEntireNotebook
       true, // default for ragQueueStudy
-      'CLASSIC' // default defaultRemedialStrategy
+      'CLASSIC', // default defaultRemedialStrategy
+      '' // classroom_code — set later from Settings
     )
 
     if (settingsRes.error) {
@@ -789,12 +874,6 @@ h2 {
   color: var(--muted-text);
   line-height: 1.5;
   margin: -8px 0 8px; /* 8px grid */
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px; /* 8px grid */
 }
 
 .form-group:focus-within label {
@@ -1110,44 +1189,6 @@ select:focus {
   margin-bottom: 8px; /* 8px grid */
 }
 
-.status-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px; /* 8px grid */
-  border-radius: 4px;
-  background: #a0a0a0;
-  color: #121212;
-}
-
-.status-badge.checking {
-  background: #f59e0b;
-  color: #121212;
-}
-.status-badge.acquiring {
-  background: #3b82f6;
-  color: #ffffff;
-}
-.status-badge.verifying {
-  background: #8b5cf6;
-  color: #ffffff;
-}
-.status-badge.extracting {
-  background: #14b8a6;
-  color: #ffffff;
-}
-.status-badge.initializing {
-  background: #06b6d4;
-  color: #ffffff;
-}
-.status-badge.ready {
-  background: #10b981;
-  color: #ffffff;
-}
-.status-badge.failed {
-  background: #ef4444;
-  color: #ffffff;
-}
-
 .setup-msg {
   font-size: 13px;
   font-weight: 600;
@@ -1172,5 +1213,10 @@ select:focus {
   font-size: 11px;
   color: var(--muted-text);
   margin: 0;
+}
+
+/* Onboarding-specific override */
+.time-range-section {
+  margin-bottom: 20px;
 }
 </style>

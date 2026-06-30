@@ -15,10 +15,39 @@ import (
 	"ai-tutor/internal/utils"
 )
 
+// ResolveCloudSyncURL returns the effective sync URL.
+// Priority: stored SQLite value → CLOUD_SYNC_URL env var → empty (sync skipped).
+func ResolveCloudSyncURL(storedURL string) string {
+	if storedURL != "" {
+		return storedURL
+	}
+	return os.Getenv("CLOUD_SYNC_URL")
+}
+
+// ResolveCloudAPIToken returns the effective API token.
+// Priority: stored SQLite value → CLOUD_API_TOKEN env var → empty.
+func ResolveCloudAPIToken(storedToken string) string {
+	if storedToken != "" {
+		return storedToken
+	}
+	return os.Getenv("CLOUD_API_TOKEN")
+}
+
+// NotebookSyncRecord is the minimal notebook identity the server needs.
+// filepath.Base strips the local path — only the filename crosses the wire.
+type NotebookSyncRecord struct {
+	FileHash             string `json:"file_hash"`
+	Filename             string `json:"filename"`
+	Title                string `json:"title"`
+	StudyStatus          string `json:"study_status"`
+	ExternalHelpRequired bool   `json:"external_help_required"` // Red Alert indicator
+}
+
 type SyncPayload struct {
-	UserToken string                 `json:"user_token"`
-	Notebooks []models.Notebook      `json:"notebooks"`
-	Logs      []models.FSRSReviewLog `json:"logs"`
+	UserToken     string               `json:"user_token"`
+	ClassroomCode string               `json:"classroom_code"`
+	Notebooks     []NotebookSyncRecord `json:"notebooks"`
+	Logs          []models.SyncLogEntry `json:"logs"`
 }
 
 type SyncResponse struct {
@@ -52,32 +81,48 @@ func TriggerCloudSync(repo *db.Repository) error {
 	if err != nil {
 		return err
 	}
-	if settings.CloudSyncURL == "" {
+
+	syncURL := ResolveCloudSyncURL(settings.CloudSyncURL)
+	apiToken := ResolveCloudAPIToken(settings.CloudAPIToken)
+
+	if syncURL == "" {
 		if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
 			utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
 		}
 		return nil // Cloud sync not configured
 	}
 
-	utils.Warnf("[SYNC] Running cloud sync to: %s", settings.CloudSyncURL)
+	utils.Warnf("[SYNC] Running cloud sync to: %s", syncURL)
 
-	// Gather notebooks and logs from DB (all notebooks for sync)
+	// Build slim notebook records — filename only, no local paths or internal IDs
 	notebooks, err := repo.GetNotebooks("", "")
 	if err != nil {
 		return fmt.Errorf("failed to fetch notebooks: %w", err)
 	}
-
-	// For simplicity, fetch recent review logs (e.g., last 100)
-	logs, err := repo.GetRecentReviewLogs(100)
-	if err != nil {
-		utils.Warnf("[SYNC] failed to fetch recent review logs: %v", err)
-		return err
+	notebookRecords := make([]NotebookSyncRecord, 0, len(notebooks))
+	for _, nb := range notebooks {
+		notebookRecords = append(notebookRecords, NotebookSyncRecord{
+			FileHash:             nb.FileHash,
+			Filename:             filepath.Base(nb.FilePath),
+			Title:                nb.Title,
+			StudyStatus:          nb.StudyStatus,
+			ExternalHelpRequired: nb.ExternalHelpRequired,
+		})
 	}
 
+	// Delta: only logs newer than the last successful sync
+	logs, err := repo.GetReviewLogsSinceWithFileInfo(settings.LastSyncedAt)
+	if err != nil {
+		utils.Warnf("[SYNC] failed to fetch delta review logs: %v", err)
+		return err
+	}
+	utils.Warnf("[SYNC] delta logs to send: %d (since %d)", len(logs), settings.LastSyncedAt)
+
 	payload := SyncPayload{
-		UserToken: settings.CloudAPIToken,
-		Notebooks: notebooks,
-		Logs:      logs,
+		UserToken:     apiToken,
+		ClassroomCode: settings.ClassroomCode,
+		Notebooks:     notebookRecords,
+		Logs:          logs,
 	}
 
 	jsonBytes, err := json.Marshal(payload)
@@ -97,14 +142,24 @@ func TriggerCloudSync(repo *db.Repository) error {
 		}
 
 		var req *http.Request
-		req, lastErr = http.NewRequest("POST", settings.CloudSyncURL, bytes.NewBuffer(jsonBytes))
+		req, lastErr = http.NewRequest("POST", syncURL, bytes.NewBuffer(jsonBytes))
 		if lastErr != nil {
 			lastErr = fmt.Errorf("failed to create http request: %w", lastErr)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		if settings.CloudAPIToken != "" {
-			req.Header.Set("Authorization", "Bearer "+settings.CloudAPIToken)
+		if apiToken != "" {
+			req.Header.Set("Authorization", "Bearer "+apiToken)
+		}
+		anonKey := os.Getenv("CLOUD_API_TOKEN")
+		if anonKey == "" {
+			anonKey = os.Getenv("SUPABASE_ANON_KEY")
+		}
+		if anonKey == "" {
+			anonKey = apiToken // fallback
+		}
+		if anonKey != "" {
+			req.Header.Set("apikey", anonKey)
 		}
 
 		resp, lastErr = client.Do(req)
@@ -142,6 +197,11 @@ func TriggerCloudSync(repo *db.Repository) error {
 					}
 				}(assigned)
 			}
+		}
+
+		// Advance the delta cursor so next sync only sends new events
+		if setErr := repo.SetLastSyncedAt(time.Now().Unix()); setErr != nil {
+			utils.Warnf("[SYNC] failed to persist last_synced_at: %v", setErr)
 		}
 
 		// Sync completed successfully. Clear any pending FLASHCARD_SYNC tasks.

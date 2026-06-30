@@ -86,6 +86,44 @@ Refer doc/future_plan/cross_platform_asset_delivery.md
 - [x] **Task 14.4: Testing**
   - Added `TestFastTrackSkipsReread`, `TestClassicTrackInsertsReread`, and `TestDefaultIsClassic` tests.
 
+---
+
+### Sprint 15: Simplified FSRS Calibration & Enhanced Features [DONE]
+**Goal:** Simplify FSRS calibration with clean initial states, add cloud sync, streak tracking, and UI enhancements.
+
+- [x] **Task 15.1: Simplified FSRS Calibration**
+  - Removed `scheduler.NextFSRSState` review simulation
+  - Initialize all flashcards with `StateCode: 2` (Review state) to bypass FSRS intraday learning phase
+  - Set initial `due_at` based on quiz score:
+    - Ace (100%): 3-day offset
+    - Pass (<100%): 1-day offset
+  - Updated `TestFSRSCalibrationEasyAndDoubleGood` to assert clean Review state and day-based offsets
+
+- [x] **Task 15.2: Cloud Sync with Stable Identifiers**
+  - Implemented cloud sync functionality with stable identifiers
+  - Added `file_hash` to notebooks for cross-install identification
+  - Added `page_number` to sync logs for stable referencing
+  - Implemented external help alerts for failed Socratic rescues
+  - Added `FLASHCARD_SYNC` task type for cloud sync recovery
+
+- [x] **Task 15.3: Streak Tracking Feature**
+  - Implemented streak tracking with calendar widget
+  - Added streak API integration for tracking consecutive study days
+  - Enhanced dashboard with streak visualization
+
+- [x] **Task 15.4: UI Enhancements**
+  - Added flip-back button to flashcards
+  - Improved task title assignment logic in study queue
+  - Enhanced sidebar menu animations
+  - Added scroll progress bar to reader page
+  - Optimized file search using glob for improved performance
+
+- [x] **Task 15.5: Delta Sync & Settings**
+  - Implemented delta sync for review logs
+  - Added `last_synced_at` timestamp to user settings
+  - Added notebook request handling and logging
+  - Implemented fallback for notebook routes
+
 ## Archive / Historical Completed Sprints
 
 <details>

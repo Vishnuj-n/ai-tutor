@@ -89,6 +89,10 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
+export function getStreakState(timezoneOffsetMinutes) {
+  return appBridge().GetStreakState(timezoneOffsetMinutes)
+}
+
 // Comprehensive Mode endpoints (Phase 1)
 export function generateManualFlashcards(notebookID, startPage, endPage) {
   return appBridge().GenerateManualFlashcards(notebookID, startPage, endPage)
@@ -172,7 +176,8 @@ export function updateUserSettings(
   ragNotebookChapter,
   ragEntireNotebook,
   ragQueueStudy,
-  defaultRemedialStrategy
+  defaultRemedialStrategy,
+  classroomCode
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -188,16 +193,9 @@ export function updateUserSettings(
     ragNotebookChapter,
     ragEntireNotebook,
     ragQueueStudy,
-    defaultRemedialStrategy
+    defaultRemedialStrategy,
+    classroomCode
   )
-}
-
-export function getRemedialStrategy() {
-  return appBridge().GetRemedialStrategy()
-}
-
-export function setRemedialStrategy(strategy) {
-  return appBridge().SetRemedialStrategy(strategy)
 }
 
 export function getLLMSettings() {
@@ -270,6 +268,18 @@ export function getFlashcardDueTimeline() {
 
 export function getAppEnv() {
   return appBridge().GetAppEnv()
+}
+
+export function loginStudent(username, password, classroomCode) {
+  return appBridge().LoginStudent(username, password, classroomCode)
+}
+
+export function logoutStudent() {
+  return appBridge().LogoutStudent()
+}
+
+export function getCloudConfig() {
+  return appBridge().GetCloudConfig()
 }
 
 export function getTopicSectionsContent(topicID, notebookID) {

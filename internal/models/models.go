@@ -102,6 +102,13 @@ type QuizAnswer struct {
 	Selected   string `json:"selected"`
 }
 
+type FailedQuestionDetail struct {
+	Prompt        string   `json:"prompt"`
+	Options       []string `json:"options"`
+	CorrectAnswer string   `json:"correct_answer"`
+	UserAnswer    string   `json:"user_answer"`
+}
+
 type QuizAttemptRecord struct {
 	ID          string `json:"id"`
 	TaskID      string `json:"task_id"`
@@ -194,20 +201,22 @@ type ChunkWithContext struct {
 
 // Notebook represents a user-uploaded document (PDF, text, etc)
 type Notebook struct {
-	ID             string  `json:"id"`
-	Title          string  `json:"title"`
-	FilePath       string  `json:"file_path"`
-	FileType       string  `json:"file_type"` // "pdf", "txt", "md"
-	TopicID        string  `json:"topic_id,omitempty"`
-	Status         string  `json:"status"`
-	IndexingStatus string  `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
-	UploadedAt     string  `json:"uploaded_at"`
-	PageCount      int     `json:"page_count,omitempty"`
-	ChunkCount     int     `json:"chunk_count"`
-	Priority       int     `json:"priority"`
-	ExamDeadline   *string `json:"exam_deadline,omitempty"`
-	ProfileID      string  `json:"profile_id,omitempty"`
-	StudyStatus    string  `json:"study_status,omitempty"`
+	ID                   string  `json:"id"`
+	Title                string  `json:"title"`
+	FilePath             string  `json:"file_path"`
+	FileType             string  `json:"file_type"` // "pdf", "txt", "md"
+	TopicID              string  `json:"topic_id,omitempty"`
+	Status               string  `json:"status"`
+	IndexingStatus       string  `json:"indexing_status"` // PENDING, INDEXING, READY, FAILED
+	UploadedAt           string  `json:"uploaded_at"`
+	PageCount            int     `json:"page_count,omitempty"`
+	ChunkCount           int     `json:"chunk_count"`
+	Priority             int     `json:"priority"`
+	ExamDeadline         *string `json:"exam_deadline,omitempty"`
+	ProfileID            string  `json:"profile_id,omitempty"`
+	StudyStatus          string  `json:"study_status,omitempty"`
+	FileHash             string  `json:"file_hash"`
+	ExternalHelpRequired bool    `json:"external_help_required"`
 }
 
 // NotebookChunk links a chunk to a notebook (many chunks per notebook)
@@ -392,6 +401,20 @@ type FSRSReviewLog struct {
 	StateAfterJSON  string `json:"state_after_json"`
 }
 
+// SyncLogEntry is the log entry sent to cloud with file hash and page number as identifiers.
+type SyncLogEntry struct {
+	ID             string `json:"id"`
+	FileHash       string `json:"file_hash"`
+	PageNumber     int    `json:"page_number"`
+	ActivityType   string `json:"activity_type"`
+	ReferenceID    string `json:"reference_id"`
+	ReviewedAt     int64  `json:"reviewed_at"`
+	Rating         int    `json:"rating"`
+	ScheduledDays  int    `json:"scheduled_days"`
+	StateBeforeJSON string `json:"state_before_json"`
+	StateAfterJSON string `json:"state_after_json"`
+}
+
 // FlashcardStateToCard converts our FlashcardState to go-fsrs Card
 func FlashcardStateToCard(state FlashcardState, dueAt, lastReviewedAt int64) fsrs.Card {
 	var dueTime, lastReviewTime time.Time
@@ -538,14 +561,17 @@ type UserSettings struct {
 	RemindersEnabled        bool   `json:"reminders_enabled"`
 	ActiveProfileID         string `json:"active_profile_id"`
 	SkipToReadingActive     bool   `json:"skip_to_reading_active"`
-	CloudSyncURL        string `json:"cloud_sync_url"`
-	CloudAPIToken       string `json:"cloud_api_token"`
-	Theme               string `json:"theme"`
-	RAGEnabled          bool   `json:"rag_enabled"`
-	RAGNotebookChapter  bool   `json:"rag_notebook_chapter"`
-	RAGEntireNotebook   bool   `json:"rag_entire_notebook"`
-	RAGQueueStudy       bool   `json:"rag_queue_study"`
+	CloudSyncURL            string `json:"cloud_sync_url"`
+	CloudAPIToken           string `json:"cloud_api_token"`
+	Theme                   string `json:"theme"`
+	RAGEnabled              bool   `json:"rag_enabled"`
+	RAGNotebookChapter      bool   `json:"rag_notebook_chapter"`
+	RAGEntireNotebook       bool   `json:"rag_entire_notebook"`
+	RAGQueueStudy           bool   `json:"rag_queue_study"`
 	DefaultRemedialStrategy string `json:"default_remedial_strategy"`
+	ClassroomCode           string `json:"classroom_code"`
+	StudentUsername         string `json:"student_username"`
+	LastSyncedAt            int64  `json:"last_synced_at"`
 }
 
 // LLMTierSettings stores non-secret OpenAI-compatible provider config.

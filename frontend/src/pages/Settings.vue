@@ -42,26 +42,68 @@
             <p class="hint">Caps the number of FSRS reviews active in any single study session.</p>
           </div>
 
-          <div style="display: flex; gap: 16px; margin-bottom: 20px">
-            <div class="form-group" style="flex: 1; margin-bottom: 0">
-              <label for="study-start-time">Study Start Time</label>
-              <input
-                id="study-start-time"
-                v-model="settings.study_start_time"
-                type="time"
-                :disabled="loading || saving"
-                required
-              />
+          <div class="time-range-section">
+            <div class="time-range-header">
+              <label>Study Schedule</label>
+              <span v-if="studyDuration" class="duration-badge">{{ studyDuration }}</span>
             </div>
-            <div class="form-group" style="flex: 1; margin-bottom: 0">
-              <label for="study-end-time">Study End Time</label>
-              <input
-                id="study-end-time"
-                v-model="settings.study_end_time"
-                type="time"
+
+            <div class="time-range-container">
+              <div class="time-input-group">
+                <label for="study-start-time" class="time-label">Start</label>
+                <div class="time-input-wrapper">
+                  <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12,6 12,12 16,14"/>
+                  </svg>
+                  <input
+                    id="study-start-time"
+                    v-model="settings.study_start_time"
+                    type="time"
+                    class="time-input"
+                    :disabled="loading || saving"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div class="time-connector">
+                <svg viewBox="0 0 24 8" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M0 4 L20 4 M16 1 L20 4 L16 7"/>
+                </svg>
+              </div>
+
+              <div class="time-input-group">
+                <label for="study-end-time" class="time-label">End</label>
+                <div class="time-input-wrapper">
+                  <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12,6 12,12 16,14"/>
+                  </svg>
+                  <input
+                    id="study-end-time"
+                    v-model="settings.study_end_time"
+                    type="time"
+                    class="time-input"
+                    :disabled="loading || saving"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="quick-durations">
+              <button
+                v-for="preset in durationPresets"
+                :key="preset.label"
+                type="button"
+                class="duration-preset"
+                :class="{ active: studyDuration === preset.label }"
                 :disabled="loading || saving"
-                required
-              />
+                @click="applyDurationPreset(preset)"
+              >
+                {{ preset.label }}
+              </button>
             </div>
           </div>
 
@@ -402,28 +444,91 @@
           </div>
         </article>
 
-        <!-- Panel 5: Teacher Cloud Synchronization -->
+        <!-- Panel 5: Account & Cloud -->
         <article class="panel form-grid">
-          <h2>Teacher Cloud Synchronization</h2>
+          <h2>Account &amp; Cloud</h2>
 
-          <div class="form-group">
-            <label for="cloud-url">Sync Server URL</label>
+          <!-- Signed In State -->
+          <div v-if="settings.cloud_api_token" class="signed-in-box">
+            <div class="status-indicator">
+              <span class="pulse-dot active"></span>
+              <strong>Cloud Sync Active</strong>
+            </div>
+            <div class="user-details">
+              <p><strong>Username:</strong> {{ settings.student_username || 'Student' }}</p>
+              <p><strong>Classroom:</strong> {{ settings.classroom_code }}</p>
+            </div>
+            <button
+              type="button"
+              class="sync-btn danger-btn"
+              @click="handleLogout"
+            >
+              🚪 Sign Out
+            </button>
+          </div>
+
+          <!-- Signed Out State (Login Form) -->
+          <div v-else class="login-form-container">
+            <p class="field-hint" style="margin-bottom: 1.25rem;">Sign in with your student credentials to enable cloud sync and receive assignments.</p>
+            
+            <div v-if="loginError" class="login-error-message">
+              ⚠️ {{ loginError }}
+            </div>
+
+            <div class="form-group">
+              <label for="student-username">Student Username / ID</label>
+              <input
+                id="student-username"
+                v-model="loginUsername"
+                type="text"
+                placeholder="e.g. john_doe"
+                :disabled="loggingIn"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="student-password">Password</label>
+              <input
+                id="student-password"
+                v-model="loginPassword"
+                type="password"
+                placeholder="••••••••"
+                :disabled="loggingIn"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="student-classroom">Classroom Code</label>
+              <input
+                id="student-classroom"
+                v-model="loginClassroomCode"
+                type="text"
+                placeholder="e.g. BIO101"
+                :disabled="loggingIn"
+              />
+            </div>
+
+            <button
+              type="button"
+              class="sync-btn"
+              :disabled="loggingIn"
+              @click="handleLogin"
+            >
+              {{ loggingIn ? 'Signing In...' : '🔐 Sign In & Sync' }}
+            </button>
+          </div>
+
+          <!-- Sync Server URL — dev only -->
+          <div v-if="isDev" class="form-group" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
+            <label for="cloud-url">
+              Sync Server URL
+              <span class="dev-badge">DEV</span>
+            </label>
             <input
               id="cloud-url"
               v-model="settings.cloud_sync_url"
               type="url"
               placeholder="https://example.com/api/sync"
-              :disabled="loading || saving"
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="cloud-token">Access Token</label>
-            <input
-              id="cloud-token"
-              v-model="settings.cloud_api_token"
-              type="password"
-              placeholder="Enter authorization token"
               :disabled="loading || saving"
             />
           </div>
@@ -434,7 +539,7 @@
       <div class="global-actions">
         <div class="button-row">
           <button
-            v-if="settings.cloud_sync_url"
+            v-if="cloudConfigured"
             type="button"
             class="sync-btn"
             :disabled="syncing"
@@ -636,7 +741,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   getUserSettings,
   updateUserSettings,
@@ -653,6 +758,10 @@ import {
   saveLLMAPIKey,
   deleteLLMAPIKey,
   getLLMProviderPreset,
+  getAppEnv,
+  loginStudent,
+  logoutStudent,
+  getCloudConfig,
 } from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
@@ -664,6 +773,8 @@ const presetLoading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const success = ref('')
+const isDev = ref(false)
+const cloudConfigured = ref(false)
 
 const settings = ref({
   max_flashcards_per_session: 30,
@@ -680,10 +791,44 @@ const settings = ref({
   rag_entire_notebook: true,
   rag_queue_study: true,
   default_remedial_strategy: 'CLASSIC',
+  classroom_code: '',
 })
 
 const llmFastKey = ref('')
 const llmHeavyKey = ref('')
+
+const durationPresets = [
+  { label: '30 min', minutes: 30 },
+  { label: '1 hour', minutes: 60 },
+  { label: '1.5 hours', minutes: 90 },
+  { label: '2 hours', minutes: 120 },
+  { label: '3 hours', minutes: 180 },
+]
+
+const studyDuration = computed(() => {
+  if (!settings.value.study_start_time || !settings.value.study_end_time) return ''
+  const [startH, startM] = settings.value.study_start_time.split(':').map(Number)
+  const [endH, endM] = settings.value.study_end_time.split(':').map(Number)
+  const startMinutes = startH * 60 + startM
+  const endMinutes = endH * 60 + endM
+  const diff = endMinutes - startMinutes
+  if (diff <= 0) return ''
+
+  if (diff < 60) return `${diff} min`
+  const hours = Math.floor(diff / 60)
+  const mins = diff % 60
+  if (mins === 0) return hours === 1 ? '1 hour' : `${hours} hours`
+  return `${hours}h ${mins}m`
+})
+
+function applyDurationPreset(preset) {
+  const [h, m] = settings.value.study_start_time.split(':').map(Number)
+  const startMinutes = h * 60 + m
+  const endMinutes = startMinutes + preset.minutes
+  const endH = Math.floor(endMinutes / 60) % 24
+  const endM = endMinutes % 60
+  settings.value.study_end_time = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`
+}
 const llmSettings = ref({
   use_same_for_heavy: true,
   fast: {
@@ -880,6 +1025,19 @@ async function applyProviderPreset(tier) {
 }
 
 onMounted(async () => {
+  // Detect dev mode and cloud config state
+  try {
+    const envRes = await getAppEnv()
+    isDev.value = envRes?.env === 'dev'
+  } catch (_) {
+    isDev.value = false
+  }
+  try {
+    const cfgRes = await getCloudConfig()
+    cloudConfigured.value = cfgRes?.configured === true
+  } catch (_) {
+    cloudConfigured.value = false
+  }
   await loadAllData()
 })
 
@@ -888,6 +1046,57 @@ onUnmounted(() => {
   clearTimeout(saveSettingsTimer)
   clearTimeout(saveLLMTimer)
 })
+
+const loginUsername = ref('')
+const loginPassword = ref('')
+const loginClassroomCode = ref('')
+const loginError = ref('')
+const loggingIn = ref(false)
+
+async function handleLogin() {
+  if (!loginUsername.value.trim() || !loginPassword.value.trim() || !loginClassroomCode.value.trim()) {
+    loginError.value = 'All fields are required.'
+    return
+  }
+  loginError.value = ''
+  loggingIn.value = true
+  try {
+    const res = await loginStudent(
+      loginUsername.value.trim(),
+      loginPassword.value.trim(),
+      loginClassroomCode.value.trim().toUpperCase()
+    )
+    if (res.error) {
+      loginError.value = res.error
+    } else {
+      loginUsername.value = ''
+      loginPassword.value = ''
+      loginClassroomCode.value = ''
+      await loadAllData()
+      success.value = 'Successfully signed in and cloud sync enabled!'
+    }
+  } catch (err) {
+    loginError.value = err.message || 'An error occurred during sign in.'
+  } finally {
+    loggingIn.value = false
+  }
+}
+
+async function handleLogout() {
+  if (confirm('Are you sure you want to sign out? This will disable cloud sync.')) {
+    try {
+      const res = await logoutStudent()
+      if (res.error) {
+        error.value = res.error
+      } else {
+        await loadAllData()
+        success.value = 'Signed out successfully.'
+      }
+    } catch (err) {
+      error.value = err.message || 'Failed to sign out.'
+    }
+  }
+}
 
 async function loadAllData() {
   try {
@@ -1036,7 +1245,8 @@ async function saveUserSettings() {
       settings.value.rag_notebook_chapter,
       settings.value.rag_entire_notebook,
       settings.value.rag_queue_study,
-      settings.value.default_remedial_strategy
+      settings.value.default_remedial_strategy,
+      settings.value.classroom_code || ''
     )
     if (res.error) {
       error.value = res.error
@@ -1176,15 +1386,6 @@ function formatUnixDate(unix) {
   color: var(--on-surface);
 }
 
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  font-weight: 700;
-}
-
 h1 {
   margin: 0;
   font-size: 36px;
@@ -1248,12 +1449,6 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 24px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 label {
@@ -1349,12 +1544,6 @@ select:focus {
   gap: 2px;
 }
 
-.divider {
-  border: none;
-  height: 0;
-  margin: 0;
-}
-
 .llm-advanced {
   display: grid;
   gap: 16px;
@@ -1412,23 +1601,24 @@ select:focus {
   background: var(--surface-container-low);
 }
 
-.hint {
-  margin: 0;
+.field-hint {
+  margin: 2px 0 8px;
   color: var(--muted-text);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
-.error-text {
-  color: #a3362f;
-  font-size: 13px;
-  margin: 0;
-}
-
-.success-text {
-  color: #256f36;
-  font-size: 13px;
-  margin: 0;
+.dev-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: color-mix(in srgb, var(--warning, #f0a000) 20%, transparent);
+  color: var(--warning, #f0a000);
+  vertical-align: middle;
 }
 
 /* Profiles tab styles */
@@ -1458,15 +1648,6 @@ select:focus {
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
-}
-
-.empty-state {
-  text-align: center;
-  padding: 40px 20px;
-  color: var(--muted-text);
-  font-size: 14px;
-  background: var(--surface-container-low);
-  border-radius: 12px;
 }
 
 .profiles-list {
@@ -1788,5 +1969,112 @@ select:focus {
   color: var(--muted-text);
   margin-top: 4px;
   line-height: 1.4;
+}
+
+/* Settings-specific overrides for time-range shared styles */
+.duration-preset:hover:not(:disabled) {
+  background: var(--surface-container);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  color: var(--on-surface);
+}
+
+.duration-preset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+  .time-range-container {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .time-connector {
+    transform: rotate(90deg);
+    width: 100%;
+    height: 24px;
+  }
+
+  .quick-durations {
+    justify-content: center;
+  }
+}
+
+.signed-in-box {
+  background: var(--surface-low);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--success);
+}
+
+.pulse-dot.active {
+  width: 8px;
+  height: 8px;
+  background: var(--success);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.user-details {
+  font-size: 0.9rem;
+  color: var(--on-surface);
+  line-height: 1.5;
+}
+
+.user-details p {
+  margin: 0.25rem 0;
+}
+
+.danger-btn {
+  background: rgba(239, 68, 68, 0.1) !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+  color: #ef4444 !important;
+  transition: all 0.2s ease;
+}
+
+.danger-btn:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+.login-form-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.login-error-message {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
 }
 </style>

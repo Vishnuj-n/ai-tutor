@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/study"
@@ -38,10 +41,12 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"rag_entire_notebook":        s.RAGEntireNotebook,
 		"rag_queue_study":            s.RAGQueueStudy,
 		"default_remedial_strategy":  s.DefaultRemedialStrategy,
+		"classroom_code":             s.ClassroomCode,
+		"student_username":           s.StudentUsername,
 	}
 }
 
-func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string) map[string]interface{} {
+func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
@@ -76,6 +81,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 		RAGEntireNotebook:       ragEntireNotebook,
 		RAGQueueStudy:           ragQueueStudy,
 		DefaultRemedialStrategy: defaultRemedialStrategy,
+		ClassroomCode:           classroomCode,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {
@@ -100,29 +106,6 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	}
 
 	return map[string]interface{}{"ok": true}
-}
-
-func (a *App) GetRemedialStrategy() (string, error) {
-	repo := a.getRepo()
-	if repo == nil {
-		return "CLASSIC", fmt.Errorf("database repository not initialized")
-	}
-	strategy, err := repo.GetRemedialStrategy()
-	if err != nil {
-		return "", err
-	}
-	return strategy, nil
-}
-
-func (a *App) SetRemedialStrategy(strategy string) error {
-	repo := a.getRepo()
-	if repo == nil {
-		return fmt.Errorf("database repository not initialized")
-	}
-	if strategy != "CLASSIC" && strategy != "FAST" {
-		return fmt.Errorf("invalid remedial strategy: must be CLASSIC or FAST")
-	}
-	return repo.SetRemedialStrategy(strategy)
 }
 
 func (a *App) GetLLMSettings() map[string]interface{} {
@@ -446,3 +429,148 @@ func (a *App) TriggerCloudSync() map[string]interface{} {
 }
 
 // app_settings.go end
+
+// LoginStudent handles student login using the Supabase login_user RPC.
+func (a *App) LoginStudent(username, password, classroomCode string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	syncURL := study.ResolveCloudSyncURL(settings.CloudSyncURL)
+	if syncURL == "" {
+		syncURL = os.Getenv("CLOUD_SYNC_URL")
+	}
+	if syncURL == "" {
+		return map[string]interface{}{"error": "Supabase Sync URL is not configured in the environment"}
+	}
+
+	anonKey := os.Getenv("CLOUD_API_TOKEN")
+	if anonKey == "" {
+		anonKey = os.Getenv("SUPABASE_ANON_KEY")
+	}
+	if anonKey == "" {
+		anonKey = settings.CloudAPIToken
+	}
+	if anonKey == "" {
+		return map[string]interface{}{"error": "Supabase Anon Key is not configured in the environment"}
+	}
+
+	baseURL := syncURL
+	if strings.Contains(baseURL, "/rest/v1/rpc/") {
+		idx := strings.Index(baseURL, "/rest/v1/")
+		baseURL = baseURL[:idx]
+	}
+	loginURL := fmt.Sprintf("%s/rest/v1/rpc/login_user", strings.TrimSuffix(baseURL, "/"))
+
+	type LoginPayload struct {
+		Username  string `json:"p_username"`
+		Password  string `json:"p_password"`
+		IsDesktop bool   `json:"p_is_desktop"`
+	}
+	payload := LoginPayload{
+		Username:  username,
+		Password:  password,
+		IsDesktop: true,
+	}
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to encode login payload"}
+	}
+
+	req, err := http.NewRequest("POST", loginURL, strings.NewReader(string(jsonBytes)))
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", anonKey)
+	req.Header.Set("Authorization", "Bearer "+anonKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]interface{}{"error": "network error: " + err.Error()}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return map[string]interface{}{"error": fmt.Sprintf("login failed: %s", string(bodyBytes))}
+	}
+
+	var loginResp struct {
+		SessionToken  string `json:"session_token"`
+		Role          string `json:"role"`
+		ClassroomCode string `json:"classroom_code"`
+		Username      string `json:"username"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		return map[string]interface{}{"error": "failed to parse login response: " + err.Error()}
+	}
+
+	settings.CloudAPIToken = loginResp.SessionToken
+	settings.ClassroomCode = loginResp.ClassroomCode
+	settings.StudentUsername = loginResp.Username
+	if settings.CloudSyncURL == "" {
+		settings.CloudSyncURL = fmt.Sprintf("%s/rest/v1/rpc/handle_cloud_sync", strings.TrimSuffix(baseURL, "/"))
+	}
+
+	if err := repo.UpdateUserSettings(*settings); err != nil {
+		return map[string]interface{}{"error": "failed to save settings: " + err.Error()}
+	}
+
+	go func() {
+		if syncErr := study.TriggerCloudSync(repo); syncErr != nil {
+			utils.Warnf("[LOGIN] initial post-login sync warning: %v", syncErr)
+		}
+	}()
+
+	return map[string]interface{}{
+		"ok":             true,
+		"session_token":  loginResp.SessionToken,
+		"classroom_code": loginResp.ClassroomCode,
+		"username":       loginResp.Username,
+	}
+}
+
+// LogoutStudent signs out the student by clearing saved sync credentials from the SQLite store.
+func (a *App) LogoutStudent() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	settings.CloudAPIToken = ""
+	settings.ClassroomCode = ""
+	settings.StudentUsername = ""
+	if err := repo.UpdateUserSettings(*settings); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+// GetCloudConfig returns whether cloud sync is currently configured (either
+// via the stored SQLite setting or the CLOUD_SYNC_URL env var). It does NOT
+// expose the actual URL, so the frontend can use this to decide whether to show
+// the "Sync with Cloud Now" button without leaking the server address.
+func (a *App) GetCloudConfig() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"configured": false}
+	}
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"configured": false}
+	}
+	resolved := study.ResolveCloudSyncURL(settings.CloudSyncURL)
+	return map[string]interface{}{
+		"configured": resolved != "",
+	}
+}
