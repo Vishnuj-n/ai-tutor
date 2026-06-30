@@ -42,26 +42,68 @@
             <p class="hint">Caps the number of FSRS reviews active in any single study session.</p>
           </div>
 
-          <div style="display: flex; gap: 16px; margin-bottom: 20px">
-            <div class="form-group" style="flex: 1; margin-bottom: 0">
-              <label for="study-start-time">Study Start Time</label>
-              <input
-                id="study-start-time"
-                v-model="settings.study_start_time"
-                type="time"
-                :disabled="loading || saving"
-                required
-              />
+          <div class="time-range-section">
+            <div class="time-range-header">
+              <label>Study Schedule</label>
+              <span v-if="studyDuration" class="duration-badge">{{ studyDuration }}</span>
             </div>
-            <div class="form-group" style="flex: 1; margin-bottom: 0">
-              <label for="study-end-time">Study End Time</label>
-              <input
-                id="study-end-time"
-                v-model="settings.study_end_time"
-                type="time"
+
+            <div class="time-range-container">
+              <div class="time-input-group">
+                <label for="study-start-time" class="time-label">Start</label>
+                <div class="time-input-wrapper">
+                  <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12,6 12,12 16,14"/>
+                  </svg>
+                  <input
+                    id="study-start-time"
+                    v-model="settings.study_start_time"
+                    type="time"
+                    class="time-input"
+                    :disabled="loading || saving"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div class="time-connector">
+                <svg viewBox="0 0 24 8" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M0 4 L20 4 M16 1 L20 4 L16 7"/>
+                </svg>
+              </div>
+
+              <div class="time-input-group">
+                <label for="study-end-time" class="time-label">End</label>
+                <div class="time-input-wrapper">
+                  <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12,6 12,12 16,14"/>
+                  </svg>
+                  <input
+                    id="study-end-time"
+                    v-model="settings.study_end_time"
+                    type="time"
+                    class="time-input"
+                    :disabled="loading || saving"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="quick-durations">
+              <button
+                v-for="preset in durationPresets"
+                :key="preset.label"
+                type="button"
+                class="duration-preset"
+                :class="{ active: studyDuration === preset.label }"
                 :disabled="loading || saving"
-                required
-              />
+                @click="applyDurationPreset(preset)"
+              >
+                {{ preset.label }}
+              </button>
             </div>
           </div>
 
@@ -667,7 +709,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   getUserSettings,
   updateUserSettings,
@@ -721,6 +763,39 @@ const settings = ref({
 
 const llmFastKey = ref('')
 const llmHeavyKey = ref('')
+
+const durationPresets = [
+  { label: '30 min', minutes: 30 },
+  { label: '1 hour', minutes: 60 },
+  { label: '1.5 hours', minutes: 90 },
+  { label: '2 hours', minutes: 120 },
+  { label: '3 hours', minutes: 180 },
+]
+
+const studyDuration = computed(() => {
+  if (!settings.value.study_start_time || !settings.value.study_end_time) return ''
+  const [startH, startM] = settings.value.study_start_time.split(':').map(Number)
+  const [endH, endM] = settings.value.study_end_time.split(':').map(Number)
+  const startMinutes = startH * 60 + startM
+  const endMinutes = endH * 60 + endM
+  const diff = endMinutes - startMinutes
+  if (diff <= 0) return ''
+
+  if (diff < 60) return `${diff} min`
+  const hours = Math.floor(diff / 60)
+  const mins = diff % 60
+  if (mins === 0) return hours === 1 ? '1 hour' : `${hours} hours`
+  return `${hours}h ${mins}m`
+})
+
+function applyDurationPreset(preset) {
+  const [h, m] = settings.value.study_start_time.split(':').map(Number)
+  const startMinutes = h * 60 + m
+  const endMinutes = startMinutes + preset.minutes
+  const endH = Math.floor(endMinutes / 60) % 24
+  const endM = endMinutes % 60
+  settings.value.study_end_time = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`
+}
 const llmSettings = ref({
   use_same_for_heavy: true,
   fast: {
@@ -1859,5 +1934,169 @@ select:focus {
   color: var(--muted-text);
   margin-top: 4px;
   line-height: 1.4;
+}
+
+/* Time Range Section */
+.time-range-section {
+  background: var(--surface-container-low);
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.time-range-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.time-range-header label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-text);
+}
+
+.duration-badge {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.02em;
+}
+
+.time-range-container {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.time-input-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.time-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.time-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.time-icon {
+  position: absolute;
+  left: 14px;
+  width: 18px;
+  height: 18px;
+  color: var(--muted-text);
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+
+.time-input {
+  width: 100%;
+  padding: 14px 14px 14px 42px;
+  background: var(--surface-container-lowest);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--on-surface);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.time-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.time-input:focus ~ .time-icon,
+.time-input-wrapper:focus-within .time-icon {
+  color: var(--primary);
+}
+
+.time-connector {
+  flex-shrink: 0;
+  width: 32px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-text);
+  opacity: 0.5;
+}
+
+.time-connector svg {
+  width: 100%;
+  height: 8px;
+}
+
+.quick-durations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 30%, transparent);
+}
+
+.duration-preset {
+  background: var(--surface-container-lowest);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.duration-preset:hover:not(:disabled) {
+  background: var(--surface-container);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  color: var(--on-surface);
+}
+
+.duration-preset.active {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
+  color: var(--primary);
+}
+
+.duration-preset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+  .time-range-container {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .time-connector {
+    transform: rotate(90deg);
+    width: 100%;
+    height: 24px;
+  }
+
+  .quick-durations {
+    justify-content: center;
+  }
 }
 </style>

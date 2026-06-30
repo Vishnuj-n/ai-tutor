@@ -570,6 +570,7 @@ type UserSettings struct {
 	RAGQueueStudy           bool   `json:"rag_queue_study"`
 	DefaultRemedialStrategy string `json:"default_remedial_strategy"`
 	ClassroomCode           string `json:"classroom_code"`
+	StudentUsername         string `json:"student_username"`
 	LastSyncedAt            int64  `json:"last_synced_at"`
 }
 
