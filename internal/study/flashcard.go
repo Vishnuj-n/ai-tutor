@@ -109,8 +109,8 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 
 	score, passedAttempt, err := s.repo.GetLatestQuizAttemptScoreByTopic(topicID)
 	if err == nil && passedAttempt {
-		switch {
-		case score == 100:
+		switch score {
+		case 100:
 			dueAt = now + 3*24*60*60 // Ace: 3 days
 			utils.Warnf("[FSRS_CALIBRATION] Ace detected (score=100) for topicID=%s. Scheduled in 3 days.", topicID)
 		default:

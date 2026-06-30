@@ -407,9 +407,7 @@ func (a *App) GetStreakState(timezoneOffsetMinutes int) map[string]interface{} {
 
 	// Create list of active dates
 	activeDatesList := []string{}
-	for _, d := range sortedDates {
-		activeDatesList = append(activeDatesList, d)
-	}
+	activeDatesList = append(activeDatesList, sortedDates...)
 
 	return map[string]interface{}{
 		"current_streak":  currentStreak,
