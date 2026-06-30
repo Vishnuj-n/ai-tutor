@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/study"
@@ -11,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 
@@ -40,6 +42,7 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"rag_queue_study":            s.RAGQueueStudy,
 		"default_remedial_strategy":  s.DefaultRemedialStrategy,
 		"classroom_code":             s.ClassroomCode,
+		"student_username":           s.StudentUsername,
 	}
 }
 
@@ -450,15 +453,130 @@ func (a *App) TriggerCloudSync() map[string]interface{} {
 
 // app_settings.go end
 
-// OpenAuthBrowser opens the Clerk hosted sign-in page in the user's default
-// system browser. The URL is read from the CLERK_SIGN_IN_URL environment
-// variable. If the variable is not set, this is a no-op.
-func (a *App) OpenAuthBrowser() {
-	clerkURL := os.Getenv("CLERK_SIGN_IN_URL")
-	if clerkURL == "" {
-		return
+// LoginStudent handles student login using the Supabase login_user RPC.
+func (a *App) LoginStudent(username, password, classroomCode string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
 	}
-	wailsruntime.BrowserOpenURL(a.ctx, clerkURL)
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	syncURL := study.ResolveCloudSyncURL(settings.CloudSyncURL)
+	if syncURL == "" {
+		syncURL = os.Getenv("CLOUD_SYNC_URL")
+	}
+	if syncURL == "" {
+		return map[string]interface{}{"error": "Supabase Sync URL is not configured in the environment"}
+	}
+
+	anonKey := os.Getenv("CLOUD_API_TOKEN")
+	if anonKey == "" {
+		anonKey = os.Getenv("SUPABASE_ANON_KEY")
+	}
+	if anonKey == "" {
+		anonKey = settings.CloudAPIToken
+	}
+	if anonKey == "" {
+		return map[string]interface{}{"error": "Supabase Anon Key is not configured in the environment"}
+	}
+
+	baseURL := syncURL
+	if strings.Contains(baseURL, "/rest/v1/rpc/") {
+		idx := strings.Index(baseURL, "/rest/v1/")
+		baseURL = baseURL[:idx]
+	}
+	loginURL := fmt.Sprintf("%s/rest/v1/rpc/login_user", strings.TrimSuffix(baseURL, "/"))
+
+	type LoginPayload struct {
+		Username  string `json:"p_username"`
+		Password  string `json:"p_password"`
+		IsDesktop bool   `json:"p_is_desktop"`
+	}
+	payload := LoginPayload{
+		Username:  username,
+		Password:  password,
+		IsDesktop: true,
+	}
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to encode login payload"}
+	}
+
+	req, err := http.NewRequest("POST", loginURL, strings.NewReader(string(jsonBytes)))
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", anonKey)
+	req.Header.Set("Authorization", "Bearer "+anonKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]interface{}{"error": "network error: " + err.Error()}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return map[string]interface{}{"error": fmt.Sprintf("login failed: %s", string(bodyBytes))}
+	}
+
+	var loginResp struct {
+		SessionToken  string `json:"session_token"`
+		Role          string `json:"role"`
+		ClassroomCode string `json:"classroom_code"`
+		Username      string `json:"username"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		return map[string]interface{}{"error": "failed to parse login response: " + err.Error()}
+	}
+
+	settings.CloudAPIToken = loginResp.SessionToken
+	settings.ClassroomCode = loginResp.ClassroomCode
+	settings.StudentUsername = loginResp.Username
+	if settings.CloudSyncURL == "" {
+		settings.CloudSyncURL = fmt.Sprintf("%s/rest/v1/rpc/handle_cloud_sync", strings.TrimSuffix(baseURL, "/"))
+	}
+
+	if err := repo.UpdateUserSettings(*settings); err != nil {
+		return map[string]interface{}{"error": "failed to save settings: " + err.Error()}
+	}
+
+	go func() {
+		if syncErr := study.TriggerCloudSync(repo); syncErr != nil {
+			utils.Warnf("[LOGIN] initial post-login sync warning: %v", syncErr)
+		}
+	}()
+
+	return map[string]interface{}{
+		"ok":             true,
+		"session_token":  loginResp.SessionToken,
+		"classroom_code": loginResp.ClassroomCode,
+		"username":       loginResp.Username,
+	}
+}
+
+// LogoutStudent signs out the student by clearing saved sync credentials from the SQLite store.
+func (a *App) LogoutStudent() map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	settings.CloudAPIToken = ""
+	settings.ClassroomCode = ""
+	settings.StudentUsername = ""
+	if err := repo.UpdateUserSettings(*settings); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
 }
 
 // GetCloudConfig returns whether cloud sync is currently configured (either

@@ -448,46 +448,78 @@
         <article class="panel form-grid">
           <h2>Account &amp; Cloud</h2>
 
-          <!-- Classroom Code -->
-          <div class="form-group">
-            <label for="classroom-code">Classroom Code</label>
-            <p class="field-hint">Enter the code your teacher gave you (e.g. VTU-6SEM-CS-A).</p>
-            <input
-              id="classroom-code"
-              v-model="settings.classroom_code"
-              type="text"
-              placeholder="e.g. VTU-6SEM-CS-A"
-              :disabled="loading || saving"
-            />
-          </div>
-
-          <!-- Clerk auth hand-off -->
-          <div class="form-group">
-            <label>Authenticate Account</label>
-            <p class="field-hint">Opens the sign-in page in your browser. Copy your access token and paste it below.</p>
+          <!-- Signed In State -->
+          <div v-if="settings.cloud_api_token" class="signed-in-box">
+            <div class="status-indicator">
+              <span class="pulse-dot active"></span>
+              <strong>Cloud Sync Active</strong>
+            </div>
+            <div class="user-details">
+              <p><strong>Username:</strong> {{ settings.student_username || 'Student' }}</p>
+              <p><strong>Classroom:</strong> {{ settings.classroom_code }}</p>
+            </div>
             <button
               type="button"
-              class="sync-btn"
-              @click="openAuthBrowser"
+              class="sync-btn danger-btn"
+              @click="handleLogout"
             >
-              🔐 Sign In with Clerk
+              🚪 Sign Out
             </button>
           </div>
 
-          <!-- Access Token (always visible so users can paste from browser) -->
-          <div class="form-group">
-            <label for="cloud-token">Access Token</label>
-            <input
-              id="cloud-token"
-              v-model="settings.cloud_api_token"
-              type="password"
-              placeholder="Paste token from sign-in page"
-              :disabled="loading || saving"
-            />
+          <!-- Signed Out State (Login Form) -->
+          <div v-else class="login-form-container">
+            <p class="field-hint" style="margin-bottom: 1.25rem;">Sign in with your student credentials to enable cloud sync and receive assignments.</p>
+            
+            <div v-if="loginError" class="login-error-message">
+              ⚠️ {{ loginError }}
+            </div>
+
+            <div class="form-group">
+              <label for="student-username">Student Username / ID</label>
+              <input
+                id="student-username"
+                v-model="loginUsername"
+                type="text"
+                placeholder="e.g. john_doe"
+                :disabled="loggingIn"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="student-password">Password</label>
+              <input
+                id="student-password"
+                v-model="loginPassword"
+                type="password"
+                placeholder="••••••••"
+                :disabled="loggingIn"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="student-classroom">Classroom Code</label>
+              <input
+                id="student-classroom"
+                v-model="loginClassroomCode"
+                type="text"
+                placeholder="e.g. BIO101"
+                :disabled="loggingIn"
+              />
+            </div>
+
+            <button
+              type="button"
+              class="sync-btn"
+              :disabled="loggingIn"
+              @click="handleLogin"
+            >
+              {{ loggingIn ? 'Signing In...' : '🔐 Sign In & Sync' }}
+            </button>
           </div>
 
           <!-- Sync Server URL — dev only -->
-          <div v-if="isDev" class="form-group">
+          <div v-if="isDev" class="form-group" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
             <label for="cloud-url">
               Sync Server URL
               <span class="dev-badge">DEV</span>
@@ -727,7 +759,8 @@ import {
   deleteLLMAPIKey,
   getLLMProviderPreset,
   getAppEnv,
-  openAuthBrowser,
+  loginStudent,
+  logoutStudent,
   getCloudConfig,
 } from '../services/appApi'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
@@ -1013,6 +1046,57 @@ onUnmounted(() => {
   clearTimeout(saveSettingsTimer)
   clearTimeout(saveLLMTimer)
 })
+
+const loginUsername = ref('')
+const loginPassword = ref('')
+const loginClassroomCode = ref('')
+const loginError = ref('')
+const loggingIn = ref(false)
+
+async function handleLogin() {
+  if (!loginUsername.value.trim() || !loginPassword.value.trim() || !loginClassroomCode.value.trim()) {
+    loginError.value = 'All fields are required.'
+    return
+  }
+  loginError.value = ''
+  loggingIn.value = true
+  try {
+    const res = await loginStudent(
+      loginUsername.value.trim(),
+      loginPassword.value.trim(),
+      loginClassroomCode.value.trim().toUpperCase()
+    )
+    if (res.error) {
+      loginError.value = res.error
+    } else {
+      loginUsername.value = ''
+      loginPassword.value = ''
+      loginClassroomCode.value = ''
+      await loadAllData()
+      success.value = 'Successfully signed in and cloud sync enabled!'
+    }
+  } catch (err) {
+    loginError.value = err.message || 'An error occurred during sign in.'
+  } finally {
+    loggingIn.value = false
+  }
+}
+
+async function handleLogout() {
+  if (confirm('Are you sure you want to sign out? This will disable cloud sync.')) {
+    try {
+      const res = await logoutStudent()
+      if (res.error) {
+        error.value = res.error
+      } else {
+        await loadAllData()
+        success.value = 'Signed out successfully.'
+      }
+    } catch (err) {
+      error.value = err.message || 'Failed to sign out.'
+    }
+  }
+}
 
 async function loadAllData() {
   try {
@@ -2098,5 +2182,83 @@ select:focus {
   .quick-durations {
     justify-content: center;
   }
+}
+
+.signed-in-box {
+  background: var(--surface-low);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--success);
+}
+
+.pulse-dot.active {
+  width: 8px;
+  height: 8px;
+  background: var(--success);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.user-details {
+  font-size: 0.9rem;
+  color: var(--on-surface);
+  line-height: 1.5;
+}
+
+.user-details p {
+  margin: 0.25rem 0;
+}
+
+.danger-btn {
+  background: rgba(239, 68, 68, 0.1) !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+  color: #ef4444 !important;
+  transition: all 0.2s ease;
+}
+
+.danger-btn:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+.login-form-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.login-error-message {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
 }
 </style>
