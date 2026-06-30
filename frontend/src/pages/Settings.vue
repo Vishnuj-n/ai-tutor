@@ -1544,12 +1544,6 @@ select:focus {
   gap: 2px;
 }
 
-.divider {
-  border: none;
-  height: 0;
-  margin: 0;
-}
-
 .llm-advanced {
   display: grid;
   gap: 16px;
