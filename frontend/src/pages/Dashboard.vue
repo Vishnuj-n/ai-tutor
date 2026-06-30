@@ -1215,10 +1215,6 @@ function startTask(task) {
   margin-bottom: 12px;
 }
 
-.telemetry-doc-icon {
-  font-size: 16px;
-}
-
 .telemetry-doc-title {
   flex: 1;
 }
@@ -1548,19 +1544,6 @@ function startTask(task) {
   background: var(--primary);
 }
 
-.legend-line {
-  width: 16px;
-  height: 2px;
-  background: var(--muted-text);
-  opacity: 0.6;
-}
-
-.legend-line.active {
-  background: #ff4d4f;
-  opacity: 1;
-  box-shadow: 0 0 4px rgba(255, 77, 79, 0.4);
-}
-
 .chart-container {
   position: relative;
   width: 100%;
@@ -1596,22 +1579,6 @@ function startTask(task) {
   font-family: inherit;
 }
 
-.limit-line {
-  stroke: var(--muted-text);
-  stroke-width: 1.5px;
-  stroke-dasharray: 4 4;
-  opacity: 0.5;
-  transition: all 0.3s ease;
-}
-
-.limit-line.active {
-  stroke: #ff4d4f;
-  stroke-width: 2px;
-  stroke-dasharray: none;
-  opacity: 1;
-  filter: drop-shadow(0 0 2px rgba(255, 77, 79, 0.6));
-}
-
 .chart-dot {
   fill: var(--surface-container-lowest);
   stroke: var(--primary);
@@ -1623,14 +1590,6 @@ function startTask(task) {
 .chart-dot:hover {
   r: 7px;
   fill: var(--primary);
-}
-
-.chart-dot.exceeds-limit {
-  stroke: #ff4d4f;
-}
-
-.chart-dot.exceeds-limit:hover {
-  fill: #ff4d4f;
 }
 
 /* Tooltip */
@@ -1662,14 +1621,6 @@ function startTask(task) {
   color: var(--on-surface);
 }
 
-.tooltip-warn {
-  display: inline-block;
-  margin-left: 4px;
-  font-size: 10px;
-  color: #ff4d4f;
-  font-weight: 700;
-}
-
 /* X Axis */
 .chart-x-axis {
   position: relative;
@@ -1698,10 +1649,6 @@ function startTask(task) {
   font-weight: 700;
   color: var(--on-surface);
   margin-top: 2px;
-}
-
-.x-sublabel.exceeds {
-  color: #ff4d4f;
 }
 
 /* Streak Calendar Widget Styles */

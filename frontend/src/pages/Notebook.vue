@@ -1184,25 +1184,6 @@ function formatDate(dateString) {
   color: var(--muted-text);
 }
 
-.pending-index {
-  color: #b1532a;
-}
-
-.indexing-status {
-  color: #1976d2;
-  font-weight: 600;
-}
-
-.ready-status {
-  color: #2e7d32;
-  font-weight: 600;
-}
-
-.failed-status {
-  color: #c62828;
-  font-weight: 600;
-}
-
 .notebook-topic {
   margin-bottom: 12px;
 }
@@ -1258,8 +1239,6 @@ function formatDate(dateString) {
   gap: 8px;
 }
 
-.btn-view,
-.btn-download,
 .btn-delete {
   flex: 1;
   padding: 8px 12px;
@@ -1269,24 +1248,6 @@ function formatDate(dateString) {
   cursor: pointer;
   transition: all 0.2s;
   font-weight: 600;
-}
-
-.btn-view {
-  background: var(--primary);
-  color: var(--on-primary);
-}
-
-.btn-view:hover {
-  opacity: 0.9;
-}
-
-.btn-download {
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-}
-
-.btn-download:hover {
-  opacity: 0.9;
 }
 
 .btn-delete {
@@ -1391,72 +1352,6 @@ function formatDate(dateString) {
 .priority-hint {
   margin: 6px 0 0;
   font-size: 11px;
-  color: var(--muted-text);
-}
-
-.modal-topics-preview {
-  margin: 0 0 16px;
-  padding: 12px;
-  background: var(--surface-container);
-  border-radius: 8px;
-  border: 1px solid var(--outline-variant);
-}
-
-.modal-topics-preview h4 {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: var(--on-surface);
-}
-
-.topics-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.topic-preview-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--surface-container-low);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.topic-number {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  background: var(--primary);
-  color: var(--on-primary);
-  border-radius: 50%;
-  font-size: 10px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.topic-title {
-  flex: 1;
-  color: var(--on-surface);
-  font-weight: 500;
-}
-
-.topic-pages {
-  color: var(--muted-text);
-  font-size: 11px;
-}
-
-.topics-empty {
-  padding: 8px;
-  text-align: center;
-}
-
-.topics-empty p {
-  margin: 0;
-  font-size: 12px;
   color: var(--muted-text);
 }
 
@@ -1723,126 +1618,4 @@ function formatDate(dateString) {
   box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
 }
 
-/* ── Smart Shelf (Legacy - to be removed) ─────────────── */
-.shelf-section {
-  margin-top: 32px;
-}
-
-.shelf-section h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--on-surface);
-}
-
-.shelf-description {
-  margin: 0 0 16px;
-  font-size: 13px;
-  color: var(--muted-text, #888);
-}
-
-.shelf-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-.shelf-column {
-  background: var(--surface-container-low, #1e1e1e);
-  border: 1px solid var(--outline-variant, #333);
-  border-radius: 16px;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.shelf-column h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--on-surface);
-}
-
-.shelf-empty {
-  text-align: center;
-  padding: 24px 16px;
-  color: var(--muted-text, #888);
-  font-size: 13px;
-  border: 1px dashed var(--outline-variant, #333);
-  border-radius: 12px;
-}
-
-.shelf-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.shelf-card {
-  background: var(--surface-container-lowest, #161616);
-  border: 1px solid var(--outline-variant, #333);
-  border-radius: 12px;
-  padding: 12px 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.shelf-card-details h4 {
-  margin: 0 0 3px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--on-surface);
-}
-
-.shelf-card-meta {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted-text, #888);
-}
-
-.shelf-action-btn {
-  border: none;
-  border-radius: 8px;
-  padding: 6px 14px;
-  font-weight: 700;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.18s;
-  flex-shrink: 0;
-  font-family: inherit;
-}
-
-.sleep-btn {
-  background: rgba(235, 94, 85, 0.12);
-  color: #eb5e55;
-}
-
-.sleep-btn:hover {
-  background: #eb5e55;
-  color: #fff;
-}
-
-.activate-btn {
-  background: rgba(108, 92, 231, 0.12);
-  color: var(--primary, #6c5ce7);
-}
-
-.activate-btn:hover:not(:disabled) {
-  background: var(--primary, #6c5ce7);
-  color: #fff;
-}
-
-.activate-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-@media (max-width: 640px) {
-  .shelf-grid {
-    grid-template-columns: 1fr;
-  }
-}
 </style>
