@@ -2,13 +2,19 @@
   <div class="dashboard-container">
     <!-- Setup Overlay (if credentials not configured) -->
     <div v-if="showSetup" class="setup-overlay">
-      <div class="setup-card">
-        <h2 style="margin-top: 0; margin-bottom: 0.5rem; color: #fff;">Connect to Supabase</h2>
-        <p class="muted" style="margin-bottom: 2rem; font-size: 0.9rem;">
-          Enter your Supabase credentials to access the teacher workspace.
-        </p>
+      <div class="setup-card animate-fade-in">
+        <div style="text-align: center; margin-bottom: 1.5rem;">
+          <span style="font-size: 2.5rem;">☁️</span>
+          <h2 style="margin-top: 0.5rem; margin-bottom: 0.5rem; color: #fff; letter-spacing: -0.015em;">Connect to Supabase</h2>
+          <p class="muted" style="font-size: 0.85rem; line-height: 1.4;">
+            Enter your Supabase credentials to access the teacher workspace.
+          </p>
+        </div>
 
-        <div v-if="setupError" class="error-message">{{ setupError }}</div>
+        <div v-if="setupError" class="error-message">
+          <span style="font-size: 1.1rem;">⚠️</span>
+          <div style="flex: 1;">{{ setupError }}</div>
+        </div>
 
         <form @submit.prevent="saveCredentials">
           <div class="form-group">
@@ -44,8 +50,9 @@
             />
           </div>
 
-          <button class="btn" style="width: 100%; margin-top: 1rem;" :disabled="connecting">
-            {{ connecting ? 'Connecting...' : 'Connect Workspace' }}
+          <button class="btn" style="width: 100%; margin-top: 1.25rem;" :disabled="connecting">
+            <span v-if="connecting" class="loading-spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
+            {{ connecting ? 'Testing Connection...' : 'Connect Workspace' }}
           </button>
         </form>
       </div>
@@ -54,16 +61,27 @@
     <!-- Main Header -->
     <header class="header">
       <div>
-        <h1>☁️ AI Tutor <span class="muted" style="font-weight: 400; font-size: 1.1rem;">Cloud Portal</span></h1>
+        <h1>
+          <span>☁️</span>
+          <span>AI Tutor</span>
+          <span style="color: var(--primary); font-weight: 500;">Portal</span>
+        </h1>
         <div class="subtitle">Teacher Analytical Workspace</div>
       </div>
 
-      <div style="display: flex; align-items: center; gap: 1rem;">
+      <div style="display: flex; align-items: center; gap: 1.25rem;">
+        <!-- Live status ping dot -->
+        <div v-if="!showSetup" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.15); padding: 0.3rem 0.6rem; border-radius: 6px;">
+          <span class="pulsing-dot" style="background-color: var(--success); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);"></span>
+          <span style="font-size: 0.7rem; color: var(--success); font-weight: 600; font-family: var(--font-mono); letter-spacing: 0.02em;">LIVE SYNCED</span>
+        </div>
+
         <span v-if="classroomCode" class="classroom-badge">
-          Classroom: {{ classroomCode }}
+          CLASSROOM: {{ classroomCode }}
         </span>
-        <button class="btn btn-secondary" @click="openSettings" style="padding: 0.5rem 1rem;">
-          ⚙️ Connection Settings
+        
+        <button class="btn btn-secondary" @click="openSettings" style="padding: 0.45rem 0.85rem; font-size: 0.8rem;">
+          ⚙️ Settings
         </button>
       </div>
     </header>
@@ -71,53 +89,83 @@
     <!-- Dashboard Content -->
     <main v-if="!showSetup" class="main-content">
       <!-- Error Bar -->
-      <div v-if="error" class="error-message" style="margin-bottom: 0;">
-        {{ error }}
+      <div v-if="error" class="error-message">
+        <span style="font-size: 1.1rem;">⚠️</span>
+        <div style="flex: 1;">{{ error }}</div>
       </div>
 
       <!-- Overview Stats Grid -->
       <section class="stats-grid">
         <!-- Stat: Enrolled Students -->
-        <div class="stat-card">
+        <div class="stat-card animate-fade-in" style="animation-delay: 0ms">
           <div class="stat-header">
             <span class="stat-title">Students Syncing</span>
             <span class="stat-icon">👥</span>
           </div>
-          <div class="stat-value">{{ stats.studentsCount }}</div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+            <div class="stat-value">{{ stats.studentsCount }}</div>
+            <!-- Avatar stack mockup -->
+            <div v-if="students.length > 0" class="avatar-stack">
+              <div v-for="student in students.slice(0, 4)" :key="student.token" class="avatar-stacked" :title="student.token">
+                {{ student.token.substring(0, 2).toUpperCase() }}
+              </div>
+              <div v-if="students.length > 4" class="avatar-stacked" style="background: var(--surface-highest); color: var(--muted-text);">
+                +{{ students.length - 4 }}
+              </div>
+            </div>
+          </div>
           <div class="stat-desc">Distinct active profiles in class</div>
         </div>
 
         <!-- Stat: Total Review Logs -->
-        <div class="stat-card">
+        <div class="stat-card animate-fade-in" style="animation-delay: 60ms">
           <div class="stat-header">
-            <span class="stat-title">FSRS Flashcard Reviews</span>
+            <span class="stat-title">FSRS Reviews</span>
             <span class="stat-icon">⚡</span>
           </div>
           <div class="stat-value">{{ stats.totalLogs }}</div>
-          <div class="stat-desc">Total synced review instances</div>
+          <div class="stat-desc">Avg. {{ stats.studentsCount > 0 ? Math.round(stats.totalLogs / stats.studentsCount) : 0 }} cards reviewed per student</div>
         </div>
 
         <!-- Stat: Flashcard Mastery / Pass Rate -->
-        <div class="stat-card">
+        <div class="stat-card animate-fade-in" style="animation-delay: 120ms">
           <div class="stat-header">
             <span class="stat-title">Recall Pass Rate</span>
             <span class="stat-icon">📈</span>
           </div>
-          <div class="stat-value">{{ stats.passRate }}%</div>
-          <div class="stat-desc">Rating > 1 (Again/Fail) fraction</div>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="stat-value">{{ stats.passRate }}%</div>
+            <!-- SVG circular gauge -->
+            <svg class="progress-ring" width="36" height="36">
+              <circle class="progress-ring__circle" stroke="rgba(255,255,255,0.06)" stroke-width="3" fill="transparent" r="12" cx="18" cy="18"/>
+              <circle 
+                class="progress-ring__circle" 
+                :stroke="stats.passRate > 75 ? 'var(--success)' : stats.passRate > 55 ? 'var(--warning)' : 'var(--danger)'" 
+                stroke-width="3" 
+                fill="transparent" 
+                r="12" 
+                cx="18" 
+                cy="18"
+                :style="{ strokeDashoffset: 75.39 - (75.39 * stats.passRate / 100) }"
+              />
+            </svg>
+          </div>
+          <div class="stat-desc">Rating &gt; 1 (Again/Fail) fraction</div>
         </div>
 
         <!-- Stat: Active Red Alerts -->
-        <div class="stat-card" :class="{ 'alert-active': stats.alertsCount > 0 }">
+        <div class="stat-card animate-fade-in" :class="{ 'alert-active': stats.alertsCount > 0 }" style="animation-delay: 180ms">
           <div class="stat-header">
             <span class="stat-title">Red Alerts</span>
             <div v-if="stats.alertsCount > 0" class="pulsing-dot"></div>
             <span v-else class="stat-icon">🛡️</span>
           </div>
-          <div class="stat-value" :style="{ color: stats.alertsCount > 0 ? 'var(--danger)' : '#fff' }">
+          <div class="stat-value" :style="{ color: stats.alertsCount > 0 ? 'var(--danger)' : 'var(--on-surface)' }">
             {{ stats.alertsCount }}
           </div>
-          <div class="stat-desc">Remediation failures needing support</div>
+          <div class="stat-desc">
+            {{ stats.alertsCount > 0 ? 'Remediation failures needing support' : 'All students on track' }}
+          </div>
         </div>
       </section>
 
@@ -125,58 +173,72 @@
       <div class="workspace-grid">
         <!-- Column 1: Students Directory -->
         <section class="section-card">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
             <h2 class="section-title" style="margin-bottom: 0; border: none; padding: 0;">
-              Student Profiles
+              👥 Student Profiles
             </h2>
-            <div style="display: flex; gap: 0.75rem; align-items: center;">
-              <!-- Filter Controls -->
-              <input 
-                type="text" 
-                v-model="searchQuery" 
-                placeholder="Search student or file..." 
-                style="background: var(--surface-low); border: 1px solid var(--border); padding: 0.4rem 0.8rem; border-radius: 6px; color: #fff; font-size: 0.85rem;"
-              />
+            
+            <div style="display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap;">
+              <!-- Modern Filter Controls with Keyboard hint -->
+              <div class="search-container">
+                <span class="search-icon">🔍</span>
+                <input 
+                  ref="searchInputRef"
+                  type="text" 
+                  v-model="searchQuery" 
+                  class="search-input"
+                  placeholder="Filter student or topic..." 
+                  style="background: var(--surface-low); border: 1px solid var(--border); padding: 0.4rem 0.8rem; border-radius: 6px; color: #fff; font-size: 0.85rem;"
+                />
+                <kbd class="search-kbd">/</kbd>
+              </div>
+
               <button 
                 class="btn btn-secondary" 
                 :class="{ active: filterAlerts }" 
                 @click="filterAlerts = !filterAlerts"
-                style="padding: 0.4rem 0.8rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;"
+                style="padding: 0.45rem 0.85rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem;"
                 :style="filterAlerts ? 'border-color: var(--danger); color: var(--danger); background: var(--danger-glow);' : ''"
               >
                 🚨 Alerts Only
               </button>
-              <button class="btn btn-secondary" @click="fetchData" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" :disabled="loading">
-                {{ loading ? 'Refreshing...' : '🔄 Refresh' }}
+
+              <button class="btn" @click="fetchData" style="padding: 0.45rem 0.85rem; font-size: 0.8rem;" :disabled="loading">
+                <span v-if="loading" class="loading-spinner" style="width: 12px; height: 12px; border-width: 2px;"></span>
+                {{ loading ? 'Syncing...' : '🔄 Refresh' }}
               </button>
             </div>
           </div>
 
           <!-- Empty State -->
-          <div v-if="loading && students.length === 0" class="text-center" style="padding: 3rem;">
+          <div v-if="loading && students.length === 0" class="text-center" style="padding: 4rem 2rem;">
             <div class="loading-spinner"></div>
-            <p class="muted" style="margin-top: 1rem;">Loading student database...</p>
+            <p class="muted" style="margin-top: 1rem; font-size: 0.9rem;">Fetching classroom database...</p>
           </div>
-          <div v-else-if="filteredStudents.length === 0" class="text-center" style="padding: 3rem; border: 1px dashed var(--border); border-radius: 12px;">
+          <div v-else-if="filteredStudents.length === 0" class="text-center" style="padding: 4rem 2rem; border: 1px dashed var(--border); border-radius: 12px; background: rgba(255,255,255,0.01);">
             <span style="font-size: 2rem;">📭</span>
-            <p class="muted" style="margin-top: 1rem; margin-bottom: 0;">No matching student data synced for classroom "{{ classroomCode }}" yet.</p>
+            <p class="muted" style="margin-top: 1rem; margin-bottom: 0; font-size: 0.9rem;">
+              No students synced for classroom "{{ classroomCode }}" matching the filters.
+            </p>
           </div>
 
           <!-- Student Accordion list -->
           <div v-else class="student-list">
             <div
-              v-for="student in filteredStudents"
+              v-for="(student, index) in filteredStudents"
               :key="student.token"
-              class="student-row"
+              class="student-row animate-fade-in"
+              :class="{ expanded: expandedStudents[student.token] }"
+              :style="{ animationDelay: `${(index + 2) * 50}ms` }"
             >
               <!-- Accordion Header -->
-              <div class="student-header" @click="toggleStudent(student.token)">
+              <div class="student-header" @click="toggleStudent(student.token)" aria-label="Toggle student details">
                 <div class="student-info">
                   <div class="student-avatar">
                     {{ student.token.substring(0, 2).toUpperCase() }}
                   </div>
                   <div>
-                    <div class="student-name">Student Token: {{ student.token }}</div>
+                    <div class="student-name">token:{{ student.token.substring(0, 12) }}...</div>
                     <div class="student-meta">
                       {{ student.notebooks.length }} Notebooks &bull; {{ student.logs.length }} reviews synced &bull; Last updated {{ formatRelativeTime(student.lastUpdate) }}
                     </div>
@@ -185,96 +247,148 @@
 
                 <div class="student-metrics">
                   <!-- Red Alert Warning Badge -->
-                  <div v-if="student.alertsCount > 0" class="alert-indicator">
-                    🚨 {{ student.alertsCount }} Red Alert{{ student.alertsCount > 1 ? 's' : '' }}
+                  <div v-if="student.alertsCount > 0" class="alert-indicator" style="animation: hazard-pulse 2s infinite ease-in-out;">
+                    🚨 {{ student.alertsCount }} Alert{{ student.alertsCount > 1 ? 's' : '' }}
                   </div>
-                  <span style="font-size: 1.25rem;">
-                    {{ expandedStudents[student.token] ? '▲' : '▼' }}
-                  </span>
+                  <!-- Rotating Chevron Chevron -->
+                  <svg 
+                    width="12" 
+                    height="12" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    stroke-width="3" 
+                    stroke-linecap="round" 
+                    stroke-linejoin="round"
+                    style="transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);"
+                    :style="{ transform: expandedStudents[student.token] ? 'rotate(180deg)' : 'rotate(0deg)' }"
+                  >
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
                 </div>
               </div>
 
-              <!-- Accordion Body -->
-              <div v-if="expandedStudents[student.token]" class="student-details">
-                <!-- Part A: Notebook Statuses -->
-                <div>
-                  <h3 style="margin-top: 0; margin-bottom: 1rem; font-size: 1rem; color: #fff;">Notebook Ingestion & Study Progress</h3>
-                  <div class="notebooks-grid">
-                    <div
-                      v-for="nb in student.notebooks"
-                      :key="nb.file_hash"
-                      class="notebook-card"
-                    >
-                      <div class="notebook-header">
-                        <div>
-                          <h4 class="notebook-title">{{ nb.title }}</h4>
-                          <span class="notebook-filename">{{ nb.filename }}</span>
+              <!-- Accordion Body (CSS Grid height transition wrapper) -->
+              <div class="student-details-wrapper">
+                <div class="student-details">
+                  <div class="student-details-content">
+                    
+                    <!-- FSRS Review Heatmap Strip -->
+                    <div v-if="student.logs.length > 0" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem;">
+                      <div class="heatmap-title-container">
+                        <span style="font-size: 0.75rem; font-weight: 600; color: var(--muted-text); letter-spacing: 0.05em;">RETENTION HISTORY (CHRONOLOGICAL)</span>
+                        <div class="heatmap-legend">
+                          <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-1"></span> Fail</span>
+                          <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-2"></span> Hard</span>
+                          <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-3"></span> Good</span>
+                          <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-4"></span> Easy</span>
                         </div>
-                        <span class="status-tag" :class="nb.study_status.toLowerCase()">
-                          {{ nb.study_status.toUpperCase() }}
-                        </span>
                       </div>
                       
-                      <!-- Red Alert Notice -->
-                      <div v-if="nb.external_help_required" class="alert-indicator" style="width: 100%; justify-content: center; padding: 0.4rem;">
-                        🚨 Remediation failed. External help required!
+                      <div class="heatmap-strip">
+                        <div 
+                          v-for="log in student.logs.slice().reverse()" 
+                          :key="log.id" 
+                          class="heatmap-node" 
+                          :class="'rating-' + log.rating"
+                        >
+                          <!-- Custom HTML Tooltip hover -->
+                          <div class="tooltip-text">
+                            <div><strong>{{ formatRatingLabel(log.rating) }}</strong></div>
+                            <div style="margin-top: 0.15rem; color: var(--muted-text);">Interval: {{ log.scheduled_days }}d &bull; Pg {{ log.page_number }}</div>
+                            <div style="font-size: 0.65rem; color: var(--muted-text); margin-top: 0.15rem;">{{ formatTime(log.reviewed_at) }}</div>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                <!-- Part B: Review History Log -->
-                <div>
-                  <h3 style="margin-top: 1rem; margin-bottom: 1rem; font-size: 1rem; color: #fff;">Spaced Repetition Log</h3>
-                  <div v-if="student.logs.length === 0" class="muted" style="font-size: 0.875rem; font-style: italic;">
-                    No flashcard reviews completed yet.
-                  </div>
-                  <div v-else class="logs-table-wrapper">
-                    <table class="logs-table">
-                      <thead>
-                        <tr>
-                          <th>Time</th>
-                          <th>Notebook Hash</th>
-                          <th>Pg</th>
-                          <th>Type</th>
-                          <th>Rating Given</th>
-                          <th>Interval</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="log in student.logs" :key="log.id">
-                          <td>{{ formatTime(log.reviewed_at) }}</td>
-                          <td class="muted" style="font-family: monospace; font-size: 0.75rem;" :title="log.file_hash">
-                            {{ log.file_hash.substring(0, 10) }}...
-                          </td>
-                          <td>{{ log.page_number }}</td>
-                          <td>
-                            <span class="status-tag dormant" style="padding: 0.1rem 0.3rem; font-size: 0.7rem;">
-                              {{ log.activity_type.toUpperCase() }}
-                            </span>
-                          </td>
-                          <td>
-                            <!-- FSRS Rating visualization -->
-                            <div class="rating-bar" :title="'Rating Code: ' + log.rating">
-                              <span
-                                v-for="dot in 4"
-                                :key="dot"
-                                class="rating-dot"
-                                :class="{
-                                  filled: dot <= log.rating,
-                                  hard: log.rating === 2,
-                                  bad: log.rating === 1
-                                }"
-                              ></span>
+                    <!-- Notebook Statuses -->
+                    <div>
+                      <h3 style="margin-top: 0; margin-bottom: 0.85rem; font-size: 0.8rem; font-weight: 600; color: var(--muted-text); letter-spacing: 0.05em; text-transform: uppercase;">
+                        Ingestion & Study Progress
+                      </h3>
+                      <div class="notebooks-grid">
+                        <div
+                          v-for="nb in student.notebooks"
+                          :key="nb.file_hash"
+                          class="notebook-card"
+                          :style="{ borderColor: nb.external_help_required ? 'rgba(239, 68, 68, 0.3)' : 'var(--border)' }"
+                        >
+                          <div class="notebook-header">
+                            <div style="min-width: 0; flex: 1;">
+                              <h4 class="notebook-title" :title="nb.title">{{ nb.title }}</h4>
+                              <span class="notebook-filename" :title="nb.filename">{{ nb.filename }}</span>
                             </div>
-                            <span style="font-size: 0.75rem; margin-left: 0.5rem; vertical-align: middle;">
-                              {{ formatRatingLabel(log.rating) }}
+                            <span class="status-tag" :class="nb.study_status.toLowerCase()">
+                              {{ nb.study_status }}
                             </span>
-                          </td>
-                          <td>{{ log.scheduled_days }}d</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                          </div>
+                          
+                          <!-- Red Alert Notice -->
+                          <div v-if="nb.external_help_required" class="alert-indicator" style="width: 100%; justify-content: center; padding: 0.35rem; margin-top: 0.25rem;">
+                            🚨 Socratic rescue failed. Needs support!
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Review History Table (Fallback details) -->
+                    <div>
+                      <h3 style="margin-top: 0.5rem; margin-bottom: 0.85rem; font-size: 0.8rem; font-weight: 600; color: var(--muted-text); letter-spacing: 0.05em; text-transform: uppercase;">
+                        Detailed Spaced Repetition Logs
+                      </h3>
+                      <div v-if="student.logs.length === 0" class="muted" style="font-size: 0.8rem; font-style: italic; padding: 0.5rem 0;">
+                        No flashcard reviews completed yet.
+                      </div>
+                      <div v-else class="logs-table-wrapper">
+                        <table class="logs-table">
+                          <thead>
+                            <tr>
+                              <th>Time</th>
+                              <th>Notebook Hash</th>
+                              <th>Page</th>
+                              <th>Type</th>
+                              <th>Rating</th>
+                              <th>Interval</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="log in student.logs" :key="log.id">
+                              <td style="font-family: var(--font-mono);">{{ formatTime(log.reviewed_at) }}</td>
+                              <td class="muted" style="font-family: var(--font-mono); font-size: 0.7rem;" :title="log.file_hash">
+                                {{ log.file_hash.substring(0, 10) }}...
+                              </td>
+                              <td style="font-family: var(--font-mono);">{{ log.page_number }}</td>
+                              <td>
+                                <span class="status-tag dormant" style="padding: 0.1rem 0.3rem; font-size: 0.65rem;">
+                                  {{ log.activity_type }}
+                                </span>
+                              </td>
+                              <td>
+                                <!-- FSRS Rating bar visualization -->
+                                <div class="rating-bar" :title="'Rating Code: ' + log.rating">
+                                  <span
+                                    v-for="dot in 4"
+                                    :key="dot"
+                                    class="rating-dot"
+                                    :class="{
+                                      filled: dot <= log.rating,
+                                      hard: log.rating === 2,
+                                      bad: log.rating === 1
+                                    }"
+                                  ></span>
+                                </div>
+                                <span style="font-size: 0.7rem; margin-left: 0.4rem; vertical-align: middle;">
+                                  {{ formatRatingLabel(log.rating) }}
+                                </span>
+                              </td>
+                              <td style="font-family: var(--font-mono);">{{ log.scheduled_days }}d</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
                   </div>
                 </div>
               </div>
@@ -290,16 +404,18 @@
 
           <!-- Publish Form -->
           <form @submit.prevent="publishAssignment" style="margin-bottom: 2rem;">
-            <h3 style="margin-top: 0; font-size: 0.95rem; color: #fff; margin-bottom: 1rem;">Publish New PDF</h3>
+            <h3 style="margin-top: 0; font-size: 0.85rem; color: var(--on-surface); margin-bottom: 0.85rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">
+              Publish New PDF
+            </h3>
             
             <div class="form-group">
-              <label for="assign-title">Notebook Title</label>
+              <label for="assign-title">Assignment Title</label>
               <input
                 id="assign-title"
                 v-model="newTitle"
                 type="text"
                 required
-                placeholder="e.g. Chapter 4: Photosynthesis"
+                placeholder="e.g. Chapter 4: Cell Division"
               />
             </div>
 
@@ -310,27 +426,28 @@
                 v-model="newUrl"
                 type="url"
                 required
-                placeholder="e.g. https://server.com/files/chap4.pdf"
+                placeholder="https://example.com/files/cell_chap4.pdf"
               />
             </div>
 
-            <button class="btn" style="width: 100%;" :disabled="publishing">
+            <button class="btn" style="width: 100%; margin-top: 0.5rem;" :disabled="publishing">
+              <span v-if="publishing" class="loading-spinner" style="width: 12px; height: 12px; border-width: 2px;"></span>
               {{ publishing ? 'Publishing...' : 'Publish to Class' }}
             </button>
           </form>
 
           <!-- List of Published Assignments -->
           <div>
-            <h3 style="font-size: 0.95rem; color: #fff; margin-bottom: 1rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
+            <h3 style="font-size: 0.85rem; color: var(--muted-text); margin-bottom: 0.85rem; border-top: 1px solid var(--border); padding-top: 1.25rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">
               Active Assignments ({{ assignments.length }})
             </h3>
 
-            <div v-if="loadingAssignments" class="text-center" style="padding: 1rem 0;">
-              <div class="loading-spinner" style="width: 16px; height: 16px;"></div>
+            <div v-if="loadingAssignments" class="text-center" style="padding: 1.5rem 0;">
+              <div class="loading-spinner"></div>
             </div>
 
-            <div v-else-if="assignments.length === 0" class="muted" style="font-size: 0.85rem; font-style: italic; text-align: center; padding: 1.5rem 0; border: 1px dashed var(--border); border-radius: 8px;">
-              No custom homework assignments published.
+            <div v-else-if="assignments.length === 0" class="muted" style="font-size: 0.8rem; font-style: italic; text-align: center; padding: 2rem 1rem; border: 1px dashed var(--border); border-radius: 8px; background: rgba(255,255,255,0.01);">
+              No assignments published yet.
             </div>
 
             <div v-else class="assignments-list">
@@ -340,7 +457,7 @@
                 class="assignment-item"
               >
                 <div class="assignment-info">
-                  <h4 class="assignment-title" :title="asm.title">{{ asm.title }}</h4>
+                  <h4 class="assignment-title" :title="asm.title">📄 {{ asm.title }}</h4>
                   <a :href="asm.download_url" target="_blank" class="assignment-url" :title="asm.download_url">
                     {{ asm.download_url }}
                   </a>
@@ -348,7 +465,7 @@
                 </div>
                 <button
                   class="btn btn-secondary btn-danger"
-                  style="padding: 0.35rem 0.6rem; font-size: 0.75rem; border-radius: 4px;"
+                  style="padding: 0.35rem 0.55rem; font-size: 0.75rem; border-radius: 6px; min-height: unset;"
                   @click="deleteAssignment(asm.id)"
                   title="Remove assignment"
                 >
@@ -364,7 +481,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 
 // Setup State
 const showSetup = ref(true);
@@ -389,32 +506,52 @@ const expandedStudents = reactive({});
 // Search/Filter State
 const searchQuery = ref('');
 const filterAlerts = ref(false);
+const searchInputRef = ref(null);
 
 // New Assignment Form
 const newTitle = ref('');
 const newUrl = ref('');
 const publishing = ref(false);
 
+// Global keyboard listeners for search bar focus (CMD+K or /)
+const handleGlobalKeydown = (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    searchInputRef.value?.focus();
+  } else if (e.key === '/' && document.activeElement !== searchInputRef.value && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+    e.preventDefault();
+    searchInputRef.value?.focus();
+  }
+};
+
 // Check configuration on mount
 onMounted(() => {
-  const url = localStorage.getItem('supabase_url');
-  const key = localStorage.getItem('supabase_key');
-  const cls = localStorage.getItem('classroom_code');
+  const url = localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || '';
+  const key = localStorage.getItem('supabase_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  const cls = localStorage.getItem('classroom_code') || import.meta.env.VITE_CLASSROOM_CODE || '';
+
+  if (url) setupUrl.value = url;
+  if (key) setupKey.value = key;
+  if (cls) setupClassroom.value = cls;
 
   if (url && key && cls) {
     supabaseUrl.value = url;
     supabaseKey.value = key;
     classroomCode.value = cls;
     
-    setupUrl.value = url;
-    setupKey.value = key;
-    setupClassroom.value = cls;
-    
     showSetup.value = false;
     fetchData();
   } else {
     showSetup.value = true;
   }
+
+  // Register keydown listener
+  window.addEventListener('keydown', handleGlobalKeydown);
+});
+
+onUnmounted(() => {
+  // Cleanup listener
+  window.removeEventListener('keydown', handleGlobalKeydown);
 });
 
 // Save credentials from setup screen
@@ -457,7 +594,7 @@ async function saveCredentials() {
     fetchData();
   } catch (err) {
     console.error('Setup connection failure:', err);
-    setupError.value = `Failed to connect to Supabase: ${err.message}. Please double-check your credentials and SQL schemas.`;
+    setupError.value = `Failed to connect to Supabase: ${err.message}. Please check credentials and tables configuration.`;
   } finally {
     connecting.value = false;
   }
