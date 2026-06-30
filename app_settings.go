@@ -495,7 +495,7 @@ func (a *App) LoginStudent(username, password, classroomCode string) map[string]
 	if err != nil {
 		return map[string]interface{}{"error": "network error: " + err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
