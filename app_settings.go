@@ -108,29 +108,6 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	return map[string]interface{}{"ok": true}
 }
 
-func (a *App) GetRemedialStrategy() (string, error) {
-	repo := a.getRepo()
-	if repo == nil {
-		return "CLASSIC", fmt.Errorf("database repository not initialized")
-	}
-	strategy, err := repo.GetRemedialStrategy()
-	if err != nil {
-		return "", err
-	}
-	return strategy, nil
-}
-
-func (a *App) SetRemedialStrategy(strategy string) error {
-	repo := a.getRepo()
-	if repo == nil {
-		return fmt.Errorf("database repository not initialized")
-	}
-	if strategy != "CLASSIC" && strategy != "FAST" {
-		return fmt.Errorf("invalid remedial strategy: must be CLASSIC or FAST")
-	}
-	return repo.SetRemedialStrategy(strategy)
-}
-
 func (a *App) GetLLMSettings() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {

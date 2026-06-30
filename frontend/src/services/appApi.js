@@ -198,14 +198,6 @@ export function updateUserSettings(
   )
 }
 
-export function getRemedialStrategy() {
-  return appBridge().GetRemedialStrategy()
-}
-
-export function setRemedialStrategy(strategy) {
-  return appBridge().SetRemedialStrategy(strategy)
-}
-
 export function getLLMSettings() {
   return appBridge().GetLLMSettings()
 }
