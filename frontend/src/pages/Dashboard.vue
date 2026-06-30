@@ -1011,15 +1011,6 @@ function startTask(task) {
   color: var(--on-surface);
 }
 
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  font-weight: 700;
-}
-
 .header-actions {
   display: flex;
   align-items: center;

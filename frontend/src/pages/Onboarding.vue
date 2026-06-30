@@ -876,12 +876,6 @@ h2 {
   margin: -8px 0 8px; /* 8px grid */
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px; /* 8px grid */
-}
-
 .form-group:focus-within label {
   color: var(--primary); /* Spec focus shift */
 }
@@ -1195,44 +1189,6 @@ select:focus {
   margin-bottom: 8px; /* 8px grid */
 }
 
-.status-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px; /* 8px grid */
-  border-radius: 4px;
-  background: #a0a0a0;
-  color: #121212;
-}
-
-.status-badge.checking {
-  background: #f59e0b;
-  color: #121212;
-}
-.status-badge.acquiring {
-  background: #3b82f6;
-  color: #ffffff;
-}
-.status-badge.verifying {
-  background: #8b5cf6;
-  color: #ffffff;
-}
-.status-badge.extracting {
-  background: #14b8a6;
-  color: #ffffff;
-}
-.status-badge.initializing {
-  background: #06b6d4;
-  color: #ffffff;
-}
-.status-badge.ready {
-  background: #10b981;
-  color: #ffffff;
-}
-.status-badge.failed {
-  background: #ef4444;
-  color: #ffffff;
-}
-
 .setup-msg {
   font-size: 13px;
   font-weight: 600;
@@ -1259,163 +1215,8 @@ select:focus {
   margin: 0;
 }
 
-/* Time Range Section */
+/* Onboarding-specific override */
 .time-range-section {
-  background: var(--surface-container-low);
-  border-radius: 16px;
-  padding: 20px;
   margin-bottom: 20px;
-}
-
-.time-range-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.time-range-header label {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted-text);
-}
-
-.duration-badge {
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: 20px;
-  letter-spacing: 0.02em;
-}
-
-.time-range-container {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.time-input-group {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.time-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted-text);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.time-input-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.time-icon {
-  position: absolute;
-  left: 14px;
-  width: 18px;
-  height: 18px;
-  color: var(--muted-text);
-  pointer-events: none;
-  transition: color 0.2s ease;
-}
-
-.time-input {
-  width: 100%;
-  padding: 14px 14px 14px 42px;
-  background: var(--surface-container-lowest);
-  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
-  border-radius: 12px;
-  font-size: 16px;
-  font-weight: 600;
-  font-family: inherit;
-  color: var(--on-surface);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.time-input:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
-}
-
-.time-input:focus ~ .time-icon,
-.time-input-wrapper:focus-within .time-icon {
-  color: var(--primary);
-}
-
-.time-connector {
-  flex-shrink: 0;
-  width: 32px;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted-text);
-  opacity: 0.5;
-}
-
-.time-connector svg {
-  width: 100%;
-  height: 8px;
-}
-
-.quick-durations {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 30%, transparent);
-}
-
-.duration-preset {
-  background: var(--surface-container-lowest);
-  border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent);
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted-text);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.duration-preset:hover {
-  background: var(--surface-container);
-  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
-  color: var(--on-surface);
-}
-
-.duration-preset.active {
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
-  color: var(--primary);
-}
-
-@media (max-width: 480px) {
-  .time-range-container {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .time-connector {
-    transform: rotate(90deg);
-    width: 100%;
-    height: 24px;
-  }
-
-  .quick-durations {
-    justify-content: center;
-  }
 }
 </style>

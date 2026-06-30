@@ -1579,22 +1579,6 @@ function formatDate(dateString) {
   gap: 12px;
 }
 
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--outline-variant);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  flex-shrink: 0;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .drafting-title {
   display: block;
   font-weight: 700;
