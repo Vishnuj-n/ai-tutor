@@ -154,6 +154,7 @@ wails build -tags sqlite_extension
 
 ## Documentation
 
+- Developer Onboarding & Handover: [doc/DEVELOPER_ONBOARDING.md](doc/DEVELOPER_ONBOARDING.md)
 - System design: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
 - App flow and user interactions: [doc/APP_FLOW.md](doc/APP_FLOW.md)
 - Database schema: [doc/SCHEMA.md](doc/SCHEMA.md)

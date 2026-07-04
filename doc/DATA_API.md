@@ -1,20 +1,13 @@
 # Data API Contracts
 
-## Overview
-
-API contracts between frontend, queue router, and modules. All communication is synchronous and explicit.
+All communication synchronous and explicit.
 
 ---
 
 ## Queue Router API
 
 ### GetNextTask
-
-Returns the next pending task from the queue.
-
-**Endpoint:** `GetNextTask() → Task`
-
-**Request:** None
+Returns next pending task.
 
 **Response:**
 ```json
@@ -34,490 +27,122 @@ Returns the next pending task from the queue.
 }
 ```
 
-**Errors:**
-- `ErrNoPendingTasks` - Queue is empty
-
----
+**Errors:** `ErrNoPendingTasks` — queue empty.
 
 ### CompleteTask
-
-Marks a task complete and triggers follow-up logic.
-
-**Endpoint:** `CompleteTask(taskID string, result TaskResult) → error`
-
-**Request:**
-```json
-{
-  "task_id": "task-uuid",
-  "result": {
-    "type": "quiz_result",
-    "score": 75,
-    "passed": true
-  }
-}
-```
+Marks task complete + triggers follow-ups.
 
 **Result Types:**
 
-| Type | Use Case | Data Fields |
-|------|----------|-------------|
-| `quiz_result` | Quiz completion (Reading Layer) | `score`, `passed`. Does NOT update FSRS. |
-| `read_complete` | Reading completion (Reading Layer) | `pages_read` (informational only; not a mastery signal) |
-| `flashcard_review` | Flashcard session (Retention Layer) | `cards_reviewed`, `ratings`. Updates FSRS state. |
+| Type | Use Case | Data |
+|------|----------|------|
+| `quiz_result` | Quiz completion | `score`, `passed`. No FSRS update. |
+| `read_complete` | Reading completion | `pages_read` (informational) |
+| `flashcard_review` | Flashcard session | `cards_reviewed`, `ratings`. Updates FSRS. |
 | `skip` | User skips task | `reason` (optional) |
 
-**Response:** Success or error
-
-**Side Effects:**
-- Updates task status to `COMPLETED`, `SKIPPED`, or `FAILED`
-- May insert follow-up tasks based on result
-- Reading completion only closes the reading task; it does not determine mastery or remediation quality
-- Quiz submission/evaluation may insert reread, retry, next task, spaced repetition follow-ups, or mastery progression tasks
-- Dashboard regains ownership after quiz evaluation
-- Skipped tasks preserve audit trail and can resurface
+**Side effects:** Updates status, may insert follow-ups, skipped tasks preserve audit trail.
 
 ### SkipTask
-
-Explicitly marks a task as skipped (auditable bypass).
-
-**Endpoint:** `SkipTask(taskID string, reason string) → error`
-
-**Request:**
-```json
-{
-  "task_id": "task-uuid",
-  "reason": "User chose to skip remediation"
-}
-```
-
-**Response:** Success or error
-
-**Side Effects:**
-- Updates task status to `SKIPPED`
-- Task remains auditable in database
-- Can be resurfaced via manual retry if needed
-- No follow-up tasks inserted
-
----
+Marks task as skipped (auditable). No follow-ups inserted.
 
 ### GetTaskContext
-
-Returns full context for a task.
-
-**Endpoint:** `GetTaskContext(taskID string) → TaskContext`
-
-**Response:**
-```json
-{
-  "task": {
-    "id": "task-uuid",
-    "task_type": "READING",
-    "block_id": "block-uuid"
-  },
-  "block": {
-    "id": "block-uuid",
-    "content": "...",
-    "word_count": 2500,
-    "start_page": 10,
-    "end_page": 15
-  },
-  "topic": {
-    "id": "topic-uuid",
-    "title": "Neural Networks"
-  }
-}
-```
+Returns full context: task, block content, topic info.
 
 ---
 
 ## Reader Module API
 
 ### GetBlockContent
-
-Returns content for a reading block.
-
-**Endpoint:** `GetBlockContent(blockID string) → BlockContent`
-
-**Response:**
-```json
-{
-  "id": "block-uuid",
-  "content": "Full text content...",
-  "word_count": 2500,
-  "start_page": 10,
-  "end_page": 15,
-  "order_index": 3,
-  "topic_id": "topic-uuid"
-}
-```
-
----
+Returns content for a reading block: id, content, word_count, start_page, end_page, order_index, topic_id.
 
 ### MarkBlockRead
-
-Records reading progress.
-
-**Endpoint:** `MarkBlockRead(blockID string, progress int) → error`
-
-**Request:**
-```json
-{
-  "block_id": "block-uuid",
-  "progress": 100
-}
-```
+Records reading progress (block_id, progress percentage).
 
 ---
 
 ## Quiz Module API
 
 ### GetQuizSet
-
-Returns quiz questions for a block.
-
-**Endpoint:** `GetQuizSet(blockID string) → QuizSet`
-
-**Response:**
-```json
-{
-  "id": "quiz-set-uuid",
-  "block_id": "block-uuid",
-  "topic_id": "topic-uuid",
-  "questions": [
-    {
-      "id": "q-1",
-      "question": "What is backpropagation?",
-      "options": ["A", "B", "C", "D"],
-      "correct_answer": 0
-    }
-  ],
-  "threshold": 70
-}
-```
-
----
+Returns quiz questions for a block: questions array, threshold.
 
 ### SubmitQuiz
-
-Submits answers and returns score.
-
-**Endpoint:** `SubmitQuiz(blockID string, answers []Answer) → QuizResult`
-
-**Request:**
-```json
-{
-  "block_id": "quiz-set-uuid",
-  "answers": [
-    {"question_id": "q-1", "selected": 0},
-    {"question_id": "q-2", "selected": 2}
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "score": 75,
-  "passed": true,
-  "correct_count": 3,
-  "total_count": 4,
-  "feedback": "Good understanding of concepts..."
-}
-```
-
-Quiz results are evaluated by the backend to determine follow-up behavior such as reread, retry, next task, spaced repetition follow-ups, or mastery progression.
+Submits answers, returns score/passed/feedback. Backend evaluates for follow-up behavior.
 
 ---
 
 ## Flashcard Module API
 
 ### GetDueCards
-
-Returns cards due for review.
-
-**Endpoint:** `GetDueCards(blockID string) → []Card`
-
-**Response:**
-```json
-{
-  "cards": [
-    {
-      "id": "card-uuid",
-      "prompt": "What is gradient descent?",
-      "answer": "An optimization algorithm...",
-      "due_at": 1234567890
-    }
-  ]
-}
-```
-
----
+Returns cards due for review (id, prompt, answer, due_at).
 
 ### RateCard
-
-Records user rating and updates FSRS state.
-
-**Endpoint:** `RateCard(cardID string, rating Rating) → error`
-
-**Request:**
-```json
-{
-  "card_id": "card-uuid",
-  "rating": 3
-}
-```
-
-**Rating Values:**
-- 1 = Again
-- 2 = Hard
-- 3 = Good
-- 4 = Easy
-
----
+Records rating (1=Again, 2=Hard, 3=Good, 4=Easy). Updates FSRS state.
 
 ### GenerateFlashcardsForQuizTask
-
-Generates FSRS flashcards after a passed quiz task with simplified calibration.
-
-**Endpoint:** `GenerateFlashcardsForQuizTask(taskID string) → map`
-
-**Response:**
-```json
-{
-  "cards": [...],
-  "existing": false,
-  "card_count": 8,
-  "llm_tier": "fast"
-}
-```
-
-**Side Effects:**
-- Creates FSRS flashcards in clean Review state (StateCode: 2)
-- Sets initial `due_at` based on quiz score:
-  - Ace (100%): 3-day offset
-  - Pass (<100%): 1-day offset
-  - Default: Tomorrow offset (1 day)
-- Cards bypass FSRS intraday learning phase for predictable initial intervals
+Generates FSRS flashcards after passed quiz. Clean Review state (StateCode: 2), day-based `due_at` offsets:
+- Ace (100%): 3-day offset
+- Pass (<100%): 1-day offset
+- Default: tomorrow
 
 ---
 
 ## FSRS Service API
 
 ### CalculateNextReview
-
-Pure function for FSRS scheduling.
-
-**Endpoint:** `CalculateNextReview(state FSRSState, rating int) → FSRSResult`
-
-**Request:**
-```json
-{
-  "state": {
-    "stability": 1.5,
-    "difficulty": 5.0,
-    "elapsed_days": 1
-  },
-  "rating": 3
-}
-```
-
-**Response:**
-```json
-{
-  "next_interval_days": 3,
-  "new_state": {
-    "stability": 2.8,
-    "difficulty": 4.8
-  }
-}
-```
-
----
+Pure function: FSRSState + rating → next interval + new state.
 
 ### GetDueCards
-
-Returns all cards due for a topic.
-
-**Endpoint:** `GetDueCards(topicID string) → []Card`
+Returns all due cards for a topic.
 
 ---
 
 ## RAG / Ask AI API
 
 ### AskQuestion
-
-Answers a question using topic-scoped retrieval.
-
-**Endpoint:** `AskQuestion(topicID string, question string) → Answer`
-
-**Request:**
-```json
-{
-  "topic_id": "topic-uuid",
-  "question": "Explain backpropagation"
-}
-```
-
-**Response:**
-```json
-{
-  "answer": "Backpropagation is...",
-  "context_blocks": ["block-uuid-1", "block-uuid-2"],
-  "confidence": 0.95
-}
-```
+Topic-scoped retrieval. Input: topic_id + question. Output: answer, context_blocks, confidence.
 
 ---
 
-## SuspendFlashcard API
-
-### SuspendFlashcard
-
-Suspends a flashcard, removing it from all future review sessions.
-
-**Endpoint:** `SuspendFlashcard(taskID string, cardID string) → int`
-
-**Request:**
-```json
-{
-  "task_id": "review-task-uuid",
-  "card_id": "card-uuid"
-}
-```
-
-**Response:** Remaining pending card count in current session.
-
-**Side Effects:**
-- `fsrs_cards.suspended` set to `1`
-- Card removed from all future `FLASHCARD_REVIEW` sessions
-- Review task card marked as reviewed
+## SuspendFlashcard
+Suspends a card (removed from future reviews). Returns remaining pending card count.
 
 ---
 
-## GetTopicSectionsContent API
-
-### GetTopicSectionsContent
-
-Returns joined text content of all sections in a topic, used by SocraticRescue to display source material.
-
-**Endpoint:** `GetTopicSectionsContent(topicID string, notebookID string) → map`
-
-**Response:**
-```json
-{
-  "content": "Joined text of all chunks in topic...",
-  "notebook_title": "Neural Networks"
-}
-```
+## GetTopicSectionsContent
+Returns joined text of all sections in a topic (used by SocraticRescue).
 
 ---
 
 ## SocraticRescue API
 
 ### CompleteSocraticRescue
-
-Completes a SOCRATIC_REMEDIAL rescue session and inserts a fresh QUIZ task for re-quiz.
-
-**Endpoint:** `CompleteSocraticRescue(taskID string) → error`
-
-**Request:**
-```json
-{
-  "task_id": "socratic-remedial-task-uuid"
-}
-```
-
-**Response:** Success or error
-
-**Side Effects:**
-- SOCRATIC_REMEDIAL task marked COMPLETED
-- Fresh QUIZ task inserted into queue with `"source": "socratic_rescue_requiz"` in payload
-- Queue unblocks — fresh quiz becomes next pending task
-
-**Errors:**
-- `ErrNotFound` - Task not found
-- `ErrTaskNotActive` - Task is not in ACTIVE status
-- `ErrInvalidTaskType` - Task is not SOCRATIC_REMEDIAL
-
----
+Completes rescue session, inserts fresh QUIZ task with `"source": "socratic_rescue_requiz"`. Queue unblocks.
 
 ### DevForceSocraticRescue
-
-Dev-only endpoint to force a topic into SOCRATIC_REMEDIAL state for testing.
-
-**Endpoint:** `DevForceSocraticRescue(notebookID, topicID string) → error`
-
-**Access:** Only when `APP_ENV = dev`
-
-**Side Effects:**
-- Deletes FSRS flashcards for the topic
-- Inserts SOCRATIC_REMEDIAL task into queue
+Dev-only: forces topic into SOCRATIC_REMEDIAL state. Requires `APP_ENV=dev`.
 
 ---
 
 ## Settings API
 
-### GetRemedialStrategy
-
-Returns the user's current preference for handling quiz failures.
-
-**Endpoint:** `GetRemedialStrategy() → string`
-
-**Response:**
-```json
-"CLASSIC"
-```
-
-**Values:** `"CLASSIC"` (reread first) or `"FAST"` (direct Socratic rescue).
-
----
-
-### SetRemedialStrategy
-
-Updates the user's preference for handling quiz failures.
-
-**Endpoint:** `SetRemedialStrategy(strategy string) → error`
-
-**Request:**
-```json
-"FAST"
-```
-
-**Side Effects:**
-- Updates `default_remedial_strategy` in `user_settings` table
-- Affects subsequent quiz failure behavior in `SubmitQuizAttempt`
+### GetRemedialStrategy / SetRemedialStrategy
+Get/set user's quiz failure preference: `CLASSIC` (reread first) or `FAST` (direct rescue).
 
 ---
 
 ## Ingestion API
 
 ### ProcessPDF
-
-Extracts text and creates chunks.
-
-**Endpoint:** `ProcessPDF(filePath string) → ProcessingResult`
-
-**Response:**
-```json
-{
-  "topic_id": "topic-uuid",
-  "title": "Neural Networks",
-  "chunks_created": 12,
-  "tasks_inserted": 12
-}
-```
-
-**Legacy note:** Older responses used the key `blocks_created`; the current naming is `chunks_created` (see `doc/SCHEMA.md` for mapping).
+Extracts text, creates chunks. Returns topic_id, title, chunks_created, tasks_inserted.
 
 ---
 
 ## Type Definitions
 
 ### Task Types
-
 ```go
 type TaskType string
-
 const (
   TaskTypeReading         TaskType = "READING"
   TaskTypeQuiz            TaskType = "QUIZ"
@@ -530,10 +155,8 @@ const (
 ```
 
 ### Task Status
-
 ```go
 type TaskStatus string
-
 const (
   StatusPending   TaskStatus = "PENDING"
   StatusActive    TaskStatus = "ACTIVE"
@@ -543,93 +166,28 @@ const (
 )
 ```
 
-**Status Semantics:**
-
-| Status | Meaning | Terminal |
-|--------|---------|----------|
-| `PENDING` | Waiting in queue | No |
-| `ACTIVE` | Currently being worked | No |
-| `COMPLETED` | Successfully finished | Yes |
-| `SKIPPED` | User bypassed task | Yes (auditable) |
-| `FAILED` | Generation error | Yes (can retry) |
+| Status | Terminal |
+|--------|----------|
+| `PENDING` | No |
+| `ACTIVE` | No |
+| `COMPLETED` | Yes |
+| `SKIPPED` | Yes (auditable, can resurface) |
+| `FAILED` | Yes (can retry) |
 
 ### Generation Status (Quiz Tasks)
-
-```go
-type GenerationStatus string
-
-const (
-  StatusGenerating GenerationStatus = "GENERATING"
-  StatusReady      GenerationStatus = "READY"
-  StatusFailedGen  GenerationStatus = "FAILED"
-)
-```
-
-### Task Result Types
-
-```go
-type TaskResult struct {
-  Type   string      // "quiz_result", "read_complete", "flashcard_review"
-  Data   interface{} // Type-specific data
-}
-
-type QuizResult struct {
-  Score   int  // 0-100
-  Passed  bool
-}
-
-type FlashcardReviewResult struct {
-  CardsReviewed int
-  Ratings       []int
-}
-```
+`GENERATING` → `READY` or `FAILED`
 
 ---
 
 ## Dashboard Streak API
 
 ### GetStreakState
-
-Returns streak metrics and active calendar dates for the dashboard streak calendar widget.
-
-**Endpoint:** `GetStreakState(timezoneOffsetMinutes int) → map`
-
-**Request:**
-```json
-{
-  "timezoneOffsetMinutes": -330
-}
-```
-
-**Response:**
-```json
-{
-  "current_streak": 5,
-  "longest_streak": 12,
-  "active_dates": ["2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27"]
-}
-```
-
-**Behavior:**
-- Queries all completed task timestamps from `study_queue`
-- Converts UTC timestamps to local day boundaries using provided timezone offset
-- Computes consecutive active days for current and longest streaks
-- Returns list of active dates for calendar highlighting
-
-**Implementation:**
-- Backend: `GetStreakState()` in `app_study.go`
-- Database: `GetCompletedTaskTimes()` in `internal/db/study_queue_repo.go`
-- Frontend: Calendar widget in `Dashboard.vue`
+Returns current_streak, longest_streak, active_dates[] for calendar widget. Timezone-aware.
 
 ---
 
 ## Cloud Sync Payload
 
-### SyncPayload
-
-Cloud sync payload structure with stable identifiers for cross-student analytics.
-
-**Structure:**
 ```json
 {
   "classroom_code": "CLS101",
@@ -649,80 +207,35 @@ Cloud sync payload structure with stable identifiers for cross-student analytics
 }
 ```
 
-**Key Changes:**
-- `Filename`: SHA-256 file hash (stable across installs)
-- `PageNumber`: Source page number (stable across installs)
-- Replaces local IDs (`topic_id`, `notebook_id`) for cloud analytics
-- `classroom_code`: Teacher-student association field
-
-**Data Chain:**
-`review_log.reference_id` → `flashcards.id` → `chunks.id` → `notebook_topics.topic_id` → `notebooks.file_path` → `filepath.Base()`
+Data chain: `reference_id → flashcards.id → chunks.id → notebook_topics.topic_id → notebooks.file_path → filepath.Base()`
 
 ---
 
 ## Error Handling
 
-### Standard Errors
-
 | Error | Code | Description |
 |-------|------|-------------|
 | ErrNotFound | 404 | Resource not found |
-| ErrNoPendingTasks | 204 | Queue is empty |
+| ErrNoPendingTasks | 204 | Queue empty |
 | ErrInvalidInput | 400 | Invalid request |
 | ErrLLMUnavailable | 503 | LLM service down |
 | ErrQuizGenerationFailed | 500 | Quiz generation error |
 | ErrMaxRereadsReached | 409 | Max reread attempts exceeded |
-| ErrTaskNotActive | 409 | Task is not in ACTIVE status |
-
-### Error Response Format
-
-```json
-{
-  "error": "ErrNoPendingTasks",
-  "message": "No pending tasks in queue",
-  "code": 204
-}
-```
 
 ---
 
-## API Call Patterns
-
-### Standard Flow
+## Standard Flow
 
 ```
-1. Dashboard calls GetNextTask()
-2. User clicks task
-3. Router mounts module with task.context
-4. Module calls its API (GetBlockContent, GetQuizSet, etc.)
-5. User completes task
-6. Module calls CompleteTask(taskID, result)
-7. Queue router marks complete, inserts follow-ups
-8. Dashboard refreshes, shows next task
+Dashboard → GetNextTask() → User clicks → Router mounts module
+→ Module calls API (GetBlockContent, GetQuizSet, etc.)
+→ User completes → CompleteTask(taskID, result)
+→ Queue router marks complete + inserts follow-ups
+→ Dashboard refreshes, shows next task
 ```
 
-Reader completion may immediately lead to a generated Quiz task becoming the next pending queue item. That transition is queue-owned, not a direct module-to-module route.
+All calls synchronous. No callbacks, event listeners, webhooks, or background polling.
 
-### No Async Patterns
+## Authentication
 
-- No callbacks
-- No event listeners
-- No webhooks
-- No background job status polling
-
-All calls are:
-- Synchronous request/response
-- Immediate result
-- Loading state shown in UI
-
----
-
-## Authentication / Security
-
-Local-only app - no authentication required.
-
-All APIs:
-- Run on localhost
-- Bound to Wails bridge
-- No CORS needed
-- No tokens needed
+Local-only app. All APIs run on localhost via Wails bridge. No auth, no CORS, no tokens.

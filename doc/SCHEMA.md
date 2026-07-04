@@ -2,9 +2,9 @@
 
 ## Overview
 
-SQLite is the source of truth. The current schema is centered on the persistent `study_queue`, with content ingestion, quiz generation, FSRS retention, profile management, and user/LLM settings stored in a set of explicit tables.
+SQLite = source of truth. Current schema centered on persistent `study_queue`, with content ingestion, quiz generation, FSRS retention, profile management, + user/LLM settings in explicit tables.
 
-This document is generated from and must remain synchronized with `internal/db/schema.go`. Every `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statement in `InitSchema()` must have a corresponding documented entry below.
+Generated from + must stay synchronized with `internal/db/schema.go`. Every `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` in `InitSchema()` must have corresponding documented entry below.
 
 ## Table Map
 
@@ -20,7 +20,7 @@ This document is generated from and must remain synchronized with `internal/db/s
 
 ### `study_queue`
 
-Central task table for the application.
+Central task table.
 
 | Field          | Type                                | Description                                                 |
 | -------------- | ----------------------------------- | ----------------------------------------------------------- |
@@ -60,7 +60,7 @@ Per-task reading cursor.
 
 ### `review_task_cards`
 
-Links a flashcard review task to the cards selected for that session.
+Links flashcard review task to cards selected for that session.
 
 | Field | Type | Description |
 |---|---|---|
@@ -127,7 +127,7 @@ CREATE INDEX idx_topics_status_created_at ON topics(status, created_at DESC);
 
 ### `chunks`
 
-Granular content chunks produced from the source document.
+Granular content chunks from source document.
 
 | Field | Type | Description |
 |---|---|---|
@@ -151,7 +151,7 @@ CREATE INDEX idx_chunks_topic_page_num ON chunks(topic_id, page_num);
 
 ### `notebook_topics`
 
-Many-to-many link between notebooks and topics.
+Many-to-many link between notebooks + topics.
 
 | Field | Type | Description |
 |---|---|---|
@@ -163,7 +163,7 @@ Primary key: `(notebook_id, topic_id)`.
 
 ### `notebook_chunks`
 
-Many-to-many link between notebooks and chunks.
+Many-to-many link between notebooks + chunks.
 
 | Field | Type | Description |
 |---|---|---|
@@ -188,17 +188,17 @@ Topic-level learning metadata.
 | Field | Type | Description |
 |---|---|---|
 | `topic_id` | TEXT PRIMARY KEY | FK → `topics(id)` |
-| `learned_at` | TIMESTAMP | When topic was marked learned |
+| `learned_at` | TIMESTAMP | When topic marked learned |
 | `last_read_at` | TIMESTAMP | Last read time |
 | `mastery_score` | REAL DEFAULT 0 | Topic mastery score |
-| `review_enabled` | INTEGER DEFAULT 0 | Whether review is enabled |
+| `review_enabled` | INTEGER DEFAULT 0 | Whether review enabled |
 | `status` | TEXT DEFAULT 'active' | Topic progress lifecycle state |
 
 ## Assessment Tables
 
 ### `quiz_attempts`
 
-Rollup of a completed quiz task.
+Rollup of completed quiz task.
 
 | Field | Type | Description |
 |---|---|---|
@@ -286,7 +286,7 @@ Flashcards with FSRS state.
 | `answer` | TEXT NOT NULL | Card back |
 | `state_json` | TEXT | FSRS state payload |
 | `due_at` | INTEGER | Next due timestamp |
-| `suspended` | BOOLEAN DEFAULT 0 | Whether the card is suspended |
+| `suspended` | BOOLEAN DEFAULT 0 | Whether card suspended |
 | `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Update time |
 
@@ -299,11 +299,11 @@ CREATE INDEX idx_fsrs_cards_suspended_due_at ON fsrs_cards(suspended, due_at);
 
 **Initial State (Simplified Calibration):**
 - New flashcards start in clean Review state (`StateCode: 2`, `Reps: 0`)
-- Initial `due_at` is set based on quiz performance:
+- Initial `due_at` set based on quiz performance:
   - Ace (100%): 3-day offset
   - Pass (<100%): 1-day offset
   - Default: Tomorrow offset (1 day)
-- This bypasses the FSRS intraday learning phase for predictable initial intervals
+- Bypasses FSRS intraday learning phase for predictable initial intervals
 
 ### `fsrs_review_log`
 
@@ -359,7 +359,7 @@ Singleton table for global preferences.
 | `max_flashcards_per_session` | INTEGER NOT NULL DEFAULT 30 | Max flashcards per session |
 | `study_start_time` | TEXT DEFAULT '17:00' | Study window start time (HH:MM format) |
 | `study_end_time` | TEXT DEFAULT '18:00' | Study window end time (HH:MM format) |
-| `reminders_enabled` | BOOLEAN DEFAULT 1 | Whether study reminders are enabled |
+| `reminders_enabled` | BOOLEAN DEFAULT 1 | Whether study reminders enabled |
 | `active_profile_id` | TEXT | Active study profile. FK → `study_profiles(id)` ON DELETE SET NULL |
 | `skip_to_reading_active` | BOOLEAN DEFAULT 0 | Skip dashboard to active reading |
 | `cloud_sync_url` | TEXT DEFAULT '' | Remote sync endpoint URL |
@@ -376,11 +376,11 @@ Singleton table for global preferences.
 
 **Foreign keys:** `active_profile_id` → `study_profiles(id)` ON DELETE SET NULL.
 
-**Bootstrap:** A single row with default settings `(id=1, max_flashcards_per_session=30, study_start_time='17:00', study_end_time='18:00', reminders_enabled=1)` is inserted on initial schema creation.
+**Bootstrap:** Single row with default settings `(id=1, max_flashcards_per_session=30, study_start_time='17:00', study_end_time='18:00', reminders_enabled=1)` inserted on initial schema creation.
 
 ### `llm_settings`
 
-LLM provider configuration per performance tier.
+LLM provider config per performance tier.
 
 | Field | Type | Description |
 |---|---|---|
@@ -390,10 +390,10 @@ LLM provider configuration per performance tier.
 | `model` | TEXT NOT NULL DEFAULT '' | Model identifier string |
 | `timeout_ms` | INTEGER NOT NULL DEFAULT 30000 | Request timeout in milliseconds |
 | `api_key_source` | TEXT NOT NULL DEFAULT 'keyring' | Key storage backend |
-| `has_api_key` | BOOLEAN DEFAULT 0 | Whether an API key has been configured |
+| `has_api_key` | BOOLEAN DEFAULT 0 | Whether API key configured |
 | `updated_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Last update time |
 
-**Bootstrap:** Two rows are inserted on initial schema creation:
+**Bootstrap:** Two rows inserted on initial schema creation:
 
 ```
 ('fast',  'groq', 'https://api.groq.com/openai', 'openai/gpt-oss-120b', 60000, 'keyring', 0)
@@ -402,7 +402,7 @@ LLM provider configuration per performance tier.
 
 ### `study_profiles`
 
-Named study profiles with deadline tracking. Referenced by `user_settings.active_profile_id` and `notebooks.profile_id`.
+Named study profiles with deadline tracking. Referenced by `user_settings.active_profile_id` + `notebooks.profile_id`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -445,35 +445,35 @@ Named study profiles with deadline tracking. Referenced by `user_settings.active
 
 ### Semantic Relationships
 
-- `notebooks` link to `topics` through `notebook_topics` (M:N).
-- `notebooks` link to `chunks` through `notebook_chunks` (M:N).
-- `topics` own `chunks`, `written_questions`, `fsrs_cards`, and `fsrs_review_log` rows.
-- `written_questions` and `fsrs_cards` can optionally reference a specific `chunk` for source context.
-- `quiz_attempts` records the outcome of a `study_queue` QUIZ task.
-- `review_task_cards` binds a `FLASHCARD_REVIEW` queue task to the exact cards reviewed in that session.
+- `notebooks` → `topics` through `notebook_topics` (M:N).
+- `notebooks` → `chunks` through `notebook_chunks` (M:N).
+- `topics` own `chunks`, `written_questions`, `fsrs_cards`, `fsrs_review_log` rows.
+- `written_questions` + `fsrs_cards` can optionally reference specific `chunk` for source context.
+- `quiz_attempts` records outcome of `study_queue` QUIZ task.
+- `review_task_cards` binds `FLASHCARD_REVIEW` queue task to exact cards reviewed in session.
 - `topic_progress` stores per-topic learning metadata (mastery, last read, review toggle).
-- `study_profiles` own `notebooks` (via `profile_id`) and are selected as active profile in `user_settings`.
-- `llm_settings` is referenced by application code at runtime to configure model providers per tier.
+- `study_profiles` own `notebooks` (via `profile_id`) + selected as active profile in `user_settings`.
+- `llm_settings` referenced by application code at runtime to configure model providers per tier.
 
-## Legacy Terms Removed From The Current Schema
+## Legacy Terms Removed From Current Schema
 
-The live schema no longer uses the legacy table names. Mapping (old → current):
+Live schema no longer uses legacy table names. Mapping (old → current):
 
 - `blocks` → `chunks` (granular content chunks)
 - `quiz_sets` → dynamically generated questions (stored in task payload JSON)
-- `sources` → `notebooks` (source documents are stored in `notebooks` and linked via `notebook_chunks` / `notebook_topics`)
+- `sources` → `notebooks` (source documents stored in `notebooks` + linked via `notebook_chunks` / `notebook_topics`)
 - `app_config` → `user_settings` (singleton configuration stored in `user_settings`)
-- `block_vectors` → embeddings managed by the RAG embedding store; `chunks.embedding_ref` holds references to external/vector storage
+- `block_vectors` → embeddings managed by RAG embedding store; `chunks.embedding_ref` holds references to external/vector storage
 
-These mappings are documentation-only: the code and live schema already use the current table names. Before removing any legacy migration scripts or external references, verify there are no external systems (backups, ETL jobs, CI scripts) that still depend on the legacy names.
+These mappings documentation-only: code + live schema already use current table names. Before removing any legacy migration scripts or external references, verify no external systems (backups, ETL jobs, CI scripts) still depend on legacy names.
 
 ## Data Flow Summary
 
-1. Ingestion creates `notebooks`, `topics`, and `chunks`.
-2. Study work is queued through `study_queue`.
-3. Quiz generation uses `written_questions` and inline payload quiz questions; answers/attempts land in `quiz_attempts` and `written_user_answers`.
-4. Quiz completion is rolled up in `quiz_attempts`, with `reread_attempts` tracking repeated remediation. After 1 failed reread, `SOCRATIC_REMEDIAL` rescue task is inserted.
+1. Ingestion creates `notebooks`, `topics`, `chunks`.
+2. Study work queued through `study_queue`.
+3. Quiz generation uses `written_questions` + inline payload quiz questions; answers/attempts land in `quiz_attempts` + `written_user_answers`.
+4. Quiz completion rolled up in `quiz_attempts`, with `reread_attempts` tracking repeated remediation. After 1 failed reread, `SOCRATIC_REMEDIAL` rescue task inserted.
 5. Socratic rescue uses `external_help_required` flag on `topics` to prevent infinite rescue cycles.
-6. Long-term retention is handled by `fsrs_cards`, `fsrs_review_log`, and `manual_flashcards`.
+6. Long-term retention handled by `fsrs_cards`, `fsrs_review_log`, `manual_flashcards`.
 7. Cloud sync failures insert `FLASHCARD_SYNC` tasks at highest queue priority.
-6. Session-specific review mappings live in `review_task_cards`, and per-task reading cursors live in `reading_progress`.
+6. Session-specific review mappings live in `review_task_cards`, per-task reading cursors live in `reading_progress`.

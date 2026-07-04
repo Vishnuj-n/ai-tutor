@@ -1,483 +1,224 @@
 # AI Tutor App Flow
-- **Legacy term note:** The term `blocks` has been replaced by `chunks`. The API still uses `block_id` as the identifier for a chunk. See `doc/SCHEMA.md` for mapping.
 
-## Core Philosophy: Persistent Guided Study Queue
+**Legacy note:** `blocks` → `chunks`. API still uses `block_id`. See `doc/SCHEMA.md`.
 
-**Reference:** `ARCHITECTURE.md` for complete system design, queue ordering rules, and architectural philosophy.
+Queue-driven progression is deterministic. Manual entry points also supported. Both use SQLite as source of truth.
 
-This document describes **runtime flow, user interaction sequence, and lifecycle behavior**. Queue-driven progression is deterministic and recommended, and manual study entry points are also supported. Both paths use SQLite as the source of truth and must converge on the same canonical bootstrap and ownership semantics.
-
-Canonical checkpoint flow:
-
-Dashboard -> Reader -> Quiz -> Dashboard
-
-**Reading Layer**: Focuses on immediate comprehension validation and progression readiness.
-**Retention Layer**: Focuses on long-term retention using FSRS-based spaced repetition.
-
-Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard owns progression again after quiz submission and evaluation.
+**Canonical flow:** Dashboard → Reader → Quiz → Dashboard
 
 ---
 
-## 1. The Queue Loop (Primary Flow)
-
-### What
-
-The application follows a deterministic SQLite-driven queue:
+## 1. Queue Loop (Primary Flow)
 
 ```
-Dashboard fetches next pending task
-→ User clicks task → Status becomes ACTIVE
-→ Mount correct module/view
-→ User completes/skips task
-→ Mark task COMPLETED/SKIPPED/FAILED
-→ Insert follow-up tasks (if any)
+Dashboard fetches next PENDING task
+→ User clicks → status ACTIVE
+→ Mount correct module
+→ User completes/skips
+→ Mark COMPLETED/SKIPPED/FAILED
+→ Insert follow-up tasks
 → Repeat
 ```
 
-### Multi-Notebook Priority
+**Multi-Notebook Priority:** Notebooks have `priority INTEGER DEFAULT 5` (1-10). Higher = more frequent. This is a deterministic bias, not adaptive scheduling.
 
-Multiple notebooks are supported with deterministic prioritization:
-
-- Notebooks have `priority INTEGER DEFAULT 5` (1-10 scale)
-- Higher priority notebooks surface more frequently
-- Lower priority notebooks still eventually appear
-- Priority is a **deterministic bias** (query-time rule, not adaptive scheduling)
-
-### Queue Ordering Rules
-
-**Reference:** `ARCHITECTURE.md` Section 7 for complete priority hierarchy and SQL query.
-
-Explicit priority hierarchy (task type first, then notebook priority):
+**Queue Ordering:**
 
 | Order | Task Type |
 |-------|-----------|
-| 1 | `FLASHCARD_SYNC` (cloud sync pending) |
-| 2 | `FLASHCARD_REVIEW` (due reviews) |
+| 1 | `FLASHCARD_SYNC` |
+| 2 | `FLASHCARD_REVIEW` |
 | 3 | `REREAD` |
 | 4 | `QUIZ` |
 | 5 | `READING` |
-| 6 | `SOCRATIC_REMEDIAL` (concept rescue) |
+| 6 | `SOCRATIC_REMEDIAL` |
 | 7 | `EXAMINER` |
 
 Then apply notebook priority bias within each tier.
 
-### Why
+**How:**
+1. Dashboard queries `study_queue` for next PENDING task
+2. User clicks → status ACTIVE, `activated_at` set
+3. Router opens module with context
+4. Module renders content from `task_type` + `block_id`
+5. User completes → `CompleteTask(taskID, result)`
+6. Backend marks status, inserts follow-ups
+7. Dashboard refreshes
 
-**Reference:** `ARCHITECTURE.md` Section 1 for architectural rationale.
-
-Runtime benefits:
-
-### How
-
-1. **Dashboard queries** `study_queue` for next `PENDING` task (with ordering rules)
-2. **User clicks task** → Status becomes `ACTIVE`, `activated_at` timestamp set
-3. **Router opens** correct module with context
-4. **Module renders** content based on `task_type` and `block_id`
-5. **User completes task** → Module calls `CompleteTask(taskID, result)`
-6. **Backend marks** task `COMPLETED`/`SKIPPED`/`FAILED`, inserts follow-up tasks
-7. **Dashboard refreshes** showing next pending task
-
-Manual study actions, such as opening Quiz, Flashcards, Reader, or Written Assessment directly, are valid when they call the same backend initialization and retrieval helpers instead of re-implementing them per route. Generated QUIZ follow-up tasks may be activated immediately after Reader completion as part of the same checkpoint chain, but that remains a queue transition rather than arbitrary module-to-module routing.
-
-### Task Lifecycle Semantics
-
-Explicit state machine:
-
+**Task Lifecycle:**
 ```
-PENDING → ACTIVE (when user opens task)
-  ↓
-COMPLETED (on success)
-  ↓
-SKIPPED (on user bypass - auditable)
-  ↓
-FAILED (on generation error - can retry)
+PENDING → ACTIVE → COMPLETED
+           ↓
+        SKIPPED / FAILED
 ```
 
-**Crash Recovery:** On startup, any `ACTIVE` tasks older than 30-minute timeout revert to `PENDING`. This ensures restart-safe queue recovery.
+Crash recovery: ACTIVE tasks > 30 min revert to PENDING on startup.
 
 ---
 
 ## 2. Ingestion Pipeline
 
-### What
-
 PDF upload → Chapter selection → Sliding window chunking → READING tasks inserted
 
-### Why
-
-**Reference:** `ARCHITECTURE.md` Section 5 for chunking rationale.
-
-### How
-
-1. **PDF Upload**: User uploads PDF, system extracts text
-2. **Chapter Selection**: User reviews/prunes extracted chapters
-3. **Sliding Window Chunking**:
-   - 2500-word chunks
-   - 200-word overlap between chunks
-   - Deterministic, no AI involvement in boundary decisions
-4. **READING Tasks Inserted**: One task per chunk into `study_queue`
+1. PDF Upload: user uploads, system extracts text
+2. Chapter Selection: user reviews/prunes chapters
+3. Sliding Window: 2500-word chunks, 200-word overlap, deterministic
+4. READING tasks inserted (one per chunk)
 
 ---
 
 ## 3. Reading Flow
 
-### What
+Reading completion → Backend generates QUIZ task
 
-User completes reading task → Backend generates follow-up QUIZ task
+**Trust-based:** User decides when done. Complete Session button always enabled. No page-completion validation. No timers or tracking.
 
-### Why
-
-**Reference:** `ARCHITECTURE.md` Section 8 for synchronous generation rationale.
-
-### Reading Completion (Trust-Based)
-
-Reading tasks use trust-based completion:
-
-- User decides when reading is complete
-- Complete Session button stays enabled during active reading task
-- No enforced page-completion validation
-- No engagement surveillance, timers, or tracking
-
-### How
-
-1. User clicks **Complete Session** when they feel ready (button always enabled)
-2. Frontend shows **loading spinner**
+1. User clicks Complete Session
+2. Frontend shows loading spinner
 3. Backend calls LLM synchronously
-4. Reading completion closes the reading task only; it does not measure mastery or progression quality
-5. Backend inserts and activates the generated **QUIZ task** in `study_queue`
-6. Dashboard may immediately surface the quiz as the next pending checkpoint
+4. Reading closes reading task only (not mastery signal)
+5. Backend inserts + activates QUIZ task
+6. Dashboard surfaces quiz as next task
 
-### Quiz Generation States
+**Quiz Generation States:** `GENERATING` → `READY` or `FAILED`
 
-QUIZ tasks have explicit generation lifecycle:
-
-| State | Meaning |
-|-------|---------|
-| `GENERATING` | LLM call in progress |
-| `READY` | Quiz ready for user |
-| `FAILED` | Generation error - dashboard surfaces explicitly |
-
-**Flow:**
-1. Reading complete → QUIZ task inserted with `GENERATING` state
-2. LLM called synchronously
-3. Success → `generation_status = READY`
-4. Failure → `generation_status = FAILED` (user sees explicit error)
-
-The Reader does not route itself to Quiz. Only generated follow-up quiz tasks may transition immediately through the queue loop.
+Reader does not route to Quiz. Only generated follow-up quiz tasks transition through queue.
 
 ---
 
 ## 4. Quiz Flow & Remediation
 
-### What
-
-Quiz submission/evaluation → Queue-driven follow-up
-
-### Why
-
-Remediation is lightweight queue insertion, NOT:
-
-- Forced loops
-- Hidden state machines  
-- User traps
-
-The app only **recommends** revisiting material.
-
-### How
-
-**IF PASS:**
+**Pass:**
 ```
-QUIZ task → mark COMPLETED
-→ Optionally insert FLASHCARD_REVIEW task or move to next queued task
-→ Dashboard shows next pending task
+QUIZ → COMPLETED
+→ Insert FLASHCARD_REVIEW or move to next task
+→ Dashboard shows next
 ```
 
-**IF FAIL (below threshold):**
+**Fail (below threshold):**
 
-Remediation behavior depends on the user-configured `default_remedial_strategy` (`CLASSIC` or `FAST`):
+Depends on `default_remedial_strategy`:
 
-**Classic Track (Default):**
-```plaintext
-QUIZ task → mark COMPLETED
-→ Insert REREAD task for the material (if under max attempts)
-→ Generate lightweight AI feedback
-→ Dashboard shows REREAD as next pending task
+**Classic (default):**
+```
+QUIZ → COMPLETED → Insert REREAD task (if under max attempts)
+→ Generate AI feedback → Dashboard shows REREAD
 ```
 
-**Fast Track (Direct Socratic Rescue):**
-```plaintext
-QUIZ task → mark COMPLETED
-→ Skip REREAD and directly insert SOCRATIC_REMEDIAL task
-→ Delete FSRS flashcards for the topic (protect purity)
-→ Dashboard shows Concept Rescue as next task
+**Fast (direct rescue):**
+```
+QUIZ → COMPLETED → Skip REREAD, insert SOCRATIC_REMEDIAL directly
+→ Delete FSRS flashcards → Dashboard shows Concept Rescue
 ```
 
-User can:
-- Complete the REREAD task (Classic Track)
-- Skip it (mark SKIPPED - auditable, can resurface)
-- The system does NOT force remediation loops
-
-Dashboard regains orchestration ownership after quiz submission and evaluation.
-
+User can complete or skip REREAD. No forced loops.
 
 ---
 
-## 4a. Socratic Rescue Pipeline (2-Strike)
-
-### What
-
-When a student fails a quiz twice on the same topic, the system intervenes with a guided rescue flow.
-
-### How
+## 4a. Socratic Rescue (2-Strike)
 
 **Strike 1 (quiz fail):**
-```plaintext
-QUIZ task → mark COMPLETED
-→ Insert REREAD task (if reread_attempt <= maxAutomaticRereadAttempts=1)
-→ Dashboard shows REREAD as next task
+```
+QUIZ → COMPLETED → Insert REREAD (if reread_attempt ≤ max)
+→ Dashboard shows REREAD
 ```
 
-**Strike 2 (quiz fail again after reread):**
-```plaintext
-QUIZ task → mark COMPLETED
-→ SOCRATIC_REMEDIAL task inserted (blocks queue)
-→ FSRS flashcards for topic deleted (protect purity)
-→ Dashboard shows Concept Rescue as next task
+**Strike 2 (quiz fail again):**
+```
+QUIZ → COMPLETED → Insert SOCRATIC_REMEDIAL (blocks queue)
+→ Delete FSRS flashcards → Dashboard shows Concept Rescue
 ```
 
-**Rescue session (dual-lane):**
-```plaintext
-Student opens SocraticRescue page
-→ Option A: In-App Socratic Tutor (interactive chat with context-grounded leading questions)
-→ Option B: External AI Prompt (source text preview + pre-engineered Socratic prompt)
-  → Student copies prompt to external LLM (copy-to-clipboard)
-  → Student completes external Socratic tutoring session
-→ Clicks "I've Completed the Session"
-→ SOCRATIC_REMEDIAL task marked COMPLETED
-→ Fresh QUIZ task inserted for same topic
-```
+**Rescue session:**
+1. Student opens SocraticRescue page → source text + Socratic prompt
+2. Option A: In-app Socratic tutor (interactive chat)
+3. Option B: Copy prompt to external LLM
+4. Clicks "I've Completed the Session"
+5. SOCRATIC_REMEDIAL → COMPLETED, fresh QUIZ task inserted
 
-**Re-quiz outcomes:**
-```plaintext
-[Pass] → Flashcards generated → Topic mastered → Next task
-[Fail] → external_help_required flag set on topic → Queue unblocks → Notice shown
-```
+**Re-quiz:** Pass → flashcards generated, topic mastered. Fail → `external_help_required` flag set, queue unblocks.
 
-### Key Behaviors
-
-- SOCRATIC_REMEDIAL **blocks the queue** — student must complete rescue before progressing
-- Single rescue cycle only — no infinite loops
-- No flashcards generated for failed concepts at any point
-- External prompt mode — no local LLM integration, student uses external tool
-- `external_help_required` flag on topic prevents further rescue cycles
-- Re-quiz identified by `"source": "socratic_rescue_requiz"` in task payload
+Key behaviors: SOCRATIC_REMEDIAL blocks queue, single rescue cycle only, no flashcards for failed concepts, `external_help_required` prevents further rescue.
 
 ---
 
 ## 4b. FLASHCARD_SYNC (Cloud Sync Recovery)
 
-### What
-
-When cloud sync fails after retry exhaustion, a `FLASHCARD_SYNC` task is inserted to ensure pending sync data is not lost.
-
-### How
-
-1. Cloud sync fails after all retry attempts
-2. `FLASHCARD_SYNC` task inserted into queue (priority tier 7, highest)
-3. On next sync attempt, if successful → `FLASHCARD_SYNC` tasks resolved (COMPLETED)
-4. If sync fails again → new `FLASHCARD_SYNC` task inserted
+On sync failure after retries → `FLASHCARD_SYNC` task inserted (priority tier 7). Resolved when sync succeeds. Prevents data loss.
 
 ---
 
 ## 5. Flashcards & FSRS
 
-### Retention Layer: Spaced Retrieval
+**FSRS = scheduling algorithm only** for long-term retention. Quizzes do NOT update FSRS state.
 
-FSRS is a scheduling algorithm only for long-term retention. It calculates intervals for flashcards and examiner tasks; it does not control immediate progression or comprehension validation. Quizzes are separate and do NOT update FSRS state.
+**One `FLASHCARD_REVIEW` task = one review session per block** (not per flashcard). Prevents queue explosion.
 
-### Flashcard Review Granularity
-
-**One `FLASHCARD_REVIEW` task = one review session for a block/chunk.**
-
-- Do NOT create one queue task per flashcard
-- A single task represents "review all due cards in this block"
-- Prevents queue explosion with many cards
-
-### How
-
-1. When reviews become **due** (per FSRS calculation):
-   - Insert `FLASHCARD_REVIEW` task into `study_queue` (one task per block)
-2. Dashboard fetches pending review task
-3. User completes flashcard session (reviews all due cards in block)
-4. FSRS calculates next review interval
-5. New `FLASHCARD_REVIEW` task scheduled for future due date
-
-Flashcards become **queue-driven review tasks**, not autonomous review systems.
+1. Reviews become due (per FSRS) → `FLASHCARD_REVIEW` task inserted
+2. Dashboard fetches review task
+3. User reviews all due cards in block
+4. FSRS calculates next interval
+5. New task scheduled for future due date
 
 ---
 
 ## 6. Examiner Mode
 
-### What
-
-Optional advanced queue task for written assessments.
-
-### How
-
-- Triggered after mastery thresholds (e.g., quiz scores > 80%)
-- Appears as `EXAMINER` task type in `study_queue`
-- Dashboard-driven, user-triggered
-- NOT a hidden autonomous system
-
-### Examiner Task Policy
-
-- Inserted after mastery thresholds
-- Assigned elevated queue priority (tier 5, after reviews/quizzes/reading)
-- Remain optional (user can skip)
-- Appear naturally in queue flow through deterministic ordering
-- NOT through hidden orchestration
-
-Prevents starvation: EXAMINER is tier 5, ensuring reviews and reading are not blocked.
+Optional written assessments. Triggered after mastery (e.g., quiz > 80%). Tier 7 priority (reviews/reading not blocked). User-triggered, not hidden.
 
 ---
 
-## 6a. Dashboard Streak Calendar (2026-06-28)
+## 6a. Dashboard Streak Calendar
 
-### What
-
-Monthly Streak Calendar widget in the dashboard sidebar tracks study consistency and motivates daily learning.
-
-### How
-
-1. **Backend computes streaks**: `GetStreakState(timezoneOffsetMinutes)` converts UTC completion times to local days
-2. **Frontend renders calendar**: Dynamic month layout with active day highlighting
-3. **Streak metrics displayed**: Current streak, longest streak, active dates
-4. **Visual feedback**: Glowing fire icon pulses when user completes a task today
-
-**Features:**
-- Timezone-aware: aligns UTC timestamps with user's local day boundaries
-- Active days highlighted with primary container color
-- Custom tooltip overlays showing activity details on hover
-- Flashcard Reviews Hero Card shows due count and overdue deck size
-- "Continue Reading" action contexts with "Resume" buttons for active readings
+Monthly calendar widget tracks study consistency. Timezone-aware, highlights active days, shows current/longest streak, fire icon pulses on today's completion.
 
 ---
 
-## 6b. Cloud Sync with Stable Identifiers (2026-06-28)
+## 6b. Cloud Sync
 
-### What
-
-Cloud sync payload uses stable SHA-256 file hashes and page numbers instead of local database IDs for cross-student analytics.
-
-### How
-
-1. **Local IDs replaced**: `topic_id`, `notebook_id` → `filename` (file hash), `page_number`
-2. **Delta sync**: Only unsent review logs are included, eliminating duplicates
-3. **Classroom integration**: `classroom_code` field for teacher-student association
-4. **Clerk authentication**: Support for cloud dashboard access
-
-**Data Chain:**
-```
-review_log.reference_id → flashcards.id → chunks.id → notebook_topics.topic_id → notebooks.file_path → filepath.Base()
-```
+Stable SHA-256 file hashes + page numbers replace local IDs for cross-student analytics. Delta sync (only unsent logs). `classroom_code` for teacher-student association.
 
 ---
 
-## 7. Navigation and Layout
+## 7. Navigation
 
-### What
-
-Left sidebar navigation with persistent sections:
-
-1. Dashboard (default landing)
-2. Reader
-3. Notebooks
-4. Quiz
-5. Flashcards
-6. Examiner (WrittenAssessment)
-7. Tutor (Socratic)
-8. SocraticRescue (Concept Rescue — queue-driven, not in sidebar)
-9. Settings (bottom)
-10. Sync (bottom)
-
-### Why
-
-Stable mental model; users can always access any module directly, but the **Dashboard queue is the primary workflow**.
+Left sidebar: Dashboard, Reader, Notebooks, Quiz, Flashcards, Examiner, Tutor, Settings, Sync. Dashboard queue is primary workflow.
 
 ---
 
 ## 8. Synchronous Generation
 
-**Reference:** `ARCHITECTURE.md` Section 8 for LLM layer design.
-
-All AI generation is synchronous. User clicks Complete → Loading spinner → LLM call → Response → Task inserted.
+All AI generation sync. Click Complete → Spinner → LLM call → Response → Task inserted.
 
 ---
 
 ## 9. Error and State Feedback
 
-### What
+- Loading: spinner for LLM calls
+- Empty queue: "All caught up! Upload a new PDF."
+- AI unavailable: explicit error, no fallback
+- Queue state: always visible via SQLite
+- Quiz gen failed: explicit error, retry available
 
-Consistent status signaling for loading, success, and failure.
-
-### How
-
-- **Loading**: Show spinner for synchronous LLM calls
-- **Empty Queue**: "All caught up! Upload a new PDF to continue."
-- **AI Unavailable**: Explicit error, no fallback
-- **Queue State**: Always visible and queryable via SQLite
-- **Quiz Generation Failed**: Explicit error state, user can retry
-- **Max Rereads Reached**: Recommendation message, manual retry available
-
-### Skip Semantics
-
-Explicit terminal states preserve audit trail:
-
-| Status | Meaning | Can Resurface |
-|--------|---------|---------------|
-| `COMPLETED` | Successfully finished | No |
-| `SKIPPED` | User bypassed task | Yes (manual retry) |
-| `FAILED` | Generation error | Yes (can retry) |
-
-Skipped tasks are auditable and can resurface if needed. Do NOT silently mark skipped tasks as completed.
+**Skip semantics:**
+| Status | Can Resurface |
+|--------|---------------|
+| COMPLETED | No |
+| SKIPPED | Yes (manual retry) |
+| FAILED | Yes (can retry) |
 
 ---
 
-## 10. Module Boundaries (Strict)
+## 10. Module Boundaries
 
-### Reader Module
-- Renders PDF pages
-- Displays content from assigned page range
-- StartPage is authoritative for opening context
-- EndPage is informational only
-- Trust-based completion (user signals when done)
-- Reader only completes the reading task
-- No orchestration logic
-- No completion validation or gating
-- No arbitrary routing to other modules
+**Reader:** Renders PDF, trust-based completion, no orchestration, no completion gating.
 
-Generated follow-up QUIZ tasks may be activated immediately after Reader completion through the queue loop only.
+**Quiz:** Displays quiz, scores, drives follow-up through queue results, no orchestration.
 
-### Quiz Module
-- Displays quiz
-- Returns score
-- Drives mastery/remediation follow-up through queue results
-- No orchestration logic
+**Flashcards:** Renders cards, captures ratings, no orchestration.
 
-### Flashcard Module
-- Renders cards
-- Captures ratings (Again/Hard/Good/Easy)
-- No orchestration logic
+**Examiner:** Renders assessments, no orchestration.
 
-### Examiner Module
-- Renders written assessments
-- No orchestration logic
+**SocraticRescue:** Source text preview + prompt, "Copy to Clipboard", "I've Completed" → `CompleteSocraticRescue(taskID)`, inserts QUIZ.
 
-### SocraticRescue Module
-- Renders source text preview + pre-engineered Socratic prompt
-- Provides "Copy to Clipboard" for external LLM interaction
-- "I've Completed the Session" calls `CompleteSocraticRescue(taskID)`
-- Inserts fresh QUIZ task for re-quiz
-- No orchestration logic
-
-**Queue Router only**: fetch next pending task, mount correct module, mark complete, insert follow-up tasks.
+**Queue Router only:** fetch next task, mount module, mark complete, insert follow-ups.
