@@ -422,7 +422,11 @@ func FlashcardStateToCard(state FlashcardState, dueAt, lastReviewedAt int64) fsr
 		dueTime = time.Unix(dueAt, 0)
 	}
 	if lastReviewedAt > 0 {
-		lastReviewTime = time.Unix(lastReviewedAt, 0)
+		if lastReviewedAt > 1e12 {
+			lastReviewTime = time.UnixMilli(lastReviewedAt)
+		} else {
+			lastReviewTime = time.Unix(lastReviewedAt, 0)
+		}
 	}
 
 	// Map StateCode to fsrs.State

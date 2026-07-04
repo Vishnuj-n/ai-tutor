@@ -9,7 +9,7 @@ import (
 )
 
 // CreateNotebook saves a notebook record to the database
-func (r *Repository) CreateNotebook(id, title, filePath, fileType, topicID string, pageCount int) error {
+func (r *Repository) CreateNotebook(id, title, filePath, fileType, topicID, fileHash string, pageCount int) error {
 	var topicValue interface{}
 	if topicID != "" {
 		validatedTopicID, err := validateID(topicID, "topic id")
@@ -25,9 +25,9 @@ func (r *Repository) CreateNotebook(id, title, filePath, fileType, topicID strin
 	}
 
 	_, err = r.db.Exec(`
-		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, status, indexing_status, page_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, validatedID, title, filePath, fileType, topicValue, "uploaded", "PENDING", pageCount)
+		INSERT INTO notebooks (id, title, file_path, file_type, topic_id, file_hash, status, indexing_status, page_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, validatedID, title, filePath, fileType, topicValue, fileHash, "uploaded", "PENDING", pageCount)
 	return err
 }
 

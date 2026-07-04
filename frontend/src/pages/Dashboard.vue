@@ -269,54 +269,59 @@
         <div class="dashboard-sidebar">
           <!-- Calendar Streak Widget -->
           <section class="streak-calendar-widget card">
-            <header class="streak-header-row">
-              <div class="streak-title-container">
-                <span class="streak-flame-icon" :class="{ active: streakState.today_completed }">🔥</span>
-                <div class="streak-counts">
-                  <span class="streak-count-val">{{ streakState.current_streak }}</span>
-                  <span class="streak-count-label">day streak</span>
-                </div>
-              </div>
-              <div class="streak-stats-row">
-                <span class="streak-stat-item">Longest: <strong>{{ streakState.longest_streak }}d</strong></span>
-              </div>
-            </header>
-
-            <div class="calendar-month-title">{{ currentMonthLabel }}</div>
-            
-            <div class="calendar-grid">
-              <!-- Weekday Headers -->
-              <span v-for="day in ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']" :key="day" class="calendar-header-cell">
-                {{ day }}
-              </span>
-              
-              <!-- Empty Cells for Padding -->
-              <div 
-                v-for="(_, index) in calendarDays.filter(d => d.dayNum === null)" 
-                :key="'empty-' + index" 
-                class="calendar-day-cell empty"
-              ></div>
-              
-              <!-- Actual Day Cells -->
-              <div
-                v-for="day in calendarDays.filter(d => d.dayNum !== null)"
-                :key="day.dayNum"
-                class="calendar-day-cell"
-                :class="{ 
-                  active: day.active, 
-                  today: day.today,
-                  'has-hover': day.active
-                }"
-              >
-                <span class="day-number">{{ day.dayNum }}</span>
-                <span v-if="day.active" class="active-indicator"></span>
-                
-                <!-- Tooltip for active days -->
-                <div v-if="day.active" class="cell-tooltip">
-                  Activity logged! Streak kept active.
-                </div>
-              </div>
+            <div v-if="streakError" class="streak-error" style="color: var(--danger); font-size: 0.85rem; padding: 1rem; text-align: center;">
+              {{ streakError }}
             </div>
+            <template v-else>
+              <header class="streak-header-row">
+                <div class="streak-title-container">
+                  <span class="streak-flame-icon" :class="{ active: streakState.today_completed }">🔥</span>
+                  <div class="streak-counts">
+                    <span class="streak-count-val">{{ streakState.current_streak }}</span>
+                    <span class="streak-count-label">day streak</span>
+                  </div>
+                </div>
+                <div class="streak-stats-row">
+                  <span class="streak-stat-item">Longest: <strong>{{ streakState.longest_streak }}d</strong></span>
+                </div>
+              </header>
+
+              <div class="calendar-month-title">{{ currentMonthLabel }}</div>
+              
+              <div class="calendar-grid">
+                <!-- Weekday Headers -->
+                <span v-for="day in ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']" :key="day" class="calendar-header-cell">
+                  {{ day }}
+                </span>
+                
+                <!-- Empty Cells for Padding -->
+                <div 
+                  v-for="(_, index) in calendarDays.filter(d => d.dayNum === null)" 
+                  :key="'empty-' + index" 
+                  class="calendar-day-cell empty"
+                ></div>
+                
+                <!-- Actual Day Cells -->
+                <div
+                  v-for="day in calendarDays.filter(d => d.dayNum !== null)"
+                  :key="day.dayNum"
+                  class="calendar-day-cell"
+                  :class="{ 
+                    active: day.active, 
+                    today: day.today,
+                    'has-hover': day.active
+                  }"
+                >
+                  <span class="day-number">{{ day.dayNum }}</span>
+                  <span v-if="day.active" class="active-indicator"></span>
+                  
+                  <!-- Tooltip for active days -->
+                  <div v-if="day.active" class="cell-tooltip">
+                    Activity logged! Streak kept active.
+                  </div>
+                </div>
+              </div>
+            </template>
           </section>
 
           <!-- Forecast Chart -->
@@ -490,6 +495,7 @@ const streakState = ref({
   active_dates: [],
   today_completed: false
 })
+const streakError = ref('')
 
 const currentDate = new Date()
 const currentYear = currentDate.getFullYear()
@@ -731,9 +737,13 @@ async function loadAgenda() {
       const streakRes = await getStreakState(tzOffset)
       if (streakRes && !streakRes.error) {
         streakState.value = streakRes
+        streakError.value = ''
+      } else {
+        streakError.value = (streakRes && streakRes.error) ? streakRes.error : 'Failed to retrieve streak'
       }
     } catch (err) {
       console.error('Failed to get streak state', err)
+      streakError.value = err.message || 'Failed to retrieve streak'
     }
   } catch (err) {
     error.value = err.message || 'Failed to load tasks'

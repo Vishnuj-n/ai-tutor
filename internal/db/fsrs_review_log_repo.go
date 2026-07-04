@@ -149,8 +149,8 @@ func (r *Repository) GetReviewLogsSinceWithFileInfo(since int64) ([]models.SyncL
 		FROM fsrs_review_log r
 		LEFT JOIN fsrs_cards f ON f.id = r.reference_id AND r.activity_type = 'flashcard'
 		LEFT JOIN chunks c ON c.id = f.source_chunk_id
-		LEFT JOIN notebook_topics nt ON nt.topic_id = r.topic_id
-		LEFT JOIN notebooks n ON n.id = nt.notebook_id
+		LEFT JOIN notebook_chunks nc ON nc.chunk_id = f.source_chunk_id
+		LEFT JOIN notebooks n ON n.id = nc.notebook_id
 		WHERE r.reviewed_at > ?
 		ORDER BY r.reviewed_at ASC
 	`, since)

@@ -222,10 +222,10 @@ func TestGetNextDueReviewNotebookUsesPriorityAndLegacyTopicLink(t *testing.T) {
 	if err := testRepo.EnsureTopic("topic-high", "High Priority Topic"); err != nil {
 		t.Fatalf("EnsureTopic high failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook("nb-low", "Low", "/tmp/low.pdf", "pdf", "topic-low", 10); err != nil {
+	if err := testRepo.CreateNotebook("nb-low", "Low", "/tmp/low.pdf", "pdf", "topic-low", "", 10); err != nil {
 		t.Fatalf("CreateNotebook low failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook("nb-high", "High", "/tmp/high.pdf", "pdf", "", 10); err != nil {
+	if err := testRepo.CreateNotebook("nb-high", "High", "/tmp/high.pdf", "pdf", "", "", 10); err != nil {
 		t.Fatalf("CreateNotebook high failed: %v", err)
 	}
 	if _, err := testRepo.db.Exec(`UPDATE notebooks SET priority = 9 WHERE id = 'nb-high'`); err != nil {

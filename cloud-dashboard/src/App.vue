@@ -899,7 +899,8 @@ function formatRatingLabel(rating) {
 }
 
 function formatTime(unixSeconds) {
-  const d = new Date(unixSeconds * 1000);
+  const ms = unixSeconds > 1e11 ? unixSeconds : unixSeconds * 1000;
+  const d = new Date(ms);
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 

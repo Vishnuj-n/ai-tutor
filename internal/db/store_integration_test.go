@@ -17,7 +17,7 @@ func TestIngestNotebookContentByTopicRollsBackOnMidTransactionFailure(t *testing
 	if err := testRepo.EnsureTopic("os-scheduling", "OS Scheduling"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook(notebookID, "Rollback Notebook", "/tmp/rollback.txt", "txt", "os-scheduling", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Rollback Notebook", "/tmp/rollback.txt", "txt", "os-scheduling", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 	if err := testRepo.UpdateNotebookStatus(notebookID, "uploaded_unlinked"); err != nil {
@@ -79,10 +79,10 @@ func TestDeleteNotebookRemovesLinkedDataAndPreservesUnrelatedRows(t *testing.T) 
 		t.Fatalf("failed to insert topic_progress: %v", err)
 	}
 
-	if err := testRepo.CreateNotebook(notebookID, "Delete Notebook", "/tmp/del.txt", "txt", autoTopicID, 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Delete Notebook", "/tmp/del.txt", "txt", autoTopicID, "", 1); err != nil {
 		t.Fatalf("CreateNotebook delete target failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook(keepNotebookID, "Keep Notebook", "/tmp/keep.txt", "txt", keepTopicID, 1); err != nil {
+	if err := testRepo.CreateNotebook(keepNotebookID, "Keep Notebook", "/tmp/keep.txt", "txt", keepTopicID, "", 1); err != nil {
 		t.Fatalf("CreateNotebook keep target failed: %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestGetNotebookTopicTreeDeduplicatesTopicRowsPerNotebook(t *testing.T) {
 
 	notebookID := "nb-tree-dedupe"
 	topicID := "topic-tree-dedupe"
-	if err := testRepo.CreateNotebook(notebookID, "Dedupe Notebook", "/tmp/dedupe.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Dedupe Notebook", "/tmp/dedupe.txt", "txt", "", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 	if err := testRepo.EnsureTopic(topicID, "Shared Topic"); err != nil {
@@ -284,7 +284,7 @@ func TestGetNotebookTopicTreeIncludesTopiclessAndIgnoresBrokenLinks(t *testing.T
 	initDBForTest(t, false, 0)
 
 	notebookID := "nb-tree-empty"
-	if err := testRepo.CreateNotebook(notebookID, "Empty Notebook", "/tmp/empty.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Empty Notebook", "/tmp/empty.txt", "txt", "", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestIngestNotebookContentByTopicRejectsWhitespaceOnlyIDs(t *testing.T) {
 	initDBForTest(t, false, 0)
 
 	notebookID := "nb-whitespace-test"
-	if err := testRepo.CreateNotebook(notebookID, "Whitespace Test Notebook", "/tmp/ws.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Whitespace Test Notebook", "/tmp/ws.txt", "txt", "", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -411,7 +411,7 @@ func TestGetChunkTextsForTopicPageRangeIncludesBufferPage(t *testing.T) {
 	if err := testRepo.EnsureTopic(topicID, "Completion Context"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook(notebookID, "Completion Context", "/tmp/context.txt", "txt", "", 4); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Completion Context", "/tmp/context.txt", "txt", "", "", 4); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 

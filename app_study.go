@@ -130,7 +130,10 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 
 		if materializedCards > 0 {
 			bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
-			if err == nil && bestNotebookID != "" {
+			if err != nil {
+				return map[string]interface{}{"error": fmt.Sprintf("failed to get next due review notebook: %v", err)}
+			}
+			if bestNotebookID != "" {
 				reviewCardsForTask := materializedCards
 				if selectedDueCards < reviewCardsForTask {
 					reviewCardsForTask = selectedDueCards

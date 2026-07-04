@@ -227,7 +227,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 
 	// Build conversation history block for the prompt
 	// Calculate baseline instructions tokens to establish the remaining history budget
-	instructionsOnlyText := socraticInstructions + "\n\nStudent question: " + question
+	instructionsOnlyText := socraticInstructions + "\n" + failedQuestionsSummary + "\n\nStudent question: " + question
 	instructionsTokens := embeddings.CountTokensFallback(instructionsOnlyText)
 
 	// History budget should leave space for context (e.g. 1500 tokens) and safety margin (100 tokens)
@@ -284,6 +284,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	// Compute tokens for prompt overhead (instructions + history + student question + fixed labels)
 	overheadText := strings.Join([]string{
 		socraticInstructions,
+		failedQuestionsSummary,
 		"",
 		historyBlock,
 		"Student question: " + question,

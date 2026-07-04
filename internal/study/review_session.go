@@ -81,7 +81,7 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		TopicID:         card.TopicID,
 		ActivityType:    "flashcard",
 		ReferenceID:     card.ID,
-		ReviewedAt:      now,
+		ReviewedAt:      time.Now().UnixMilli(),
 		Rating:          ratingCode,
 		ScheduledDays:   nextState.ScheduledDays,
 		StateBeforeJSON: string(stateBeforeJSONBytes),

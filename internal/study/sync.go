@@ -277,15 +277,21 @@ func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error
 	}
 	limitedBody := &io.LimitedReader{R: resp.Body, N: maxDownloadBytes + 1}
 	if _, err = io.Copy(out, limitedBody); err != nil {
+		_ = out.Close()
 		return err
 	}
+	_ = out.Close()
 	if limitedBody.N <= 0 {
 		return fmt.Errorf("download aborted: response exceeded 100 MiB limit")
 	}
 
 	// 3. Register in SQLite
 	// Note: We register with status 'uploaded' and indexer will process it normally.
-	err = repo.CreateNotebook(nb.ID, nb.Title, localPath, "pdf", "", 0)
+	fileHash, hashErr := utils.FileSHA256(localPath)
+	if hashErr != nil {
+		return fmt.Errorf("failed to compute file hash: %w", hashErr)
+	}
+	err = repo.CreateNotebook(nb.ID, nb.Title, localPath, "pdf", "", fileHash, 0)
 	if err != nil {
 		return fmt.Errorf("failed to insert notebook to database: %w", err)
 	}
