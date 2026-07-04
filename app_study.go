@@ -752,6 +752,59 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 		}
 		return map[string]interface{}{"error": err.Error()}
 	}
+	externalPrompt := ""
+	if task.TaskType == models.StudyTaskTypeSocraticRemedial {
+		bundle, err := repo.GetReaderTopicBundle(task.TopicID, task.NotebookID)
+		if err == nil {
+			var sectionsContent []string
+			for _, s := range bundle.Sections {
+				if s.Content != "" {
+					sectionsContent = append(sectionsContent, s.Content)
+				}
+			}
+			sourceText := strings.Join(sectionsContent, "\n\n")
+
+			bookContext := ""
+			notebookTitle := bundle.NotebookTitle
+			if notebookTitle != "" {
+				bookContext = fmt.Sprintf("Book: %s\n", notebookTitle)
+			}
+
+			promptText := fmt.Sprintf("I'm studying the following text from %s for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.\n\n", func() string {
+				if notebookTitle != "" {
+					return notebookTitle
+				}
+				return "my material"
+			}())
+
+			var payload struct {
+				FailedQuestions []models.FailedQuestionDetail `json:"failed_questions"`
+			}
+			if task.PayloadJSON != "" {
+				_ = json.Unmarshal([]byte(task.PayloadJSON), &payload)
+			}
+
+			if len(payload.FailedQuestions) > 0 {
+				promptText += "During my quiz, I failed the following questions:\n"
+				for idx, q := range payload.FailedQuestions {
+					promptText += fmt.Sprintf("%d. Question: %s\n", idx+1, q.Prompt)
+					if len(q.Options) > 0 {
+						promptText += fmt.Sprintf("   Options: %s\n", strings.Join(q.Options, ", "))
+					}
+					userAns := q.UserAnswer
+					if userAns == "" {
+						userAns = "(No answer)"
+					}
+					promptText += fmt.Sprintf("   My Answer: %s\n", userAns)
+					promptText += fmt.Sprintf("   Correct Answer: %s\n\n", q.CorrectAnswer)
+				}
+				promptText += "Please focus on guiding me through the concepts behind these failed questions.\n\n"
+			}
+
+			externalPrompt = promptText + bookContext + "---\n" + sourceText + "\n---"
+		}
+	}
+
 	return map[string]interface{}{
 		"task": task,
 		"topic": map[string]interface{}{
@@ -760,6 +813,7 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 		"notebook": map[string]interface{}{
 			"id": task.NotebookID,
 		},
+		"external_prompt": externalPrompt,
 	}
 }
 

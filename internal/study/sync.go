@@ -101,6 +101,10 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 	notebookRecords := make([]NotebookSyncRecord, 0, len(notebooks))
 	for _, nb := range notebooks {
+		if nb.FileHash == "" {
+			utils.Warnf("[SYNC] skipping notebook with empty FileHash: title=%q, path=%q", nb.Title, nb.FilePath)
+			continue
+		}
 		notebookRecords = append(notebookRecords, NotebookSyncRecord{
 			FileHash:             nb.FileHash,
 			Filename:             filepath.Base(nb.FilePath),
@@ -148,18 +152,13 @@ func TriggerCloudSync(repo *db.Repository) error {
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		if apiToken != "" {
-			req.Header.Set("Authorization", "Bearer "+apiToken)
-		}
 		anonKey := os.Getenv("CLOUD_API_TOKEN")
 		if anonKey == "" {
 			anonKey = os.Getenv("SUPABASE_ANON_KEY")
 		}
-		if anonKey == "" {
-			anonKey = apiToken // fallback
-		}
 		if anonKey != "" {
 			req.Header.Set("apikey", anonKey)
+			req.Header.Set("Authorization", "Bearer "+anonKey)
 		}
 
 		resp, lastErr = client.Do(req)
@@ -200,7 +199,13 @@ func TriggerCloudSync(repo *db.Repository) error {
 		}
 
 		// Advance the delta cursor so next sync only sends new events
-		if setErr := repo.SetLastSyncedAt(time.Now().Unix()); setErr != nil {
+		maxReviewedAt := settings.LastSyncedAt
+		for _, entry := range logs {
+			if entry.ReviewedAt > maxReviewedAt {
+				maxReviewedAt = entry.ReviewedAt
+			}
+		}
+		if setErr := repo.SetLastSyncedAt(maxReviewedAt); setErr != nil {
 			utils.Warnf("[SYNC] failed to persist last_synced_at: %v", setErr)
 		}
 

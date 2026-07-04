@@ -157,25 +157,7 @@ const sourceText = ref('')
 const notebookTitle = ref('')
 const failedQuestions = ref([])
 
-const fullPrompt = computed(() => {
-  const bookContext = notebookTitle.value ? `Book: ${notebookTitle.value}\n` : ''
-  let promptText = `I'm studying the following text from ${notebookTitle.value || 'my material'} for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.\n\n`
-
-  if (failedQuestions.value && failedQuestions.value.length > 0) {
-    promptText += `During my quiz, I failed the following questions:\n`
-    failedQuestions.value.forEach((q, idx) => {
-      promptText += `${idx + 1}. Question: ${q.prompt}\n`
-      if (q.options && q.options.length > 0) {
-        promptText += `   Options: ${q.options.join(', ')}\n`
-      }
-      promptText += `   My Answer: ${q.user_answer || '(No answer)'}\n`
-      promptText += `   Correct Answer: ${q.correct_answer}\n\n`
-    })
-    promptText += `Please focus on guiding me through the concepts behind these failed questions.\n\n`
-  }
-
-  return promptText + `${bookContext}---\n${sourceText.value}\n---`
-})
+const fullPrompt = ref('')
 
 onMounted(async () => {
   taskID.value = route.query.taskId || route.query.task_id || ''
@@ -194,6 +176,7 @@ onMounted(async () => {
       loading.value = false
       return
     }
+    fullPrompt.value = contextRes.external_prompt || ''
     const task = contextRes?.task
     if (!task) {
       error.value = 'Task not found.'

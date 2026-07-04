@@ -3,6 +3,7 @@
 
 -- Enable UUID extension if not enabled
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- 1. Student Notebooks Table
 CREATE TABLE IF NOT EXISTS student_notebooks (
@@ -363,7 +364,63 @@ END;
 $outer$;
 
 
+-- RPC to get classroom dashboard data (rolled up student logs & notebooks)
+CREATE OR REPLACE FUNCTION get_classroom_dashboard(p_classroom_code text)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+declare
+    v_result json;
+begin
+    with student_nbs as (
+        select
+            student_token,
+            json_agg(n order by updated_at desc) as notebooks,
+            count(*) filter (where external_help_required = true) as alerts_count,
+            max(extract(epoch from updated_at) * 1000) as max_nb_update
+        from student_notebooks n
+        where classroom_code = p_classroom_code
+        group by student_token
+    ),
+    student_logs as (
+        select
+            student_token,
+            json_agg(l order by reviewed_at desc) as logs,
+            max(reviewed_at * 1000) as max_log_update
+        from student_review_logs l
+        where classroom_code = p_classroom_code
+        group by student_token
+    ),
+    all_students as (
+        select distinct student_token from (
+            select student_token from student_notebooks where classroom_code = p_classroom_code
+            union
+            select student_token from student_review_logs where classroom_code = p_classroom_code
+        ) s
+    ),
+    rolled_up as (
+        select
+            a.student_token as token,
+            coalesce(n.notebooks, '[]'::json) as notebooks,
+            coalesce(l.logs, '[]'::json) as logs,
+            coalesce(n.alerts_count, 0) as "alertsCount",
+            greatest(coalesce(n.max_nb_update, 0), coalesce(l.max_log_update, 0)) as "lastUpdate"
+        from all_students a
+        left join student_nbs n on n.student_token = a.student_token
+        left join student_logs l on l.student_token = a.student_token
+        order by "lastUpdate" desc
+    )
+    select json_agg(r) into v_result from rolled_up r;
+
+    return coalesce(v_result, '[]'::json);
+end;
+$$;
+
 -- Grant execution permissions
+GRANT EXECUTE ON FUNCTION get_classroom_dashboard(TEXT) TO anon;
+GRANT EXECUTE ON FUNCTION get_classroom_dashboard(TEXT) TO authenticated;
+
 GRANT EXECUTE ON FUNCTION handle_cloud_sync(TEXT, TEXT, JSONB, JSONB) TO anon;
 GRANT EXECUTE ON FUNCTION handle_cloud_sync(TEXT, TEXT, JSONB, JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION login_user(TEXT, TEXT, BOOLEAN) TO anon;

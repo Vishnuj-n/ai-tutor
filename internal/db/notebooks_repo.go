@@ -319,11 +319,10 @@ func (r *Repository) GetNotebooks(topicID, profileID string) ([]models.Notebook,
 		exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant'),
 		COALESCE(file_hash, ''),
 		COALESCE((
-			SELECT t.external_help_required
+			SELECT MAX(COALESCE(t.external_help_required, 0))
 			FROM topics t
 			WHERE t.id = notebooks.topic_id
 			   OR t.id IN (SELECT topic_id FROM notebook_topics WHERE notebook_id = notebooks.id)
-			LIMIT 1
 		), 0) AS external_help_required
 	FROM notebooks`
 	args := []interface{}{}
@@ -388,11 +387,10 @@ func (r *Repository) GetNotebookByID(notebookID string) (*models.Notebook, error
 			exam_deadline, uploaded_at, COALESCE(profile_id, ''), COALESCE(study_status, 'dormant'),
 			COALESCE(file_hash, ''),
 			COALESCE((
-				SELECT t.external_help_required
+				SELECT MAX(COALESCE(t.external_help_required, 0))
 				FROM topics t
 				WHERE t.id = notebooks.topic_id
 				   OR t.id IN (SELECT topic_id FROM notebook_topics WHERE notebook_id = notebooks.id)
-				LIMIT 1
 			), 0) AS external_help_required
 		FROM notebooks
 		WHERE id = ?

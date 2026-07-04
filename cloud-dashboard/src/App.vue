@@ -506,8 +506,8 @@ function toggleAuthMode() {
 }
 
 // Core State
-const supabaseUrl = ref(import.meta.env.VITE_SUPABASE_URL || 'https://dkqahgkkighcpycexovi.supabase.co');
-const supabaseKey = ref(import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Gno-X5ppMB6YZza52F4Nog__7kxobfX');
+const supabaseUrl = ref(import.meta.env.VITE_SUPABASE_URL || '');
+const supabaseKey = ref(import.meta.env.VITE_SUPABASE_ANON_KEY || '');
 const sessionToken = ref('');
 const classroomCode = ref('');
 const error = ref('');
@@ -544,6 +544,13 @@ onMounted(() => {
   const token = sessionStorage.getItem('session_token');
   const cls = sessionStorage.getItem('classroom_code');
 
+  if (!supabaseUrl.value || !supabaseKey.value) {
+    setupError.value = 'Configuration error: Supabase URL or Anon Key is missing.';
+    showSetup.value = true;
+    window.addEventListener('keydown', handleGlobalKeydown);
+    return;
+  }
+
   if (token && cls) {
     sessionToken.value = token;
     classroomCode.value = cls;
@@ -573,6 +580,12 @@ async function handleAuth() {
 async function signupTeacher() {
   connecting.value = true;
   setupError.value = '';
+
+  if (!supabaseUrl.value || !supabaseKey.value) {
+    setupError.value = 'Configuration error: Supabase URL or Anon Key is missing.';
+    connecting.value = false;
+    return;
+  }
 
   if (!loginUsername.value.trim() || !loginPassword.value.trim() || !loginClassroom.value.trim()) {
     setupError.value = 'All fields are required for sign up.';
@@ -620,6 +633,12 @@ async function loginTeacher() {
   connecting.value = true;
   setupError.value = '';
   
+  if (!supabaseUrl.value || !supabaseKey.value) {
+    setupError.value = 'Configuration error: Supabase URL or Anon Key is missing.';
+    connecting.value = false;
+    return;
+  }
+
   if (!loginUsername.value.trim() || !loginPassword.value.trim()) {
     setupError.value = 'Username/Email and Password are required.';
     connecting.value = false;
@@ -689,80 +708,18 @@ async function fetchData() {
   error.value = '';
 
   try {
-    // 1. Fetch Student Notebooks
-    const nbRes = await fetch(
-      `${supabaseUrl.value}/rest/v1/student_notebooks?classroom_code=eq.${classroomCode.value}&order=updated_at.desc`,
-      {
-        headers: {
-          'apikey': supabaseKey.value,
-          'Authorization': `Bearer ${supabaseKey.value}`,
-          'x-session-token': sessionToken.value
-        }
-      }
-    );
-    if (!nbRes.ok) throw new Error(`Notebooks fetch error: ${nbRes.statusText}`);
-    const notebooksData = await nbRes.json();
-
-    // 2. Fetch Review Logs
-    const logRes = await fetch(
-      `${supabaseUrl.value}/rest/v1/student_review_logs?classroom_code=eq.${classroomCode.value}&order=reviewed_at.desc`,
-      {
-        headers: {
-          'apikey': supabaseKey.value,
-          'Authorization': `Bearer ${supabaseKey.value}`,
-          'x-session-token': sessionToken.value
-        }
-      }
-    );
-    if (!logRes.ok) throw new Error(`Logs fetch error: ${logRes.statusText}`);
-    const logsData = await logRes.json();
-
-    // Group data by student_token
-    const studentsMap = {};
-
-    // Initialize map with students from notebooks
-    notebooksData.forEach(nb => {
-      const token = nb.student_token;
-      if (!studentsMap[token]) {
-        studentsMap[token] = {
-          token,
-          notebooks: [],
-          logs: [],
-          lastUpdate: 0,
-          alertsCount: 0
-        };
-      }
-      studentsMap[token].notebooks.push(nb);
-      if (nb.external_help_required) {
-        studentsMap[token].alertsCount++;
-      }
-      const updateTime = new Date(nb.updated_at).getTime();
-      if (updateTime > studentsMap[token].lastUpdate) {
-        studentsMap[token].lastUpdate = updateTime;
-      }
+    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/get_classroom_dashboard`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`,
+        'x-session-token': sessionToken.value
+      },
+      body: JSON.stringify({ p_classroom_code: classroomCode.value })
     });
-
-    // Append logs
-    logsData.forEach(log => {
-      const token = log.student_token;
-      if (!studentsMap[token]) {
-        studentsMap[token] = {
-          token,
-          notebooks: [],
-          logs: [],
-          lastUpdate: 0,
-          alertsCount: 0
-        };
-      }
-      studentsMap[token].logs.push(log);
-      const logTime = log.reviewed_at * 1000;
-      if (logTime > studentsMap[token].lastUpdate) {
-        studentsMap[token].lastUpdate = logTime;
-      }
-    });
-
-    // Convert map to sorted array
-    students.value = Object.values(studentsMap).sort((a, b) => b.lastUpdate - a.lastUpdate);
+    if (!res.ok) throw new Error(`Dashboard fetch error: ${res.statusText}`);
+    students.value = await res.json();
 
     // Fetch assignments
     fetchAssignments();
