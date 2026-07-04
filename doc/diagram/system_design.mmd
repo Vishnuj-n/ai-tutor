@@ -1,0 +1,248 @@
+%% =============================================================================
+%% Diagram 1: High-Level Component Architecture
+%% Offline-first desktop stack: Vue 3 + Wails IPC + Go Backend + SQLite
+%% =============================================================================
+
+graph TD
+    subgraph Client_UI["Client UI Layer"]
+        direction TB
+        VueSPA["Vue 3 SPA<br/>Multi-Page Frontend"]
+        Sidebar["Sidebar Navigation<br/>Dashboard · Reader · Quiz<br/>Flashcards · Examiner · Tutor"]
+        WailsBridge["Wails IPC Bridge<br/>TypeScript Bindings"]
+
+        VueSPA --> Sidebar
+        VueSPA --> WailsBridge
+    end
+
+    subgraph CoreEngine["Core Engine — Go Backend"]
+        direction TB
+        QueueRouter["Queue Router<br/>Deterministic Task Fetch<br/>Next PENDING → Module Mount"]
+        NotebookSvc["Notebook Service<br/>PDF Upload · Extraction<br/>Semantic Chunking"]
+        RAGPipeline["RAG Pipeline<br/>Topic-Scoped Retrieval<br/>Embed Query → Top-K → Prompt"]
+        Embedder["ONNX Embedder<br/>Local Inference<br/>yalue/onnxruntime_go"]
+        FSRS["FSRS Algorithm<br/>Spaced Repetition Scheduling<br/>Interval Calculation"]
+        LLMProvider["LLM Provider Adapter<br/>Dual-Tier: Fast + Heavy<br/>Groq · OpenAI · OpenRouter"]
+        SocraticRescue["Socratic Rescue<br/>2-Strike Pipeline<br/>REREAD → SOCRATIC_REMEDIAL"]
+
+        QueueRouter --> NotebookSvc
+        QueueRouter --> RAGPipeline
+        QueueRouter --> FSRS
+        QueueRouter --> SocraticRescue
+        RAGPipeline --> Embedder
+        RAGPipeline --> LLMProvider
+    end
+
+    subgraph Persistence["Persistence Layer — SQLite"]
+        direction TB
+        StudyQueue[("study_queue<br/>Central Task Table<br/>PENDING → ACTIVE → COMPLETED")]
+        SQLiteVec[("chunk_vectors<br/>sqlite-vec vec0 Virtual Table<br/>Cosine Similarity Search")]
+        ContentTables[("Content Tables<br/>notebooks · topics · chunks<br/>notebook_topics · notebook_chunks")]
+        FSRSCards[("fsrs_cards<br/>Flashcard State + due_at<br/>fsrs_review_log")]
+        UserSettings[("user_settings<br/>LLM Config · RAG Toggles<br/>Study Profiles")]
+        VectorExt["vec0 Extension<br/>Loaded at db.Init()<br/>Single Connection Pool"]
+
+        StudyQueue --- ContentTables
+        SQLiteVec --- VectorExt
+        FSRSCards --- StudyQueue
+    end
+
+    subgraph External["External Services"]
+        direction TB
+        LLMInference["LLM Inference API<br/>OpenAI-Compatible Endpoint<br/>Quiz Gen · RAG Answer"]
+        CloudSync["Cloud Sync Backend<br/>Classroom Dashboard<br/>Delta Sync Payload"]
+
+        LLMInference -->|"HTTP REST"| LLMProvider
+        CloudSync -->|"HTTPS"| QueueRouter
+    end
+
+    %% Cross-layer connections
+    WailsBridge -->|"IPC Commands"| QueueRouter
+    NotebookSvc -->|"CREATE/INSERT"| ContentTables
+    RAGPipeline -->|"vec_distance_cosine()"| SQLiteVec
+    Embedder -->|"Embed → Store"| SQLiteVec
+    FSRS -->|"INSERT/UPDATE"| FSRSCards
+    QueueRouter -->|"SELECT/UPDATE"| StudyQueue
+    LLMProvider -->|"generate_answer()"| LLMInference
+
+    %% Styling
+    classDef frontend fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    classDef engine fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef persistence fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef external fill:#fce4ec,stroke:#c62828,stroke-width:2px
+
+    class VueSPA,Sidebar,WailsBridge frontend
+    class QueueRouter,NotebookSvc,RAGPipeline,Embedder,FSRS,LLMProvider,SocraticRescue engine
+    class StudyQueue,SQLiteVec,ContentTables,FSRSCards,UserSettings,VectorExt persistence
+    class LLMInference,CloudSync external
+
+%% =============================================================================
+%% Diagram 2: The Two-Stage Queue Pipeline
+%% Active Lane Pre-Filter → Priority Rank → Dashboard
+%% =============================================================================
+
+flowchart TD
+    Start(["User opens Dashboard"])
+    QueryQueue["Query study_queue<br/>WHERE status = 'PENDING'"]
+
+    Start --> QueryQueue
+
+    subgraph Stage1["Stage 1 — Active Lane Pre-Filter"]
+        direction TB
+        IsReviewSync{"Is task type<br/>FLASHCARD_REVIEW<br/>or FLASHCARD_SYNC?"}
+        IsNotebookActive{"Notebook study_status<br/>= 'active'?"}
+        ActiveCount{"Count active notebooks<br/>study_status = 'active'"}
+        UnderLimit{"active_count<br/>< 4 ?"}
+        PassFilter["✓ Passes Pre-Filter<br/>Survives to Stage 2"]
+        RejectTask["✗ Rejected<br/>Task does not surface"]
+
+        IsReviewSync -->|"YES"| PassFilter
+        IsReviewSync -->|"NO"| IsNotebookActive
+        IsNotebookActive -->|"active"| ActiveCount
+        IsNotebookActive -->|"dormant"| RejectTask
+        ActiveCount --> UnderLimit
+        UnderLimit -->|"YES"| PassFilter
+        UnderLimit -->|"NO"| RejectTask
+    end
+
+    QueryQueue --> IsReviewSync
+
+    subgraph Stage2["Stage 2 — Deterministic Priority Rank"]
+        direction TB
+        SortType["Sort by Task Type<br/>DESC tier ranking"]
+        SortBias["Sort by Notebook Priority<br/>DESC (bias coefficient)"]
+        SortPriority["Sort by Task Priority<br/>ASC (lower = first)"]
+        SortAge["Sort by Created At<br/>ASC (FIFO tiebreak)"]
+
+        SortType --> SortBias
+        SortBias --> SortPriority
+        SortPriority --> SortAge
+    end
+
+    PassFilter --> SortType
+
+    subgraph TierMap["Task Type Priority Hierarchy"]
+        direction LR
+        T7["Tier 7<br/>FLASHCARD_SYNC"]
+        T6["Tier 6<br/>FLASHCARD_REVIEW"]
+        T5["Tier 5<br/>REREAD"]
+        T4["Tier 4<br/>QUIZ"]
+        T3["Tier 3<br/>READING"]
+        T2["Tier 2<br/>SOCRATIC_REMEDIAL"]
+        T1["Tier 1<br/>EXAMINER"]
+    end
+
+    SortAge --> NextTask["Select TOP 1<br/>from Ranked Results"]
+    NextTask --> Dashboard["Serve Task to Dashboard<br/>Task Card + Context"]
+
+    %% Anti-starvation note
+    NoteStarvation["Anti-Starvation Rule:<br/>After 5 review tasks,<br/>surface 1 READING task<br/>(query-time SQL logic)"]
+    NoteStarvation -.->|"Applied in<br/>Stage 2"| SortType
+
+    %% Styling
+    classDef filter fill:#fff8e1,stroke:#f9a825,stroke-width:2px
+    classDef rank fill:#e8eaf6,stroke:#5c6bc0,stroke-width:2px
+    classDef output fill:#e0f2f1,stroke:#00897b,stroke-width:2px
+    classDef note fill:#fafafa,stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:5
+
+    class IsReviewSync,IsNotebookActive,ActiveCount,UnderLimit filter
+    class SortType,SortBias,SortPriority,SortAge rank
+    class Dashboard,NextTask output
+    class NoteStarvation note
+
+%% =============================================================================
+%% Diagram 3: Document Ingestion Pipeline (Actual Implementation)
+%% Upload → Local Extract → LLM Draft → User Confirm → Semantic Chunk → Store
+%% =============================================================================
+
+sequenceDiagram
+    autonumber
+    participant User as User
+    participant FE as Vue 3 Frontend
+    participant BE as Go Backend
+    participant PDF as ledongthuc/pdf<br/>(Local PDF Parser)
+    participant LLM as Heavy LLM Provider<br/>(Syllabus Draft)
+    participant DB as SQLite<br/>(study_queue + chunks + vec0)
+    participant RAG as RAG Index Queue<br/>(Deferred Embedding)
+
+    Note over User,RAG: === Phase 1: Upload + Extract ===
+
+    User->>FE: Upload PDF / TXT / MD
+    FE->>BE: UploadNotebook(fileData, fileName)
+
+    BE->>BE: SaveUploadedFile → write to disk
+
+    BE->>PDF: ExtractDocument(filePath, fileType)
+    alt PDF
+        PDF->>PDF: Page-by-page text extraction<br/>(pdfreader.Open → GetPlainText)
+        PDF-->>BE: ExtractedDocument<br/>(sections with heading, text, page)
+    else TXT
+        BE->>BE: ReadFile + NormalizeWhitespace
+    else MD
+        BE->>BE: splitMarkdownByHeadings<br/>(split on # headings)
+    end
+
+    BE->>BE: utils.FileSHA256(filePath)<br/>(for cloud sync identification)
+
+    BE->>DB: INSERT INTO notebooks<br/>(file_hash, status = 'uploaded')
+
+    BE-->>FE: { status: "uploaded",<br/>page_count, word_count }
+
+    Note over User,RAG: === Phase 2: Syllabus Draft (LLM) ===
+
+    User->>FE: Request syllabus draft
+    FE->>BE: DraftNotebookSyllabus(notebookID)
+
+    BE->>DB: GetNotebookSyllabusDraft<br/>(check for cached draft)
+    alt Draft exists and regenerate=false
+        DB-->>BE: Persisted draft JSON
+    else No draft or regenerate=true
+        BE->>PDF: ExtractDocumentSample<br/>(first 30 pages only)
+        PDF-->>BE: Lightweight ExtractedDocument
+        BE->>LLM: DraftSyllabusChapters<br/>(sample text → chapter list)
+        LLM-->>BE: []SyllabusChapterDraft<br/>(title, startPage, endPage)
+        BE->>DB: UpdateNotebookSyllabusDraft<br/>(persist JSON)
+    end
+
+    BE->>DB: UPDATE notebooks<br/>SET status = 'draft_ready'
+
+    BE-->>FE: { chapters, status: "draft_ready" }
+
+    Note over User,RAG: === Phase 3: User Confirms → Full Ingest ===
+
+    User->>FE: Edit chapters, click Confirm
+    FE->>BE: ConfirmNotebookSyllabus<br/>(notebookID, chapters[])
+
+    BE->>PDF: ExtractDocument<br/>(full document, all pages)
+    PDF-->>BE: Full ExtractedDocument<br/>(all sections)
+
+    BE->>BE: NormalizeSyllabusChapters<br/>(clamp page bounds)
+
+    loop For each confirmed chapter
+        BE->>DB: EnsureTopicsBatch<br/>(create/update topics)
+        BE->>DB: UpdateTopicPageBoundsBatch
+    end
+
+    BE->>BE: BuildTopicGroupsFromChapters<br/>(SplitPageIntoChunks per section)
+    Note over BE: Semantic chunking<br/>~150 words per chunk<br/>boundary-aware (sentence/newline)
+
+    loop For each topic group
+        BE->>DB: IngestNotebookContentByTopic<br/>(batch INSERT chunks)
+    end
+
+    BE->>DB: LinkNotebookTopics<br/>(notebook ↔ topics)
+
+    BE->>DB: UPDATE notebooks<br/>SET status = 'chunked'
+
+    Note over User,RAG: === Phase 4: Embedding (Deferred) ===
+
+    alt RAG enabled
+        BE->>RAG: Enqueue notebookID
+        RAG->>RAG: Embed chunks via ONNX<br/>(local yalue/onnxruntime_go)
+        RAG->>DB: INSERT INTO chunk_vectors<br/>(vec0 virtual table)
+    end
+
+    BE-->>FE: { status: "chunked",<br/>chunk_count: N }
+
+    FE->>FE: Emit ingestion-progress event<br/>(phase: chunking → complete)
+
+    BE-->>FE: Auto-activate notebook<br/>if active_count < 4

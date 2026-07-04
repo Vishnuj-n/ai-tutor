@@ -50,6 +50,7 @@ describe('SocraticRescue.vue Integration', () => {
         start_page: 1,
         end_page: 10,
       },
+      external_prompt: 'DeepMind builds AI agents.',
     })
 
     appApi.activateTask.mockResolvedValue({ error: null })
