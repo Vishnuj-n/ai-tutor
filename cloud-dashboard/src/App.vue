@@ -1,13 +1,15 @@
 <template>
   <div class="dashboard-container">
-    <!-- Setup Overlay (Teacher Login) -->
+    <!-- Setup Overlay (Teacher Login / Sign Up) -->
     <div v-if="showSetup" class="setup-overlay">
       <div class="setup-card animate-fade-in">
         <div style="text-align: center; margin-bottom: 1.5rem;">
           <span style="font-size: 2.5rem;">🏫</span>
-          <h2 style="margin-top: 0.5rem; margin-bottom: 0.5rem; color: #fff; letter-spacing: -0.015em;">Teacher Portal Login</h2>
+          <h2 style="margin-top: 0.5rem; margin-bottom: 0.5rem; color: #fff; letter-spacing: -0.015em;">
+            {{ isSignUp ? 'Create Teacher Account' : 'Teacher Portal Login' }}
+          </h2>
           <p class="muted" style="font-size: 0.85rem; line-height: 1.4;">
-            Sign in with your teacher credentials to manage assignments and monitor student progress.
+            {{ isSignUp ? 'Sign up to manage assignments and monitor student progress.' : 'Sign in with your teacher credentials to access your dashboard.' }}
           </p>
         </div>
 
@@ -16,7 +18,7 @@
           <div style="flex: 1;">{{ setupError }}</div>
         </div>
 
-        <form @submit.prevent="loginTeacher">
+        <form @submit.prevent="handleAuth">
           <div class="form-group">
             <label for="login-username">Email / Username</label>
             <input
@@ -39,10 +41,27 @@
             />
           </div>
 
+          <div v-if="isSignUp" class="form-group animate-fade-in">
+            <label for="login-classroom">Default Classroom Code</label>
+            <input
+              id="login-classroom"
+              v-model="loginClassroom"
+              type="text"
+              required
+              placeholder="e.g. BIO101"
+            />
+          </div>
+
           <button class="btn" style="width: 100%; margin-top: 1.25rem;" :disabled="connecting">
             <span v-if="connecting" class="loading-spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
-            {{ connecting ? 'Signing In...' : '🔑 Sign In' }}
+            {{ connecting ? (isSignUp ? 'Creating Account...' : 'Signing In...') : (isSignUp ? '✨ Sign Up' : '🔑 Sign In') }}
           </button>
+
+          <div style="text-align: center; margin-top: 1rem;">
+            <a href="#" @click.prevent="toggleAuthMode" style="font-size: 0.85rem; text-decoration: none; color: var(--primary); font-weight: 500;">
+              {{ isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up' }}
+            </a>
+          </div>
         </form>
       </div>
     </div>
@@ -478,6 +497,13 @@ const connecting = ref(false);
 const setupError = ref('');
 const loginUsername = ref('');
 const loginPassword = ref('');
+const isSignUp = ref(false);
+const loginClassroom = ref('');
+
+function toggleAuthMode() {
+  isSignUp.value = !isSignUp.value;
+  setupError.value = '';
+}
 
 // Core State
 const supabaseUrl = ref(import.meta.env.VITE_SUPABASE_URL || 'https://dkqahgkkighcpycexovi.supabase.co');
@@ -533,6 +559,61 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
 });
+
+// handleAuth switches behavior depending on whether user is registering or logging in
+async function handleAuth() {
+  if (isSignUp.value) {
+    await signupTeacher();
+  } else {
+    await loginTeacher();
+  }
+}
+
+// signupTeacher creates a new teacher account via signup_user RPC
+async function signupTeacher() {
+  connecting.value = true;
+  setupError.value = '';
+
+  if (!loginUsername.value.trim() || !loginPassword.value.trim() || !loginClassroom.value.trim()) {
+    setupError.value = 'All fields are required for sign up.';
+    connecting.value = false;
+    return;
+  }
+
+  try {
+    const payload = {
+      p_username: loginUsername.value.trim(),
+      p_password: loginPassword.value.trim(),
+      p_role: 'teacher',
+      p_classroom_code: loginClassroom.value.trim().toUpperCase()
+    };
+
+    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/signup_user`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      let parsedErr;
+      try { parsedErr = JSON.parse(errText); } catch(_) {}
+      throw new Error(parsedErr?.message || errText || `Server returned status ${res.status}`);
+    }
+
+    // Sign up succeeded, log in automatically
+    isSignUp.value = false;
+    await loginTeacher();
+  } catch (err) {
+    console.error('Sign up failure:', err);
+    setupError.value = err.message || 'Failed to sign up.';
+    connecting.value = false;
+  }
+}
 
 // loginTeacher handles teacher credentials validation via login_user RPC
 async function loginTeacher() {

@@ -151,6 +151,39 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
+-- 7b. RPC Function for User Sign-Up
+CREATE OR REPLACE FUNCTION signup_user(
+  p_username TEXT,
+  p_password TEXT,
+  p_role TEXT,
+  p_classroom_code TEXT
+) RETURNS JSONB AS $$
+BEGIN
+  IF p_username IS NULL OR p_username = '' THEN
+    RAISE EXCEPTION 'Username is required';
+  END IF;
+  IF p_password IS NULL OR length(p_password) < 6 THEN
+    RAISE EXCEPTION 'Password must be at least 6 characters';
+  END IF;
+
+  INSERT INTO public.user_accounts (username, password_hash, role, classroom_code)
+  VALUES (
+    LOWER(p_username),
+    crypt(p_password, gen_salt('bf')),
+    p_role,
+    UPPER(p_classroom_code)
+  );
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'username', LOWER(p_username)
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+
+
 -- 8. Unified RPC Function for Cloud Sync Endpoint
 -- Receives client payload, validates student session token, upserts progress, and returns assignments.
 CREATE OR REPLACE FUNCTION handle_cloud_sync(
@@ -313,14 +346,21 @@ CREATE POLICY "Allow teachers to delete assignments in their classroom" ON publi
       )
     );
 
-
 -- 10. Automated Purge (pg_cron)
-DO $$
+DO $outer$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    PERFORM cron.schedule('nightly-cleanup', '0 0 * * *', $$ DELETE FROM public.active_sessions WHERE expires_at < NOW(); $$);
+    PERFORM cron.schedule(
+      'nightly-cleanup',
+      '0 0 * * *',
+      $job$
+      DELETE FROM public.active_sessions
+      WHERE expires_at < NOW();
+      $job$
+    );
   END IF;
-END $$;
+END;
+$outer$;
 
 
 -- Grant execution permissions
@@ -328,4 +368,6 @@ GRANT EXECUTE ON FUNCTION handle_cloud_sync(TEXT, TEXT, JSONB, JSONB) TO anon;
 GRANT EXECUTE ON FUNCTION handle_cloud_sync(TEXT, TEXT, JSONB, JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION login_user(TEXT, TEXT, BOOLEAN) TO anon;
 GRANT EXECUTE ON FUNCTION login_user(TEXT, TEXT, BOOLEAN) TO authenticated;
+GRANT EXECUTE ON FUNCTION signup_user(TEXT, TEXT, TEXT, TEXT) TO anon;
+GRANT EXECUTE ON FUNCTION signup_user(TEXT, TEXT, TEXT, TEXT) TO authenticated;
 
