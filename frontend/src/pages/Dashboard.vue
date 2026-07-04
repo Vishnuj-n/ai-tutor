@@ -151,7 +151,7 @@
                     formatTaskType(task.action_type)
                   }}</span>
                   <span
-                    v-if="task.action_type !== 'flashcard_sync' && task.estimate_minutes > 0"
+                    v-if="task.action_type !== 'flashcard_generate' && task.estimate_minutes > 0"
                     class="task-estimate"
                     >{{ task.estimate_minutes }} min</span
                   >
@@ -176,13 +176,13 @@
                 <button
                   type="button"
                   class="primary-btn"
-                  :class="{ 'sync-btn': task.action_type === 'flashcard_sync' }"
+                  :class="{ 'sync-btn': task.action_type === 'flashcard_generate' }"
                   :aria-label="'Start task ' + (task.title || task.id)"
-                  :disabled="task.action_type === 'flashcard_sync' && isSyncing"
+                  :disabled="task.action_type === 'flashcard_generate' && isSyncing"
                   @click="startTask(task)"
                 >
-                  <span v-if="task.action_type === 'flashcard_sync' && isSyncing">Syncing...</span>
-                  <span v-else-if="task.action_type === 'flashcard_sync'">Sync</span>
+                  <span v-if="task.action_type === 'flashcard_generate' && isSyncing">Generating...</span>
+                  <span v-else-if="task.action_type === 'flashcard_generate'">Generate</span>
                   <span v-else-if="task.action_type === 'READING' || task.action_type === 'REREAD'">Resume</span>
                   <span v-else>Start</span>
                 </button>
@@ -429,7 +429,7 @@
           {{ forcingRescue ? 'Forcing...' : 'Force Socratic Rescue' }}
         </button>
         <button type="button" class="dev-btn" :disabled="forcingSync" @click="forceSyncTask">
-          {{ forcingSync ? 'Forcing...' : 'Force Flashcard Sync' }}
+          {{ forcingSync ? 'Forcing...' : 'Force Flashcard Generate' }}
         </button>
       </div>
       <p v-if="devMessage" class="dev-message">{{ devMessage }}</p>
@@ -446,10 +446,10 @@ import {
   getUserSettings,
   updateUserSettings,
   getProfileDailyPace,
-  triggerCloudSync,
+  retryFlashcardGeneration,
   getAppEnv,
   devForceSocraticRescue,
-  devForceFlashcardSync,
+  devForceFlashcardGenerate,
   getNotebooks,
   getFlashcardDueTimeline,
   getStreakState,
@@ -833,18 +833,18 @@ function formatDaysRemaining(days) {
   return `${days} days left`
 }
 
-async function runFlashcardSyncInline(_task) {
+async function runFlashcardSyncInline(task) {
   try {
     isSyncing.value = true
     actionError.value = ''
-    const res = await triggerCloudSync()
+    const res = await retryFlashcardGeneration(task.id)
     if (res && res.error) {
-      actionError.value = `Cloud Sync Failed: ${res.error}. Please check your connection.`
+      actionError.value = `Flashcard Generation Failed: ${res.error}. Please check your connection.`
     } else {
       await loadAgenda()
     }
   } catch (err) {
-    actionError.value = `Cloud Sync Error: ${err.message || err}`
+    actionError.value = `Flashcard Generation Error: ${err.message || err}`
   } finally {
     isSyncing.value = false
   }
@@ -858,7 +858,7 @@ function formatTaskType(type) {
   if (t === 'examiner') return 'Examiner'
   if (t === 'reread') return 'Reread'
   if (t === 'socratic_remedial') return 'Concept Rescue'
-  if (t === 'flashcard_sync') return 'Cloud Sync'
+  if (t === 'flashcard_generate') return 'Generate Flashcards'
   return type
 }
 
@@ -905,11 +905,11 @@ async function forceSyncTask() {
     if (notebooks.length > 0) {
       nbId = notebooks[0].id
     }
-    const res = await devForceFlashcardSync(nbId)
+    const res = await devForceFlashcardGenerate(nbId)
     if (res && res.error) {
       devMessage.value = 'Error: ' + res.error
     } else {
-      devMessage.value = 'Successfully forced Flashcard Sync task!'
+      devMessage.value = 'Successfully forced Flashcard Generate task!'
       await loadAgenda()
     }
   } catch (err) {
@@ -946,7 +946,7 @@ function startTask(task) {
     routePath = '/reader'
   } else if (action === 'socratic_remedial') {
     routePath = '/socratic-rescue'
-  } else if (action === 'flashcard_sync') {
+  } else if (action === 'flashcard_generate') {
     runFlashcardSyncInline(task)
     return
   } else {
@@ -1401,7 +1401,7 @@ function startTask(task) {
   font-size: 13px;
 }
 
-.task-type.flashcard_sync {
+.task-type.flashcard_generate {
   color: #c0392b;
   background: rgba(192, 41, 43, 0.1);
 }

@@ -130,7 +130,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			WHERE sq.status = 'PENDING'
 			ORDER BY
 				CASE sq.task_type
-					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'FLASHCARD_GENERATE' THEN 7
 					WHEN 'SOCRATIC_REMEDIAL' THEN 6
 					WHEN 'FLASHCARD_REVIEW' THEN 5
 					WHEN 'REREAD' THEN 4
@@ -234,7 +234,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 						-- Escape hatch ranking
 						CASE WHEN ? = 1 THEN
 							CASE sq.task_type
-								WHEN 'FLASHCARD_SYNC' THEN 7
+								WHEN 'FLASHCARD_GENERATE' THEN 7
 								WHEN 'SOCRATIC_REMEDIAL' THEN 6
 								WHEN 'REREAD' THEN 5
 								WHEN 'QUIZ' THEN 4
@@ -245,7 +245,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 							END
 						ELSE
 							CASE sq.task_type
-								WHEN 'FLASHCARD_SYNC' THEN 7
+								WHEN 'FLASHCARD_GENERATE' THEN 7
 								WHEN 'SOCRATIC_REMEDIAL' THEN 6
 								WHEN 'FLASHCARD_REVIEW' THEN 5
 								WHEN 'REREAD' THEN 4
@@ -268,7 +268,7 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 			  AND (
 				  ? = ''
 				  OR sq.task_type = 'FLASHCARD_REVIEW'
-				  OR sq.task_type = 'FLASHCARD_SYNC'
+				  OR sq.task_type = 'FLASHCARD_GENERATE'
 				  OR n.study_status = 'active'
 			  )
 		) ranked_tasks
@@ -478,7 +478,7 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 		query += `
 			ORDER BY
 				CASE sq.task_type
-					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'FLASHCARD_GENERATE' THEN 7
 					WHEN 'SOCRATIC_REMEDIAL' THEN 6
 					WHEN 'FLASHCARD_REVIEW' THEN 5
 					WHEN 'REREAD' THEN 4
@@ -564,14 +564,14 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 			query += ` AND n.profile_id = ?`
 			args = append(args, activeProfileStr)
 		}
-		query += ` AND (sq.task_type = 'FLASHCARD_REVIEW' OR sq.task_type = 'FLASHCARD_SYNC' OR n.study_status = 'active')`
+		query += ` AND (sq.task_type = 'FLASHCARD_REVIEW' OR sq.task_type = 'FLASHCARD_GENERATE' OR n.study_status = 'active')`
 	}
 
 	query += `
 		ORDER BY
 			CASE WHEN ? = 1 THEN
 				CASE sq.task_type
-					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'FLASHCARD_GENERATE' THEN 7
 					WHEN 'SOCRATIC_REMEDIAL' THEN 6
 					WHEN 'REREAD' THEN 5
 					WHEN 'QUIZ' THEN 4
@@ -582,7 +582,7 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 				END
 			ELSE
 				CASE sq.task_type
-					WHEN 'FLASHCARD_SYNC' THEN 7
+					WHEN 'FLASHCARD_GENERATE' THEN 7
 					WHEN 'SOCRATIC_REMEDIAL' THEN 6
 					WHEN 'FLASHCARD_REVIEW' THEN 5
 					WHEN 'REREAD' THEN 4
@@ -1160,19 +1160,20 @@ func (r *Repository) GetLatestQuizAttemptScoreByTopic(topicID string) (int, bool
 	return score, passed, nil
 }
 
-// EnsurePendingFlashcardSyncTask inserts a new FLASHCARD_SYNC task if none exists in PENDING or ACTIVE status.
-func (r *Repository) EnsurePendingFlashcardSyncTask(notebookID string) error {
+// EnsurePendingFlashcardGenerateTask inserts a new FLASHCARD_GENERATE task if none exists in PENDING or ACTIVE status for the topic.
+func (r *Repository) EnsurePendingFlashcardGenerateTask(notebookID, topicID string, startPage, endPage int, title string) error {
 	notebookID = strings.TrimSpace(notebookID)
-	if notebookID == "" {
-		return fmt.Errorf("notebook ID is required")
+	topicID = strings.TrimSpace(topicID)
+	if notebookID == "" || topicID == "" {
+		return fmt.Errorf("notebook ID and topic ID are required")
 	}
 
 	return r.withTx(func(tx *sql.Tx) error {
 		var count int
 		err := tx.QueryRow(`
 			SELECT COUNT(*) FROM study_queue
-			WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
-		`).Scan(&count)
+			WHERE task_type = 'FLASHCARD_GENERATE' AND topic_id = ? AND status IN ('PENDING', 'ACTIVE')
+		`, topicID).Scan(&count)
 		if err != nil {
 			return err
 		}
@@ -1183,21 +1184,29 @@ func (r *Repository) EnsurePendingFlashcardSyncTask(notebookID string) error {
 		task := models.StudyQueueTask{
 			ID:         uuid.NewString(),
 			NotebookID: notebookID,
-			TaskType:   models.StudyTaskTypeFlashcardSync,
+			TopicID:    topicID,
+			TaskType:   models.StudyTaskTypeFlashcardGenerate,
 			Status:     models.StudyTaskStatusPending,
 			Priority:   0,
+			Title:      title,
+			StartPage:  startPage,
+			EndPage:    endPage,
 		}
 		return r.InsertStudyTaskTx(tx, task)
 	})
 }
 
-// ResolveFlashcardSyncTasks marks all pending/active FLASHCARD_SYNC tasks as COMPLETED.
-func (r *Repository) ResolveFlashcardSyncTasks() error {
+// ResolveFlashcardGenerateTasksForTopic marks all pending/active FLASHCARD_GENERATE tasks for a topic as COMPLETED.
+func (r *Repository) ResolveFlashcardGenerateTasksForTopic(topicID string) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic ID is required")
+	}
 	return r.withTx(func(tx *sql.Tx) error {
 		rows, err := tx.Query(`
 			SELECT id, status FROM study_queue
-			WHERE task_type = 'FLASHCARD_SYNC' AND status IN ('PENDING', 'ACTIVE')
-		`)
+			WHERE task_type = 'FLASHCARD_GENERATE' AND topic_id = ? AND status IN ('PENDING', 'ACTIVE')
+		`, topicID)
 		if err != nil {
 			return err
 		}
@@ -1234,7 +1243,7 @@ func (r *Repository) ResolveFlashcardSyncTasks() error {
 					return err
 				}
 				if affected == 1 {
-					utils.LogQueueTransition(t.id, "FLASHCARD_SYNC", "PENDING", "ACTIVE", "task_activated")
+					utils.LogQueueTransition(t.id, "FLASHCARD_GENERATE", "PENDING", "ACTIVE", "task_activated")
 				}
 			}
 

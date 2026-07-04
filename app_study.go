@@ -230,8 +230,8 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		titlePrefix = "Examiner"
 	case models.StudyTaskTypeSocraticRemedial:
 		titlePrefix = "Concept Rescue"
-	case models.StudyTaskTypeFlashcardSync:
-		titlePrefix = "Sync Flashcards"
+	case models.StudyTaskTypeFlashcardGenerate:
+		titlePrefix = "Generate Flashcards"
 	}
 
 	meta := ""
@@ -239,7 +239,7 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		meta = fmt.Sprintf("Pages %d-%d", task.StartPage, task.EndPage)
 	}
 	estimateMinutes := 10
-	if task.TaskType == models.StudyTaskTypeFlashcardSync {
+	if task.TaskType == models.StudyTaskTypeFlashcardGenerate {
 		estimateMinutes = 0
 	} else if task.TaskType == models.StudyTaskTypeFlashcardReview {
 		// Use card count from payload if available
@@ -877,8 +877,16 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 	cardCount, err := a.studyService.GenerateFlashcardsAfterQuiz(task.NotebookID, task.TopicID, task.StartPage, task.EndPage)
 	if err != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_failed taskID=%s reason=%v", taskID, err)
+		if ensureErr := repo.EnsurePendingFlashcardGenerateTask(task.NotebookID, task.TopicID, task.StartPage, task.EndPage, task.Title); ensureErr != nil {
+			utils.Warnf("[FLASHCARD_PIPELINE] failed to insert FLASHCARD_GENERATE retry task: %v", ensureErr)
+		}
 		return map[string]interface{}{"error": "failed to generate flashcards: " + err.Error()}
 	}
+
+	if resolveErr := repo.ResolveFlashcardGenerateTasksForTopic(task.TopicID); resolveErr != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE tasks: %v", resolveErr)
+	}
+
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
 	utils.Warnf("[DASHBOARD] dashboard_redirect_after_generation taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
 
@@ -1172,9 +1180,9 @@ func (a *App) DevForceSocraticRescue(notebookID, topicID string) map[string]inte
 	return map[string]interface{}{"ok": true, "task_id": socraticTaskID}
 }
 
-// DevForceFlashcardSync forces a FLASHCARD_SYNC task into the pending queue.
+// DevForceFlashcardGenerate forces a FLASHCARD_GENERATE task into the pending queue.
 // Only accessible when APP_ENV = dev.
-func (a *App) DevForceFlashcardSync(notebookID string) map[string]interface{} {
+func (a *App) DevForceFlashcardGenerate(notebookID string) map[string]interface{} {
 	if os.Getenv("APP_ENV") != "dev" {
 		return map[string]interface{}{"error": "forbidden: dev mode only"}
 	}
@@ -1182,10 +1190,65 @@ func (a *App) DevForceFlashcardSync(notebookID string) map[string]interface{} {
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
 	}
-	if err := repo.EnsurePendingFlashcardSyncTask(notebookID); err != nil {
+	topics, err := repo.GetNotebookTopicsWithBounds(notebookID)
+	if err != nil || len(topics) == 0 {
+		if err := repo.EnsurePendingFlashcardGenerateTask(notebookID, "dev-dummy-topic", 1, 10, "Dev Dummy Topic"); err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		return map[string]interface{}{"ok": true}
+	}
+	firstTopic := topics[0]
+	startPage := firstTopic.StartPage
+	if startPage <= 0 {
+		startPage = 1
+	}
+	endPage := firstTopic.EndPage
+	if endPage <= startPage {
+		endPage = startPage + 10
+	}
+	if err := repo.EnsurePendingFlashcardGenerateTask(notebookID, firstTopic.TopicID, startPage, endPage, firstTopic.Title); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true}
+}
+
+// RetryFlashcardGeneration retries generating flashcards for a failed FLASHCARD_GENERATE task.
+func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if a.studyService == nil {
+		return map[string]interface{}{"error": "study service not initialized"}
+	}
+
+	task, err := repo.GetTaskByID(taskID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if task.TaskType != models.StudyTaskTypeFlashcardGenerate {
+		return map[string]interface{}{"error": "task is not a flashcard generation retry task"}
+	}
+
+	utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_started taskID=%s topicID=%s notebookID=%s", taskID, task.TopicID, task.NotebookID)
+
+	cardCount, err := a.studyService.GenerateFlashcardsAfterQuiz(task.NotebookID, task.TopicID, task.StartPage, task.EndPage)
+	if err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_failed taskID=%s reason=%v", taskID, err)
+		return map[string]interface{}{"error": "failed to generate flashcards: " + err.Error()}
+	}
+
+	// On success, resolve the FLASHCARD_GENERATE task
+	if err := repo.ResolveFlashcardGenerateTasksForTopic(task.TopicID); err != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE task: %v", err)
+	}
+
+	utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_completed taskID=%s cardsScheduled=%d", taskID, cardCount)
+
+	return map[string]interface{}{
+		"ok":              true,
+		"cards_scheduled": cardCount,
+	}
 }
 
 type FlashcardDuePoint struct {

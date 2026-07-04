@@ -751,7 +751,7 @@ func TestStudyQueueNewPriorityLevels(t *testing.T) {
 		models.StudyTaskTypeQuiz,
 		models.StudyTaskTypeReread,
 		models.StudyTaskTypeFlashcardReview,
-		models.StudyTaskTypeFlashcardSync,
+		models.StudyTaskTypeFlashcardGenerate,
 	}
 
 	// Insert all task types in reverse-priority or arbitrary order to test queue sorting
@@ -771,7 +771,7 @@ func TestStudyQueueNewPriorityLevels(t *testing.T) {
 
 	// Expected order (highest priority first)
 	expectedOrder := []models.StudyTaskType{
-		models.StudyTaskTypeFlashcardSync,
+		models.StudyTaskTypeFlashcardGenerate,
 		models.StudyTaskTypeSocraticRemedial,
 		models.StudyTaskTypeFlashcardReview,
 		models.StudyTaskTypeReread,

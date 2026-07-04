@@ -85,6 +85,10 @@ export function generateFlashcardsForQuizTask(taskID) {
   return appBridge().GenerateFlashcardsForQuizTask(taskID)
 }
 
+export function retryFlashcardGeneration(taskID) {
+  return appBridge().RetryFlashcardGeneration(taskID)
+}
+
 export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
@@ -290,8 +294,8 @@ export function devForceSocraticRescue(notebookID, topicID) {
   return appBridge().DevForceSocraticRescue(notebookID, topicID)
 }
 
-export function devForceFlashcardSync(notebookID) {
-  return appBridge().DevForceFlashcardSync(notebookID)
+export function devForceFlashcardGenerate(notebookID) {
+  return appBridge().DevForceFlashcardGenerate(notebookID)
 }
 
 export function logFrontendEvent(level, component, event, details = '') {

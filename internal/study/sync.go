@@ -86,9 +86,6 @@ func TriggerCloudSync(repo *db.Repository) error {
 	apiToken := ResolveCloudAPIToken(settings.CloudAPIToken)
 
 	if syncURL == "" {
-		if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
-			utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
-		}
 		return nil // Cloud sync not configured
 	}
 
@@ -208,24 +205,11 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if setErr := repo.SetLastSyncedAt(maxReviewedAt); setErr != nil {
 			utils.Warnf("[SYNC] failed to persist last_synced_at: %v", setErr)
 		}
-
-		// Sync completed successfully. Clear any pending FLASHCARD_SYNC tasks.
-		if syncErr := repo.ResolveFlashcardSyncTasks(); syncErr != nil {
-			utils.Warnf("[SYNC] failed to resolve FLASHCARD_SYNC tasks: %v", syncErr)
-		}
-
 		break
 	}
 
 	if lastErr != nil {
 		utils.Warnf("[SYNC] Cloud sync failed after %d attempts: %v", attempts, lastErr)
-		// Insert FLASHCARD_SYNC task if not already pending/active and a valid notebook exists
-		if len(notebooks) > 0 {
-			notebookID := notebooks[0].ID
-			if syncErr := repo.EnsurePendingFlashcardSyncTask(notebookID); syncErr != nil {
-				utils.Warnf("[SYNC] failed to insert FLASHCARD_SYNC task: %v", syncErr)
-			}
-		}
 		return lastErr
 	}
 
