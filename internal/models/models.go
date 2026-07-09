@@ -35,8 +35,9 @@ const (
 	StudyTaskTypeReading         StudyTaskType = "READING"
 	StudyTaskTypeExaminer        StudyTaskType = "EXAMINER"
 	StudyTaskTypeSocraticRemedial StudyTaskType = "SOCRATIC_REMEDIAL"
-	StudyTaskTypeFlashcardSync    StudyTaskType = "FLASHCARD_GENERATE" // ponytail: kept enum name to avoid DB schema breakage, renamed value to FLASHCARD_GENERATE
-	StudyTaskTypeFlashcardGenerate = StudyTaskTypeFlashcardSync
+	StudyTaskTypeFlashcardGenerate StudyTaskType = "FLASHCARD_GENERATE"
+	// Deprecated: Use StudyTaskTypeFlashcardGenerate instead
+	StudyTaskTypeFlashcardSync     StudyTaskType = StudyTaskTypeFlashcardGenerate
 )
 
 type StudyTaskStatus string

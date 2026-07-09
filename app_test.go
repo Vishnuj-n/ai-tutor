@@ -657,7 +657,13 @@ func TestTriggerCloudSyncRetriesAndFailSafe(t *testing.T) {
 		t.Fatalf("expected exactly 3 attempts, got %d", attempts)
 	}
 
-
+	syncCount, err := testRepo.CountTasksByTopicTypeAndStatus("", "FLASHCARD_GENERATE", "PENDING")
+	if err != nil {
+		t.Fatalf("failed to query sync task: %v", err)
+	}
+	if syncCount != 0 {
+		t.Fatalf("expected no PENDING FLASHCARD_GENERATE task, got %d", syncCount)
+	}
 
 	serverFail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -675,6 +681,44 @@ func TestTriggerCloudSyncRetriesAndFailSafe(t *testing.T) {
 	err = study.TriggerCloudSync(testRepo)
 	if err == nil {
 		t.Fatalf("expected sync to fail, but it succeeded")
+	}
+
+	syncCount, err = testRepo.CountTasksByTopicTypeAndStatus("", "FLASHCARD_GENERATE", "PENDING")
+	if err != nil {
+		t.Fatalf("failed to query sync task: %v", err)
+	}
+	if syncCount != 1 {
+		t.Fatalf("expected 1 PENDING FLASHCARD_GENERATE task, got %d", syncCount)
+	}
+
+	serverSuccess := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"new_notebooks": []interface{}{},
+		})
+	}))
+	defer serverSuccess.Close()
+
+	if _, err := testRepo.ExecForTest(`
+		UPDATE user_settings
+		SET cloud_sync_url = ?
+		WHERE id = 1
+	`, serverSuccess.URL); err != nil {
+		t.Fatalf("failed to update user settings: %v", err)
+	}
+
+	err = study.TriggerCloudSync(testRepo)
+	if err != nil {
+		t.Fatalf("expected sync to succeed, got %v", err)
+	}
+
+	var status string
+	err = testRepo.QueryRowForTest("SELECT status FROM study_queue WHERE task_type = 'FLASHCARD_GENERATE' AND (topic_id IS NULL OR topic_id = '')").Scan(&status)
+	if err != nil {
+		t.Fatalf("failed to query sync task status: %v", err)
+	}
+	if status != "COMPLETED" {
+		t.Fatalf("expected sync task status to be COMPLETED, got %q", status)
 	}
 }
 

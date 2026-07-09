@@ -1238,6 +1238,16 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 	cardCount, err := a.studyService.GenerateFlashcardsAfterQuiz(task.NotebookID, task.TopicID, task.StartPage, task.EndPage)
 	if err != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_failed taskID=%s reason=%v", taskID, err)
+		if task.Status == models.StudyTaskStatusPending {
+			if activateErr := repo.ActivateTask(taskID); activateErr != nil {
+				utils.Warnf("[FLASHCARD_PIPELINE] failed to activate taskID=%s on retry failure: %v", taskID, activateErr)
+			}
+		}
+		if completeErr := repo.CompleteTask(taskID, models.CompletionResult{
+			Status: models.StudyTaskStatusFailed,
+		}); completeErr != nil {
+			utils.Warnf("[FLASHCARD_PIPELINE] failed to mark taskID=%s as FAILED: %v", taskID, completeErr)
+		}
 		return map[string]interface{}{"error": "failed to generate flashcards: " + err.Error()}
 	}
 

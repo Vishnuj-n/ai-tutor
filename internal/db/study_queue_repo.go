@@ -640,20 +640,20 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 	return task, nil
 }
 
-// ActivateTask moves one task from PENDING to ACTIVE.
-func (r *Repository) ActivateTask(taskID string) error {
+// ActivateTaskTx moves one task from PENDING to ACTIVE within a transaction.
+func (r *Repository) ActivateTaskTx(tx *sql.Tx, taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return fmt.Errorf("task id is required")
 	}
 	var beforeStatus string
 	var taskType string
-	if err := r.db.QueryRow(`SELECT COALESCE(status, ''), COALESCE(task_type, '') FROM study_queue WHERE id = ?`, taskID).Scan(&beforeStatus, &taskType); err == nil {
-		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s status=%s taskType=%s", taskID, beforeStatus, taskType)
+	if err := tx.QueryRow(`SELECT COALESCE(status, ''), COALESCE(task_type, '') FROM study_queue WHERE id = ?`, taskID).Scan(&beforeStatus, &taskType); err == nil {
+		utils.Warnf("[QUEUE] ActivateTaskTx before update taskID=%s status=%s taskType=%s", taskID, beforeStatus, taskType)
 	} else {
-		utils.Warnf("[QUEUE] ActivateTask before update taskID=%s statusLoadErr=%v", taskID, err)
+		utils.Warnf("[QUEUE] ActivateTaskTx before update taskID=%s statusLoadErr=%v", taskID, err)
 	}
-	res, err := r.db.Exec(`
+	res, err := tx.Exec(`
 		UPDATE study_queue
 		SET status = 'ACTIVE', activated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = 'PENDING'
@@ -666,20 +666,27 @@ func (r *Repository) ActivateTask(taskID string) error {
 		return err
 	}
 	if affected == 1 {
-		utils.LogQueueTransition(taskID, taskType, "PENDING", "ACTIVE", "task_activated")
+		utils.LogQueueTransition(taskID, taskType, string(models.StudyTaskStatusPending), string(models.StudyTaskStatusActive), "task_activated")
 		return nil
 	}
 	var exists int
-	if err := r.db.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
-		utils.Warnf("[QUEUE] ActivateTask existence check error taskID=%s err=%v", taskID, err)
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&exists); err != nil {
+		utils.Warnf("[QUEUE] ActivateTaskTx existence check error taskID=%s err=%v", taskID, err)
 		return err
 	}
 	if exists == 0 {
-		utils.Warnf("[QUEUE] ActivateTask rejected taskID=%s reason=not_found", taskID)
+		utils.Warnf("[QUEUE] ActivateTaskTx rejected taskID=%s reason=not_found", taskID)
 		return ErrTaskNotFound
 	}
-	utils.Warnf("[QUEUE] ActivateTask rejected taskID=%s reason=not_pending status=%s", taskID, beforeStatus)
+	utils.Warnf("[QUEUE] ActivateTaskTx rejected taskID=%s reason=not_pending status=%s", taskID, beforeStatus)
 	return ErrTaskNotPending
+}
+
+// ActivateTask moves one task from PENDING to ACTIVE.
+func (r *Repository) ActivateTask(taskID string) error {
+	return r.withTx(func(tx *sql.Tx) error {
+		return r.ActivateTaskTx(tx, taskID)
+	})
 }
 
 // CompleteTaskTx marks ACTIVE task as terminal and inserts explicit follow-up tasks transactionally.
@@ -1164,16 +1171,24 @@ func (r *Repository) GetLatestQuizAttemptScoreByTopic(topicID string) (int, bool
 func (r *Repository) EnsurePendingFlashcardGenerateTask(notebookID, topicID string, startPage, endPage int, title string) error {
 	notebookID = strings.TrimSpace(notebookID)
 	topicID = strings.TrimSpace(topicID)
-	if notebookID == "" || topicID == "" {
-		return fmt.Errorf("notebook ID and topic ID are required")
+	if notebookID == "" {
+		return fmt.Errorf("notebook ID is required")
 	}
 
 	return r.withTx(func(tx *sql.Tx) error {
 		var count int
-		err := tx.QueryRow(`
-			SELECT COUNT(*) FROM study_queue
-			WHERE task_type = 'FLASHCARD_GENERATE' AND topic_id = ? AND status IN ('PENDING', 'ACTIVE')
-		`, topicID).Scan(&count)
+		var err error
+		if topicID == "" {
+			err = tx.QueryRow(`
+				SELECT COUNT(*) FROM study_queue
+				WHERE task_type = 'FLASHCARD_GENERATE' AND (topic_id IS NULL OR topic_id = '') AND status IN ('PENDING', 'ACTIVE')
+			`).Scan(&count)
+		} else {
+			err = tx.QueryRow(`
+				SELECT COUNT(*) FROM study_queue
+				WHERE task_type = 'FLASHCARD_GENERATE' AND topic_id = ? AND status IN ('PENDING', 'ACTIVE')
+			`, topicID).Scan(&count)
+		}
 		if err != nil {
 			return err
 		}
@@ -1199,14 +1214,20 @@ func (r *Repository) EnsurePendingFlashcardGenerateTask(notebookID, topicID stri
 // ResolveFlashcardGenerateTasksForTopic marks all pending/active FLASHCARD_GENERATE tasks for a topic as COMPLETED.
 func (r *Repository) ResolveFlashcardGenerateTasksForTopic(topicID string) error {
 	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return fmt.Errorf("topic ID is required")
-	}
 	return r.withTx(func(tx *sql.Tx) error {
-		rows, err := tx.Query(`
-			SELECT id, status FROM study_queue
-			WHERE task_type = 'FLASHCARD_GENERATE' AND topic_id = ? AND status IN ('PENDING', 'ACTIVE')
-		`, topicID)
+		var rows *sql.Rows
+		var err error
+		if topicID == "" {
+			rows, err = tx.Query(`
+				SELECT id, status FROM study_queue
+				WHERE task_type = 'FLASHCARD_GENERATE' AND (topic_id IS NULL OR topic_id = '') AND status IN ('PENDING', 'ACTIVE')
+			`)
+		} else {
+			rows, err = tx.Query(`
+				SELECT id, status FROM study_queue
+				WHERE task_type = 'FLASHCARD_GENERATE' AND topic_id = ? AND status IN ('PENDING', 'ACTIVE')
+			`, topicID)
+		}
 		if err != nil {
 			return err
 		}
@@ -1230,20 +1251,8 @@ func (r *Repository) ResolveFlashcardGenerateTasksForTopic(topicID string) error
 
 		for _, t := range tasks {
 			if t.status == string(models.StudyTaskStatusPending) {
-				res, err := tx.Exec(`
-					UPDATE study_queue
-					SET status = 'ACTIVE', activated_at = CURRENT_TIMESTAMP
-					WHERE id = ? AND status = 'PENDING'
-				`, t.id)
-				if err != nil {
+				if err := r.ActivateTaskTx(tx, t.id); err != nil {
 					return err
-				}
-				affected, err := res.RowsAffected()
-				if err != nil {
-					return err
-				}
-				if affected == 1 {
-					utils.LogQueueTransition(t.id, "FLASHCARD_GENERATE", "PENDING", "ACTIVE", "task_activated")
 				}
 			}
 
