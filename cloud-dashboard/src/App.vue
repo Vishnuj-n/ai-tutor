@@ -240,7 +240,16 @@
               :style="{ animationDelay: `${(index + 2) * 50}ms` }"
             >
               <!-- Accordion Header -->
-              <div class="student-header" @click="toggleStudent(student.token)" aria-label="Toggle student details">
+              <div
+                class="student-header"
+                role="button"
+                tabindex="0"
+                :aria-expanded="!!expandedStudents[student.token]"
+                @click="toggleStudent(student.token)"
+                @keydown.enter.prevent="toggleStudent(student.token)"
+                @keydown.space.prevent="toggleStudent(student.token)"
+                aria-label="Toggle student details"
+              >
                 <div class="student-info">
                   <div class="student-avatar">
                     {{ student.token.substring(0, 2).toUpperCase() }}
@@ -758,6 +767,13 @@ async function fetchAssignments() {
 // Publish custom assignment
 async function publishAssignment() {
   if (!newTitle.value.trim() || !newUrl.value.trim()) return;
+
+  const trimmedUrl = newUrl.value.trim();
+  if (!trimmedUrl.toLowerCase().startsWith('http://') && !trimmedUrl.toLowerCase().startsWith('https://')) {
+    error.value = 'Failed to publish assignment: URL must use http or https scheme.';
+    return;
+  }
+
   publishing.value = true;
 
   // Safe unique assignment ID generation

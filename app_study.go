@@ -131,9 +131,8 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		if materializedCards > 0 {
 			bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
 			if err != nil {
-				return map[string]interface{}{"error": fmt.Sprintf("failed to get next due review notebook: %v", err)}
-			}
-			if bestNotebookID != "" {
+				utils.Warnf("failed to get next due review notebook: %v", err)
+			} else if bestNotebookID != "" {
 				reviewCardsForTask := materializedCards
 				if selectedDueCards < reviewCardsForTask {
 					reviewCardsForTask = selectedDueCards
@@ -758,7 +757,9 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 	externalPrompt := ""
 	if task.TaskType == models.StudyTaskTypeSocraticRemedial {
 		bundle, err := repo.GetReaderTopicBundle(task.TopicID, task.NotebookID)
-		if err == nil {
+		if err != nil {
+			utils.Warnf("failed to get reader topic bundle for task %s: %v", task.ID, err)
+		} else {
 			var sectionsContent []string
 			for _, s := range bundle.Sections {
 				if s.Content != "" {
@@ -784,7 +785,9 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 				FailedQuestions []models.FailedQuestionDetail `json:"failed_questions"`
 			}
 			if task.PayloadJSON != "" {
-				_ = json.Unmarshal([]byte(task.PayloadJSON), &payload)
+				if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+					utils.Warnf("failed to unmarshal failed questions for task %s: %v", task.ID, err)
+				}
 			}
 
 			if len(payload.FailedQuestions) > 0 {

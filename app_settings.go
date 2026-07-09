@@ -523,11 +523,6 @@ func (a *App) LoginStudent(username, password, classroomCode string) map[string]
 		return map[string]interface{}{"error": "failed to save settings: " + err.Error()}
 	}
 
-	go func() {
-		if syncErr := study.TriggerCloudSync(repo); syncErr != nil {
-			utils.Warnf("[LOGIN] initial post-login sync warning: %v", syncErr)
-		}
-	}()
 
 	return map[string]interface{}{
 		"ok":             true,

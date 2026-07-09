@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS teacher_assignments (
     id TEXT PRIMARY KEY, -- UUID generated at publish time
     classroom_code TEXT NOT NULL,
     title TEXT NOT NULL,
-    download_url TEXT NOT NULL,
+    download_url TEXT NOT NULL CHECK (download_url ILIKE 'http://%' OR download_url ILIKE 'https://%'),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -152,6 +152,20 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
+-- 7a. Teacher Signup Invites Table for verified teacher flow
+CREATE TABLE IF NOT EXISTS public.teacher_signup_invites (
+    classroom_code TEXT NOT NULL,
+    invite_email_or_username TEXT NOT NULL,
+    is_used BOOLEAN DEFAULT FALSE NOT NULL,
+    PRIMARY KEY (classroom_code, invite_email_or_username)
+);
+
+-- Seed default teacher invite for active development/docs onboarding
+INSERT INTO public.teacher_signup_invites (classroom_code, invite_email_or_username)
+VALUES ('BIO101', 'teacher@school.edu')
+ON CONFLICT DO NOTHING;
+
+
 -- 7b. RPC Function for User Sign-Up
 CREATE OR REPLACE FUNCTION signup_user(
   p_username TEXT,
@@ -165,6 +179,37 @@ BEGIN
   END IF;
   IF p_password IS NULL OR length(p_password) < 6 THEN
     RAISE EXCEPTION 'Password must be at least 6 characters';
+  END IF;
+
+  -- Validate role
+  IF p_role IS NULL OR (p_role <> 'student' AND p_role <> 'teacher') THEN
+    RAISE EXCEPTION 'Invalid role specified. Must be student or teacher';
+  END IF;
+
+  -- Verify classroom code against allowed invite or membership record
+  IF p_role = 'teacher' THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.teacher_signup_invites
+      WHERE classroom_code = UPPER(p_classroom_code)
+        AND LOWER(invite_email_or_username) = LOWER(p_username)
+        AND is_used = FALSE
+    ) THEN
+      RAISE EXCEPTION 'No pending teacher invite found for this username and classroom';
+    END IF;
+
+    -- Mark invite as used
+    UPDATE public.teacher_signup_invites
+    SET is_used = TRUE
+    WHERE classroom_code = UPPER(p_classroom_code)
+      AND LOWER(invite_email_or_username) = LOWER(p_username);
+  ELSIF p_role = 'student' THEN
+    -- Student must sign up to an active classroom with a registered teacher
+    IF NOT EXISTS (
+      SELECT 1 FROM public.user_accounts
+      WHERE classroom_code = UPPER(p_classroom_code) AND role = 'teacher'
+    ) THEN
+      RAISE EXCEPTION 'Classroom code must belong to an existing registered teacher';
+    END IF;
   END IF;
 
   INSERT INTO public.user_accounts (username, password_hash, role, classroom_code)
@@ -372,7 +417,30 @@ SECURITY DEFINER
 AS $$
 declare
     v_result json;
+    v_teacher_username TEXT;
+    v_teacher_class_code TEXT;
+    v_session_token UUID;
 begin
+    v_session_token := get_current_session_token();
+    if v_session_token is null then
+        raise exception 'Missing session token';
+    end if;
+
+    select entity_id, public.user_accounts.classroom_code into v_teacher_username, v_teacher_class_code
+    from public.active_sessions
+    join public.user_accounts on lower(public.user_accounts.username) = lower(public.active_sessions.entity_id)
+    where public.active_sessions.session_token = v_session_token
+      and public.active_sessions.role = 'teacher'
+      and public.active_sessions.expires_at > now();
+
+    if not found then
+        raise exception 'Invalid or expired teacher session';
+    end if;
+
+    if lower(v_teacher_class_code) <> lower(p_classroom_code) then
+        raise exception 'Classroom code mismatch';
+    end if;
+
     with student_nbs as (
         select
             student_token,
@@ -418,7 +486,7 @@ end;
 $$;
 
 -- Grant execution permissions
-GRANT EXECUTE ON FUNCTION get_classroom_dashboard(TEXT) TO anon;
+REVOKE EXECUTE ON FUNCTION get_classroom_dashboard(TEXT) FROM public, anon;
 GRANT EXECUTE ON FUNCTION get_classroom_dashboard(TEXT) TO authenticated;
 
 GRANT EXECUTE ON FUNCTION handle_cloud_sync(TEXT, TEXT, JSONB, JSONB) TO anon;

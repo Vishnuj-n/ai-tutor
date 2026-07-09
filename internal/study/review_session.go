@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	fsrs "github.com/open-spaced-repetition/go-fsrs/v4"
 )
 
 func (s *StudyService) GetReviewSession(taskID string) (*models.ReviewSession, error) {
@@ -64,9 +65,28 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		return nil, nil, "", fmt.Errorf("failed to retrieve last reviewed time: %w", err)
 	}
 
-	nextState, err := scheduler.NextFSRSState(*state, ratingCode, time.Now(), card.DueAt, lastReviewedAt)
+	fsrsCard := FlashcardStateToCard(*state, card.DueAt, lastReviewedAt)
+	originalLastReview := fsrsCard.LastReview
+	tNow := time.Now()
+
+	nextFsrsCard, err := scheduler.NextFSRSState(fsrsCard, ratingCode, tNow)
 	if err != nil {
 		return nil, nil, "", err
+	}
+	nextState := models.CardToFlashcardState(nextFsrsCard)
+
+	// Calculate ElapsedDays
+	if !originalLastReview.IsZero() {
+		elapsedDays = int(tNow.Sub(originalLastReview).Hours() / 24)
+		if elapsedDays < 0 {
+			elapsedDays = 0
+		}
+		nextState.ElapsedDays = elapsedDays
+	} else if lastReviewedAt > 0 {
+		elapsedSeconds := tNow.Unix() - lastReviewedAt
+		if elapsedSeconds > 0 {
+			nextState.ElapsedDays = int(elapsedSeconds / (24 * 60 * 60))
+		}
 	}
 	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {
@@ -208,4 +228,46 @@ func (s *StudyService) SuspendFlashcard(taskID, cardID string) (int, error) {
 	}
 	committed = true
 	return remaining, nil
+}
+
+const UnixMillisecondThreshold = 1e12
+
+func FlashcardStateToCard(state models.FlashcardState, dueAt, lastReviewedAt int64) fsrs.Card {
+	var dueTime, lastReviewTime time.Time
+	if dueAt > 0 {
+		dueTime = time.Unix(dueAt, 0)
+	}
+	if lastReviewedAt > 0 {
+		if lastReviewedAt > UnixMillisecondThreshold {
+			lastReviewTime = time.UnixMilli(lastReviewedAt)
+		} else {
+			lastReviewTime = time.Unix(lastReviewedAt, 0)
+		}
+	}
+
+	var fsrsState fsrs.State
+	switch state.StateCode {
+	case 0:
+		fsrsState = fsrs.New
+	case 1:
+		fsrsState = fsrs.Learning
+	case 2:
+		fsrsState = fsrs.Review
+	case 3:
+		fsrsState = fsrs.Relearning
+	default:
+		fsrsState = fsrs.New
+	}
+
+	return fsrs.Card{
+		Due:            dueTime,
+		Stability:      state.Stability,
+		Difficulty:     state.Difficulty,
+		ScheduledDays:  uint64(state.ScheduledDays),
+		Reps:           uint64(state.Reps),
+		Lapses:         uint64(state.Lapses),
+		State:          fsrsState,
+		LastReview:     lastReviewTime,
+		RemainingSteps: 0,
+	}
 }

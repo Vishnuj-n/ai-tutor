@@ -88,6 +88,10 @@
               </div>
             </div>
           </div>
+          <div v-else-if="failedQuestionsError" class="failed-questions-preview">
+            <h3>Failed Quiz Questions</h3>
+            <p class="error-text" style="color: var(--danger); font-size: 0.9rem;">{{ failedQuestionsError }}</p>
+          </div>
 
           <div class="source-preview">
             <h3>Source Material</h3>
@@ -156,6 +160,7 @@ const endPage = ref(10)
 const sourceText = ref('')
 const notebookTitle = ref('')
 const failedQuestions = ref([])
+const failedQuestionsError = ref(null)
 
 const fullPrompt = ref('')
 
@@ -196,6 +201,7 @@ onMounted(async () => {
         }
       } catch (e) {
         console.error('Failed to parse task payload_json:', e)
+        failedQuestionsError.value = 'Failed to load failed questions due to a malformed payload.'
       }
     }
 

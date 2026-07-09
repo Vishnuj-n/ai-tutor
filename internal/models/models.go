@@ -1,8 +1,6 @@
 package models
 
 import (
-	"time"
-
 	"github.com/open-spaced-repetition/go-fsrs/v4"
 )
 
@@ -416,47 +414,7 @@ type SyncLogEntry struct {
 	StateAfterJSON string `json:"state_after_json"`
 }
 
-// FlashcardStateToCard converts our FlashcardState to go-fsrs Card
-func FlashcardStateToCard(state FlashcardState, dueAt, lastReviewedAt int64) fsrs.Card {
-	var dueTime, lastReviewTime time.Time
-	if dueAt > 0 {
-		dueTime = time.Unix(dueAt, 0)
-	}
-	if lastReviewedAt > 0 {
-		if lastReviewedAt > 1e12 {
-			lastReviewTime = time.UnixMilli(lastReviewedAt)
-		} else {
-			lastReviewTime = time.Unix(lastReviewedAt, 0)
-		}
-	}
 
-	// Map StateCode to fsrs.State
-	var fsrsState fsrs.State
-	switch state.StateCode {
-	case 0:
-		fsrsState = fsrs.New
-	case 1:
-		fsrsState = fsrs.Learning
-	case 2:
-		fsrsState = fsrs.Review
-	case 3:
-		fsrsState = fsrs.Relearning
-	default:
-		fsrsState = fsrs.New
-	}
-
-	return fsrs.Card{
-		Due:            dueTime,
-		Stability:      state.Stability,
-		Difficulty:     state.Difficulty,
-		ScheduledDays:  safeUint64FromInt(state.ScheduledDays),
-		Reps:           safeUint64FromInt(state.Reps),
-		Lapses:         safeUint64FromInt(state.Lapses),
-		State:          fsrsState,
-		LastReview:     lastReviewTime,
-		RemainingSteps: 0, // Not tracked in our current implementation
-	}
-}
 
 // CardToFlashcardState converts go-fsrs Card to our FlashcardState
 func CardToFlashcardState(card fsrs.Card) FlashcardState {

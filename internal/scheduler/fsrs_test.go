@@ -5,15 +5,57 @@ import (
 	"time"
 
 	"ai-tutor/internal/models"
+	fsrs "github.com/open-spaced-repetition/go-fsrs/v4"
 )
+
+func toFsrsCard(state models.FlashcardState, dueAt, lastReviewedAt int64) fsrs.Card {
+	var dueTime, lastReviewTime time.Time
+	if dueAt > 0 {
+		dueTime = time.Unix(dueAt, 0)
+	}
+	if lastReviewedAt > 0 {
+		if lastReviewedAt > 1e12 {
+			lastReviewTime = time.UnixMilli(lastReviewedAt)
+		} else {
+			lastReviewTime = time.Unix(lastReviewedAt, 0)
+		}
+	}
+
+	var fsrsState fsrs.State
+	switch state.StateCode {
+	case 0:
+		fsrsState = fsrs.New
+	case 1:
+		fsrsState = fsrs.Learning
+	case 2:
+		fsrsState = fsrs.Review
+	case 3:
+		fsrsState = fsrs.Relearning
+	default:
+		fsrsState = fsrs.New
+	}
+
+	return fsrs.Card{
+		Due:            dueTime,
+		Stability:      state.Stability,
+		Difficulty:     state.Difficulty,
+		ScheduledDays:  uint64(state.ScheduledDays),
+		Reps:           uint64(state.Reps),
+		Lapses:         uint64(state.Lapses),
+		State:          fsrsState,
+		LastReview:     lastReviewTime,
+		RemainingSteps: 0,
+	}
+}
 
 func mustNextState(t *testing.T, state models.FlashcardState, rating int, now time.Time, dueAt, lastReviewedAt int64) models.FlashcardState {
 	t.Helper()
-	s, err := NextFSRSState(state, rating, now, dueAt, lastReviewedAt)
+	fsrsCard := toFsrsCard(state, dueAt, lastReviewedAt)
+	resCard, err := NextFSRSState(fsrsCard, rating, now)
 	if err != nil {
 		t.Fatalf("NextFSRSState failed: %v", err)
 	}
-	return s
+	return models.CardToFlashcardState(resCard)
 }
 
 func TestNextFSRSStateFirstReviewProducesValidStateForAllRatings(t *testing.T) {

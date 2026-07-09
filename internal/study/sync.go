@@ -64,10 +64,6 @@ func StartCloudSyncLoop(repo *db.Repository) {
 	ticker := time.NewTicker(15 * time.Minute)
 	go func() {
 		utils.Warnf("[SYNC] Background cloud sync worker started.")
-		// Run initial sync on launch
-		if err := TriggerCloudSync(repo); err != nil {
-			utils.Warnf("[SYNC] Initial launch sync warning: %v", err)
-		}
 		for range ticker.C {
 			if err := TriggerCloudSync(repo); err != nil {
 				utils.Warnf("[SYNC] Periodic sync warning: %v", err)
@@ -257,15 +253,19 @@ func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error
 
 	const maxDownloadBytes = 100 << 20 // 100 MiB
 	if resp.ContentLength > maxDownloadBytes {
+		_ = out.Close()
+		_ = os.Remove(localPath)
 		return fmt.Errorf("download rejected: Content-Length %d exceeds 100 MiB limit", resp.ContentLength)
 	}
 	limitedBody := &io.LimitedReader{R: resp.Body, N: maxDownloadBytes + 1}
 	if _, err = io.Copy(out, limitedBody); err != nil {
 		_ = out.Close()
+		_ = os.Remove(localPath)
 		return err
 	}
 	_ = out.Close()
 	if limitedBody.N <= 0 {
+		_ = os.Remove(localPath)
 		return fmt.Errorf("download aborted: response exceeded 100 MiB limit")
 	}
 
@@ -273,10 +273,12 @@ func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error
 	// Note: We register with status 'uploaded' and indexer will process it normally.
 	fileHash, hashErr := utils.FileSHA256(localPath)
 	if hashErr != nil {
+		_ = os.Remove(localPath)
 		return fmt.Errorf("failed to compute file hash: %w", hashErr)
 	}
 	err = repo.CreateNotebook(nb.ID, nb.Title, localPath, "pdf", "", fileHash, 0)
 	if err != nil {
+		_ = os.Remove(localPath)
 		return fmt.Errorf("failed to insert notebook to database: %w", err)
 	}
 
