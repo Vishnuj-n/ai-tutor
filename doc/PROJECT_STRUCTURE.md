@@ -41,7 +41,7 @@ internal/
     socratic.go       # Socratic tutor (in-app + retrieval)
     socratic_rescue.go # SOCRATIC_REMEDIAL completion handler
     review_session.go # Review session + suspend
-    sync.go           # Cloud sync + FLASHCARD_SYNC tasks
+    sync.go           # Cloud sync + FLASHCARD_GENERATE tasks
 
   notebook/           # Upload + ingestion (4 files)
     upload.go         # PDF upload
@@ -124,13 +124,22 @@ SELECT * FROM study_queue sq
 JOIN notebooks n ON sq.notebook_id = n.id
 WHERE sq.status = 'PENDING'
 ORDER BY
-  -- task_type tier DESC (via CASE),
-  COALESCE(n.priority, 5) DESC,   -- notebook: higher = more frequent
-  sq.priority ASC,                -- task: lower = higher priority
+  CASE sq.task_type
+    WHEN 'FLASHCARD_GENERATE' THEN 7
+    WHEN 'SOCRATIC_REMEDIAL' THEN 6
+    WHEN 'FLASHCARD_REVIEW' THEN 5
+    WHEN 'REREAD' THEN 4
+    WHEN 'QUIZ' THEN 3
+    WHEN 'READING' THEN 2
+    WHEN 'EXAMINER' THEN 1
+    ELSE 0
+  END DESC,
+  COALESCE(n.priority, 5) DESC,
+  sq.priority ASC,
   sq.created_at ASC;
 ```
 
-Task shape: `id` (TEXT), `task_type` (READING/QUIZ/REREAD/FLASHCARD_REVIEW/EXAMINER/SOCRATIC_REMEDIAL/FLASHCARD_SYNC), `block_id`, `related_id`, `status`, `priority`, `created_at`.
+Task shape: `id` (TEXT), `task_type` (READING/QUIZ/REREAD/FLASHCARD_REVIEW/EXAMINER/SOCRATIC_REMEDIAL/FLASHCARD_GENERATE), `block_id`, `related_id`, `status`, `priority`, `created_at`.
 
 ---
 

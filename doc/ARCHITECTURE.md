@@ -145,7 +145,7 @@ Relational structure with JSON extensions, centered on **persistent queue**.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | TEXT PK | Unique task identifier |
-| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_SYNC` |
+| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_GENERATE` |
 | `block_id` | TEXT | Reference to content block (chunk, quiz_set, etc.) |
 | `related_id` | TEXT | Optional related topic identifier |
 | `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED` |
@@ -319,13 +319,13 @@ Explicit priority hierarchy with notebook biasing:
 
 | Order | Task Type | Rationale |
 |-------|-----------|-----------|
-| 1 | `FLASHCARD_SYNC` (cloud sync) | Sync pending flashcard data |
-| 2 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
-| 3 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
-| 4 | `QUIZ` | Assessment after reading (Reading Layer) |
-| 5 | `READING` | New material after obligations (Reading Layer) |
+| 7 | `FLASHCARD_GENERATE` (cloud sync) | Sync pending flashcard data |
 | 6 | `SOCRATIC_REMEDIAL` (concept rescue) | Blocks queue after 2nd quiz failure; requires intervention |
-| 7 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
+| 5 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
+| 4 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
+| 3 | `QUIZ` | Assessment after reading (Reading Layer) |
+| 2 | `READING` | New material after obligations (Reading Layer) |
+| 1 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
 
 **Deterministic Query-Time Rules:**
 - Same `study_queue` state → same task order always
@@ -340,12 +340,12 @@ LEFT JOIN notebooks n ON sq.notebook_id = n.id
 WHERE sq.status = 'PENDING'
 ORDER BY 
   CASE sq.task_type
-    WHEN 'FLASHCARD_SYNC' THEN 7
-    WHEN 'FLASHCARD_REVIEW' THEN 6
-    WHEN 'REREAD' THEN 5
-    WHEN 'QUIZ' THEN 4
-    WHEN 'READING' THEN 3
-    WHEN 'SOCRATIC_REMEDIAL' THEN 2
+    WHEN 'FLASHCARD_GENERATE' THEN 7
+    WHEN 'SOCRATIC_REMEDIAL' THEN 6
+    WHEN 'FLASHCARD_REVIEW' THEN 5
+    WHEN 'REREAD' THEN 4
+    WHEN 'QUIZ' THEN 3
+    WHEN 'READING' THEN 2
     WHEN 'EXAMINER' THEN 1
     ELSE 0
   END DESC,
@@ -415,7 +415,7 @@ ORDER BY
 **Cloud sync payload uses stable identifiers** instead of local database IDs for cross-student analytics:
 
 **Changes:**
-- **SyncPayload.Logs** now uses `[]SyncLogEntry` with `Filename` (SHA-256 file hash) + `PageNumber` fields
+- **SyncPayload.Logs** now uses `[]SyncLogEntry` with `FileHash` (SHA-256 file hash) + `Filename` (plain filename from `filepath.Base()`) + `PageNumber` fields
 - Replaces `[]FSRSReviewLog` with local IDs (`topic_id`, `reference_id`)
 - Local `FSRSReviewLog` struct unchanged for internal use
 - Server receives stable identifiers for dashboard analytics
@@ -515,13 +515,13 @@ Canonical ORDER BY: `task_type_tier DESC, n.priority DESC, sq.priority ASC, crea
 
 | Legacy Priority | Task Type | Source |
 |----------|-----------|--------|
-| 1 | FLASHCARD_SYNC | Cloud sync pending |
-| 2 | FLASHCARD_REVIEW | FSRS due date passed |
-| 3 | REREAD (remediation) | Failed quiz |
-| 4 | QUIZ | Reading completion |
-| 5 | READING | New material ingestion |
+| 7 | FLASHCARD_GENERATE | Cloud sync pending |
 | 6 | SOCRATIC_REMEDIAL | 2nd quiz failure rescue |
-| 7 | EXAMINER | Mastery threshold met |
+| 5 | FLASHCARD_REVIEW | FSRS due date passed |
+| 4 | REREAD (remediation) | Failed quiz |
+| 3 | QUIZ | Reading completion |
+| 2 | READING | New material ingestion |
+| 1 | EXAMINER | Mastery threshold met |
 
 ### Adaptive Token-Budget Reading Windows
 
@@ -617,9 +617,9 @@ Student fails quiz twice on same topic → guided rescue flow:
 - `study_queue.task_type` accepts `SOCRATIC_REMEDIAL`
 - Re-quiz tasks include `"source": "socratic_rescue_requiz"` in payload for identification
 
-### FLASHCARD_SYNC Task
+### FLASHCARD_GENERATE Task
 
-Cloud sync operations use dedicated `FLASHCARD_SYNC` task type:
+Cloud sync operations use dedicated `FLASHCARD_GENERATE` task type:
 
 - Inserted when cloud sync fails (after retry exhaustion)
 - Resolved (COMPLETED) when sync succeeds on next attempt

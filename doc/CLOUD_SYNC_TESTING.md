@@ -46,7 +46,7 @@ App syncs study data (notebooks + FSRS review logs) to cloud via HTTP POST.
 > `file_hash` = SHA-256 of notebook file. `page_number` = from flashcard's source chunk. Both are stable, cross-install identifiers.
 
 3. **Delta sync:** Only logs with `reviewed_at > last_synced_at` sent. After success, `last_synced_at` advances.
-4. **Retry:** 3 attempts, 1s delay. On failure → `FLASHCARD_SYNC` task inserted.
+4. **Retry:** 3 attempts, 1s delay. On failure → `FLASHCARD_GENERATE` task inserted.
 5. **Response:** Server returns `new_notebooks` array for teacher-assigned PDF downloads.
 
 ---
@@ -179,4 +179,4 @@ Reset: `UPDATE user_settings SET last_synced_at = 0 WHERE id = 1;`
 | Sync does nothing | `cloud_sync_url` empty | Set URL in Settings or env var |
 | `Review logs: 0` first sync | `last_synced_at` already advanced | Reset to 0 |
 | Network error | Server not running | Verify mock server |
-| `FLASHCARD_SYNC` in queue | Sync failed 3 times | Fix server, next sync resolves |
+| `FLASHCARD_GENERATE` in queue | Sync failed 3 times | Fix server, next sync resolves |

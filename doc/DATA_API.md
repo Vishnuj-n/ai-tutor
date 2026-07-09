@@ -150,7 +150,7 @@ const (
   TaskTypeFlashcardReview TaskType = "FLASHCARD_REVIEW"
   TaskTypeExaminer        TaskType = "EXAMINER"
   TaskTypeSocraticRemedial TaskType = "SOCRATIC_REMEDIAL"
-  TaskTypeFlashcardSync   TaskType = "FLASHCARD_SYNC"
+  TaskTypeFlashcardSync   TaskType = "FLASHCARD_GENERATE"
 )
 ```
 
@@ -190,10 +190,20 @@ Returns current_streak, longest_streak, active_dates[] for calendar widget. Time
 
 ```json
 {
+  "user_token": "<api_token>",
   "classroom_code": "CLS101",
+  "notebooks": [
+    {
+      "file_hash": "a1b2c3...",
+      "filename": "textbook_chapter3.pdf",
+      "title": "My Notebook",
+      "study_status": "active",
+      "external_help_required": false
+    }
+  ],
   "logs": [
     {
-      "filename": "textbook_chapter3.pdf",
+      "file_hash": "a1b2c3d4e5f6...",
       "page_number": 15,
       "activity_type": "review",
       "reference_id": "card-uuid",
@@ -226,7 +236,7 @@ Data chain: `reference_id → flashcards.id → chunks.id → notebook_topics.to
 
 ## Standard Flow
 
-```
+```text
 Dashboard → GetNextTask() → User clicks → Router mounts module
 → Module calls API (GetBlockContent, GetQuizSet, etc.)
 → User completes → CompleteTask(taskID, result)

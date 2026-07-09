@@ -27,7 +27,7 @@ Central task table.
 | `id`           | TEXT PRIMARY KEY                    | Unique task identifier                                      |
 | `notebook_id`  | TEXT NOT NULL                       | Parent notebook. FK → `notebooks(id)`                       |
 | `topic_id`     | TEXT                                | Optional task context. FK → `topics(id)`                    |
-| `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_SYNC` |
+| `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_GENERATE` |
 | `status`       | TEXT NOT NULL                       | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED`       |
 | `priority`     | INTEGER DEFAULT 0                   | Task priority: lower = higher priority (ASC). Distinct from notebook priority (higher = more frequent). |
 | `created_at`   | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time                                               |
@@ -475,5 +475,5 @@ These mappings documentation-only: code + live schema already use current table 
 4. Quiz completion rolled up in `quiz_attempts`, with `reread_attempts` tracking repeated remediation. After 1 failed reread, `SOCRATIC_REMEDIAL` rescue task inserted.
 5. Socratic rescue uses `external_help_required` flag on `topics` to prevent infinite rescue cycles.
 6. Long-term retention handled by `fsrs_cards`, `fsrs_review_log`, `manual_flashcards`.
-7. Cloud sync failures insert `FLASHCARD_SYNC` tasks at highest queue priority.
-6. Session-specific review mappings live in `review_task_cards`, per-task reading cursors live in `reading_progress`.
+7. Cloud sync failures insert `FLASHCARD_GENERATE` tasks at highest queue priority.
+8. Session-specific review mappings live in `review_task_cards`, per-task reading cursors live in `reading_progress`.

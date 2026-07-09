@@ -26,12 +26,12 @@ Dashboard fetches next PENDING task
 
 | Order | Task Type |
 |-------|-----------|
-| 1 | `FLASHCARD_SYNC` |
-| 2 | `FLASHCARD_REVIEW` |
-| 3 | `REREAD` |
-| 4 | `QUIZ` |
-| 5 | `READING` |
-| 6 | `SOCRATIC_REMEDIAL` |
+| 1 | `FLASHCARD_GENERATE` |
+| 2 | `SOCRATIC_REMEDIAL` |
+| 3 | `FLASHCARD_REVIEW` |
+| 4 | `REREAD` |
+| 5 | `QUIZ` |
+| 6 | `READING` |
 | 7 | `EXAMINER` |
 
 Then apply notebook priority bias within each tier.
@@ -142,9 +142,9 @@ Key behaviors: SOCRATIC_REMEDIAL blocks queue, single rescue cycle only, no flas
 
 ---
 
-## 4b. FLASHCARD_SYNC (Cloud Sync Recovery)
+## 4b. FLASHCARD_GENERATE (Cloud Sync Recovery)
 
-On sync failure after retries → `FLASHCARD_SYNC` task inserted (priority tier 7). Resolved when sync succeeds. Prevents data loss.
+On sync failure after retries → `FLASHCARD_GENERATE` task inserted (priority tier 7). Resolved when sync succeeds. Prevents data loss.
 
 ---
 

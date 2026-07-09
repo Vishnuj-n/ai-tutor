@@ -92,9 +92,9 @@ All progression: `study_queue`
 **Task Lifecycle:** `PENDING → ACTIVE → COMPLETED` (or `FAILED`/`SKIPPED`)
 
 **Priority Order:**
-1. `FLASHCARD_SYNC` — cloud sync recovery
-2. `FLASHCARD_REVIEW` — spaced repetition
-3. `SOCRATIC_REMEDIAL` — rescue lane
+1. `FLASHCARD_GENERATE` — cloud sync recovery
+2. `SOCRATIC_REMEDIAL` — rescue lane
+3. `FLASHCARD_REVIEW` — spaced repetition
 4. `REREAD` — remediation
 5. `QUIZ` — assessment
 6. `READING` — content

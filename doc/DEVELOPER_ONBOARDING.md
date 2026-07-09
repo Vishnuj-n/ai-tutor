@@ -45,7 +45,7 @@ Local RAG requires runtime dependencies (DLL/dylib/so files) and the embedding m
   ./sync-deps.sh
   ```
 
-This script will verify your platform and download the required binary libraries (`vec0`, `onnxruntime`) and model assets into the [asset/](file:///c:/Users/vishn/PROJECT/ai-tutor/asset) folder.
+This script will verify your platform and download the required binary libraries (`vec0`, `onnxruntime`) and model assets into the [asset/](./asset) folder.
 
 ### Step 2: System Health Check
 Run the Wails diagnostic command to ensure your developer environment is ready:
@@ -69,14 +69,14 @@ All learning progression in the application is managed via a **deterministic que
 ### Invariants:
 1. **SQLite is the Source of Truth:** Every state change is a direct database transaction.
 2. **Deterministic Priority Ordering:**
-   1. `FLASHCARD_SYNC` (Spaced repetition sync failures)
-   2. `FLASHCARD_REVIEW` (Due cards via FSRS)
-   3. `SOCRATIC_REMEDIAL` (Remediation lane for consecutive failures)
+   1. `FLASHCARD_GENERATE` (Cloud sync recovery)
+   2. `SOCRATIC_REMEDIAL` (Remediation lane for consecutive failures)
+   3. `FLASHCARD_REVIEW` (Due cards via FSRS)
    4. `REREAD` (Remediation study tasks)
    5. `QUIZ` (Short-term comprehension check)
    6. `READING` (New conceptual material)
 
-Review the full schema details in [doc/SCHEMA.md](file:///c:/Users/vishn/PROJECT/ai-tutor/doc/SCHEMA.md) and module mapping in [doc/AGENT_MAP.md](file:///c:/Users/vishn/PROJECT/ai-tutor/doc/AGENT_MAP.md).
+Review the full schema details in [doc/SCHEMA.md](./doc/SCHEMA.md) and module mapping in [doc/AGENT_MAP.md](./doc/AGENT_MAP.md).
 
 ---
 
@@ -103,7 +103,7 @@ As a developer inheriting the cloud infrastructure, you will manage both the **S
 To hand over or provision a new backend:
 1. Create a new project in the [Supabase Console](https://supabase.com).
 2. Go to the **SQL Editor** in your Supabase project dashboard.
-3. Open and copy the entire contents of [supabase_schema.sql](file:///c:/Users/vishn/PROJECT/ai-tutor/supabase_schema.sql) in this repository.
+3. Open and copy the entire contents of [supabase_schema.sql](./supabase_schema.sql) in this repository.
 4. Paste and execute it. This script does the following:
    * Enables the UUID extension.
    * Creates the core tables: `student_notebooks`, `student_review_logs`, `teacher_assignments`, `user_accounts`, and `active_sessions`.
@@ -127,9 +127,9 @@ SELECT signup_user('student1', 'studentpassword123', 'student', 'BIO101');
 The dashboard allows teachers to view student statistics, recall pass rates, active alerts (such as students stuck in Socratic rescue blocks), and assign textbook PDFs.
 
 #### Directory Structure
-All dashboard code is located in the [cloud-dashboard/](file:///c:/Users/vishn/PROJECT/ai-tutor/cloud-dashboard) directory:
-* [cloud-dashboard/src/App.vue](file:///c:/Users/vishn/PROJECT/ai-tutor/cloud-dashboard/src/App.vue) — Core Dashboard logic and template
-* [cloud-dashboard/src/style.css](file:///c:/Users/vishn/PROJECT/ai-tutor/cloud-dashboard/src/style.css) — Glassmorphism and indigo dark theme stylings
+All dashboard code is located in the [cloud-dashboard/](./cloud-dashboard) directory:
+* [cloud-dashboard/src/App.vue](./cloud-dashboard/src/App.vue) — Core Dashboard logic and template
+* [cloud-dashboard/src/style.css](./cloud-dashboard/src/style.css) — Glassmorphism and indigo dark theme stylings
 
 #### Local Setup
 1. Navigate to the cloud-dashboard directory:
@@ -180,5 +180,5 @@ When you hand over the instance:
 Use these commands during onboarding to verify everything works:
 
 * **Go Tests:** `go test ./...`
-* **Mock Server Verification:** Run `node doc/CLOUD_SYNC_TESTING.md` mock setups to test delta logs without hitting Supabase.
+* **Mock Server Verification:** See [doc/CLOUD_SYNC_TESTING.md](./doc/CLOUD_SYNC_TESTING.md) for mock server setup (Method 1: embedded Node.js server) to test delta logs without hitting Supabase.
 * **Database Inspection:** Run `sqlite3` on the client profile `.db` file in the user's local directory to manually query state if tasks become locked.

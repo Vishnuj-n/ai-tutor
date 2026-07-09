@@ -33,7 +33,7 @@ Reader completes reading task only. Backend generates + activates QUIZ follow-up
 - Crash recovery: reset stale ACTIVE tasks on startup (30-min timeout)
 - Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when next pending queue item
 - Handle SOCRATIC_REMEDIAL tasks (concept rescue) with queue-blocking semantics
-- Handle FLASHCARD_SYNC tasks for cloud sync recovery
+- Handle FLASHCARD_GENERATE tasks for cloud sync recovery
 - Branch quiz failure logic based on user's `default_remedial_strategy` (Classic vs Fast track)
 
 **Explicitly Deterministic:**
@@ -465,7 +465,7 @@ internal/
     socratic.go       # Socratic tutor session
     socratic_rescue.go # SOCRATIC_REMEDIAL completion handler (re-quiz insertion)
     review_session.go # Review session management
-    sync.go           # Cloud sync + FLASHCARD_SYNC task management
+    sync.go           # Cloud sync + FLASHCARD_GENERATE task management
   scheduler/         # Scheduling algorithms
     fsrs.go          # FSRS spaced repetition algorithm
     service.go       # Scheduler service wrapper

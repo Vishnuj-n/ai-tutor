@@ -35,7 +35,7 @@ UI sends `block_id` with request. Backend validates block exists. Retrieval quer
 
 ## 5. Retrieval Pipeline
 
-```
+```text
 User question
   → validate active topic
   → embed query
