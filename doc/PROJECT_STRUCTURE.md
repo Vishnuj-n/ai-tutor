@@ -120,9 +120,14 @@ Sidebar: Dashboard, Reader, Notebooks, Quiz, Flashcards, Examiner, Tutor. Settin
 ## Queue Contract (V1)
 
 ```sql
-SELECT * FROM study_queue 
-WHERE status = 'PENDING' 
-ORDER BY priority ASC, created_at ASC;
+SELECT * FROM study_queue sq
+JOIN notebooks n ON sq.notebook_id = n.id
+WHERE sq.status = 'PENDING'
+ORDER BY
+  -- task_type tier DESC (via CASE),
+  COALESCE(n.priority, 5) DESC,   -- notebook: higher = more frequent
+  sq.priority ASC,                -- task: lower = higher priority
+  sq.created_at ASC;
 ```
 
 Task shape: `id` (TEXT), `task_type` (READING/QUIZ/REREAD/FLASHCARD_REVIEW/EXAMINER/SOCRATIC_REMEDIAL/FLASHCARD_SYNC), `block_id`, `related_id`, `status`, `priority`, `created_at`.

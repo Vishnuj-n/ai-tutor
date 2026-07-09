@@ -592,8 +592,8 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 					ELSE 0
 				END
 			END DESC,
-			sq.priority ASC,
 			COALESCE(n.priority, 5) DESC,
+			sq.priority ASC,
 			n.title ASC,
 			sq.id ASC
 		LIMIT 1

@@ -149,7 +149,7 @@ Relational structure with JSON extensions, centered on **persistent queue**.
 | `block_id` | TEXT | Reference to content block (chunk, quiz_set, etc.) |
 | `related_id` | TEXT | Optional related topic identifier |
 | `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED` |
-| `priority` | INTEGER | Lower = higher priority |
+| `priority` | INTEGER | Task priority: lower = higher priority (ASC). Note: notebook priority uses opposite convention (higher = more frequent, DESC). |
 | `created_at` | INTEGER | Unix timestamp |
 | `completed_at` | INTEGER | Unix timestamp (NULL if pending) |
 
@@ -506,7 +506,12 @@ Acceptable for MVP. Future refactoring may separate generation state to `quiz_se
 
 ### Task Priority Order (Legacy Reference)
 
-**⚠️ OUTDATED.** Actual priority ordering defined by SQL query above (Section 7) where higher numeric value = higher priority. See ordering SQL for authoritative values.
+**⚠️ OUTDATED.** Actual priority ordering defined by SQL query above (Section 7). Two priority conventions exist:
+- **Task type tiers** (CASE statement): higher number = more important task type
+- **`sq.priority`** (task field): lower number = higher priority (ASC)
+- **`n.priority`** (notebook field): higher number = more frequent (DESC)
+
+Canonical ORDER BY: `task_type_tier DESC, n.priority DESC, sq.priority ASC, created_at ASC`
 
 | Legacy Priority | Task Type | Source |
 |----------|-----------|--------|

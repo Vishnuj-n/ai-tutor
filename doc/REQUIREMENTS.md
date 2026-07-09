@@ -85,7 +85,7 @@ Local-first desktop study assistant. Users upload documents, system creates a de
 
 9. **Queue-Driven Workflow**
    - SQLite `study_queue` = scheduler (no separate engine)
-   - Dashboard queries: `SELECT * FROM study_queue WHERE status = 'PENDING' ORDER BY priority`
+   - Dashboard queries: `SELECT * FROM study_queue WHERE status = 'PENDING' ORDER BY priority ASC` (lower = higher priority)
    - Task types: `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`
    - Thin orchestrator: fetch, mount, complete, insert follow-ups
    - Stateless modules

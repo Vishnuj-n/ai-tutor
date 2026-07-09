@@ -29,7 +29,7 @@ Central task table.
 | `topic_id`     | TEXT                                | Optional task context. FK → `topics(id)`                    |
 | `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_SYNC` |
 | `status`       | TEXT NOT NULL                       | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED`       |
-| `priority`     | INTEGER DEFAULT 0                   | Lower values sort first                                     |
+| `priority`     | INTEGER DEFAULT 0                   | Task priority: lower = higher priority (ASC). Distinct from notebook priority (higher = more frequent). |
 | `created_at`   | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time                                               |
 | `activated_at` | TIMESTAMP                           | When task became active                                     |
 | `completed_at` | TIMESTAMP                           | When task finished                                          |
@@ -89,7 +89,7 @@ Top-level container for uploaded study material.
 | `file_path` | TEXT NOT NULL | Local file path |
 | `file_type` | TEXT DEFAULT 'pdf' | File type |
 | `topic_id` | TEXT | Primary topic reference. FK → `topics(id)` |
-| `priority` | INTEGER DEFAULT 5 | Queue bias for this notebook |
+| `priority` | INTEGER DEFAULT 5 | Notebook priority (1-10): higher = more frequent in queue (DESC). Distinct from task priority (lower = higher). |
 | `status` | TEXT DEFAULT 'uploaded' | Notebook status |
 | `indexing_status` | TEXT DEFAULT 'PENDING' | Ingestion state |
 | `page_count` | INTEGER | Page count if known |

@@ -49,7 +49,7 @@ func (r *QueueRepo) GetNextPending(notebookID string) (*models.StudyTask, error)
         SELECT id, task_type, status, payload_json
         FROM study_queue
         WHERE notebook_id = ? AND status = 'PENDING'
-        ORDER BY priority DESC, created_at ASC
+        ORDER BY priority ASC, created_at ASC
         LIMIT 1
     `, notebookID)
     // ... scan and return
