@@ -160,10 +160,9 @@ CREATE TABLE IF NOT EXISTS public.teacher_signup_invites (
     PRIMARY KEY (classroom_code, invite_email_or_username)
 );
 
--- Seed default teacher invite for active development/docs onboarding
-INSERT INTO public.teacher_signup_invites (classroom_code, invite_email_or_username)
-VALUES ('BIO101', 'teacher@school.edu')
-ON CONFLICT DO NOTHING;
+-- NOTE: Do NOT seed teacher invites here. Populate teacher_signup_invites
+-- via your admin tooling or a dev-only migration script. An unconditional
+-- INSERT here becomes a live backdoor in every deployed environment.
 
 
 -- 7b. RPC Function for User Sign-Up

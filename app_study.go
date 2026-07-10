@@ -1233,9 +1233,35 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 		return map[string]interface{}{"error": "task is not a flashcard generation retry task"}
 	}
 
-	utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_started taskID=%s topicID=%s notebookID=%s", taskID, task.TopicID, task.NotebookID)
+	// If task has missing topicID or invalid page range, look up from notebook
+	topicID := task.TopicID
+	startPage := task.StartPage
+	endPage := task.EndPage
+	if topicID == "" || startPage <= 0 || endPage <= 0 || endPage < startPage {
+		topics, topicsErr := repo.GetNotebookTopicsWithBounds(task.NotebookID)
+		if topicsErr != nil || len(topics) == 0 {
+			utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_failed taskID=%s reason=no_topics_for_notebook notebookID=%s", taskID, task.NotebookID)
+			return map[string]interface{}{"error": "no topics found for notebook, cannot generate flashcards"}
+		}
+		firstTopic := topics[0]
+		if topicID == "" {
+			topicID = firstTopic.TopicID
+		}
+		if startPage <= 0 || endPage <= 0 || endPage < startPage {
+			startPage = firstTopic.StartPage
+			if startPage <= 0 {
+				startPage = 1
+			}
+			endPage = firstTopic.EndPage
+			if endPage <= startPage {
+				endPage = startPage + 10
+			}
+		}
+	}
 
-	cardCount, err := a.studyService.GenerateFlashcardsAfterQuiz(task.NotebookID, task.TopicID, task.StartPage, task.EndPage)
+	utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_started taskID=%s topicID=%s notebookID=%s", taskID, topicID, task.NotebookID)
+
+	cardCount, err := a.studyService.GenerateFlashcardsAfterQuiz(task.NotebookID, topicID, startPage, endPage)
 	if err != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_failed taskID=%s reason=%v", taskID, err)
 		if task.Status == models.StudyTaskStatusPending {
@@ -1252,11 +1278,11 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 	}
 
 	// On success, resolve the FLASHCARD_GENERATE task
-	if err := repo.ResolveFlashcardGenerateTasksForTopic(task.TopicID); err != nil {
+	if err := repo.ResolveFlashcardGenerateTasksForTopic(topicID); err != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE task: %v", err)
 	}
 
-	utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_completed taskID=%s cardsScheduled=%d", taskID, cardCount)
+	utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_completed taskID=%s topicID=%s cardsScheduled=%d", taskID, topicID, cardCount)
 
 	return map[string]interface{}{
 		"ok":              true,

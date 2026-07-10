@@ -82,11 +82,6 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 			elapsedDays = 0
 		}
 		nextState.ElapsedDays = elapsedDays
-	} else if lastReviewedAt > 0 {
-		elapsedSeconds := tNow.Unix() - lastReviewedAt
-		if elapsedSeconds > 0 {
-			nextState.ElapsedDays = int(elapsedSeconds / (24 * 60 * 60))
-		}
 	}
 	dueAt := now + int64(nextState.ScheduledDays)*24*60*60
 	if nextState.ScheduledDays == 0 {
@@ -101,7 +96,7 @@ func (s *StudyService) applyFlashcardReview(tx *sql.Tx, cardID string, ratingCod
 		TopicID:         card.TopicID,
 		ActivityType:    "flashcard",
 		ReferenceID:     card.ID,
-		ReviewedAt:      time.Now().UnixMilli(),
+		ReviewedAt:      time.Now().Unix(),
 		Rating:          ratingCode,
 		ScheduledDays:   nextState.ScheduledDays,
 		StateBeforeJSON: string(stateBeforeJSONBytes),

@@ -60,9 +60,14 @@
             <div class="time-input-group">
               <label for="study-start-time" class="time-label">Start</label>
               <div class="time-input-wrapper">
-                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="10"/>
-                  <polyline points="12,6 12,12 16,14"/>
+                  <line x1="12" y1="6.5" x2="12" y2="7"/>
+                  <line x1="12" y1="17" x2="12" y2="17.5"/>
+                  <line x1="6.5" y1="12" x2="7" y2="12"/>
+                  <line x1="17" y1="12" x2="17.5" y2="12"/>
+                  <polyline points="12,8 12,12 14.5,13.5"/>
+                  <circle cx="12" cy="12" r="0.75" fill="currentColor"/>
                 </svg>
                 <input
                   id="study-start-time"
@@ -83,9 +88,14 @@
             <div class="time-input-group">
               <label for="study-end-time" class="time-label">End</label>
               <div class="time-input-wrapper">
-                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="10"/>
-                  <polyline points="12,6 12,12 16,14"/>
+                  <line x1="12" y1="6.5" x2="12" y2="7"/>
+                  <line x1="12" y1="17" x2="12" y2="17.5"/>
+                  <line x1="6.5" y1="12" x2="7" y2="12"/>
+                  <line x1="17" y1="12" x2="17.5" y2="12"/>
+                  <polyline points="12,8 12,12 14.5,13.5"/>
+                  <circle cx="12" cy="12" r="0.75" fill="currentColor"/>
                 </svg>
                 <input
                   id="study-end-time"
