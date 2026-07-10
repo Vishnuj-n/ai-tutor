@@ -19,6 +19,7 @@ INCLUDE_EXTENSIONS = {
 # Files to ignore
 IGNORE_FILES = {
     "doc_god.md",
+    "CLOUD_SYNC_TESTING.md",
 }
 
 # ============================================================
