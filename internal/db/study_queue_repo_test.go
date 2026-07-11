@@ -748,6 +748,7 @@ func TestStudyQueueNewPriorityLevels(t *testing.T) {
 		models.StudyTaskTypeExaminer,
 		models.StudyTaskTypeSocraticRemedial,
 		models.StudyTaskTypeReading,
+		models.StudyTaskTypeMilestoneExam,
 		models.StudyTaskTypeQuiz,
 		models.StudyTaskTypeReread,
 		models.StudyTaskTypeFlashcardReview,
@@ -776,6 +777,7 @@ func TestStudyQueueNewPriorityLevels(t *testing.T) {
 		models.StudyTaskTypeFlashcardReview,
 		models.StudyTaskTypeReread,
 		models.StudyTaskTypeQuiz,
+		models.StudyTaskTypeMilestoneExam,
 		models.StudyTaskTypeReading,
 		models.StudyTaskTypeExaminer,
 	}
@@ -870,3 +872,126 @@ func TestGetCompletedTaskTimes(t *testing.T) {
 	}
 }
 
+func TestMilestoneExamRepoHelpersCountOnlyPassedQuizzes(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-milestone"
+	topicID := "topic-milestone"
+	if err := testRepo.EnsureTopic(topicID, "Milestone Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook(notebookID, "Milestone Notebook", "/tmp/milestone.pdf", "pdf", topicID, "", 20); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		taskID := fmt.Sprintf("quiz-task-%d", i)
+		status := models.StudyTaskStatusPending
+		if err := testRepo.InsertStudyTask(models.StudyQueueTask{
+			ID:          taskID,
+			NotebookID:  notebookID,
+			TopicID:     topicID,
+			TaskType:    models.StudyTaskTypeQuiz,
+			Status:      status,
+			Priority:    0,
+			PayloadJSON: `{"questions":[{"id":"q1","prompt":"P","options":["A","B","C","D"],"correct_answer":"A"}],"passing_score":70}`,
+		}); err != nil {
+			t.Fatalf("InsertStudyTask failed: %v", err)
+		}
+		if err := testRepo.ActivateTask(taskID); err != nil {
+			t.Fatalf("ActivateTask failed: %v", err)
+		}
+
+		passed := i != 1
+		score := 100
+		if !passed {
+			score = 0
+		}
+		tx, err := testRepo.Begin()
+		if err != nil {
+			t.Fatalf("Begin failed: %v", err)
+		}
+		if err := testRepo.SaveQuizAttemptTx(tx, models.QuizAttemptRecord{
+			ID:          fmt.Sprintf("attempt-%d", i),
+			TaskID:      taskID,
+			Score:       score,
+			Passed:      passed,
+			AnswersJSON: `[{"question_id":"q1","selected":"A"}]`,
+			Feedback:    "",
+			CompletedAt: time.Now().Unix() + int64(i),
+		}); err != nil {
+			t.Fatalf("SaveQuizAttemptTx failed: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit failed: %v", err)
+		}
+	}
+
+	count, err := testRepo.CountCompletedQuizzesByNotebook(notebookID)
+	if err != nil {
+		t.Fatalf("CountCompletedQuizzesByNotebook failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 passed quizzes to count toward milestone, got %d", count)
+	}
+
+	attempts, err := testRepo.GetLastNQuizAttemptsWithCorrectness(notebookID, 10)
+	if err != nil {
+		t.Fatalf("GetLastNQuizAttemptsWithCorrectness failed: %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 passed attempts, got %d", len(attempts))
+	}
+	if attempts[0].PassingScore != 70 {
+		t.Fatalf("expected passing score 70, got %d", attempts[0].PassingScore)
+	}
+}
+
+func TestInsertMilestoneExamTaskPersistsPayload(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-milestone-insert"
+	topicID := "topic-milestone-insert"
+	if err := testRepo.EnsureTopic(topicID, "Milestone Insert Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook(notebookID, "Milestone Insert Notebook", "/tmp/milestone-insert.pdf", "pdf", topicID, "", 20); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	payload := models.MilestoneExamPayload{
+		Quizzes: map[string][]int{
+			"attempt-1": []int{1, 0, 1},
+		},
+		PassingScore: 70,
+		QuizCount:    1,
+	}
+	if err := testRepo.InsertMilestoneExamTask(notebookID, payload); err != nil {
+		t.Fatalf("InsertMilestoneExamTask failed: %v", err)
+	}
+
+	var taskType string
+	var payloadJSON string
+	if err := testRepo.db.QueryRow(`
+		SELECT task_type, COALESCE(payload_json, '')
+		FROM study_queue
+		WHERE notebook_id = ? AND task_type = 'MILESTONE_EXAM'
+		LIMIT 1
+	`, notebookID).Scan(&taskType, &payloadJSON); err != nil {
+		t.Fatalf("query milestone exam task failed: %v", err)
+	}
+	if taskType != "MILESTONE_EXAM" {
+		t.Fatalf("expected MILESTONE_EXAM task type, got %s", taskType)
+	}
+	if payloadJSON == "" {
+		t.Fatalf("expected milestone exam payload to be persisted")
+	}
+
+	exists, err := testRepo.HasMilestoneExamForAttemptID(notebookID, "attempt-1")
+	if err != nil {
+		t.Fatalf("HasMilestoneExamForAttemptID failed: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected milestone exam dedupe check to find attempt-1")
+	}
+}

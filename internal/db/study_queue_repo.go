@@ -20,6 +20,16 @@ var (
 	ErrTaskNotFound   = errors.New("task not found")
 )
 
+type QuizAttemptWithPayload struct {
+	ID           string
+	Score        int
+	Passed       bool
+	AnswersJSON  string
+	CompletedAt  int64
+	QuizPayload  string
+	PassingScore int
+}
+
 // InsertStudyTask inserts one task row in study_queue.
 func (r *Repository) InsertStudyTask(task models.StudyQueueTask) error {
 	return r.withTx(func(tx *sql.Tx) error {
@@ -84,7 +94,6 @@ func (r *Repository) GetTaskByID(taskID string) (*models.StudyQueueTask, error) 
 	return task, nil
 }
 
-
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
 func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 	var activeProfileID sql.NullString
@@ -135,8 +144,9 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 					WHEN 'FLASHCARD_REVIEW' THEN 5
 					WHEN 'REREAD' THEN 4
 					WHEN 'QUIZ' THEN 3
-					WHEN 'READING' THEN 2
-					WHEN 'EXAMINER' THEN 1
+					WHEN 'MILESTONE_EXAM' THEN 2
+					WHEN 'READING' THEN 1
+					WHEN 'EXAMINER' THEN 0
 					ELSE 0
 				END DESC,
 				COALESCE(n.priority, 5) DESC,
@@ -238,8 +248,9 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 								WHEN 'SOCRATIC_REMEDIAL' THEN 6
 								WHEN 'REREAD' THEN 5
 								WHEN 'QUIZ' THEN 4
-								WHEN 'READING' THEN 3
-								WHEN 'EXAMINER' THEN 2
+								WHEN 'MILESTONE_EXAM' THEN 3
+								WHEN 'READING' THEN 2
+								WHEN 'EXAMINER' THEN 1
 								WHEN 'FLASHCARD_REVIEW' THEN 1
 								ELSE 0
 							END
@@ -250,8 +261,9 @@ func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
 								WHEN 'FLASHCARD_REVIEW' THEN 5
 								WHEN 'REREAD' THEN 4
 								WHEN 'QUIZ' THEN 3
-								WHEN 'READING' THEN 2
-								WHEN 'EXAMINER' THEN 1
+								WHEN 'MILESTONE_EXAM' THEN 2
+								WHEN 'READING' THEN 1
+								WHEN 'EXAMINER' THEN 0
 								ELSE 0
 							END
 						END DESC,
@@ -483,8 +495,9 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 					WHEN 'FLASHCARD_REVIEW' THEN 5
 					WHEN 'REREAD' THEN 4
 					WHEN 'QUIZ' THEN 3
-					WHEN 'READING' THEN 2
-					WHEN 'EXAMINER' THEN 1
+					WHEN 'MILESTONE_EXAM' THEN 2
+					WHEN 'READING' THEN 1
+					WHEN 'EXAMINER' THEN 0
 					ELSE 0
 				END DESC,
 				COALESCE(n.priority, 5) DESC,
@@ -575,8 +588,9 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 					WHEN 'SOCRATIC_REMEDIAL' THEN 6
 					WHEN 'REREAD' THEN 5
 					WHEN 'QUIZ' THEN 4
-					WHEN 'READING' THEN 3
-					WHEN 'EXAMINER' THEN 2
+					WHEN 'MILESTONE_EXAM' THEN 3
+					WHEN 'READING' THEN 2
+					WHEN 'EXAMINER' THEN 1
 					WHEN 'FLASHCARD_REVIEW' THEN 1
 					ELSE 0
 				END
@@ -587,8 +601,9 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 					WHEN 'FLASHCARD_REVIEW' THEN 5
 					WHEN 'REREAD' THEN 4
 					WHEN 'QUIZ' THEN 3
-					WHEN 'READING' THEN 2
-					WHEN 'EXAMINER' THEN 1
+					WHEN 'MILESTONE_EXAM' THEN 2
+					WHEN 'READING' THEN 1
+					WHEN 'EXAMINER' THEN 0
 					ELSE 0
 				END
 			END DESC,
@@ -1088,7 +1103,6 @@ func (r *Repository) CompleteReadingWithGeneratedQuiz(taskID string, quizPayload
 	return quizTaskID, nil
 }
 
-
 // SaveQuizAttemptTx saves one quiz attempt record transactionally.
 func (r *Repository) SaveQuizAttemptTx(tx *sql.Tx, attempt models.QuizAttemptRecord) error {
 	attempt.ID = strings.TrimSpace(attempt.ID)
@@ -1165,6 +1179,136 @@ func (r *Repository) GetLatestQuizAttemptScoreByTopic(topicID string) (int, bool
 		return 0, false, err
 	}
 	return score, passed, nil
+}
+
+// CountCompletedQuizzesByNotebook returns the count of passed quiz attempts for a notebook.
+func (r *Repository) CountCompletedQuizzesByNotebook(notebookID string) (int, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return 0, fmt.Errorf("notebook ID is required")
+	}
+
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM quiz_attempts qa
+		JOIN study_queue sq ON qa.task_id = sq.id
+		WHERE sq.notebook_id = ?
+		  AND sq.task_type = 'QUIZ'
+		  AND qa.passed = 1
+	`, notebookID).Scan(&count)
+	return count, err
+}
+
+// GetLastNQuizAttemptsWithCorrectness returns recent passed quiz attempts with original quiz payloads.
+func (r *Repository) GetLastNQuizAttemptsWithCorrectness(notebookID string, n int) ([]QuizAttemptWithPayload, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook ID is required")
+	}
+	if n <= 0 {
+		return nil, fmt.Errorf("n must be positive")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT
+			qa.id,
+			qa.score,
+			qa.passed,
+			qa.answers_json,
+			qa.completed_at,
+			COALESCE(sq.payload_json, '')
+		FROM quiz_attempts qa
+		JOIN study_queue sq ON qa.task_id = sq.id
+		WHERE sq.notebook_id = ?
+		  AND sq.task_type = 'QUIZ'
+		  AND qa.passed = 1
+		ORDER BY qa.completed_at DESC
+		LIMIT ?
+	`, notebookID, n)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	attempts := make([]QuizAttemptWithPayload, 0, n)
+	for rows.Next() {
+		var attempt QuizAttemptWithPayload
+		if err := rows.Scan(
+			&attempt.ID,
+			&attempt.Score,
+			&attempt.Passed,
+			&attempt.AnswersJSON,
+			&attempt.CompletedAt,
+			&attempt.QuizPayload,
+		); err != nil {
+			return nil, err
+		}
+
+		var payload models.QuizTaskPayload
+		if err := json.Unmarshal([]byte(attempt.QuizPayload), &payload); err == nil && payload.PassingScore > 0 {
+			attempt.PassingScore = payload.PassingScore
+		} else {
+			attempt.PassingScore = 70
+		}
+
+		attempts = append(attempts, attempt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return attempts, nil
+}
+
+// InsertMilestoneExamTask inserts a MILESTONE_EXAM task into the queue.
+func (r *Repository) InsertMilestoneExamTask(notebookID string, payload models.MilestoneExamPayload) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook ID is required")
+	}
+	if len(payload.Quizzes) == 0 {
+		return fmt.Errorf("milestone exam payload must include quizzes")
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal milestone exam payload: %w", err)
+	}
+
+	task := models.StudyQueueTask{
+		ID:          uuid.NewString(),
+		NotebookID:  notebookID,
+		TaskType:    models.StudyTaskTypeMilestoneExam,
+		Status:      models.StudyTaskStatusPending,
+		Priority:    0,
+		PayloadJSON: string(payloadJSON),
+	}
+	return r.InsertStudyTask(task)
+}
+
+// HasMilestoneExamForAttemptID reports whether a milestone exam already includes the given quiz attempt.
+func (r *Repository) HasMilestoneExamForAttemptID(notebookID, attemptID string) (bool, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	attemptID = strings.TrimSpace(attemptID)
+	if notebookID == "" {
+		return false, fmt.Errorf("notebook ID is required")
+	}
+	if attemptID == "" {
+		return false, fmt.Errorf("attempt ID is required")
+	}
+
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM study_queue
+		WHERE notebook_id = ?
+		  AND task_type = 'MILESTONE_EXAM'
+		  AND payload_json LIKE ?
+	`, notebookID, `%`+`"`+attemptID+`"`+`%`).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // EnsurePendingFlashcardGenerateTask inserts a new FLASHCARD_GENERATE task if none exists in PENDING or ACTIVE status for the topic.
@@ -1341,7 +1485,3 @@ func (r *Repository) GetActiveRemedialTaskPayloadByTopic(topicID string) (string
 	}
 	return payloadJSON, err
 }
-
-
-
-

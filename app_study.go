@@ -12,6 +12,7 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/scheduler"
+	studypkg "ai-tutor/internal/study"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
@@ -221,6 +222,8 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		titlePrefix = "Read"
 	case models.StudyTaskTypeQuiz:
 		titlePrefix = "Quiz"
+	case models.StudyTaskTypeMilestoneExam:
+		titlePrefix = "Milestone Exam"
 	case models.StudyTaskTypeReread:
 		titlePrefix = "Reread"
 	case models.StudyTaskTypeFlashcardReview:
@@ -888,6 +891,44 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 
 	if resolveErr := repo.ResolveFlashcardGenerateTasksForTopic(task.TopicID); resolveErr != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE tasks: %v", resolveErr)
+	}
+
+	count, err := repo.CountCompletedQuizzesByNotebook(task.NotebookID)
+	if err != nil {
+		utils.Warnf("[MILESTONE_EXAM] quiz_count_failed notebookID=%s err=%v", task.NotebookID, err)
+	} else if count > 0 && count%10 == 0 {
+		attempts, attemptsErr := repo.GetLastNQuizAttemptsWithCorrectness(task.NotebookID, 10)
+		if attemptsErr != nil {
+			utils.Warnf("[MILESTONE_EXAM] recent_quiz_fetch_failed notebookID=%s err=%v", task.NotebookID, attemptsErr)
+		} else if len(attempts) > 0 {
+			exists, existsErr := repo.HasMilestoneExamForAttemptID(task.NotebookID, attempts[0].ID)
+			if existsErr != nil {
+				utils.Warnf("[MILESTONE_EXAM] dedupe_check_failed notebookID=%s attemptID=%s err=%v", task.NotebookID, attempts[0].ID, existsErr)
+			}
+			if exists {
+				utils.Warnf("[MILESTONE_EXAM] skipped_duplicate notebookID=%s attemptID=%s", task.NotebookID, attempts[0].ID)
+			} else {
+				quizzes := make(map[string][]int, len(attempts))
+				passingScore := 70
+				for i, attempt := range attempts {
+					quizzes[attempt.ID] = studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
+					if i == 0 && attempt.PassingScore > 0 {
+						passingScore = attempt.PassingScore
+					}
+				}
+
+				payload := models.MilestoneExamPayload{
+					Quizzes:      quizzes,
+					PassingScore: passingScore,
+					QuizCount:    len(attempts),
+				}
+				if insertErr := repo.InsertMilestoneExamTask(task.NotebookID, payload); insertErr != nil {
+					utils.Warnf("[MILESTONE_EXAM] insertion_failed notebookID=%s err=%v", task.NotebookID, insertErr)
+				} else {
+					utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", task.NotebookID, len(attempts))
+				}
+			}
+		}
 	}
 
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)

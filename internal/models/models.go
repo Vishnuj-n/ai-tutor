@@ -29,15 +29,16 @@ type ScheduledTask struct {
 type StudyTaskType string
 
 const (
-	StudyTaskTypeFlashcardReview StudyTaskType = "FLASHCARD_REVIEW"
-	StudyTaskTypeReread          StudyTaskType = "REREAD"
-	StudyTaskTypeQuiz            StudyTaskType = "QUIZ"
-	StudyTaskTypeReading         StudyTaskType = "READING"
-	StudyTaskTypeExaminer        StudyTaskType = "EXAMINER"
-	StudyTaskTypeSocraticRemedial StudyTaskType = "SOCRATIC_REMEDIAL"
+	StudyTaskTypeFlashcardReview   StudyTaskType = "FLASHCARD_REVIEW"
+	StudyTaskTypeReread            StudyTaskType = "REREAD"
+	StudyTaskTypeQuiz              StudyTaskType = "QUIZ"
+	StudyTaskTypeMilestoneExam     StudyTaskType = "MILESTONE_EXAM"
+	StudyTaskTypeReading           StudyTaskType = "READING"
+	StudyTaskTypeExaminer          StudyTaskType = "EXAMINER"
+	StudyTaskTypeSocraticRemedial  StudyTaskType = "SOCRATIC_REMEDIAL"
 	StudyTaskTypeFlashcardGenerate StudyTaskType = "FLASHCARD_GENERATE"
 	// Deprecated: Use StudyTaskTypeFlashcardGenerate instead
-	StudyTaskTypeFlashcardSync     StudyTaskType = StudyTaskTypeFlashcardGenerate
+	StudyTaskTypeFlashcardSync StudyTaskType = StudyTaskTypeFlashcardGenerate
 )
 
 type StudyTaskStatus string
@@ -87,6 +88,12 @@ type CompletionResult struct {
 type QuizTaskPayload struct {
 	Questions    []QuizTaskQuestion `json:"questions"`
 	PassingScore int                `json:"passing_score"`
+}
+
+type MilestoneExamPayload struct {
+	Quizzes      map[string][]int `json:"quizzes"`
+	PassingScore int              `json:"passing_score"`
+	QuizCount    int              `json:"quiz_count"`
 }
 
 type QuizTaskQuestion struct {
@@ -403,19 +410,17 @@ type FSRSReviewLog struct {
 
 // SyncLogEntry is the log entry sent to cloud with file hash and page number as identifiers.
 type SyncLogEntry struct {
-	ID             string `json:"id"`
-	FileHash       string `json:"file_hash"`
-	PageNumber     int    `json:"page_number"`
-	ActivityType   string `json:"activity_type"`
-	ReferenceID    string `json:"reference_id"`
-	ReviewedAt     int64  `json:"reviewed_at"`
-	Rating         int    `json:"rating"`
-	ScheduledDays  int    `json:"scheduled_days"`
+	ID              string `json:"id"`
+	FileHash        string `json:"file_hash"`
+	PageNumber      int    `json:"page_number"`
+	ActivityType    string `json:"activity_type"`
+	ReferenceID     string `json:"reference_id"`
+	ReviewedAt      int64  `json:"reviewed_at"`
+	Rating          int    `json:"rating"`
+	ScheduledDays   int    `json:"scheduled_days"`
 	StateBeforeJSON string `json:"state_before_json"`
-	StateAfterJSON string `json:"state_after_json"`
+	StateAfterJSON  string `json:"state_after_json"`
 }
-
-
 
 // CardToFlashcardState converts go-fsrs Card to our FlashcardState
 func CardToFlashcardState(card fsrs.Card) FlashcardState {
