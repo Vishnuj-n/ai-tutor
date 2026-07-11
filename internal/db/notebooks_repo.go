@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 // CreateNotebook saves a notebook record to the database
@@ -701,7 +702,9 @@ func (r *Repository) GetNotebookTopicTree(profileID string) ([]models.NotebookTo
 			n.id,
 			n.title,
 			COALESCE(t.id, ''),
-			COALESCE(t.title, '')
+			COALESCE(t.title, ''),
+			COALESCE(t.start_page, 0),
+			COALESCE(t.end_page, 0)
 		FROM notebooks n
 		LEFT JOIN notebook_chunks nc ON nc.notebook_id = n.id
 		LEFT JOIN chunks c ON c.id = nc.chunk_id
@@ -731,8 +734,9 @@ func (r *Repository) GetNotebookTopicTree(profileID string) ([]models.NotebookTo
 		var notebookTitle string
 		var topicID string
 		var topicTitle string
+		var startPage, endPage int
 
-		if err := rows.Scan(&notebookID, &notebookTitle, &topicID, &topicTitle); err != nil {
+		if err := rows.Scan(&notebookID, &notebookTitle, &topicID, &topicTitle, &startPage, &endPage); err != nil {
 			return nil, err
 		}
 
@@ -752,13 +756,18 @@ func (r *Repository) GetNotebookTopicTree(profileID string) ([]models.NotebookTo
 			continue
 		}
 
+		cleanTitle := utils.CleanTopicTitle(topicTitle)
+		if startPage > 0 && endPage >= startPage {
+			cleanTitle = fmt.Sprintf("%s (Pages %d to %d)", cleanTitle, startPage, endPage)
+		}
+
 		if _, duplicate := seenTopics[notebookID][topicID]; duplicate {
 			continue
 		}
 
 		tree[idx].Topics = append(tree[idx].Topics, models.NotebookTopicTreeTopic{
 			TopicID: topicID,
-			Title:   topicTitle,
+			Title:   cleanTitle,
 		})
 		seenTopics[notebookID][topicID] = struct{}{}
 	}

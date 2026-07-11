@@ -421,8 +421,12 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	topicIDs := make([]string, 0, len(normalized))
 
 	for i, ch := range normalized {
+		chTitle := strings.TrimSpace(ch.Title)
+		if chTitle == "" {
+			chTitle = fmt.Sprintf("Chapter %d", i+1)
+		}
 		// Sanitize topic ID: lowercase, replace non-alphanumerics with hyphens, collapse duplicates
-		sanitized := strings.ToLower(strings.TrimSpace(ch.Title))
+		sanitized := strings.ToLower(chTitle)
 		// Replace any character not in [a-z0-9] with hyphen
 		var result []rune
 		for _, r := range sanitized {
@@ -452,7 +456,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 		topicItems = append(topicItems, db.TopicBatchItem{
 			TopicID: topicID,
-			Title:   ch.Title,
+			Title:   chTitle,
 		})
 
 		boundsItems = append(boundsItems, db.TopicPageBoundsBatchItem{

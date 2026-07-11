@@ -136,7 +136,11 @@ func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 	initTestDB(t)
 	uploadDir := t.TempDir()
 	service := notebook.NewService(uploadDir)
-	app := &App{repo: testRepo, notebookService: service}
+	app := &App{
+		repo:             testRepo,
+		notebookService:  service,
+		heavyLLMProvider: &mockLLMProvider{answer: `{"chapters":[{"title":"Chapter 1","start_page":1,"end_page":1}]}`},
+	}
 
 	uploadResult, err := service.SaveUploadedFile([]byte("Alpha beta gamma"), "draft.txt")
 	if err != nil {

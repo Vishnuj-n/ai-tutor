@@ -70,7 +70,7 @@ func (r *Repository) EnsureTopicsBatchTx(tx *sql.Tx, items []TopicBatchItem) err
 		}
 		title := item.Title
 		if title == "" {
-			title = id
+			title = utils.CleanTopicTitle(id)
 		}
 
 		_, err = stmt.Exec(id, title)
@@ -376,7 +376,7 @@ func (r *Repository) QueryNextReadingTopic() (models.ReadingTopicCursor, bool, e
 		query += ` AND (n.profile_id = ? OR n.profile_id IS NULL OR n.profile_id = '') `
 		args = append(args, activeProfileStr)
 	}
-	query += ` ORDER BY COALESCE(n.priority, 5) DESC, t.updated_at ASC, t.created_at ASC LIMIT 1 `
+	query += ` ORDER BY COALESCE(n.priority, 5) DESC, t.start_page ASC, t.created_at ASC LIMIT 1 `
 
 	err = r.db.QueryRow(query, args...).Scan(&topic.ID, &topic.Title, &topic.StartPage, &topic.EndPage, &topic.CurrentPageCursor, &topic.NotebookID)
 	if err == sql.ErrNoRows {

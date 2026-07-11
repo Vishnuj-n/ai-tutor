@@ -215,6 +215,7 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 	if titleBase == "" {
 		titleBase = "Task"
 	}
+	titleBase = utils.CleanTopicTitle(titleBase)
 
 	titlePrefix := "Task"
 	switch task.TaskType {
