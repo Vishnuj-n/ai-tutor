@@ -417,9 +417,9 @@ func (r *Repository) GetAllTopicIDs() ([]string, error) {
 	return topicIDs, nil
 }
 
-// GetAllTopics returns all topics as id/title pairs.
+// GetAllTopics returns all topics as id/title pairs with human-friendly titles and page ranges.
 func (r *Repository) GetAllTopics() ([]map[string]string, error) {
-	rows, err := r.db.Query("SELECT id, title FROM topics ORDER BY title")
+	rows, err := r.db.Query("SELECT id, title, COALESCE(start_page, 0), COALESCE(end_page, 0) FROM topics ORDER BY start_page ASC, title ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -433,12 +433,17 @@ func (r *Repository) GetAllTopics() ([]map[string]string, error) {
 	for rows.Next() {
 		var id string
 		var title string
-		if err := rows.Scan(&id, &title); err != nil {
+		var startPage, endPage int
+		if err := rows.Scan(&id, &title, &startPage, &endPage); err != nil {
 			return nil, err
+		}
+		cleanTitle := utils.CleanTopicTitle(title)
+		if startPage > 0 && endPage >= startPage {
+			cleanTitle = fmt.Sprintf("%s (Pages %d to %d)", cleanTitle, startPage, endPage)
 		}
 		topics = append(topics, map[string]string{
 			"id":    id,
-			"title": title,
+			"title": cleanTitle,
 		})
 	}
 
