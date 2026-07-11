@@ -119,6 +119,9 @@ func InitSchema(tx *sql.Tx) error {
 			rag_entire_notebook BOOLEAN DEFAULT 1,
 			rag_queue_study BOOLEAN DEFAULT 1,
 			default_remedial_strategy TEXT DEFAULT 'CLASSIC',
+			classroom_code TEXT DEFAULT '',
+			student_username TEXT DEFAULT '',
+			last_synced_at INTEGER DEFAULT 0,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (active_profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
@@ -140,6 +143,7 @@ func InitSchema(tx *sql.Tx) error {
 			title TEXT NOT NULL,
 			file_path TEXT NOT NULL,
 			file_type TEXT DEFAULT 'pdf',
+			file_hash TEXT DEFAULT '',
 			topic_id TEXT,
 			priority INTEGER DEFAULT 5,
 			status TEXT DEFAULT 'uploaded',
@@ -376,6 +380,10 @@ var alterStatements = []struct {
 	{"user_settings", "study_end_time", "ALTER TABLE user_settings ADD COLUMN study_end_time TEXT DEFAULT '18:00'"},
 	{"user_settings", "reminders_enabled", "ALTER TABLE user_settings ADD COLUMN reminders_enabled BOOLEAN DEFAULT 1"},
 	{"user_settings", "default_remedial_strategy", "ALTER TABLE user_settings ADD COLUMN default_remedial_strategy TEXT DEFAULT 'CLASSIC'"},
+	{"user_settings", "classroom_code", "ALTER TABLE user_settings ADD COLUMN classroom_code TEXT DEFAULT ''"},
+	{"user_settings", "student_username", "ALTER TABLE user_settings ADD COLUMN student_username TEXT DEFAULT ''"},
+	{"user_settings", "last_synced_at", "ALTER TABLE user_settings ADD COLUMN last_synced_at INTEGER DEFAULT 0"},
+	{"notebooks", "file_hash", "ALTER TABLE notebooks ADD COLUMN file_hash TEXT DEFAULT ''"},
 }
 
 func columnExists(tx *sql.Tx, table, column string) (bool, error) {

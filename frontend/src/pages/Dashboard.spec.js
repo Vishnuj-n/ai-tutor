@@ -13,11 +13,13 @@ vi.mock('../services/appApi', () => ({
   getUserSettings: vi.fn(),
   updateUserSettings: vi.fn(),
   getProfileDailyPace: vi.fn(),
-  triggerCloudSync: vi.fn(),
+  retryFlashcardGeneration: vi.fn(),
   getAppEnv: vi.fn(),
   devForceSocraticRescue: vi.fn(),
-  devForceFlashcardSync: vi.fn(),
+  devForceFlashcardGenerate: vi.fn(),
   getNotebooks: vi.fn(),
+  getStreakState: vi.fn(),
+  getFlashcardDueTimeline: vi.fn(),
 }))
 
 // Mock vue-router hooks
@@ -48,6 +50,8 @@ describe('Dashboard.vue Integration', () => {
       skip_to_reading_active: false,
     })
     appApi.getProfileDailyPace.mockResolvedValue({ completed_today: 0, target_today: 10 })
+    appApi.getStreakState.mockResolvedValue({ current_streak: 2, longest_streak: 5, active_dates: [], today_completed: false })
+    appApi.getFlashcardDueTimeline.mockResolvedValue({ timeline: [], error: null })
   })
 
   it('renders today tasks and study statistics correctly', async () => {
@@ -100,7 +104,8 @@ describe('Dashboard.vue Integration', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      ''
     )
   })
 

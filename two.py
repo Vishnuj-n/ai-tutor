@@ -19,6 +19,7 @@ INCLUDE_EXTENSIONS = {
 # Files to ignore
 IGNORE_FILES = {
     "doc_god.md",
+    "CLOUD_SYNC_TESTING.md",
 }
 
 # ============================================================
@@ -48,7 +49,7 @@ sections = [header]
 
 doc_files = []
 
-for path in DOCS_DIR.rglob("*"):
+for path in DOCS_DIR.glob("*"):
 
     if not path.is_file():
         continue

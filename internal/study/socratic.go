@@ -5,6 +5,7 @@ package study
 // SemanticSearch engine. All other study flows use page-bounded SQL injection.
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -183,6 +184,26 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 		return nil, fmt.Errorf("retrieval engine not initialized")
 	}
 
+	// ponytail: check for active remedial task and retrieve failed questions payload
+	var failedQuestionsSummary string
+	if topicID != "" {
+		if payloadJSON, err := s.repo.GetActiveRemedialTaskPayloadByTopic(topicID); err == nil && payloadJSON != "" {
+			var payload struct {
+				FailedQuestions []models.FailedQuestionDetail `json:"failed_questions"`
+			}
+			if err := json.Unmarshal([]byte(payloadJSON), &payload); err == nil && len(payload.FailedQuestions) > 0 {
+				var sb strings.Builder
+				sb.WriteString("\n=== WRONG ANSWERS ===\n")
+				sb.WriteString("The student failed these quiz questions recently. Focus guidance on these concepts:\n")
+				for _, q := range payload.FailedQuestions {
+					fmt.Fprintf(&sb, "- Q: %s | User answered: %s | Correct: %s\n", q.Prompt, q.UserAnswer, q.CorrectAnswer)
+				}
+				sb.WriteString("\n")
+				failedQuestionsSummary = sb.String()
+			}
+		}
+	}
+
 	// 1. Semantic search for relevant chunks inside the notebook scope
 	const topK = 5
 	results, err := s.retrievalEngine.SemanticSearchNotebook(notebookID, topicID, question, topK)
@@ -206,7 +227,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 
 	// Build conversation history block for the prompt
 	// Calculate baseline instructions tokens to establish the remaining history budget
-	instructionsOnlyText := socraticInstructions + "\n\nStudent question: " + question
+	instructionsOnlyText := socraticInstructions + "\n" + failedQuestionsSummary + "\n\nStudent question: " + question
 	instructionsTokens := embeddings.CountTokensFallback(instructionsOnlyText)
 
 	// History budget should leave space for context (e.g. 1500 tokens) and safety margin (100 tokens)
@@ -263,6 +284,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	// Compute tokens for prompt overhead (instructions + history + student question + fixed labels)
 	overheadText := strings.Join([]string{
 		socraticInstructions,
+		failedQuestionsSummary,
 		"",
 		historyBlock,
 		"Student question: " + question,
@@ -325,6 +347,7 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	// Rebuild the final prompt now that contextText may have been truncated
 	socraticPrompt := strings.Join([]string{
 		socraticInstructions,
+		failedQuestionsSummary,
 		"",
 		historyBlock,
 		"Retrieved material:",

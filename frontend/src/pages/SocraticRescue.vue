@@ -73,6 +73,26 @@
             prompt containing the topic's source material below.
           </p>
 
+          <div v-if="failedQuestions && failedQuestions.length > 0" class="failed-questions-preview">
+            <h3>Failed Quiz Questions</h3>
+            <div class="failed-questions-list">
+              <div v-for="(q, idx) in failedQuestions" :key="idx" class="failed-question-item">
+                <p class="question-prompt"><strong>Q{{ idx + 1 }}:</strong> {{ q.prompt }}</p>
+                <ul class="options-list">
+                  <li v-for="opt in q.options" :key="opt" :class="{ 'correct-opt': opt === q.correct_answer, 'user-opt': opt === q.user_answer }">
+                    {{ opt }}
+                    <span v-if="opt === q.correct_answer" class="opt-label correct-label">(Correct)</span>
+                    <span v-if="opt === q.user_answer && opt !== q.correct_answer" class="opt-label user-label">(Your Answer)</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="failedQuestionsError" class="failed-questions-preview">
+            <h3>Failed Quiz Questions</h3>
+            <p class="error-text" style="color: var(--danger); font-size: 0.9rem;">{{ failedQuestionsError }}</p>
+          </div>
+
           <div class="source-preview">
             <h3>Source Material</h3>
             <div class="source-text">{{ sourceText }}</div>
@@ -139,15 +159,10 @@ const startPage = ref(1)
 const endPage = ref(10)
 const sourceText = ref('')
 const notebookTitle = ref('')
+const failedQuestions = ref([])
+const failedQuestionsError = ref(null)
 
-const fullPrompt = computed(() => {
-  const bookContext = notebookTitle.value ? `Book: ${notebookTitle.value}\n` : ''
-  return `I'm studying the following text from ${notebookTitle.value || 'my material'} for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.
-
-${bookContext}---
-${sourceText.value}
----`
-})
+const fullPrompt = ref('')
 
 onMounted(async () => {
   taskID.value = route.query.taskId || route.query.task_id || ''
@@ -166,6 +181,7 @@ onMounted(async () => {
       loading.value = false
       return
     }
+    fullPrompt.value = contextRes.external_prompt || ''
     const task = contextRes?.task
     if (!task) {
       error.value = 'Task not found.'
@@ -176,6 +192,18 @@ onMounted(async () => {
     notebookID.value = task.notebook_id || ''
     startPage.value = Number.parseInt(task.start_page, 10) || 1
     endPage.value = Number.parseInt(task.end_page, 10) || 10
+
+    if (task.payload_json) {
+      try {
+        const payload = JSON.parse(task.payload_json)
+        if (payload && payload.failed_questions) {
+          failedQuestions.value = payload.failed_questions
+        }
+      } catch (e) {
+        console.error('Failed to parse task payload_json:', e)
+        failedQuestionsError.value = 'Failed to load failed questions due to a malformed payload.'
+      }
+    }
 
     // Activate the task on mount to transition from PENDING to ACTIVE
     const activate = await activateTask(taskID.value)
@@ -496,6 +524,111 @@ h1 {
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--muted-text);
+}
+
+.failed-questions-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface-container-low);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--outline-variant);
+  text-align: left;
+}
+
+.failed-questions-preview h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-text);
+}
+
+.failed-questions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.failed-question-item {
+  border-bottom: 1px dashed var(--outline-variant);
+  padding-bottom: 12px;
+}
+
+.failed-question-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.question-prompt {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--on-surface);
+}
+
+.options-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.options-list li {
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--on-surface);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+}
+
+.correct-opt {
+  background: rgba(46, 204, 113, 0.1) !important;
+  border-color: rgba(46, 204, 113, 0.3) !important;
+  color: #27ae60 !important;
+  font-weight: 600;
+}
+
+.user-opt {
+  background: rgba(235, 94, 85, 0.1) !important;
+  border-color: rgba(235, 94, 85, 0.3) !important;
+  color: #eb5e55 !important;
+  font-weight: 600;
+}
+
+.correct-opt.user-opt {
+  background: rgba(46, 204, 113, 0.15) !important;
+  border-color: rgba(46, 204, 113, 0.4) !important;
+  color: #27ae60 !important;
+}
+
+.opt-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.correct-label {
+  background: #27ae60;
+  color: white;
+}
+
+.user-label {
+  background: #eb5e55;
+  color: white;
 }
 
 .source-preview {

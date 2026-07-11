@@ -125,10 +125,10 @@
       >
         <span class="warning-icon">⚠</span>
         <div class="warning-text">
-          <p class="warning-title">Sync Warning / Network Error</p>
+          <p class="warning-title">Generation Warning / Network Error</p>
           <p class="warning-detail">
-            Flashcard sync could not be completed automatically. A background task has been
-            scheduled. You can try manually retrying the sync now.
+            Flashcard generation could not be completed automatically. A retry task has been
+            added to your queue. You can also try retrying the generation now.
           </p>
           <p class="warning-message">
             Reason: {{ result.flashcards_generation_message || 'Unknown error' }}
@@ -164,7 +164,7 @@
           :disabled="generatingFlashcards"
           @click="retryFlashcardGeneration"
         >
-          {{ generatingFlashcards ? 'Retrying sync...' : 'Retry Sync' }}
+          {{ generatingFlashcards ? 'Retrying...' : 'Retry Generation' }}
         </button>
 
         <button

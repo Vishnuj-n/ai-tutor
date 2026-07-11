@@ -2,7 +2,7 @@
   <aside class="sidebar">
     <div>
       <div class="brand">
-        <div class="brand-mark">A</div>
+        <div class="brand-mark">S</div>
         <div>
           <p class="brand-title">The Scholar OS</p>
           <p class="brand-subtitle">Study Operating System</p>
@@ -102,8 +102,9 @@ const topItems = [
   font-weight: 500;
   background: transparent;
   transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+    background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .menu-icon {
@@ -117,6 +118,7 @@ const topItems = [
 
 .menu-item:hover {
   background: var(--surface-container-low);
+  transform: translateX(4px);
 }
 
 .menu-item.router-link-active {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ============================================================================
@@ -287,7 +288,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 	if err := testRepo.EnsureTopic("queue-review-topic", "Queue Review Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", 15); err != nil {
+	if err := testRepo.CreateNotebook("queue-review-nb", "Queue Review Notebook", "/tmp/queue-review.pdf", "pdf", "", "", 15); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 	if err := testRepo.LinkNotebookTopics("queue-review-nb", []string{"queue-review-topic"}); err != nil {
@@ -384,7 +385,7 @@ func TestReviewSessionEndpointsSupportGenerationRecoveryAndCompletion(t *testing
 func TestGetReviewSessionNoDueCards(t *testing.T) {
 	app := newTestApp(t)
 
-	if err := testRepo.CreateNotebook("no-due-nb", "No Due Notebook", "/tmp/no-due.pdf", "pdf", "", 15); err != nil {
+	if err := testRepo.CreateNotebook("no-due-nb", "No Due Notebook", "/tmp/no-due.pdf", "pdf", "", "", 15); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -452,7 +453,7 @@ func TestGetReaderTopicBundle_Success(t *testing.T) {
 	app := &App{repo: testRepo}
 
 	notebookID := "test-notebook-reader"
-	if err := testRepo.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -531,7 +532,7 @@ func TestGetReaderTopicBundle_InvalidTopic(t *testing.T) {
 	app := &App{repo: testRepo}
 
 	notebookID := "test-notebook-invalid"
-	if err := testRepo.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", 1); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Test Notebook", "/tmp/test.txt", "txt", "", "", 1); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -555,7 +556,7 @@ func TestAskReaderAI_ScopedResponseShape(t *testing.T) {
 	if err := testRepo.UpdateTopicPageBounds(topicID, 2, 4); err != nil {
 		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, 6); err != nil {
+	if err := testRepo.CreateNotebook(notebookID, "Reader AI Notebook", "/tmp/reader-ai.txt", "txt", topicID, "", 6); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 	if err := testRepo.UpdateNotebookIndexingStatus(notebookID, "READY"); err != nil {
@@ -608,7 +609,7 @@ func TestCompleteSocraticRescueInsertsRequiz(t *testing.T) {
 	if err := testRepo.EnsureTopic("topic-test", "Topic Test"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook("nb-test", "NB Test", "/tmp/nb-test.pdf", "pdf", "topic-test", 12); err != nil {
+	if err := testRepo.CreateNotebook("nb-test", "NB Test", "/tmp/nb-test.pdf", "pdf", "topic-test", "", 12); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 	mustInsertMockChunk(t, "nb-test", "topic-test", "chunk-socratic-test-1", 1)
@@ -680,7 +681,7 @@ func TestRequizPassGeneratesFlashcards(t *testing.T) {
 	if err := testRepo.EnsureTopic("topic-requiz-pass", "Requiz Pass Topic"); err != nil {
 		t.Fatalf("EnsureTopic failed: %v", err)
 	}
-	if err := testRepo.CreateNotebook("nb-requiz-pass", "NB Requiz Pass", "/tmp/nb-requiz-pass.pdf", "pdf", "topic-requiz-pass", 12); err != nil {
+	if err := testRepo.CreateNotebook("nb-requiz-pass", "NB Requiz Pass", "/tmp/nb-requiz-pass.pdf", "pdf", "topic-requiz-pass", "", 12); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -730,7 +731,7 @@ func TestRequizFailMarksExternalHelp(t *testing.T) {
 	if err := testRepo.EnsureTopic("topic-requiz-fail", "Requiz Fail Topic"); err != nil {
 		t.Fatalf("failed to ensure topic: %v", err)
 	}
-	if err := testRepo.CreateNotebook("nb-requiz-fail", "NB Requiz Fail", "/tmp/nb-requiz-fail.pdf", "pdf", "topic-requiz-fail", 12); err != nil {
+	if err := testRepo.CreateNotebook("nb-requiz-fail", "NB Requiz Fail", "/tmp/nb-requiz-fail.pdf", "pdf", "topic-requiz-fail", "", 12); err != nil {
 		t.Fatalf("CreateNotebook failed: %v", err)
 	}
 
@@ -817,8 +818,14 @@ func TestFSRSCalibrationEasyAndDoubleGood(t *testing.T) {
 	if err := json.Unmarshal([]byte(stateJSON.String), &cardState); err != nil {
 		t.Fatalf("failed to unmarshal state: %v", err)
 	}
-	if cardState.Reps != 1 || cardState.Difficulty != 1.0 || cardState.Stability < 8.0 {
-		t.Fatalf("expected Ace card state to be calibrated to Easy, got reps=%d diff=%f stability=%f", cardState.Reps, cardState.Difficulty, cardState.Stability)
+	// Check clean Review state (StateCode: 2, Reps: 0) and ~3 days due_at
+	now := time.Now().Unix()
+	if cardState.StateCode != 2 || cardState.Reps != 0 {
+		t.Fatalf("expected Ace card state to be clean Review state, got reps=%d StateCode=%d", cardState.Reps, cardState.StateCode)
+	}
+	diffDays := float64(dueAt-now) / (24 * 60 * 60)
+	if diffDays < 2.9 || diffDays > 3.1 {
+		t.Fatalf("expected Ace dueAt offset to be ~3 days, got %f days", diffDays)
 	}
 
 	mustInsertActiveQuizTask(t, "nb-calibration-2", "topic-calibration-2", "task-quiz-pass", 50)
@@ -847,7 +854,12 @@ func TestFSRSCalibrationEasyAndDoubleGood(t *testing.T) {
 	if err := json.Unmarshal([]byte(stateJSON2.String), &cardState2); err != nil {
 		t.Fatalf("failed to unmarshal state: %v", err)
 	}
-	if cardState2.Reps != 2 || cardState2.Stability != 2.3065 {
-		t.Fatalf("expected Pass card state to be calibrated to Double Good, got reps=%d stability=%f", cardState2.Reps, cardState2.Stability)
+	// Check clean Review state (StateCode: 2, Reps: 0) and ~1 day due_at
+	if cardState2.StateCode != 2 || cardState2.Reps != 0 {
+		t.Fatalf("expected Pass card state to be clean Review state, got reps=%d StateCode=%d", cardState2.Reps, cardState2.StateCode)
+	}
+	diffDays2 := float64(dueAt2-now) / (24 * 60 * 60)
+	if diffDays2 < 0.9 || diffDays2 > 1.1 {
+		t.Fatalf("expected Pass dueAt offset to be ~1 day, got %f days", diffDays2)
 	}
 }

@@ -94,8 +94,17 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		}
 	}
 
+	// Compute file hash for cloud sync identification.
+	fileHash, hashErr := utils.FileSHA256(uploadResult.FilePath)
+	if hashErr != nil {
+		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
+		return map[string]interface{}{
+			"error": fmt.Sprintf("failed to compute file hash: %v", hashErr),
+		}
+	}
+
 	// Create notebook record as unlinked; Sprint 11 uses a draft/confirm ingestion flow.
-	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", doc.PageCount)
+	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", fileHash, doc.PageCount)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{

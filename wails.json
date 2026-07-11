@@ -1,6 +1,6 @@
 {
-  "name": "ai-tutor",
-  "outputfilename": "ai-tutor",
+  "name": "Studyloop",
+  "outputfilename": "Studyloop",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
@@ -9,5 +9,12 @@
   "author": {
     "name": "Vishnu J Narayanan",
     "email": "144352066+Vishnuj-n@users.noreply.github.com"
+  },
+  "info": {
+    "companyName": "Studyloop",
+    "productName": "Studyloop",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2025 Studyloop",
+    "comments": "A Persistent Guided Study Queue application"
   }
 }

@@ -4,31 +4,31 @@
 
 ### What
 
-A **Persistent Guided Study Queue** - NOT an autonomous AI tutor, hidden orchestration engine, or proactive scheduling system. The queue is the recommended guided progression path, but manual and exploratory entry points are intentionally supported when they reuse the same canonical bootstrap and topic ownership semantics.
+**Persistent Guided Study Queue** — NOT autonomous AI tutor, hidden orchestration engine, or proactive scheduling system. Queue is recommended guided progression path, but manual/exploratory entry points supported when reusing same canonical bootstrap + topic ownership semantics.
 
-Advanced learning systems are treated as **"Data, not Engines."** They create queue tasks but do NOT control orchestration directly.
+Advanced learning systems = **"Data, not Engines."** Create queue tasks but no orchestration control.
 
-- **Reading Layer**: Validates immediate comprehension and progression readiness (Reading → Quiz → pass/fail → reread or progress).
-- **Retention Layer**: Optimizes long-term retention using spaced retrieval (Flashcards / Examiner → FSRS update → adaptive review scheduling).
+- **Reading Layer**: Validates immediate comprehension + progression readiness (Reading → Quiz → pass/fail → reread or progress).
+- **Retention Layer**: Long-term retention via spaced retrieval (Flashcards / Examiner → FSRS update → adaptive review scheduling).
 - **Rescue Layer**: 2-strike Socratic rescue for repeated quiz failures (Quiz fail #1 → REREAD → Quiz fail #2 → SOCRATIC_REMEDIAL → re-quiz → mastery or external help).
 
 Canonical checkpoint flow:
 Dashboard -> Reader -> Quiz -> Dashboard
 
-Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation. A Reader -> Quiz transition is allowed only for generated follow-up quiz tasks and only through the queue loop.
+Reader completes reading task only. Backend generates + activates QUIZ follow-up task. Dashboard regains ownership after quiz submission + evaluation. Reader → Quiz transition allowed only for generated follow-up quiz tasks and only through queue loop.
 
-**SQLite is the source of truth.**
+**SQLite = source of truth.**
 
 ### Why
 
 - **Deterministic**: Predictable, inspectable flow
-- **Debuggable**: Queue state is queryable SQL
-- **Resumable**: No runtime-only state that vanishes on restart
-- **Simple**: Solo development requires low-complexity architecture
+- **Debuggable**: Queue state = queryable SQL
+- **Resumable**: No runtime-only state vanishes on restart
+- **Simple**: Solo dev requires low-complexity architecture
 
 ### How
 
-- Go + Wails host core services and desktop runtime
+- Go + Wails host core services + desktop runtime
 - Vue multi-page UI invokes typed backend commands
 - **SQLite `study_queue` table drives all user flows**
 - SQLite + sqlite-vec store topic-scoped embeddings locally
@@ -52,17 +52,17 @@ Reader completes the reading task only. The backend generates and activates the 
                     └──────────────┘     └─────────────┘
 ```
 
-The queue router ONLY, for queue-driven progression:
+Queue router ONLY, for queue-driven progression:
 - Fetches next pending task from `study_queue` (deterministic ordering)
 - Mounts correct module/view based on `task_type`
 - Marks tasks complete
 - Inserts follow-up queue tasks (explicit rules only)
 
-If a reading task produces a quiz checkpoint, the generated QUIZ task may be activated immediately as the next queue item. That is a queue transition, not direct module-to-module orchestration.
+Reading task producing quiz checkpoint → generated QUIZ task may activate immediately as next queue item. Queue transition, not direct module-to-module orchestration.
 
-Manual study entry points may invoke the same module bootstrap and retrieval helpers directly. They must not introduce separate lifecycle implementations.
+Manual study entry points may invoke same module bootstrap + retrieval helpers directly. Must not introduce separate lifecycle implementations.
 
-The router does NOT:
+Router does NOT:
 - Manage hidden state machines
 - Proactively schedule flows
 - Own remediation logic
@@ -74,22 +74,21 @@ The router does NOT:
 ### What
 
 Core components:
-
-- Desktop shell and backend services
-- Frontend pages and sidebar navigation
+- Desktop shell + backend services
+- Frontend pages + sidebar navigation
 - Local data layer (SQLite + embedding index)
 - LLM provider adapter
 - Scheduler services (Reading follow-up + Retention/FSRS)
 
 ### Why
 
-Separates concerns clearly while keeping boundaries simple.
+Separates concerns while keeping boundaries simple.
 
 ### How
 
 - UI sends command-style requests to backend
-- Backend executes retrieval, scheduling, and persistence
-- AI requests are stateless and scoped to current topic only
+- Backend executes retrieval, scheduling, + persistence
+- AI requests stateless, scoped to current topic only
 
 ## 3. Frontend Structure (Vue Multi-Page)
 
@@ -107,22 +106,22 @@ Sidebar sections:
 8. Settings (bottom)
 9. Sync (bottom)
 
-These pages can be opened either from a queue task or from a manual exploratory action; both paths should converge on the same initialization pipeline.
+Pages open from queue task or manual exploratory action; both converge on same initialization pipeline.
 
-Reader can be followed immediately by Quiz when the backend generates the follow-up quiz task. This is the only Reader -> Quiz path that is allowed.
+Reader followed immediately by Quiz when backend generates follow-up quiz task. Only Reader → Quiz path allowed.
 
 ### Why
 
-Enforces the guided flow and keeps AI contextual rather than conversational.
+Enforces guided flow, keeps AI contextual rather than conversational.
 
 ### How
 
 - Dashboard reads daily task queue from scheduler service
-- Reader renders parsed sections with Ask AI panel
-- Quiz loads topic quiz sets and shows generation status
-- Flashcards run FSRS reviews and optional Explain
+- Reader renders parsed sections + Ask AI panel
+- Quiz loads topic quiz sets + shows generation status
+- Flashcards run FSRS reviews + optional Explain
 - Settings stores provider config securely in local app config
-- Notebooks manage uploaded PDFs and their processing status
+- Notebooks manage uploaded PDFs + processing status
 - Examiner provides written assessments for long-term retention
 - Socratic Tutor enables conversational learning mode
 
@@ -130,27 +129,27 @@ Enforces the guided flow and keeps AI contextual rather than conversational.
 
 ### What
 
-Relational structure with JSON extensions, centered on the **persistent queue**.
+Relational structure with JSON extensions, centered on **persistent queue**.
 
 ### Why
 
-- SQL tables give strong queryability for scheduling and progress
-- JSON keeps quiz and card payloads flexible
-- **Queue persistence** enables resumable, debuggable flows
+- SQL tables → strong queryability for scheduling + progress
+- JSON → flexible quiz + card payloads
+- **Queue persistence** → resumable, debuggable flows
 
 ### Core Tables
 
-**Legacy term note:** Older documentation used the term `blocks` and `block_vectors`. The live schema uses `chunks` and an embedding store; see `doc/SCHEMA.md` for exact mappings.
+**Legacy term note:** Older docs used `blocks` / `block_vectors`. Live schema uses `chunks` + embedding store; see `doc/SCHEMA.md` for exact mappings.
 
 **study_queue (NEW - The Central Queue)**
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | TEXT PK | Unique task identifier |
-| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_SYNC` |
+| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_GENERATE` |
 | `block_id` | TEXT | Reference to content block (chunk, quiz_set, etc.) |
 | `related_id` | TEXT | Optional related topic identifier |
 | `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED` |
-| `priority` | INTEGER | Lower = higher priority |
+| `priority` | INTEGER | Task priority: lower = higher priority (ASC). Note: notebook priority uses opposite convention (higher = more frequent, DESC). |
 | `created_at` | INTEGER | Unix timestamp |
 | `completed_at` | INTEGER | Unix timestamp (NULL if pending) |
 
@@ -164,7 +163,7 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 - `manual_flashcards` - id, notebook_id, prompt, answer
 - `external_help_required` (on `topics` table) - boolean flag for topics needing external review after failed Socratic rescue
 
-### What the Queue Replaces
+### What Queue Replaces
 
 - Runtime-only queues
 - Hidden orchestrators
@@ -176,17 +175,17 @@ Relational structure with JSON extensions, centered on the **persistent queue**.
 
 ### What
 
-**Sliding Window Chunking** - deterministic, inspectable, sufficient for MVP.
+**Sliding Window Chunking** — deterministic, inspectable, sufficient for MVP.
 
 ### Why
 
-We intentionally removed:
+Intentionally removed:
 - Semantic topic chunking
 - AI-generated chunk boundaries
 - Advanced syllabus graphing
 - Autonomous chunk orchestration
 
-**Reason**: Deterministic chunking is simpler, inspectable, and sufficient for MVP.
+**Reason**: Deterministic chunking simpler, inspectable, sufficient for MVP.
 
 ### How
 
@@ -225,27 +224,26 @@ RAG pipeline remains topic-scoped:
 
 ### What
 
-Deterministic single-turn pipeline for Ask AI and Explain use cases.
+Deterministic single-turn pipeline for Ask AI + Explain use cases.
 
 ### Why
 
-Maintains control, cost, and predictable behavior.
+Maintains control, cost, + predictable behavior.
 
 ### How
 
-1. Validate active topic context.
-2. Embed the user query.
-3. Retrieve top-k chunks within topic scope.
-4. Build a structured prompt with:
+1. Validate active topic context
+2. Embed user query
+3. Retrieve top-k chunks within topic scope
+4. Build structured prompt with:
    - User question
    - Topic metadata
    - Retrieved context chunks
    - Output constraints
-5. Execute one LLM request.
-6. Return response with citations.
+5. Execute one LLM request
+6. Return response with citations
 
 Constraints:
-
 - No global retrieval by default
 - Strict token budget at prompt assembly stage
 - Stateless requests, no conversation memory
@@ -254,66 +252,66 @@ Constraints:
 
 ### What
 
-The embedding pipeline depends on local model/runtime assets located in the `asset/` folder.
+Embedding pipeline depends on local model/runtime assets in `asset/` folder.
 
 ### Why
 
-Embedding generation must be deterministic and available without external vector services.
+Embedding generation must be deterministic + available without external vector services.
 
 ### How
 
-- Required assets (must be present in the `asset/` folder):
+- Required assets (must exist in `asset/` folder):
   - `asset/tokenizer.json`
   - `asset/model_int8.onnx`
   - `asset/onnxruntime.dll` (Windows runtime)
   - `asset/vec0.dll` (sqlite-vec extension on Windows builds)
-- At startup, validate these assets before enabling ingestion/retrieval features.
-- If a required local dependency is missing, show explicit setup guidance and fail clearly.
+- Validate assets at startup before enabling ingestion/retrieval features.
+- Missing dependency → explicit setup guidance + clear failure.
 
-## 6.2 SQLite Connection Pool and vec0 Extension Management
+## 6.2 SQLite Connection Pool + vec0 Extension Management
 
 ### What
 
-SQLite database maintains a single persistent connection with the sqlite-vec (vec0) extension loaded.
+SQLite maintains single persistent connection with sqlite-vec (vec0) extension loaded.
 
 ### Why
 
-SQLite extensions are connection-scoped. If the application opens multiple DB connections (via pooling), only the first connection will have the extension loaded. Subsequent connections will fail to access the vec0 virtual table with "no such module: vec0" errors.
+SQLite extensions are connection-scoped. Multiple DB connections → only first has extension loaded. Subsequent connections fail with "no such module: vec0" errors.
 
 ### How
 
-- **Single Connection Pool:** `SetMaxOpenConns(1)` and `SetMaxIdleConns(1)` enforce exactly one active database connection.
-- **Extension Loading:** At `db.Init()`, the SQLite connection loads the vec0 extension via driver-level `sqliteConn.LoadExtension()` (not SQL `LOAD_EXTENSION`).
-- **Vector Table Storage:** All vectors are stored in a vec0 virtual table with integer rowids (not string IDs). Application chunk IDs are mapped to SQLite rowids before insert/query operations.
-- **Vector Serialization:** Float32 embedding vectors are serialized to JSON strings before binding to database parameters, since `database/sql` does not support slice types directly.
+- **Single Connection Pool:** `SetMaxOpenConns(1)` + `SetMaxIdleConns(1)` enforce exactly one active DB connection.
+- **Extension Loading:** At `db.Init()`, SQLite connection loads vec0 via driver-level `sqliteConn.LoadExtension()` (not SQL `LOAD_EXTENSION`).
+- **Vector Table Storage:** All vectors stored in vec0 virtual table with integer rowids (not string IDs). Chunk IDs mapped to SQLite rowids before insert/query.
+- **Vector Serialization:** Float32 embedding vectors serialized to JSON strings before binding to DB parameters, since `database/sql` doesn't support slice types directly.
 
 **Architectural Constraints:**
-- Do not increase `MaxOpenConns` from 1; this is a permanent requirement.
-- All vector operations must resolve string chunk IDs to integer rowids first (via `lookupChunkRowID()`).
+- Never increase `MaxOpenConns` from 1; permanent requirement.
+- All vector ops must resolve string chunk IDs → integer rowids first (via `lookupChunkRowID()`).
 - All embeddings must be JSON-serialized before DB binding (via `vectorToJSON()`).
 
 **Resource Cleanup:**
-- Call `db.Close()` in test cleanup handlers to release the connection before temp directory removal (prevents Windows file lock errors).
-- On application shutdown, the connection is automatically closed by the database driver.
+- Call `db.Close()` in test cleanup handlers to release connection before temp directory removal (prevents Windows file lock errors).
+- On shutdown, connection automatically closed by DB driver.
 
 ## 7. Scheduling: Queue-Driven (Simplified)
 
 ### What
 
-**FSRS is a scheduling algorithm ONLY** - not an orchestrator, session manager, or hidden engine.
+**FSRS = scheduling algorithm ONLY** — not orchestrator, session manager, or hidden engine.
 
 ### Multi-Notebook Priority System
 
-We officially support multiple notebooks with deterministic biasing:
+Officially supports multiple notebooks with deterministic biasing:
 
 - Notebooks have `priority INTEGER DEFAULT 5` (1-10 scale)
 - Higher priority notebooks surface more frequently
 - Lower priority notebooks still eventually appear
-- Notebook priority is a **bias**, NOT absolute control
+- Notebook priority = **bias**, NOT absolute control
 
 ### Queue Ordering Rules
 
-**Ordering is: deterministic → priority-biased → anti-starvation balanced**
+**Ordering: deterministic → priority-biased → anti-starvation balanced**
 
 **NOT:** adaptive scheduling, autonomous pacing, or AI-driven prioritization.
 
@@ -321,19 +319,19 @@ Explicit priority hierarchy with notebook biasing:
 
 | Order | Task Type | Rationale |
 |-------|-----------|-----------|
-| 1 | `FLASHCARD_SYNC` (cloud sync) | Sync pending flashcard data |
-| 2 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
-| 3 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
-| 4 | `QUIZ` | Assessment after reading (Reading Layer) |
-| 5 | `READING` | New material after obligations (Reading Layer) |
+| 7 | `FLASHCARD_GENERATE` (cloud sync) | Sync pending flashcard data |
 | 6 | `SOCRATIC_REMEDIAL` (concept rescue) | Blocks queue after 2nd quiz failure; requires intervention |
-| 7 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
+| 5 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
+| 4 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
+| 3 | `QUIZ` | Assessment after reading (Reading Layer) |
+| 2 | `READING` | New material after obligations (Reading Layer) |
+| 1 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
 
 **Deterministic Query-Time Rules:**
-- Same `study_queue` state always produces same task order
+- Same `study_queue` state → same task order always
 - No runtime adaptation based on user behavior
 - No AI-driven dynamic reprioritization
-- Notebook priority is a static bias coefficient, not adaptive weighting
+- Notebook priority = static bias coefficient, not adaptive weighting
 
 **Ordering Query:**
 ```sql
@@ -342,12 +340,12 @@ LEFT JOIN notebooks n ON sq.notebook_id = n.id
 WHERE sq.status = 'PENDING'
 ORDER BY 
   CASE sq.task_type
-    WHEN 'FLASHCARD_SYNC' THEN 7
-    WHEN 'FLASHCARD_REVIEW' THEN 6
-    WHEN 'REREAD' THEN 5
-    WHEN 'QUIZ' THEN 4
-    WHEN 'READING' THEN 3
-    WHEN 'SOCRATIC_REMEDIAL' THEN 2
+    WHEN 'FLASHCARD_GENERATE' THEN 7
+    WHEN 'SOCRATIC_REMEDIAL' THEN 6
+    WHEN 'FLASHCARD_REVIEW' THEN 5
+    WHEN 'REREAD' THEN 4
+    WHEN 'QUIZ' THEN 3
+    WHEN 'READING' THEN 2
     WHEN 'EXAMINER' THEN 1
     ELSE 0
   END DESC,
@@ -358,9 +356,9 @@ ORDER BY
 
 ### How Retention Layer (FSRS) Integrates with Queue
 
-**Important**: FSRS is for long-term retention (Flashcards, Examiner). Quizzes are for short-term comprehension and do NOT update FSRS state.
+**Important**: FSRS for long-term retention (Flashcards, Examiner). Quizzes = short-term comprehension, do NOT update FSRS state.
 
-1. When cards become **due** (per FSRS calculation):
+1. Cards become **due** (per FSRS calculation):
    - Insert `FLASHCARD_REVIEW` task into `study_queue` (one task per block)
    - Set `priority` based on overdue duration
 
@@ -369,6 +367,70 @@ ORDER BY
 3. User completes flashcard session → FSRS calculates next interval
 
 4. New `FLASHCARD_REVIEW` task scheduled for future due date
+
+### FSRS Calibration (Simplified)
+
+**New flashcards start in clean Review state** with day-based offsets based on quiz performance:
+
+- **Ace (100% quiz score):** 3-day offset before first review
+- **Pass (<100% quiz score):** 1-day offset before first review
+- **Default (no quiz attempt):** Tomorrow offset (1 day)
+
+**Implementation:**
+- All new FSRS cards start with `StateCode: 2` (Review state) to bypass FSRS intraday learning phase
+- Initial `due_at` calculated based on latest quiz attempt score for topic
+- Clean state ensures predictable initial review intervals without simulation overhead
+
+**Changes Made (2026-06-28):**
+- Removed `scheduler.NextFSRSState` review simulation from `internal/study/flashcard.go`
+- Initialized all flashcards with `StateCode: 2` (Review state) to bypass FSRS intraday learning phase
+- Set initial `due_at` based on quiz score:
+  - **Ace (100%):** 3 days offset
+  - **Pass (<100%):** 1 day offset
+- Updated `TestFSRSCalibrationEasyAndDoubleGood` in `quiz_flashcard_test.go` to assert clean Review state (Reps = 0, StateCode = 2) + day-based offsets
+
+### Dashboard Streak Calendar (2026-06-28)
+
+**Monthly Streak Calendar widget** in dashboard sidebar tracks study consistency:
+
+**Implementation:**
+- **Database Layer**: `GetCompletedTaskTimes()` in `internal/db/study_queue_repo.go` queries all completed task timestamps
+- **Backend Logic**: `GetStreakState(timezoneOffsetMinutes int)` in `app_study.go` computes streaks with timezone alignment
+- **Frontend**: Calendar widget in `Dashboard.vue` with dynamic month layout, active day highlighting, streak metrics
+
+**Features:**
+- Highlights days with completed study tasks (reading, quiz, socratic tutor, review sessions)
+- Tracks `current_streak` + `longest_streak`
+- Timezone-aware: converts UTC timestamps to local day boundaries
+- Glowing fire icon pulses when user completes task today
+- Custom tooltip overlays showing activity details on hover
+
+**Dashboard Layout Optimizations:**
+- Flashcard Reviews Hero Card: High-priority widget showing due count + overdue deck size
+- Action Contexts: "Continue Reading" titles with "Resume" buttons for active readings
+- Telemetry Widget Relocation: Profile Study Pacing moved to bottom of main column
+
+### Cloud Sync with Stable Identifiers (2026-06-28)
+
+**Cloud sync payload uses stable identifiers** instead of local database IDs for cross-student analytics:
+
+**Changes:**
+- **SyncPayload.Logs** now uses `[]SyncLogEntry` with `FileHash` (SHA-256 file hash) + `Filename` (plain filename from `filepath.Base()`) + `PageNumber` fields
+- Replaces `[]FSRSReviewLog` with local IDs (`topic_id`, `reference_id`)
+- Local `FSRSReviewLog` struct unchanged for internal use
+- Server receives stable identifiers for dashboard analytics
+
+**Data Chain for File Identification:**
+`review_log.reference_id` → `flashcards.id` (get `source_chunk_id`) → `chunks.id` (get `page_num`) → `notebook_topics.topic_id` (get `notebook_id`) → `notebooks.file_path` (get `filepath.Base()`)
+
+**Delta Sync:**
+- `GetUnsentReviewLogs()` in `internal/db/fsrs_review_log_repo.go` fetches only unsent events
+- Eliminates duplicates + provides file hash + page number for cloud sync
+- `SetLastSyncedAt()` updates timestamp after successful sync
+
+**Classroom Integration:**
+- `classroom_code` field in sync payload for teacher-student association
+- Clerk authentication support for cloud dashboard access
 
 ### Task Lifecycle Semantics
 
@@ -388,7 +450,7 @@ ACTIVE → FAILED (on quiz generation error)
 
 ### Dashboard Starvation Protection
 
-To prevent review monopolization (e.g., 500 flashcards blocking reading):
+Prevents review monopolization (e.g., 500 flashcards blocking reading):
 
 **Deterministic Balancing Rule (Query-Time Only):**
 After 5 review tasks (`FLASHCARD_REVIEW` or `REREAD`), surface 1 `READING` task.
@@ -398,7 +460,7 @@ After 5 review tasks (`FLASHCARD_REVIEW` or `REREAD`), surface 1 `READING` task.
 - No hidden scheduling daemon
 - Explicit, inspectable, reproducible behavior
 
-**Anti-Drift Safeguard:** Balancing rules are static SQL ordering constraints, not adaptive runtime systems. No behavioral learning, no dynamic pacing, no runtime adaptation.
+**Anti-Drift Safeguard:** Balancing rules = static SQL ordering constraints, not adaptive runtime systems. No behavioral learning, no dynamic pacing, no runtime adaptation.
 
 ### Reread Loop Protection
 
@@ -421,48 +483,53 @@ Explicit generation lifecycle for QUIZ tasks:
 
 **Flow:**
 1. User signals reading complete (trust-based)
-2. Reading completion closes the reading task only; it does not determine mastery or remediation quality
+2. Reading completion closes reading task only; does not determine mastery or remediation quality
 3. QUIZ task inserted with `GENERATING` state
 4. LLM called synchronously
 5. On success: `generation_status = READY`
 6. On failure: `generation_status = FAILED` (dashboard surfaces explicitly)
 
 **MVP Simplification Note:**
-Generation status is colocated on the QUIZ task row. This intentionally mixes:
+Generation status colocated on QUIZ task row. Intentionally mixes:
 - Task lifecycle (`PENDING` → `ACTIVE` → `COMPLETED`)
 - Generation lifecycle (`GENERATING` → `READY`/`FAILED`)
 
-This is acceptable for MVP. Future refactoring may separate generation state to `quiz_sets` table.
+Acceptable for MVP. Future refactoring may separate generation state to `quiz_sets` table.
 
 ### Flashcard Review Granularity
 
 **One `FLASHCARD_REVIEW` task = one review session for a block/chunk.**
 
 - Do NOT create one queue task per flashcard
-- Single task represents "review all due cards in this block"
+- Single task = "review all due cards in this block"
 - Prevents queue explosion with many cards
 
 ### Task Priority Order (Legacy Reference)
 
-**⚠️ This table is OUTDATED.** The actual priority ordering is defined by the SQL query above (Section 7) where higher numeric value = higher priority. See the ordering SQL for authoritative values.
+**⚠️ OUTDATED.** Actual priority ordering defined by SQL query above (Section 7). Two priority conventions exist:
+- **Task type tiers** (CASE statement): higher number = more important task type
+- **`sq.priority`** (task field): lower number = higher priority (ASC)
+- **`n.priority`** (notebook field): higher number = more frequent (DESC)
+
+Canonical ORDER BY: `task_type_tier DESC, n.priority DESC, sq.priority ASC, created_at ASC`
 
 | Legacy Priority | Task Type | Source |
 |----------|-----------|--------|
-| 1 | FLASHCARD_SYNC | Cloud sync pending |
-| 2 | FLASHCARD_REVIEW | FSRS due date passed |
-| 3 | REREAD (remediation) | Failed quiz |
-| 4 | QUIZ | Reading completion |
-| 5 | READING | New material ingestion |
+| 7 | FLASHCARD_GENERATE | Cloud sync pending |
 | 6 | SOCRATIC_REMEDIAL | 2nd quiz failure rescue |
-| 7 | EXAMINER | Mastery threshold met |
+| 5 | FLASHCARD_REVIEW | FSRS due date passed |
+| 4 | REREAD (remediation) | Failed quiz |
+| 3 | QUIZ | Reading completion |
+| 2 | READING | New material ingestion |
+| 1 | EXAMINER | Mastery threshold met |
 
 ### Adaptive Token-Budget Reading Windows
 
 Problem:
-Fixed page-count scheduling produced inconsistent workloads because page density varies significantly across textbooks, slides, OCR PDFs, and technical content.
+Fixed page-count scheduling produced inconsistent workloads because page density varies across textbooks, slides, OCR PDFs, technical content.
 
 Solution:
-The scheduler now uses token-budget-driven adaptive page windows.
+Scheduler uses token-budget-driven adaptive page windows.
 
 Core flow:
 reading minutes
@@ -483,16 +550,16 @@ Constants:
 - MinutesPerPage = 2.5 (legacy fallback only)
 
 Adaptive Window Logic:
-1. Convert reading budget into token budget.
-2. Incrementally accumulate pages using per-page token counts.
-3. Stop once accumulated tokens approach target workload.
-4. Preserve ClampWindowPages behavior near topic end.
-5. Fall back to page heuristics if token data unavailable.
+1. Convert reading budget into token budget
+2. Incrementally accumulate pages using per-page token counts
+3. Stop once accumulated tokens approach target workload
+4. Preserve ClampWindowPages behavior near topic end
+5. Fall back to page heuristics if token data unavailable
 
 Estimation Logic:
-- Actual task minutes are estimated from extracted token counts.
-- Sparse content uses minimum page floors.
-- OCR/query failures use legacy page heuristics.
+- Actual task minutes estimated from extracted token counts
+- Sparse content uses minimum page floors
+- OCR/query failures use legacy page heuristics
 
 Determinism:
 - Same chunk data -> same adaptive windows
@@ -507,11 +574,11 @@ EXAMINER tasks:
 - Remain optional (user can skip)
 - Appear through deterministic queue ordering, NOT hidden orchestration
 
-Prevents starvation: EXAMINER tasks are tier 7 in priority hierarchy, ensuring reviews and reading are not blocked.
+Prevents starvation: EXAMINER tasks tier 7 in priority hierarchy, ensuring reviews + reading not blocked.
 
 ### Socratic Rescue Pipeline (2-Strike)
 
-When a student fails a quiz twice on the same topic, the system intervenes with a guided rescue flow:
+Student fails quiz twice on same topic → guided rescue flow:
 
 **Strike 1**: REREAD task inserted (standard remediation)
 **Strike 2**: SOCRATIC_REMEDIAL task inserted, QUIZ marked COMPLETED, FSRS cards deleted
@@ -536,42 +603,42 @@ When a student fails a quiz twice on the same topic, the system intervenes with 
 ```
 
 **Key behaviors:**
-- SOCRATIC_REMEDIAL sits at priority tier 6 (between READING at tier 5 and EXAMINER at tier 7)
+- SOCRATIC_REMEDIAL sits at priority tier 6 (between READING at tier 5 + EXAMINER at tier 7)
 - Student cannot skip — must complete rescue session
 - Re-quiz pass → flashcards generated, topic mastered
 - Re-quiz fail → `external_help_required` flag set on topic, queue unblocks, notice shown
-- No flashcards are generated for failed concepts at any point
+- No flashcards generated for failed concepts at any point
 - Single rescue cycle only — no infinite loops
 
-**External prompt mode:** The rescue UI provides a pre-engineered Socratic prompt template with source text that the student copies to an external LLM. No local LLM integration required.
+**External prompt mode:** Rescue UI provides pre-engineered Socratic prompt template with source text that student copies to external LLM. No local LLM integration required.
 
 **Database changes:**
 - `topics.external_help_required` boolean column tracks topics needing external review
 - `study_queue.task_type` accepts `SOCRATIC_REMEDIAL`
 - Re-quiz tasks include `"source": "socratic_rescue_requiz"` in payload for identification
 
-### FLASHCARD_SYNC Task
+### FLASHCARD_GENERATE Task
 
-Cloud sync operations use a dedicated `FLASHCARD_SYNC` task type:
+Cloud sync operations use dedicated `FLASHCARD_GENERATE` task type:
 
 - Inserted when cloud sync fails (after retry exhaustion)
 - Resolved (COMPLETED) when sync succeeds on next attempt
 - Priority tier 7 (highest, above all other task types)
-- Prevents data loss by ensuring pending sync data is not forgotten
+- Prevents data loss by ensuring pending sync data not forgotten
 
 ### Reading Completion (Trust-Based)
 
 Reading tasks use trust-based completion:
 
-- User decides when reading is complete
+- User decides when reading complete
 - Complete Session button stays enabled during active reading task
-- StartPage is authoritative for opening context
-- EndPage is informational only
+- StartPage authoritative for opening context
+- EndPage informational only
 - No enforced page-completion validation
 - No surveillance logic, reading timers, or engagement tracking
 - Lightweight MVP approach
 
-Reading completion does not measure quality or mastery. It only closes the reading task and allows the backend to generate the follow-up quiz checkpoint.
+Reading completion does not measure quality or mastery. Only closes reading task + allows backend to generate follow-up quiz checkpoint.
 
 ### Skip Semantics
 
@@ -583,20 +650,20 @@ Explicit terminal states preserve audit trail:
 | `SKIPPED` | User bypassed | Possible (manual retry) |
 | `FAILED` | Error/generation failure | Can retry |
 
-Skipped tasks are auditable and can resurface if needed. Do NOT silently mark skipped tasks as completed.
+Skipped tasks auditable, can resurface if needed. Do NOT silently mark skipped tasks as completed.
 
 ### No Proactive Scheduling
 
 - No background workers scanning for "what's next"
 - No autonomous flow engines
-- Queue is the **only** source of next actions
+- Queue = **only** source of next actions
 - Deterministic MVP > premature optimization
 
 ## 8. LLM Layer: Synchronous Only
 
 ### What
 
-Minimal provider interface for OpenAI-compatible APIs. **All generation is synchronous.** Dual-tier LLM system with Fast and Heavy models.
+Minimal provider interface for OpenAI-compatible APIs. **All generation synchronous.** Dual-tier LLM system with Fast + Heavy models.
 
 ### Why
 
@@ -638,6 +705,13 @@ Minimal provider interface for OpenAI-compatible APIs. **All generation is synch
 - `generate_answer(prompt)` - RAG responses
 - `generate_quiz(topic_context)` - Quiz creation
 
+**Debug Logging (2026-06-26):**
+- All LLM calls flow through `Provider.GenerateAnswer()`
+- Single debug write at `provider.go:277-279` covers all call sites
+- Writes to `dev_data/logs/llm_prompt.log` with timestamp + model name
+- Format: `[TIMESTAMP] MODEL_NAME\nPROMPT\n---\n`
+- Enables prompt inspection for debugging + optimization
+
 **Non-goals:**
 - No LangChain
 - No autonomous agents
@@ -671,7 +745,7 @@ Users must keep studying even without network access.
 - No synthetic placeholder answers
 
 **Queue Persistence Enables Offline:**
-- `study_queue` is local SQLite
+- `study_queue` local SQLite
 - Task state survives app restarts
 - No runtime-only queues that vanish
 
@@ -688,13 +762,11 @@ Preserves learning continuity while controlling local growth.
 ### How
 
 Retain:
-
 - FSRS card state
 - Topic progress
 - User-facing summaries
 
 Prune:
-
 - Debug logs
 - Intermediate AI outputs
 - Temporary retrieval traces
@@ -703,18 +775,18 @@ Prune:
 
 ### What
 
-The queue router is a **query-and-route layer**, not a flow engine or orchestration system.
+Queue router = **query-and-route layer**, not flow engine or orchestration system.
 
 ### Responsibilities
 
-The router ONLY:
-1. **Fetch next pending task** from `study_queue` (using deterministic ordering rules)
+Router ONLY:
+1. **Fetch next pending task** from `study_queue` (deterministic ordering rules)
 2. **Mount correct module** based on `task_type`
 3. **Pass context** (`block_id`, `related_id`) to module
 4. **Mark tasks complete** when module signals completion
 5. **Insert follow-up tasks** based on explicit completion rules
 
-Generated follow-up quiz tasks may be mounted immediately after Reader completion if they are the next pending queue item. The router still owns the transition; the Reader does not.
+Generated follow-up quiz tasks may mount immediately after Reader completion if next pending queue item. Router still owns transition; Reader does not.
 
 ### What It Does NOT Do
 
@@ -735,7 +807,7 @@ All queue mutations MUST originate from:
 - Synchronous completion flows (task A completes → task B inserted)
 
 **Prohibited:**
-- Daemon loops scanning and modifying queue
+- Daemon loops scanning + modifying queue
 - Auto-balancers running on timers
 - Hidden startup repair jobs
 - Autonomous queue injectors
@@ -746,11 +818,11 @@ All queue mutations MUST originate from:
 ```
 Quiz Module reports score: 60% (below threshold)
 → Queue router marks QUIZ task COMPLETED
-→ Queue router inserts REREAD task and other follow-up tasks as needed
-→ Dashboard regains ownership and shows the next pending task
+→ Queue router inserts REREAD task + other follow-up tasks as needed
+→ Dashboard regains ownership + shows next pending task
 ```
 
-User can complete or skip the REREAD task. The queue router does NOT force loops.
+User can complete or skip REREAD task. Queue router does NOT force loops.
 
 ---
 
@@ -758,17 +830,17 @@ User can complete or skip the REREAD task. The queue router does NOT force loops
 
 ### Context
 
-Previous architecture review identified `app.go` and `notebook_endpoints.go` as potentially oversized coordination files.
+Previous architecture review identified `app.go` + `notebook_endpoints.go` as potentially oversized coordination files.
 
 ### Current State
 
-After cleanup and modularization work:
+After cleanup + modularization:
 - `app.go`: ~600-700 lines (acceptable MVP scale)
 - `notebook_endpoints.go`: ~600-700 lines (acceptable MVP scale)
 
 ### Decision
 
-**Do NOT aggressively split them further during Sprint 1.**
+**Do NOT aggressively split further during Sprint 1.**
 
 Extract further only if:
 - Duplication increases
@@ -780,7 +852,7 @@ Extract further only if:
 ### Acceptance Criteria
 
 - Files remain under ~800 lines
-- Clear separation of concerns is maintained
+- Clear separation of concerns maintained
 - No action required unless complexity metrics degrade
 
 ---
@@ -793,17 +865,17 @@ Dashboard tasks open target pages with context preloaded.
 
 ### Why
 
-A guided tutor must convert queue tasks into immediate action.
+Guided tutor must convert queue tasks into immediate action.
 
 ### How
 
 1. Dashboard queries `study_queue` for next `PENDING` task
-2. Task card displays `task_type` and context
+2. Task card displays `task_type` + context
 3. User clicks task → Router navigates to module
-4. Module receives `block_id` and `related_id` from task
-5. Module loads content and renders
+4. Module receives `block_id` + `related_id` from task
+5. Module loads content + renders
 
-Reader completion may immediately surface a generated Quiz task as the next queue item. That is a Dashboard/queue-router handoff, not a direct Reader-to-Quiz module route.
+Reader completion may immediately surface generated Quiz task as next queue item. Dashboard/queue-router handoff, not direct Reader-to-Quiz module route.
 
 **Example:**
 - Task: `QUIZ` with `block_id: "quiz-set-123"`

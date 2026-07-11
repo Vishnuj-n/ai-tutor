@@ -1,19 +1,19 @@
 # Agent Map: Component Responsibilities
-- **Legacy term note:** The term `blocks` has been replaced by `chunks`. The API still uses `block_id` as the identifier for a chunk. See `doc/SCHEMA.md` for mapping.
+- **Legacy term note:** `blocks` replaced by `chunks`. API still uses `block_id` for chunk identifier. See `doc/SCHEMA.md` for mapping.
 
 ## Overview
 
-Strict module boundaries for the Persistent Queue Architecture. Each module has exactly one responsibility. The queue router is intentionally thin—task routing only, no orchestration engine.
+Strict module boundaries for Persistent Queue Architecture. Each module has exactly one responsibility. Queue router intentionally thin — task routing only, no orchestration engine.
 
 Canonical checkpoint flow:
 Dashboard -> Reader -> Quiz -> Dashboard
 
-Reader completes the reading task only. The backend generates and activates the QUIZ follow-up task, and the Dashboard regains ownership after quiz submission and evaluation. Any Reader -> Quiz handoff is queue-owned and applies only to generated follow-up quiz tasks.
+Reader completes reading task only. Backend generates + activates QUIZ follow-up task. Dashboard regains ownership after quiz submission + evaluation. Any Reader → Quiz handoff queue-owned, applies only to generated follow-up quiz tasks.
 
-- **Reading Layer**: Reading, Quiz, Reread (Immediate comprehension validation).
-- **Retention Layer**: Flashcards, Examiner, FSRS (Long-term retention scheduling).
+- **Reading Layer**: Reading, Quiz, Reread (immediate comprehension validation).
+- **Retention Layer**: Flashcards, Examiner, FSRS (long-term retention scheduling).
 
-**Orchestration Constraints:** See Queue Router section (below) for comprehensive list of prohibited orchestration behaviors. Individual modules focus on their specific responsibilities only.
+**Orchestration Constraints:** See Queue Router section for comprehensive list of prohibited orchestration behaviors. Individual modules focus on specific responsibilities only.
 
 ---
 
@@ -21,19 +21,19 @@ Reader completes the reading task only. The backend generates and activates the 
 
 **File:** `internal/study/service.go`
 
-**Responsibility:** Route tasks between queue and modules. This is a lightweight query-and-route layer, not a flow engine.
+**Responsibility:** Route tasks between queue + modules. Lightweight query-and-route layer, not flow engine.
 
 **Does:**
-- Query `study_queue` for next pending task (with deterministic ordering rules)
+- Query `study_queue` for next pending task (deterministic ordering rules)
 - Set task status to `ACTIVE` with `activated_at` timestamp when opened
 - Mount correct module based on `task_type`
-- Pass `block_id` and `related_id` to modules
+- Pass `block_id` + `related_id` to modules
 - Mark tasks `COMPLETED`, `SKIPPED`, or `FAILED` on module signal
 - Insert follow-up tasks per explicit rules (respecting max reread attempts)
 - Crash recovery: reset stale ACTIVE tasks on startup (30-min timeout)
-- Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when they are the next pending queue item
+- Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when next pending queue item
 - Handle SOCRATIC_REMEDIAL tasks (concept rescue) with queue-blocking semantics
-- Handle FLASHCARD_SYNC tasks for cloud sync recovery
+- Handle FLASHCARD_GENERATE tasks for cloud sync recovery
 - Branch quiz failure logic based on user's `default_remedial_strategy` (Classic vs Fast track)
 
 **Explicitly Deterministic:**
@@ -73,7 +73,7 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 - Provide "Complete Session" button (always enabled during active task)
 - Call "Complete" when user signals completion (trust-based)
 - Provide "Ask AI" panel (RAG)
-- Complete the reading task only
+- Complete reading task only
 
 **Does NOT:**
 - Generate quizzes
@@ -83,9 +83,9 @@ func GetTaskContext(taskID string) (*TaskContext, error)
 - Own progression semantics
 - Enforce page-completion validation
 - Route to other modules
-- Require returning to Dashboard before a generated QUIZ task is mounted
+- Require returning to Dashboard before generated QUIZ task is mounted
 
-Generated follow-up QUIZ tasks may be activated immediately after Reader completion through the queue loop only.
+Generated follow-up QUIZ tasks may activate immediately after Reader completion through queue loop only.
 
 **API:**
 ```go
@@ -105,7 +105,7 @@ func MarkBlockRead(blockID string, progress int) error
 
 **File:** `frontend/src/pages/Quiz.vue` + `internal/study/quiz_sync.go`
 
-**Responsibility:** Display and score quizzes (execution surface only, Reading Layer)
+**Responsibility:** Display + score quizzes (execution surface only, Reading Layer)
 
 **Does:**
 - Load quiz from `block_id` (quiz_set reference)
@@ -117,7 +117,7 @@ func MarkBlockRead(blockID string, progress int) error
 - Show explicit error for `FAILED` generation
 - Drive queue follow-up outcomes after submission/evaluation (e.g., reread insertion)
 
-**Important**: Quizzes validate immediate comprehension and do NOT update FSRS memory state.
+**Important**: Quizzes validate immediate comprehension, do NOT update FSRS memory state.
 
 **Does NOT:**
 - Generate quizzes (synchronous LLM call happens before task creation)
@@ -146,7 +146,7 @@ func SubmitQuiz(blockID string, answers []Answer) (*QuizResult, error)
 
 **File:** `frontend/src/pages/Flashcards.vue` + `internal/study/flashcard.go`
 
-**Responsibility:** Render and rate flashcards (execution surface only, Retention Layer)
+**Responsibility:** Render + rate flashcards (execution surface only, Retention Layer)
 
 **Does:**
 - Load cards for review from `block_id` (one task = all due cards in block)
@@ -190,7 +190,7 @@ func SuspendFlashcard(taskID string, cardID string) (int, error)
 - Insert queue tasks
 - Manage UI state
 
-**Note:** FSRS is a scheduling algorithm only. Queue coordination and task insertion are handled by the Queue Router.
+**Note:** FSRS = scheduling algorithm only. Queue coordination + task insertion handled by Queue Router.
 
 **API:**
 ```go
@@ -239,7 +239,7 @@ func SubmitAssessment(blockID string, answers []Answer) (*AssessmentResult, erro
 **Responsibility:** 2-strike rescue for repeated quiz failures (Rescue Layer)
 
 **Does:**
-- Display source text preview for the topic's page range
+- Display source text preview for topic's page range
 - Show pre-engineered Socratic prompt for copy-to-clipboard
 - Provide "I've Completed the Session" button
 - Call `CompleteSocraticRescue(taskID)` on completion
@@ -256,7 +256,7 @@ func (s *StudyService) CompleteSocraticRescue(taskID string) error
 ```
 
 **Backend behavior:**
-- Validates task is SOCRATIC_REMEDIAL and ACTIVE
+- Validates task is SOCRATIC_REMEDIAL + ACTIVE
 - Marks task COMPLETED
 - Inserts fresh QUIZ task for same topic with `source: "socratic_rescue_requiz"` in payload
 - Transactional — both complete + insert happen atomically
@@ -307,16 +307,20 @@ func InsertReadingTasks(chunks []Chunk) error
 
 **File:** `frontend/src/pages/Dashboard.vue`
 
-**Responsibility:** Display pending tasks with starvation protection
+**Responsibility:** Display pending tasks with starvation protection + streak calendar
 
 **Does:**
-- Query queue router for next task (with multi-notebook priority biasing)
-- Render task card with priority and notebook context
+- Query queue router for next task (multi-notebook priority biasing)
+- Render task card with priority + notebook context
 - Handle task click → route to module
-- Show empty state when queue is clear
+- Show empty state when queue clear
 - Apply starvation protection (after N reviews, show reading)
 - Surface quiz generation failures explicitly
-- Regain ownership after quiz submission and evaluation
+- Regain ownership after quiz submission + evaluation
+- Display Monthly Streak Calendar widget with active day highlighting
+- Show current + longest streak metrics
+- Render Flashcard Reviews Hero Card with due count
+- Provide "Continue Reading" action contexts with "Resume" buttons
 
 **Does NOT:**
 - Calculate priorities (follows queue ordering rules)
@@ -326,11 +330,18 @@ func InsertReadingTasks(chunks []Chunk) error
 **API:**
 ```go
 func GetNextTask() (*Task, error)
+func GetStreakState(timezoneOffsetMinutes int) map[string]interface{}
 ```
 
 **Starvation Protection:**
 - After 5 review tasks, surface 1 READING task
 - Lightweight query-time bias (NOT autonomous orchestration)
+
+**Streak Calendar:**
+- Timezone-aware streak computation
+- Dynamic month layout with weekday alignment
+- Active day highlighting with tooltip overlays
+- Glowing fire icon for today's completion
 
 ---
 
@@ -338,7 +349,7 @@ func GetNextTask() (*Task, error)
 
 **File:** `internal/retrieval/engine.go`
 
-**Responsibility:** Topic-scoped retrieval and answering
+**Responsibility:** Topic-scoped retrieval + answering
 
 **Does:**
 - Embed user query
@@ -411,7 +422,7 @@ func RetrieveContext(topicID string, query string, limit int) ([]Context, error)
                    └─────────────┘
 ```
 
-Generated Reader -> Quiz handoffs flow through the queue router only; they are not direct module-to-module routes.
+Generated Reader → Quiz handoffs flow through queue router only; not direct module-to-module routes.
 
 ---
 
@@ -436,7 +447,7 @@ Generated Reader -> Quiz handoffs flow through the queue router only; they are n
 
 1. **Module → Module:** Direct communication
 2. **Module → Database:** Bypass queue router
-3. **Service → Module:** Services are stateless
+3. **Service → Module:** Services stateless
 4. **Router → Router:** No self-routing
 
 ---
@@ -454,7 +465,7 @@ internal/
     socratic.go       # Socratic tutor session
     socratic_rescue.go # SOCRATIC_REMEDIAL completion handler (re-quiz insertion)
     review_session.go # Review session management
-    sync.go           # Cloud sync + FLASHCARD_SYNC task management
+    sync.go           # Cloud sync + FLASHCARD_GENERATE task management
   scheduler/         # Scheduling algorithms
     fsrs.go          # FSRS spaced repetition algorithm
     service.go       # Scheduler service wrapper
@@ -467,7 +478,7 @@ internal/
     onnx.go          # ONNX Runtime embedding model
     text.go          # Text preprocessing
   retrieval/         # RAG retrieval pipeline
-    engine.go        # Search and retrieval engine
+    engine.go        # Search + retrieval engine
     indexer.go       # Index management
     queue.go         # Queue-based retrieval
   llm/               # LLM provider adapter
@@ -500,7 +511,7 @@ frontend/src/pages/
 
 ## Testing Boundaries
 
-Each module can be tested independently:
+Each module tested independently:
 
 - **Reader:** Mock block content, test rendering
 - **Quiz:** Mock quiz set, test scoring

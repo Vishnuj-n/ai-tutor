@@ -28,7 +28,7 @@ export default defineConfig({
     }
   },
   build: {
-    emptyOutDir: false
+    emptyOutDir: true
   },
   resolve: {
     alias: {
@@ -37,6 +37,9 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: 'jsdom'
+    environment: 'jsdom',
+    forks: {
+      singleFork: true
+    }
   }
 })

@@ -85,8 +85,16 @@ export function generateFlashcardsForQuizTask(taskID) {
   return appBridge().GenerateFlashcardsForQuizTask(taskID)
 }
 
+export function retryFlashcardGeneration(taskID) {
+  return appBridge().RetryFlashcardGeneration(taskID)
+}
+
 export function getTodayPlan() {
   return appBridge().GetTodayPlan()
+}
+
+export function getStreakState(timezoneOffsetMinutes) {
+  return appBridge().GetStreakState(timezoneOffsetMinutes)
 }
 
 // Comprehensive Mode endpoints (Phase 1)
@@ -172,7 +180,8 @@ export function updateUserSettings(
   ragNotebookChapter,
   ragEntireNotebook,
   ragQueueStudy,
-  defaultRemedialStrategy
+  defaultRemedialStrategy,
+  classroomCode
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -188,16 +197,9 @@ export function updateUserSettings(
     ragNotebookChapter,
     ragEntireNotebook,
     ragQueueStudy,
-    defaultRemedialStrategy
+    defaultRemedialStrategy,
+    classroomCode
   )
-}
-
-export function getRemedialStrategy() {
-  return appBridge().GetRemedialStrategy()
-}
-
-export function setRemedialStrategy(strategy) {
-  return appBridge().SetRemedialStrategy(strategy)
 }
 
 export function getLLMSettings() {
@@ -272,6 +274,18 @@ export function getAppEnv() {
   return appBridge().GetAppEnv()
 }
 
+export function loginStudent(username, password, classroomCode) {
+  return appBridge().LoginStudent(username, password, classroomCode)
+}
+
+export function logoutStudent() {
+  return appBridge().LogoutStudent()
+}
+
+export function getCloudConfig() {
+  return appBridge().GetCloudConfig()
+}
+
 export function getTopicSectionsContent(topicID, notebookID) {
   return appBridge().GetTopicSectionsContent(topicID, notebookID)
 }
@@ -280,8 +294,8 @@ export function devForceSocraticRescue(notebookID, topicID) {
   return appBridge().DevForceSocraticRescue(notebookID, topicID)
 }
 
-export function devForceFlashcardSync(notebookID) {
-  return appBridge().DevForceFlashcardSync(notebookID)
+export function devForceFlashcardGenerate(notebookID) {
+  return appBridge().DevForceFlashcardGenerate(notebookID)
 }
 
 export function logFrontendEvent(level, component, event, details = '') {

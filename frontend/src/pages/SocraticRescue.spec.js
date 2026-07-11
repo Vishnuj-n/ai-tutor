@@ -50,6 +50,7 @@ describe('SocraticRescue.vue Integration', () => {
         start_page: 1,
         end_page: 10,
       },
+      external_prompt: 'Socratic Prompt text for AI tutoring.',
     })
 
     appApi.activateTask.mockResolvedValue({ error: null })
@@ -67,7 +68,7 @@ describe('SocraticRescue.vue Integration', () => {
     expect(appApi.activateTask).toHaveBeenCalledWith('task-456')
     expect(appApi.getTopicSectionsContent).toHaveBeenCalledWith('topic-123', 'notebook-789')
     expect(wrapper.find('.source-text').text()).toBe('DeepMind builds AI agents.')
-    expect(wrapper.find('.prompt-textarea').element.value).toContain('DeepMind builds AI agents.')
+    expect(wrapper.find('.prompt-textarea').element.value).toContain('Socratic Prompt text for AI tutoring.')
   })
 
   it('completes socratic rescue session when user clicks I completed the session', async () => {

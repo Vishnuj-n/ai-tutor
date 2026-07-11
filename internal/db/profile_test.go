@@ -90,7 +90,7 @@ func TestProfileAndSettingsLifecycle(t *testing.T) {
 
 	// 5. Test Notebook Shelf Gating (limit of 4 active textbooks)
 	// Create a notebook and assign to profile
-	err = testRepo.CreateNotebook("nb-1", "Polity Book", "path/1.pdf", "pdf", "", 10)
+	err = testRepo.CreateNotebook("nb-1", "Polity Book", "path/1.pdf", "pdf", "", "", 10)
 	if err != nil {
 		t.Fatalf("failed to create notebook: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestProfileAndSettingsLifecycle(t *testing.T) {
 	// Create 4 more notebooks and try to activate them all (bringing total active to 5)
 	for i := 2; i <= 5; i++ {
 		id := fmt.Sprintf("nb-%d", i)
-		err = testRepo.CreateNotebook(id, fmt.Sprintf("Book %d", i), "path.pdf", "pdf", "", 10)
+		err = testRepo.CreateNotebook(id, fmt.Sprintf("Book %d", i), "path.pdf", "pdf", "", "", 10)
 		if err != nil {
 			t.Fatalf("failed to create notebook %s: %v", id, err)
 		}

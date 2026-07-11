@@ -1,66 +1,35 @@
 # Platform Support
 
-## Current Status: Windows-First
+## Windows-First (MVP)
 
-**Primary Target:** Windows 10/11 (x64)
+**Primary:** Windows 10/11 (x64). Single platform during MVP to avoid cross-platform native library complexity. See [doc/SPRINT.md](./doc/SPRINT.md) for current platform scope.
 
-Windows is the exclusive build target for the MVP phase. This constraint eliminates cross-platform native library complexity while the core RAG pipeline and queue architecture stabilize.
-
-### Windows-Specific Dependencies
+### Windows Dependencies
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| ONNX Runtime | `onnxruntime.dll` | Local embedding inference |
-| Vector Storage | `vec0.dll` | SQLite vector search extension |
+| ONNX Runtime | `onnxruntime.dll` | Local embedding inference ([doc/ARCHITECTURE.md §6.1](./doc/ARCHITECTURE.md)) |
+| Vector Storage | `vec0.dll` | SQLite vector search ([doc/ARCHITECTURE.md §6.2](./doc/ARCHITECTURE.md)) |
 | Build Scripts | `sync-deps.sh`, `windows-sync-deps.ps1` | Dependency management |
 
 ### Build Requirements
 
-- Go 1.26 with CGO enabled (MSYS2/MinGW on Windows)
+- Go 1.26 + CGO enabled (MSYS2/MinGW)
 - MSVC or MinGW toolchain
-- PowerShell for dependency sync scripts
+- PowerShell for dependency scripts
+- Full setup guide: [doc/DEVELOPER_ONBOARDING.md](./doc/DEVELOPER_ONBOARDING.md)
 
 ---
 
 ## Future Platforms
 
-### macOS (Intel/Apple Silicon)
-
-**Required Changes:**
-- Replace `onnxruntime.dll` with `libonnxruntime.dylib`
-- Compile `vec0.dylib` for Darwin
-- Update `app.go` app-data directory handling for macOS paths
-- Add macOS-specific build constraints
-
-### Linux (x64/ARM64)
-
-**Required Changes:**
-- Replace `onnxruntime.dll` with `libonnxruntime.so`
-- Compile `vec0.so` for target architecture
-- Validate CGO build requirements across distributions
-- Handle Linux-specific path conventions
+**macOS:** Replace `.dll` with `.dylib`, update app-data paths, add build constraints.
+**Linux:** Replace `.dll` with `.so`, validate CGO across distros, handle Linux paths.
 
 ---
 
 ## Rationale
 
-Single-platform focus during MVP enables:
+Single-platform MVP enables: deterministic testing, simpler asset management, faster iteration.
 
-1. **Deterministic Testing:** ONNX-to-SQLite pipeline stabilizes without OS-specific memory/driver variables
-2. **Simplified Asset Management:** Single `asset/` folder with Windows-only binaries
-3. **Faster Iteration:** No conditional compilation paths or abstraction layers required
-
----
-
-## Implementation Notes
-
-Platform-specific code should use Go build constraints:
-
-```go
-//go:build windows
-// +build windows
-
-package embeddings
-```
-
-Remove half-finished `runtime.GOOS` switches. Platform support is either implemented or documented as future work—no intermediate states.
+Use Go build constraints (`//go:build windows`) for platform code. No half-finished `runtime.GOOS` switches — either implemented or documented as future work.
