@@ -247,15 +247,16 @@
                       <span class="metric-label">words / day</span>
                     </div>
                     <div class="telemetry-metric">
-                      <span class="metric-value">{{
-                        activeProfilePace.sessions_per_day.toFixed(1)
-                      }}</span>
+                      <span class="metric-value">{{ sessionsPerDay }}</span>
                       <span class="metric-label">sessions / day</span>
                     </div>
                     <div class="telemetry-progress-info">
                       <div class="progress-details">
                         <span>Remaining words:
                           <strong>{{ activeProfilePace.remaining_words }}</strong></span>
+                      </div>
+                      <div v-if="paceLabel" class="pace-label">
+                        {{ paceLabel }}
                       </div>
                     </div>
                   </div>
@@ -485,6 +486,20 @@ const userSettings = ref({
 })
 const activeProfilePace = ref(null)
 const lastPersistedProfile = ref('')
+
+const sessionsPerDay = computed(() => {
+  if (!activeProfilePace.value) return 0
+  return Math.ceil(activeProfilePace.value.sessions_per_day)
+})
+
+const paceLabel = computed(() => {
+  const n = sessionsPerDay.value
+  if (n === 0) return ''
+  if (n === 1) return 'On track — 1 session/day'
+  if (n <= 2) return 'Moderate pace'
+  if (n <= 4) return 'Tight schedule'
+  return 'Consider adding more books or extending deadline'
+})
 
 const timelineData = ref([])
 const hoveredPoint = ref(null)
@@ -1270,6 +1285,13 @@ function startTask(task) {
   text-align: right;
   font-size: 13px;
   color: var(--muted-text);
+}
+
+.pace-label {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
 }
 
 /* Task cards */

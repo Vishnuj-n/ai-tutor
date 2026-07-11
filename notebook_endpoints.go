@@ -254,18 +254,27 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 	}
 
 	// regenerate=true: full extraction + LLM (used by AI Clean Up)
-	if a.heavyLLMProvider == nil {
-		_ = repo.UpdateNotebookStatus(notebookID, "failed")
-		return map[string]interface{}{"error": "AI features are disabled: LLM provider is not configured"}
-	}
-	result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
-	if err != nil {
-		_ = repo.UpdateNotebookStatus(notebookID, "failed")
-		return map[string]interface{}{"error": err.Error()}
+	// On any failure, fall back to bookmarks or single "General" chapter — never return an error.
+	var chapters []models.SyllabusChapterDraft
+	fallbackUsed := true
+
+	if a.heavyLLMProvider != nil {
+		result, llmErr := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
+		if llmErr == nil && len(result.Chapters) > 0 {
+			chapters = result.Chapters
+			fallbackUsed = result.FallbackUsed
+		}
 	}
 
-	chapters := result.Chapters
-	fallbackUsed := result.FallbackUsed
+	// LLM failed or unavailable — try bookmarks
+	if len(chapters) == 0 {
+		result, _ := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, nil)
+		if result != nil && len(result.Chapters) > 0 {
+			chapters = result.Chapters
+		}
+	}
+
+	// Still no chapters — single "General" covering all pages
 	if len(chapters) == 0 {
 		endPage := doc.PageCount
 		if endPage <= 0 {
@@ -276,7 +285,6 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 			StartPage: 1,
 			EndPage:   endPage,
 		}}
-		fallbackUsed = true
 	}
 
 	draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}

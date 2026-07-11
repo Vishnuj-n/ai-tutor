@@ -793,7 +793,11 @@ async function aiCleanupChapters() {
       end_page: Number(ch.end_page) || 1,
     }))
 
-    showToast('AI cleaned up chapter list')
+    if (result?.fallback_used) {
+      showToast('AI unavailable — using bookmark chapters')
+    } else {
+      showToast('AI cleaned up chapter list')
+    }
   } catch (error) {
     draftError.value = `AI cleanup failed: ${error.message}`
   } finally {
