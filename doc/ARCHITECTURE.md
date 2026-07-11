@@ -145,7 +145,7 @@ Relational structure with JSON extensions, centered on **persistent queue**.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | TEXT PK | Unique task identifier |
-| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_GENERATE` |
+| `task_type` | TEXT | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `MILESTONE_EXAM`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_GENERATE` |
 | `block_id` | TEXT | Reference to content block (chunk, quiz_set, etc.) |
 | `related_id` | TEXT | Optional related topic identifier |
 | `status` | TEXT | `PENDING`, `ACTIVE`, `COMPLETED` |
@@ -196,9 +196,19 @@ Intentionally removed:
 **Pipeline:**
 
 1. PDF Upload → Extract text with page numbers
-2. Chapter Selection → User reviews/prunes extracted chapters
+2. Chapter Selection → User reviews/prunes extracted chapters (AI cleanup with graceful fallback)
 3. Sliding Window Chunking → Deterministic boundaries (no AI)
 4. **Insert READING tasks** → One task per chunk into `study_queue`
+
+**AI Cleanup Fallback (2026-07-11):**
+When user clicks "AI Clean Up" on notebook chapters, three-tier fallback on LLM failure:
+1. Try LLM — if it works, use LLM chapters
+2. If LLM fails/unavailable, try bookmark-based chapters (call `DraftSyllabusChapters` with nil provider)
+3. If no bookmarks either, create single "General" chapter covering all pages
+Status always ends `"draft_ready"`. No error returned to frontend.
+
+**CleanTopicTitle Utility (`internal/utils/hash.go`):**
+Formats raw topic IDs like `nb-uuid-ch-01-chapter-1` into clean user-facing titles like "Chapter 1: Chapter 1". Used across repository layer, scheduler, and app_study.go for consistent display.
 
 **Block Storage (chunks table):**
 
@@ -324,8 +334,9 @@ Explicit priority hierarchy with notebook biasing:
 | 5 | `FLASHCARD_REVIEW` (due reviews) | Spaced repetition is time-sensitive (Retention Layer) |
 | 4 | `REREAD` (remediation) | Timely follow-up on failed material (Reading Layer) |
 | 3 | `QUIZ` | Assessment after reading (Reading Layer) |
-| 2 | `READING` | New material after obligations (Reading Layer) |
-| 1 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
+| 2 | `MILESTONE_EXAM` | Cumulative mastery exam every 10 quizzes (Reading Layer) |
+| 1 | `READING` | New material after obligations (Reading Layer) |
+| 0 | `EXAMINER` | Optional advanced assessment (Retention Layer) |
 
 **Deterministic Query-Time Rules:**
 - Same `study_queue` state → same task order always
@@ -338,15 +349,16 @@ Explicit priority hierarchy with notebook biasing:
 SELECT * FROM study_queue sq
 LEFT JOIN notebooks n ON sq.notebook_id = n.id
 WHERE sq.status = 'PENDING'
-ORDER BY 
+ORDER BY
   CASE sq.task_type
     WHEN 'FLASHCARD_GENERATE' THEN 7
     WHEN 'SOCRATIC_REMEDIAL' THEN 6
     WHEN 'FLASHCARD_REVIEW' THEN 5
     WHEN 'REREAD' THEN 4
     WHEN 'QUIZ' THEN 3
-    WHEN 'READING' THEN 2
-    WHEN 'EXAMINER' THEN 1
+    WHEN 'MILESTONE_EXAM' THEN 2
+    WHEN 'READING' THEN 1
+    WHEN 'EXAMINER' THEN 0
     ELSE 0
   END DESC,
   n.priority DESC,
@@ -520,8 +532,9 @@ Canonical ORDER BY: `task_type_tier DESC, n.priority DESC, sq.priority ASC, crea
 | 5 | FLASHCARD_REVIEW | FSRS due date passed |
 | 4 | REREAD (remediation) | Failed quiz |
 | 3 | QUIZ | Reading completion |
-| 2 | READING | New material ingestion |
-| 1 | EXAMINER | Mastery threshold met |
+| 2 | MILESTONE_EXAM | After 10th quiz per notebook |
+| 1 | READING | New material ingestion |
+| 0 | EXAMINER | Mastery threshold met |
 
 ### Adaptive Token-Budget Reading Windows
 
@@ -603,7 +616,7 @@ Student fails quiz twice on same topic → guided rescue flow:
 ```
 
 **Key behaviors:**
-- SOCRATIC_REMEDIAL sits at priority tier 6 (between READING at tier 5 + EXAMINER at tier 7)
+- SOCRATIC_REMEDIAL sits at priority tier 6 (between FLASHCARD_REVIEW at tier 5 + FLASHCARD_GENERATE at tier 7)
 - Student cannot skip — must complete rescue session
 - Re-quiz pass → flashcards generated, topic mastered
 - Re-quiz fail → `external_help_required` flag set on topic, queue unblocks, notice shown
@@ -625,6 +638,19 @@ Cloud sync operations use dedicated `FLASHCARD_GENERATE` task type:
 - Resolved (COMPLETED) when sync succeeds on next attempt
 - Priority tier 7 (highest, above all other task types)
 - Prevents data loss by ensuring pending sync data not forgotten
+
+### MILESTONE_EXAM Task
+
+Cumulative mastery exam aggregated from recent quiz history:
+
+- Auto-inserted every 10 completed quizzes per notebook (`count % 10 == 0 && count > 0`)
+- Priority tier 2 (between QUIZ at tier 3 and READING at tier 1)
+- Payload format: `{"quizzes": {"<attempt_id>": [1,0,1,0]}, "passing_score": 70, "quiz_count": 10}`
+- Correctness arrays computed at insert time (not query time) for self-contained research queries
+- Deduplicates against existing MILESTONE_EXAM tasks for same notebook
+- Gracefully skips corrupt quiz attempts (nil correctness flags)
+- Reuses questions from past quiz attempts — no LLM generation needed
+- EXAMINER remains separate for written short-answer assessments
 
 ### Reading Completion (Trust-Based)
 

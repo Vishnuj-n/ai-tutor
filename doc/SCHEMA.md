@@ -15,6 +15,7 @@ Generated from + must stay synchronized with `internal/db/schema.go`. Every `CRE
 | Assessment    | `quiz_attempts`, `reread_attempts`, `written_questions`, `written_user_answers`         |
 | Retention     | `fsrs_cards`, `fsrs_review_log`, `manual_flashcards`                                    |
 | Configuration | `user_settings`, `llm_settings`, `study_profiles`                                       |
+| Utility       | `internal/utils/hash.go` — `CleanTopicTitle`, `MD5Hex`, `FileSHA256`                    |
 
 ## Queue Tables
 
@@ -28,6 +29,8 @@ Central task table.
 | `notebook_id`  | TEXT NOT NULL                       | Parent notebook. FK → `notebooks(id)`                       |
 | `topic_id`     | TEXT                                | Optional task context. FK → `topics(id)`                    |
 | `task_type`    | TEXT NOT NULL                       | `READING`, `QUIZ`, `REREAD`, `FLASHCARD_REVIEW`, `MILESTONE_EXAM`, `EXAMINER`, `SOCRATIC_REMEDIAL`, `FLASHCARD_GENERATE` |
+
+**Note:** `MILESTONE_EXAM` is an aggregate exam task composed from multiple past quiz attempts for a notebook. It does not generate new questions — it reuses questions from completed quiz tasks.
 | `status`       | TEXT NOT NULL                       | `PENDING`, `ACTIVE`, `COMPLETED`, `SKIPPED`, `FAILED`       |
 | `priority`     | INTEGER DEFAULT 0                   | Task priority: lower = higher priority (ASC). Distinct from notebook priority (higher = more frequent). |
 | `created_at`   | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Creation time                                               |

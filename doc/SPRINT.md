@@ -1,7 +1,7 @@
 # Sprint Roadmap — AI Tutor
 
 **Status:** Active roadmap
-**Last Updated:** 2026-06-13
+**Last Updated:** 2026-07-11
 **Architecture:** SQLite-backed deterministic queue (NOT autonomous orchestration)
 
 ---
@@ -39,6 +39,17 @@
 - [x] Streak tracking + calendar widget
 - [x] UI enhancements (flip-back, sidebar, scroll progress)
 - [x] Delta sync + settings
+
+### Sprint 16: Milestone Exams, AI Cleanup & Dashboard Metrics [DONE]
+- [x] `MILESTONE_EXAM` task type — aggregate exam every 10 quizzes per notebook
+- [x] Milestone exam payload with correctness flags + deduplication
+- [x] `CleanTopicTitle` utility — formats raw topic IDs to human-readable titles
+- [x] AI cleanup fallback — graceful degradation when LLM fails during chapter cleanup
+- [x] Dashboard `sessions_per_day` computed metric for pacing display
+- [x] `GetAllTopics` enhanced with page ranges + clean titles
+- [x] `GetQuestionsForQuizAttempts` repo method for milestone exam question retrieval
+- [x] Flashcard generation retry logic with topic/page validation
+- [x] FLASHCARD_SYNC → FLASHCARD_GENERATE rename across codebase
 
 ---
 
@@ -97,8 +108,9 @@ All progression: `study_queue`
 3. `FLASHCARD_REVIEW` — spaced repetition
 4. `REREAD` — remediation
 5. `QUIZ` — assessment
-6. `READING` — content
-7. `EXAMINER` — mastery verification
+6. `MILESTONE_EXAM` — cumulative mastery exam (after 10 quizzes)
+7. `READING` — content
+8. `EXAMINER` — mastery verification
 
 **Ordering:** task type priority → notebook priority → task priority → creation time (FIFO).
 

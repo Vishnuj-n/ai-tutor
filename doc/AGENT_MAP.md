@@ -34,6 +34,7 @@ Reader completes reading task only. Backend generates + activates QUIZ follow-up
 - Allow immediate activation of generated QUIZ follow-up tasks after Reader completion when next pending queue item
 - Handle SOCRATIC_REMEDIAL tasks (concept rescue) with queue-blocking semantics
 - Handle FLASHCARD_GENERATE tasks for cloud sync recovery
+- Handle MILESTONE_EXAM tasks (aggregate exams from past quiz attempts)
 - Branch quiz failure logic based on user's `default_remedial_strategy` (Classic vs Fast track)
 
 **Explicitly Deterministic:**
@@ -289,6 +290,8 @@ func (s *StudyService) CompleteSocraticRescue(taskID string) error
 - Sliding window chunking (2500 words, 200 overlap)
  - Create chunks in database (legacy docs may call these `blocks`)
 - Insert READING tasks into queue
+- AI cleanup with graceful fallback (LLM failure → bookmark chapters → single "General" chapter)
+- Format topic titles via `CleanTopicTitle` utility
 
 **Does NOT:**
 - Use AI for chunking
@@ -402,13 +405,14 @@ func RetrieveContext(topicID string, query string, limit int) ([]Context, error)
        ▼
 ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐
 │   Reader    │  │    Quiz     │  │ Flashcards  │  │  Examiner   │  │ SocraticRescue  │
-│             │  │             │  │             │  │             │  │                 │
-│ (No routing │  │ (No routing │  │ (No routing │  │ (No routing │  │ (No routing     │
-│  logic)     │  │  logic)     │  │  logic)     │  │  logic)     │  │  logic)         │
+│             │  │  (+Milestone│  │             │  │             │  │                 │
+│ (No routing │  │   Exam)     │  │ (No routing │  │ (No routing │  │ (No routing     │
+│  logic)     │  │ (No routing │  │  logic)     │  │  logic)     │  │  logic)         │
+│             │  │  logic)     │  │             │  │             │  │                 │
 └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────────┘
        │                │                │                │                 │
        │ MarkComplete() │ SubmitQuiz()   │ RateCard()     │ Submit()        │ CompleteRescue()
-       │                │                │                │                 │
+       │                │ CompleteMilestoneExam()          │                 │
        └────────────────┴────────────────┴────────────────┴─────────────────┘
                           │
                           ▼
@@ -489,20 +493,22 @@ internal/
     asset_manager.go # Asset validation
   models/            # Domain types
     models.go        # Task, Block, Quiz types
+  utils/             # Shared utilities
+    hash.go          # CleanTopicTitle, MD5Hex, FileSHA256
   db/                # Data persistence
     store.go         # Database initialization
     schema.go        # Table definitions
     study_queue_repo.go # Queue CRUD operations
 
 frontend/src/pages/
-  Dashboard.vue      # Task display
+  Dashboard.vue      # Task display + metrics
   Reader.vue         # Reading module
-  Quiz.vue           # Quiz module
+  Quiz.vue           # Quiz module + milestone exam UI
   Flashcards.vue     # Flashcard module
   WrittenAssessment.vue # Written assessment (Examiner)
   Socratic.vue       # Socratic tutor
   SocraticRescue.vue # Concept rescue (2-strike Socratic prompt)
-  Notebook.vue       # Notebook management
+  Notebook.vue       # Notebook management + AI cleanup fallback
   Onboarding.vue     # First-time setup
   Settings.vue       # Provider config
 ```
