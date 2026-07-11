@@ -3,6 +3,7 @@ package notebook
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -32,14 +33,57 @@ func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *Extracte
 	}
 
 	bookmarkLikeDraft := []models.SyllabusChapterDraft{}
+	var rawBookmarkJSON []byte // full nested tree from pdfcpu, used for LLM context
 	if strings.EqualFold(strings.TrimSpace(fileType), "pdf") && strings.TrimSpace(filePath) != "" {
 		bookmarkLikeDraft = extractPDFCPUBookmarkDraft(filePath, doc.PageCount, s.config.UploadDir)
+		if raw, err := runPDFCPUBookmarksExport(filePath, s.config.UploadDir); err == nil {
+			rawBookmarkJSON = raw
+		}
 	}
 	sample := buildPageSample(doc, 30)
 
 	if llmProvider != nil {
-		bookmarkJSON, _ := json.Marshal(bookmarkLikeDraft)
-		prompt := fmt.Sprintf("Create syllabus chapter ranges from this document sample. Return strict JSON only as {\"chapters\":[{\"title\":\"...\",\"start_page\":1,\"end_page\":10}]}. Keep absolute page numbers, preserve order, avoid overlaps, and cover as much content as possible.\n\nFile type: %s\nPage count: %d\nBookmark candidates (may be empty): %s\n\nText sample with absolute page markers:\n%s", strings.ToLower(fileType), doc.PageCount, string(bookmarkJSON), sample)
+		// Pass the raw nested pdfcpu bookmark JSON so the LLM sees the full hierarchy.
+		// Fall back to marshalling the flat draft if raw extraction failed.
+		var bookmarkContext string
+		if len(rawBookmarkJSON) > 0 {
+			bookmarkContext = string(rawBookmarkJSON)
+		} else if len(bookmarkLikeDraft) > 0 {
+			if b, err := json.Marshal(bookmarkLikeDraft); err == nil {
+				bookmarkContext = string(b)
+			}
+		}
+		if bookmarkContext == "" {
+			bookmarkContext = "(none)"
+		}
+
+		bookName := strings.TrimSuffix(filepath.Base(strings.TrimSpace(filePath)), filepath.Ext(filePath))
+		if bookName == "" {
+			bookName = "(unknown)"
+		}
+
+		prompt := fmt.Sprintf(`You are extracting a study syllabus from a document.
+
+Document: %s
+File type: %s
+Total pages: %d
+
+Bookmark tree (nested JSON from pdfcpu — use this to understand the document hierarchy):
+%s
+
+Text sample with absolute page markers (first 30 sections):
+%s
+
+Task: Return a flat list of study-ready chapters with accurate page ranges.
+Rules:
+- Output strict JSON only: {"chapters":[{"title":"...","start_page":1,"end_page":10}]}
+- Use absolute page numbers. Preserve order. No gaps. No overlaps.
+- Prefer the most granular meaningful units (e.g. individual chapters, not parts or volumes).
+- If the bookmark tree shows a hierarchy (e.g. Part > Chapter > Section), emit only the
+  leaf chapters — skip container entries whose range fully contains multiple sub-entries.
+- Derive title and page range from both the bookmark tree and the text sample.
+- Do not emit duplicates or wrapper nodes that are just groupings of sub-chapters.`,
+			bookName, strings.ToLower(fileType), doc.PageCount, bookmarkContext, sample)
 		raw, err := llmProvider.GenerateAnswer(prompt)
 		if err != nil {
 			return nil, fmt.Errorf("AI generation failed: %w", err)
