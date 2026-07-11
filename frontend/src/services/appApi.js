@@ -270,6 +270,11 @@ export function completeSocraticRescue(taskID) {
   return appBridge().CompleteSocraticRescue(taskID)
 }
 
+export function completeMilestoneExam(taskID) {
+  return appBridge().CompleteMilestoneExam(taskID)
+}
+
+
 export function getFlashcardDueTimeline() {
   return appBridge().GetFlashcardDueTimeline()
 }

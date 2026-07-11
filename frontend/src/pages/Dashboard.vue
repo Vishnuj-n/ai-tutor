@@ -938,7 +938,7 @@ function startTask(task) {
     routePath = '/reader'
   } else if (action === 'flashcard_review') {
     routePath = '/flashcards'
-  } else if (action === 'quiz') {
+  } else if (action === 'quiz' || action === 'milestone_exam') {
     routePath = '/quiz'
   } else if (action === 'examiner' || action === 'written') {
     routePath = '/examiner'

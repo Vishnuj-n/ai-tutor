@@ -1485,3 +1485,40 @@ func (r *Repository) GetActiveRemedialTaskPayloadByTopic(topicID string) (string
 	}
 	return payloadJSON, err
 }
+
+// GetQuestionsForQuizAttempts compiles all quiz questions from the original study_queue payload_json for the given quiz attempt IDs.
+func (r *Repository) GetQuestionsForQuizAttempts(attemptIDs []string) ([]models.QuizTaskQuestion, error) {
+	if len(attemptIDs) == 0 {
+		return nil, nil
+	}
+	query := fmt.Sprintf(`
+		SELECT COALESCE(sq.payload_json, '')
+		FROM quiz_attempts qa
+		JOIN study_queue sq ON qa.task_id = sq.id
+		WHERE qa.id IN (%s)
+	`, strings.Repeat("?,", len(attemptIDs)-1)+"?")
+	args := make([]interface{}, len(attemptIDs))
+	for i, id := range attemptIDs {
+		args[i] = id
+	}
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var allQuestions []models.QuizTaskQuestion
+	for rows.Next() {
+		var payloadJSON string
+		if err := rows.Scan(&payloadJSON); err != nil {
+			return nil, err
+		}
+		if payloadJSON != "" {
+			var payload models.QuizTaskPayload
+			if err := json.Unmarshal([]byte(payloadJSON), &payload); err == nil {
+				allQuestions = append(allQuestions, payload.Questions...)
+			}
+		}
+	}
+	return allQuestions, nil
+}
+

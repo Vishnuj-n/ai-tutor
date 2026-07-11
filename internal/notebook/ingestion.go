@@ -38,7 +38,7 @@ func BuildTopicGroupsFromChapters(notebookID string, doc *ExtractedDocument, top
 		builder := builders[topicIdx]
 		builder.order++
 
-		chunkTexts := SplitPageIntoChunks(sectionText, DefaultSemanticChunkTargetWords)
+		chunkTexts := SplitPageIntoChunks(sectionText, DefaultChunkTargetWords)
 		for chunkIndex, chunkText := range chunkTexts {
 			chunkID := fmt.Sprintf("nbc_%s_%02d_%04d_%03d", notebookID, topicIdx+1, builder.order, chunkIndex+1)
 			builder.chunks = append(builder.chunks, db.NotebookChunkInput{
@@ -84,6 +84,12 @@ func chapterIndexForPage(page int, chapters []models.SyllabusChapterDraft) int {
 	}
 	if page < chapters[0].StartPage {
 		return 0
+	}
+	// If it falls in a gap, find the preceding chapter
+	for i := 0; i < len(chapters)-1; i++ {
+		if page > chapters[i].EndPage && page < chapters[i+1].StartPage {
+			return i
+		}
 	}
 	last := chapters[len(chapters)-1]
 	if page > last.EndPage {

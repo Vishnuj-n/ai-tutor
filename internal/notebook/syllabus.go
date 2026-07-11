@@ -23,7 +23,9 @@ type SyllabusDraftResult struct {
 	FallbackUsed bool
 }
 
+
 // DraftSyllabusChapters creates editable chapter ranges for HITL verification.
+// Uses LLM with bookmark context when llmProvider is non-nil.
 func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *ExtractedDocument, llmProvider LLMProvider) (*SyllabusDraftResult, error) {
 	if doc == nil || len(doc.Sections) == 0 {
 		return &SyllabusDraftResult{Chapters: nil, PageCount: 0, FallbackUsed: false}, nil
@@ -39,12 +41,14 @@ func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *Extracte
 		bookmarkJSON, _ := json.Marshal(bookmarkLikeDraft)
 		prompt := fmt.Sprintf("Create syllabus chapter ranges from this document sample. Return strict JSON only as {\"chapters\":[{\"title\":\"...\",\"start_page\":1,\"end_page\":10}]}. Keep absolute page numbers, preserve order, avoid overlaps, and cover as much content as possible.\n\nFile type: %s\nPage count: %d\nBookmark candidates (may be empty): %s\n\nText sample with absolute page markers:\n%s", strings.ToLower(fileType), doc.PageCount, string(bookmarkJSON), sample)
 		raw, err := llmProvider.GenerateAnswer(prompt)
-		if err == nil {
-			parsed := parseSyllabusDraft(raw, doc.PageCount)
-			if len(parsed) > 0 {
-				return &SyllabusDraftResult{Chapters: parsed, PageCount: doc.PageCount, FallbackUsed: false}, nil
-			}
+		if err != nil {
+			return nil, fmt.Errorf("AI generation failed: %w", err)
 		}
+		parsed := parseSyllabusDraft(raw, doc.PageCount)
+		if len(parsed) == 0 {
+			return nil, fmt.Errorf("AI returned an invalid or empty chapter draft response")
+		}
+		return &SyllabusDraftResult{Chapters: parsed, PageCount: doc.PageCount, FallbackUsed: false}, nil
 	}
 
 	if len(bookmarkLikeDraft) > 0 {

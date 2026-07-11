@@ -308,8 +308,29 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	if err != nil {
 		return models.QuizResult{}, err
 	}
-	if task.TaskType != models.StudyTaskTypeQuiz {
-		return models.QuizResult{}, fmt.Errorf("task is not a QUIZ task")
+	if task.TaskType != models.StudyTaskTypeQuiz && task.TaskType != models.StudyTaskTypeMilestoneExam {
+		return models.QuizResult{}, fmt.Errorf("task is not a QUIZ or MILESTONE_EXAM task")
+	}
+	if task.TaskType == models.StudyTaskTypeMilestoneExam {
+		var milestonePayload models.MilestoneExamPayload
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &milestonePayload); err == nil && len(milestonePayload.Quizzes) > 0 {
+			attemptIDs := make([]string, 0, len(milestonePayload.Quizzes))
+			for id := range milestonePayload.Quizzes {
+				attemptIDs = append(attemptIDs, id)
+			}
+			questions, qErr := s.repo.GetQuestionsForQuizAttempts(attemptIDs)
+			if qErr == nil && len(questions) > 0 {
+				quizPayload := models.QuizTaskPayload{
+					Questions:    questions,
+					PassingScore: milestonePayload.PassingScore,
+				}
+				if quizPayload.PassingScore <= 0 {
+					quizPayload.PassingScore = 70
+				}
+				quizPayloadJSON, _ := json.Marshal(quizPayload)
+				task.PayloadJSON = string(quizPayloadJSON)
+			}
+		}
 	}
 	if task.Status != models.StudyTaskStatusActive {
 		return models.QuizResult{}, db.ErrTaskNotActive
@@ -376,7 +397,6 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	rereadAttemptCount := 0
 	manualReviewRecommended := false
 	completionStatus := models.StudyTaskStatusCompleted
-	var resultPayload []byte
 
 	strategy, _ := s.repo.GetRemedialStrategy()
 
@@ -470,19 +490,9 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		return models.QuizResult{}, fmt.Errorf("failed to save quiz attempt: %w", err)
 	}
 
-	resultPayload, _ = json.Marshal(map[string]interface{}{
-		"score":                     score,
-		"passed":                    passed,
-		"correct_count":             correctCount,
-		"total_count":               totalCount,
-		"manual_review_recommended": manualReviewRecommended,
-		"reread_attempt_count":      rereadAttemptCount,
-		"max_reread_attempts":       maxAutomaticRereadAttempts,
-	})
-
 	if err := s.repo.CompleteTaskTx(tx, task.ID, models.CompletionResult{
 		Status:    completionStatus,
-		Payload:   string(resultPayload),
+		Payload:   "", // ponytail: preserve original questions payload in study_queue for milestone exams
 		FollowUps: followUps,
 	}); err != nil {
 		return models.QuizResult{}, err

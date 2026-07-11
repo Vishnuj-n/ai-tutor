@@ -314,6 +314,33 @@ func (a *App) CompleteTask(taskID string, result models.CompletionResult) map[st
 	return map[string]interface{}{"ok": true}
 }
 
+// CompleteMilestoneExam completes an active MILESTONE_EXAM task.
+// ponytail: simplest way to complete milestone task with no flashcard generation.
+func (a *App) CompleteMilestoneExam(taskID string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required"}
+	}
+	task, err := repo.GetTaskByID(taskID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if task.TaskType != models.StudyTaskTypeMilestoneExam {
+		return map[string]interface{}{"error": "task is not a MILESTONE_EXAM task"}
+	}
+	err = repo.CompleteTask(taskID, models.CompletionResult{
+		Status: models.StudyTaskStatusCompleted,
+	})
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true}
+}
+
 func (a *App) GetStreakState(timezoneOffsetMinutes int) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -738,6 +765,30 @@ func (a *App) GetTask(taskID string) map[string]interface{} {
 		}
 		return map[string]interface{}{"error": err.Error()}
 	}
+
+	// Dynamic compile for MILESTONE_EXAM questions
+	if task.TaskType == models.StudyTaskTypeMilestoneExam {
+		var milestonePayload models.MilestoneExamPayload
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &milestonePayload); err == nil && len(milestonePayload.Quizzes) > 0 {
+			attemptIDs := make([]string, 0, len(milestonePayload.Quizzes))
+			for id := range milestonePayload.Quizzes {
+				attemptIDs = append(attemptIDs, id)
+			}
+			questions, qErr := repo.GetQuestionsForQuizAttempts(attemptIDs)
+			if qErr == nil && len(questions) > 0 {
+				quizPayload := models.QuizTaskPayload{
+					Questions:    questions,
+					PassingScore: milestonePayload.PassingScore,
+				}
+				if quizPayload.PassingScore <= 0 {
+					quizPayload.PassingScore = 70
+				}
+				quizPayloadJSON, _ := json.Marshal(quizPayload)
+				task.PayloadJSON = string(quizPayloadJSON)
+			}
+		}
+	}
+
 	return map[string]interface{}{"task": task}
 }
 

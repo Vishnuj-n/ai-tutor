@@ -179,13 +179,8 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	maxOutputTokens := limits.MaxOutputTokens
 	utils.Warnf("[FLASHCARD_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
 
-	// Enforce strict token budget: cap at configured maximum to prevent oversized outputs
-	originalCount := ScaledFlashcardCount(tokenCount)
-	targetCount := originalCount
-	if targetCount > FlashcardCountMax {
-		targetCount = FlashcardCountMax
-		utils.Warnf("[FLASHCARD_PIPELINE] flashcard_count_capped original=%d capped=%d max_configured=%d", originalCount, targetCount, FlashcardCountMax)
-	}
+	// Default to 5 base flashcards. Additional cards will be added for failed questions in buildMarathonFlashcardPromptWithBudget.
+	targetCount := 5
 
 	// Build prompt with token budgeting
 	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookTitle, startPage, endPage, contextChunks, targetCount, maxInputTokens, failedQuestions)
@@ -212,11 +207,11 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	}
 
 	// Apply "Hard Slice" (The Array Truncation Trick) to prevent flashcard avalanche.
-	const MaxCardsPerReadingTask = 6
-	if len(parsed.Cards) > MaxCardsPerReadingTask {
+	maxCardsAllowed := 5 + len(failedQuestions)
+	if len(parsed.Cards) > maxCardsAllowed {
 		originalCount := len(parsed.Cards)
-		parsed.Cards = parsed.Cards[:MaxCardsPerReadingTask]
-		utils.Warnf("[FLASHCARD_PIPELINE] hard_slice applied original_count=%d capped_to=%d", originalCount, MaxCardsPerReadingTask)
+		parsed.Cards = parsed.Cards[:maxCardsAllowed]
+		utils.Warnf("[FLASHCARD_PIPELINE] hard_slice applied original_count=%d capped_to=%d", originalCount, maxCardsAllowed)
 	}
 
 	now := time.Now().Unix()

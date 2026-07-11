@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestSplitPageIntoSemanticChunks(t *testing.T) {
+func TestSplitPageIntoChunks(t *testing.T) {
 	tests := []struct {
 		name      string
 		text      string
