@@ -24,10 +24,10 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:            "ai-tutor",
+		Title:            "Studyloop",
 		Width:            1024,
 		Height:           768,
-		WindowStartState: options.Fullscreen,
+		WindowStartState: options.Maximised,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: notebookHandler(app),
