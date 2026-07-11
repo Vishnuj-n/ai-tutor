@@ -874,6 +874,7 @@ function formatTaskType(type) {
   if (t === 'reread') return 'Reread'
   if (t === 'socratic_remedial') return 'Concept Rescue'
   if (t === 'flashcard_generate') return 'Generate Flashcards'
+  if (t === 'milestone_exam') return 'Milestone Exam'
   return type
 }
 

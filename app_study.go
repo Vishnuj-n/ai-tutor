@@ -963,7 +963,12 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 				quizzes := make(map[string][]int, len(attempts))
 				passingScore := 70
 				for i, attempt := range attempts {
-					quizzes[attempt.ID] = studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
+					flags := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
+					if flags == nil {
+						utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s", task.NotebookID, attempt.ID)
+						continue
+					}
+					quizzes[attempt.ID] = flags
 					if i == 0 && attempt.PassingScore > 0 {
 						passingScore = attempt.PassingScore
 					}

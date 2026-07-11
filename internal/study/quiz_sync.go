@@ -313,13 +313,19 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	}
 	if task.TaskType == models.StudyTaskTypeMilestoneExam {
 		var milestonePayload models.MilestoneExamPayload
-		if err := json.Unmarshal([]byte(task.PayloadJSON), &milestonePayload); err == nil && len(milestonePayload.Quizzes) > 0 {
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &milestonePayload); err != nil {
+			return models.QuizResult{}, fmt.Errorf("failed to parse milestone exam payload: %w", err)
+		}
+		if len(milestonePayload.Quizzes) > 0 {
 			attemptIDs := make([]string, 0, len(milestonePayload.Quizzes))
 			for id := range milestonePayload.Quizzes {
 				attemptIDs = append(attemptIDs, id)
 			}
 			questions, qErr := s.repo.GetQuestionsForQuizAttempts(attemptIDs)
-			if qErr == nil && len(questions) > 0 {
+			if qErr != nil {
+				return models.QuizResult{}, fmt.Errorf("failed to retrieve questions for milestone exam: %w", qErr)
+			}
+			if len(questions) > 0 {
 				quizPayload := models.QuizTaskPayload{
 					Questions:    questions,
 					PassingScore: milestonePayload.PassingScore,
@@ -327,7 +333,10 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				if quizPayload.PassingScore <= 0 {
 					quizPayload.PassingScore = 70
 				}
-				quizPayloadJSON, _ := json.Marshal(quizPayload)
+				quizPayloadJSON, mErr := json.Marshal(quizPayload)
+				if mErr != nil {
+					return models.QuizResult{}, fmt.Errorf("failed to build milestone exam payload: %w", mErr)
+				}
 				task.PayloadJSON = string(quizPayloadJSON)
 			}
 		}

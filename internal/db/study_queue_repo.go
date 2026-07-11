@@ -1514,9 +1514,10 @@ func (r *Repository) GetQuestionsForQuizAttempts(attemptIDs []string) ([]models.
 		}
 		if payloadJSON != "" {
 			var payload models.QuizTaskPayload
-			if err := json.Unmarshal([]byte(payloadJSON), &payload); err == nil {
-				allQuestions = append(allQuestions, payload.Questions...)
+			if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+				return nil, fmt.Errorf("failed to decode quiz payload: %w", err)
 			}
+			allQuestions = append(allQuestions, payload.Questions...)
 		}
 	}
 	return allQuestions, nil

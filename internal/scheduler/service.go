@@ -172,7 +172,7 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		if ok {
 			generatedTaskID := "task-read-" + readingTopic.ID
 			utils.LogSchedulerDecision(readingTopic.ID, startPage, endPage, strconv.Itoa(tokenBudget), "adaptive_window_resolved")
-			activeTopics = append(activeTopics, readingTopic.Title)
+			activeTopics = append(activeTopics, utils.CleanTopicTitle(readingTopic.Title))
 
 			actualTaskMinutes := s.estimateTaskMinutes(
 				readingTopic.ID,

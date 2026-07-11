@@ -275,6 +275,7 @@
                     type="text"
                     class="chapter-input"
                     placeholder="Chapter title"
+                    :disabled="isAICleaning"
                   />
                 </td>
                 <td>
@@ -284,6 +285,7 @@
                     min="1"
                     :max="draftPageCount"
                     class="chapter-input chapter-page"
+                    :disabled="isAICleaning"
                     @change="sanitizeChapterPages(chapter)"
                   />
                 </td>
@@ -294,11 +296,12 @@
                     min="1"
                     :max="draftPageCount"
                     class="chapter-input chapter-page"
+                    :disabled="isAICleaning"
                     @change="sanitizeChapterPages(chapter)"
                   />
                 </td>
                 <td>
-                  <button type="button" class="row-delete" @click="removeDraftChapter(index)">
+                  <button type="button" class="row-delete" :disabled="isAICleaning" @click="removeDraftChapter(index)">
                     Delete
                   </button>
                 </td>
@@ -308,7 +311,7 @@
         </div>
 
         <div class="modal-actions">
-          <button type="button" class="btn-secondary" @click="addDraftChapter">Add Chapter</button>
+          <button type="button" class="btn-secondary" :disabled="isAICleaning" @click="addDraftChapter">Add Chapter</button>
           <button
             type="button"
             class="btn-ai-cleanup"
@@ -317,7 +320,7 @@
           >
             {{ isAICleaning ? 'Cleaning up...' : 'AI Clean Up' }}
           </button>
-          <button type="button" class="btn-secondary" @click="closeSyllabusModal">Cancel</button>
+          <button type="button" class="btn-secondary" :disabled="isAICleaning" @click="closeSyllabusModal">Cancel</button>
           <button
             type="button"
             class="btn-primary"
