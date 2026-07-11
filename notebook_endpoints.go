@@ -85,8 +85,8 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		}
 	}
 
-	// Extract normalized document content for metadata and downstream auto-analysis.
-	doc, err := a.notebookService.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	// Extract lightweight metadata for page count and size details during initial upload.
+	meta, err := a.notebookService.ExtractMetadata(uploadResult.FilePath, uploadResult.FileType)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{
@@ -104,7 +104,7 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	}
 
 	// Create notebook record as unlinked; Sprint 11 uses a draft/confirm ingestion flow.
-	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", fileHash, doc.PageCount)
+	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", fileHash, meta.PageCount)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{
@@ -132,8 +132,8 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		"file_name":     uploadResult.FileName,
 		"file_type":     uploadResult.FileType,
 		"size":          uploadResult.Size,
-		"page_count":    doc.PageCount,
-		"word_count":    doc.WordCount,
+		"page_count":    meta.PageCount,
+		"word_count":    meta.WordCount,
 		"chunk_count":   0,
 		"indexed_count": 0,
 		"failed_count":  0,
@@ -156,8 +156,9 @@ func (a *App) resolveExplicitActiveProfileID() string {
 }
 
 // DraftNotebookSyllabus creates editable chapter ranges for HITL verification.
-// If regenerate=false and a draft exists in DB, returns the persisted draft without re-running extraction/LLM.
-// If regenerate=true or no draft exists, runs extraction/LLM and persists the result.
+// Uses bookmark extraction only (no LLM) for fast default response.
+// If regenerate=true, runs full extraction+LLM (same as AICleanupNotebookSyllabus).
+// If regenerate=false and a draft exists in DB, returns the persisted draft.
 func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -186,7 +187,6 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 			return map[string]interface{}{"error": err.Error()}
 		}
 		if draftJSON != "" {
-			// Parse and return persisted draft
 			var persistedDraft models.SyllabusDraft
 			if err := json.Unmarshal([]byte(draftJSON), &persistedDraft); err == nil {
 				return map[string]interface{}{
@@ -200,15 +200,64 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		}
 	}
 
-	// No persisted draft or regenerate=true: run extraction and LLM
-	// Use lightweight sample extraction for faster response time
-	// Only extract first 30 pages for LLM context instead of full document
+	// Extract lightweight document sample for page count
 	doc, err := a.notebookService.ExtractDocumentSample(nb.FilePath, nb.FileType, 30)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
 	_ = repo.UpdateNotebookStatus(notebookID, "analyzing")
+
+	// Fast path: bookmarks only, no LLM call
+	if !regenerate {
+		result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, nil)
+		if err == nil && len(result.Chapters) > 0 {
+			chapters := result.Chapters
+			draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
+			draftJSON, err := json.Marshal(draftToPersist)
+			if err == nil {
+				_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
+			}
+			_ = repo.UpdateNotebookStatus(notebookID, "draft_ready")
+			return map[string]interface{}{
+				"notebook_id":   notebookID,
+				"page_count":    doc.PageCount,
+				"chapters":      chapters,
+				"status":        "draft_ready",
+				"fallback_used": false,
+			}
+		}
+		// No bookmarks found — create a single "General" chapter covering all pages
+		// User can edit this manually or click "AI Clean Up" for smarter extraction
+		endPage := doc.PageCount
+		if endPage <= 0 {
+			endPage = 1
+		}
+		chapters := []models.SyllabusChapterDraft{{
+			Title:     "General",
+			StartPage: 1,
+			EndPage:   endPage,
+		}}
+		draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
+		draftJSON, err := json.Marshal(draftToPersist)
+		if err == nil {
+			_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
+		}
+		_ = repo.UpdateNotebookStatus(notebookID, "draft_ready")
+		return map[string]interface{}{
+			"notebook_id":   notebookID,
+			"page_count":    doc.PageCount,
+			"chapters":      chapters,
+			"status":        "draft_ready",
+			"fallback_used": true,
+		}
+	}
+
+	// regenerate=true: full extraction + LLM (used by AI Clean Up)
+	if a.heavyLLMProvider == nil {
+		_ = repo.UpdateNotebookStatus(notebookID, "failed")
+		return map[string]interface{}{"error": "AI features are disabled: LLM provider is not configured"}
+	}
 	result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
 	if err != nil {
 		_ = repo.UpdateNotebookStatus(notebookID, "failed")
@@ -230,11 +279,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		fallbackUsed = true
 	}
 
-	// Persist the draft for future use
-	draftToPersist := models.SyllabusDraft{
-		PageCount: doc.PageCount,
-		Chapters:  chapters,
-	}
+	draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
 	draftJSON, err := json.Marshal(draftToPersist)
 	if err == nil {
 		_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
@@ -248,6 +293,12 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		"status":        "draft_ready",
 		"fallback_used": fallbackUsed,
 	}
+}
+
+// AICleanupNotebookSyllabus re-runs chapter extraction with LLM to improve bookmark-based drafts.
+// Explicit user action — not called automatically.
+func (a *App) AICleanupNotebookSyllabus(notebookID string) map[string]interface{} {
+	return a.DraftNotebookSyllabus(notebookID, true)
 }
 
 // ConfirmNotebookSyllabus commits notebook ingestion from user-confirmed chapter bounds.

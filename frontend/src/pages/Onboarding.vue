@@ -45,7 +45,7 @@
             step="5"
             required
           />
-          <p class="hint" style="margin-top: 4px; font-size: 0.85rem; opacity: 0.7">
+          <p class="hint" style="margin-top: 2px; font-size: 0.75rem; opacity: 0.7; line-height: 1.2;">
             Caps spacing repetition reviews active in any single study session.
           </p>
         </div>
@@ -124,7 +124,7 @@
 
         <div
           class="form-group check-group"
-          style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
+          style="margin-bottom: 8px; display: flex; align-items: flex-start; gap: 8px"
         >
           <label
             class="checkbox-container"
@@ -138,7 +138,7 @@
             />
             <div class="check-label">
               <strong>Enable Study Reminders</strong>
-              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
+              <p class="hint" style="margin: 0; font-size: 0.75rem; opacity: 0.7; line-height: 1.2;">
                 Notify when daily study time starts and ends.
               </p>
             </div>
@@ -790,9 +790,9 @@ onMounted(() => {
   width: 100%;
   max-width: 480px; /* slightly narrower */
   max-height: calc(100vh - 48px); /* Keep 24px margin top and bottom */
-  overflow-y: auto;
+  overflow-y: hidden;
   border-radius: 16px; /* 2 * 8px - more compact */
-  padding: 24px; /* 3 * 8px - reduced padding for a tighter fit */
+  padding: 16px 20px; /* reduced padding for a tighter fit */
   box-shadow: 0 16px 32px rgba(45, 51, 56, 0.08);
   box-sizing: border-box;
   background: var(--surface-container-lowest);
@@ -816,13 +816,13 @@ onMounted(() => {
 
 .header-section {
   text-align: center;
-  margin-bottom: 16px; /* 8px grid */
+  margin-bottom: 8px; /* 8px grid */
 }
 
 .logo-orb {
-  width: 48px; /* 8px grid */
-  height: 48px; /* 8px grid */
-  margin: 0 auto 8px; /* 8px grid */
+  width: 36px; /* reduced from 48px */
+  height: 36px; /* reduced from 48px */
+  margin: 0 auto 6px; /* 8px grid */
   background: linear-gradient(135deg, var(--primary-dim), var(--primary));
   color: var(--on-primary);
   border-radius: 50%;
@@ -831,23 +831,23 @@ onMounted(() => {
   justify-content: center;
   font-family: 'Manrope', sans-serif;
   font-weight: 800;
-  font-size: 16px;
+  font-size: 14px;
   letter-spacing: -0.05em;
   box-shadow: 0 0 24px rgba(99, 102, 241, 0.15); /* 8px grid shadow size */
 }
 
 h1 {
   font-family: 'Manrope', sans-serif; /* Display font */
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 800;
-  margin: 0 0 4px; /* 8px grid */
+  margin: 0 0 2px; /* 8px grid */
   letter-spacing: -0.02em; /* Spec: -2% tracking */
   color: var(--on-surface);
 }
 
 .subtitle {
   color: var(--muted-text);
-  font-size: 14px;
+  font-size: 12px;
   margin: 0;
 }
 
@@ -855,7 +855,7 @@ h1 {
   height: 6px; /* 8px grid */
   background: var(--outline-variant);
   border-radius: 3px;
-  margin-bottom: 16px; /* 8px grid */
+  margin-bottom: 12px; /* 8px grid */
   overflow: hidden;
 }
 
@@ -868,22 +868,22 @@ h1 {
 .step-container {
   display: flex;
   flex-direction: column;
-  gap: 16px; /* 8px grid */
+  gap: 12px; /* 8px grid */
 }
 
 h2 {
   font-family: 'Manrope', sans-serif; /* Display font */
-  font-size: 16px; /* 8px scale */
+  font-size: 14px; /* 8px scale */
   font-weight: 700;
   margin: 0;
   letter-spacing: -0.02em; /* Spec: -2% tracking */
 }
 
 .description {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted-text);
-  line-height: 1.5;
-  margin: -8px 0 8px; /* 8px grid */
+  line-height: 1.4;
+  margin: -6px 0 4px; /* 8px grid */
 }
 
 .form-group:focus-within label {
@@ -906,15 +906,31 @@ select {
   background: var(--surface-container-low);
   border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent); /* Spec ghost border */
   border-radius: 12px; /* xl: 12px/0.75rem */
-  padding: 10px 14px; /* 8px grid friendly - slightly more compact */
+  padding: 8px 12px; /* 8px grid friendly - slightly more compact */
   color: var(--on-surface);
-  font-size: 14px;
+  font-size: 13px;
   font-family: inherit;
   transition:
     border-color 0.2s,
     background-color 0.2s;
   box-sizing: border-box;
   width: 100%;
+}
+
+.time-input {
+  padding-left: 36px;
+}
+
+.time-icon {
+  left: 12px !important;
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.quick-durations {
+  margin-top: 8px !important;
+  padding-top: 8px !important;
+  gap: 6px !important;
 }
 
 input::placeholder {
@@ -1227,6 +1243,6 @@ select:focus {
 
 /* Onboarding-specific override */
 .time-range-section {
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 </style>

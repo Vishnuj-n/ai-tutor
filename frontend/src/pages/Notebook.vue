@@ -309,6 +309,14 @@
 
         <div class="modal-actions">
           <button type="button" class="btn-secondary" @click="addDraftChapter">Add Chapter</button>
+          <button
+            type="button"
+            class="btn-ai-cleanup"
+            :disabled="isAICleaning"
+            @click="aiCleanupChapters"
+          >
+            {{ isAICleaning ? 'Cleaning up...' : 'AI Clean Up' }}
+          </button>
           <button type="button" class="btn-secondary" @click="closeSyllabusModal">Cancel</button>
           <button
             type="button"
@@ -357,6 +365,7 @@ import {
   uploadNotebook as apiUploadNotebook,
   uploadNotebookFromPath as apiUploadNotebookFromPath,
   draftNotebookSyllabus as apiDraftNotebookSyllabus,
+  aiCleanupNotebookSyllabus as apiAICleanupNotebookSyllabus,
   confirmNotebookSyllabus as apiConfirmNotebookSyllabus,
   updateNotebookTitle as apiUpdateNotebookTitle,
   updateNotebookPriority as apiUpdateNotebookPriority,
@@ -405,6 +414,7 @@ const fallbackToastTimer = ref(null)
 const actionToastTimer = ref(null)
 const isDraftingSyllabus = ref(false)
 const draftingNotebookTitle = ref('')
+const isAICleaning = ref(false)
 const activeProfileID = ref('')
 const ragEnabled = ref(false)
 const ragNotebookChapter = ref(true)
@@ -751,6 +761,44 @@ function addDraftChapter() {
     start_page: Math.min(start, draftPageCount.value),
     end_page: draftPageCount.value,
   })
+}
+
+async function aiCleanupChapters() {
+  if (!draftNotebookID.value || isAICleaning.value) return
+
+  isAICleaning.value = true
+  draftError.value = ''
+
+  try {
+    const result = await apiAICleanupNotebookSyllabus(draftNotebookID.value)
+    if (result?.error) {
+      throw new Error(result.error)
+    }
+
+    const chapters = Array.isArray(result?.chapters) ? result.chapters : []
+    draftPageCount.value = Number(result?.page_count) > 0 ? Number(result.page_count) : draftPageCount.value
+    draftChapters.value =
+      chapters.length > 0
+        ? chapters.map((ch) => ({
+            title: String(ch?.title || 'Untitled Chapter').trim() || 'Untitled Chapter',
+            start_page: Number(ch?.start_page) || 1,
+            end_page: Number(ch?.end_page) || 1,
+          }))
+        : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
+
+    // Update snapshot so "Confirm" only re-ingests if user edits further
+    originalDraftChapters.value = draftChapters.value.map((ch) => ({
+      title: String(ch.title || '').trim(),
+      start_page: Number(ch.start_page) || 1,
+      end_page: Number(ch.end_page) || 1,
+    }))
+
+    showToast('AI cleaned up chapter list')
+  } catch (error) {
+    draftError.value = `AI cleanup failed: ${error.message}`
+  } finally {
+    isAICleaning.value = false
+  }
 }
 
 function removeDraftChapter(index) {
@@ -1271,13 +1319,14 @@ function formatDate(dateString) {
 }
 
 .modal-card {
-  width: min(920px, 100%);
-  max-height: 88vh;
+  width: 90vw;
+  max-width: 1100px;
+  max-height: 90vh;
   overflow: auto;
   background: var(--surface-container-lowest);
   border: 1px solid var(--outline-variant);
   border-radius: 14px;
-  padding: 18px;
+  padding: 24px;
   z-index: 1300;
   position: relative;
 }
@@ -1376,6 +1425,26 @@ function formatDate(dateString) {
   vertical-align: middle;
 }
 
+.chapter-table th:nth-child(1),
+.chapter-table td:nth-child(1) {
+  width: 50%;
+  min-width: 250px;
+}
+
+.chapter-table th:nth-child(2),
+.chapter-table td:nth-child(2),
+.chapter-table th:nth-child(3),
+.chapter-table td:nth-child(3) {
+  width: 20%;
+  min-width: 110px;
+}
+
+.chapter-table th:nth-child(4),
+.chapter-table td:nth-child(4) {
+  width: 10%;
+  min-width: 80px;
+}
+
 .chapter-table th {
   font-size: 12px;
   color: var(--muted-text);
@@ -1431,6 +1500,27 @@ function formatDate(dateString) {
 }
 
 .btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-ai-cleanup {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: white;
+  transition: all 0.2s;
+}
+
+.btn-ai-cleanup:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
+}
+
+.btn-ai-cleanup:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

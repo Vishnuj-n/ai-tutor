@@ -961,7 +961,7 @@ func TestInsertMilestoneExamTaskPersistsPayload(t *testing.T) {
 
 	payload := models.MilestoneExamPayload{
 		Quizzes: map[string][]int{
-			"attempt-1": []int{1, 0, 1},
+			"attempt-1": {1, 0, 1},
 		},
 		PassingScore: 70,
 		QuizCount:    1,

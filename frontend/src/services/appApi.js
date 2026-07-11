@@ -146,6 +146,10 @@ export function draftNotebookSyllabus(notebookID, regenerate = false) {
   return appBridge().DraftNotebookSyllabus(notebookID, regenerate)
 }
 
+export function aiCleanupNotebookSyllabus(notebookID) {
+  return appBridge().AICleanupNotebookSyllabus(notebookID)
+}
+
 export function confirmNotebookSyllabus(notebookID, chapters) {
   return appBridge().ConfirmNotebookSyllabus(notebookID, chapters)
 }

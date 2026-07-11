@@ -118,6 +118,10 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.time-input::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
 .time-input:focus {
   outline: none;
   border-color: var(--primary);
