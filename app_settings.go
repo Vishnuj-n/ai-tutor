@@ -43,10 +43,11 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"default_remedial_strategy":  s.DefaultRemedialStrategy,
 		"classroom_code":             s.ClassroomCode,
 		"student_username":           s.StudentUsername,
+		"analytics_enabled":          s.AnalyticsEnabled,
 	}
 }
 
-func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string) map[string]interface{} {
+func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string, analyticsEnabled bool) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
@@ -82,6 +83,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 		RAGQueueStudy:           ragQueueStudy,
 		DefaultRemedialStrategy: defaultRemedialStrategy,
 		ClassroomCode:           classroomCode,
+		AnalyticsEnabled:        analyticsEnabled,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {
@@ -105,6 +107,17 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 		}
 	}
 
+	return map[string]interface{}{"ok": true}
+}
+
+func (a *App) TrackAnalyticsEvent(eventType, fileHash string, pageNumber int, metadata string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": "database repository not initialized"}
+	}
+	if err := repo.TrackAnalyticsEvent(eventType, fileHash, pageNumber, metadata); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
 	return map[string]interface{}{"ok": true}
 }
 

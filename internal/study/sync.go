@@ -44,10 +44,11 @@ type NotebookSyncRecord struct {
 }
 
 type SyncPayload struct {
-	UserToken     string               `json:"user_token"`
-	ClassroomCode string               `json:"classroom_code"`
-	Notebooks     []NotebookSyncRecord `json:"notebooks"`
-	Logs          []models.SyncLogEntry `json:"logs"`
+	UserToken     string                      `json:"user_token"`
+	ClassroomCode string                      `json:"classroom_code"`
+	Notebooks     []NotebookSyncRecord        `json:"notebooks"`
+	Logs          []models.SyncLogEntry       `json:"logs"`
+	Analytics     []models.AnalyticsEventSync `json:"analytics,omitempty"`
 }
 
 type SyncResponse struct {
@@ -85,6 +86,12 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if syncErr := repo.ResolveFlashcardGenerateTasksForTopic(""); syncErr != nil {
 			utils.Warnf("[SYNC] failed to resolve FLASHCARD_GENERATE tasks: %v", syncErr)
 		}
+		if settings.AnalyticsEnabled {
+			if fbErr := syncAnalyticsFallback(repo); fbErr != nil {
+				utils.Warnf("[SYNC] fallback analytics upload failed: %v", fbErr)
+				return fbErr
+			}
+		}
 		return nil // Cloud sync not configured
 	}
 
@@ -118,11 +125,23 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 	utils.Warnf("[SYNC] delta logs to send: %d (since %d)", len(logs), settings.LastSyncedAt)
 
+	// Fetch unsynced local analytics events if consent is enabled
+	var unsyncedEvents []models.AnalyticsEventSync
+	var eventIDs []int64
+	if settings.AnalyticsEnabled {
+		var aErr error
+		unsyncedEvents, eventIDs, aErr = repo.GetUnsyncedAnalyticsEvents()
+		if aErr != nil {
+			utils.Warnf("[SYNC] failed to fetch unsynced analytics: %v", aErr)
+		}
+	}
+
 	payload := SyncPayload{
 		UserToken:     apiToken,
 		ClassroomCode: settings.ClassroomCode,
 		Notebooks:     notebookRecords,
 		Logs:          logs,
+		Analytics:     unsyncedEvents,
 	}
 
 	jsonBytes, err := json.Marshal(payload)
@@ -204,6 +223,14 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if setErr := repo.SetLastSyncedAt(maxReviewedAt); setErr != nil {
 			utils.Warnf("[SYNC] failed to persist last_synced_at: %v", setErr)
 		}
+
+		// Mark sent analytics events as synced in local SQLite
+		if len(eventIDs) > 0 {
+			if markErr := repo.MarkAnalyticsSynced(eventIDs); markErr != nil {
+				utils.Warnf("[SYNC] failed to mark analytics synced: %v", markErr)
+			}
+		}
+
 		// Sync completed successfully. Clear any pending FLASHCARD_GENERATE tasks.
 		if syncErr := repo.ResolveFlashcardGenerateTasksForTopic(""); syncErr != nil {
 			utils.Warnf("[SYNC] failed to resolve FLASHCARD_GENERATE tasks: %v", syncErr)
@@ -224,6 +251,76 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 
 	utils.Warnf("[SYNC] Cloud sync completed successfully.")
+	return nil
+}
+
+func syncAnalyticsFallback(repo *db.Repository) error {
+	events, ids, err := repo.GetUnsyncedAnalyticsEvents()
+	if err != nil {
+		return fmt.Errorf("failed to fetch unsynced analytics for fallback: %w", err)
+	}
+	if len(events) == 0 {
+		return nil
+	}
+
+	researchURL := os.Getenv("RESEARCH_ANALYTICS_URL")
+	if researchURL == "" {
+		researchURL = "https://rptpauakhdsqinpcnebw.supabase.co/rest/v1/anonymous_analytics_events"
+	}
+	researchToken := os.Getenv("RESEARCH_ANALYTICS_ANON_KEY")
+	if researchToken == "" {
+		researchToken = "sb_publishable_aL0Wgco3ZzH_OS64pP4g-w_tWRN_bNf"
+	}
+
+	jsonBytes, err := json.Marshal(events)
+	if err != nil {
+		return fmt.Errorf("failed to marshal fallback analytics: %w", err)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	var resp *http.Response
+	var lastErr error
+	const attempts = 3
+
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			utils.Warnf("[SYNC-ANALYTICS] Retrying fallback sync, attempt %d/%d due to: %v", i+1, attempts, lastErr)
+			time.Sleep(1 * time.Second)
+		}
+
+		req, reqErr := http.NewRequest("POST", researchURL, bytes.NewBuffer(jsonBytes))
+		if reqErr != nil {
+			lastErr = reqErr
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("apikey", researchToken)
+		req.Header.Set("Authorization", "Bearer "+researchToken)
+
+		resp, lastErr = client.Do(req)
+		if lastErr != nil {
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("research server returned status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue
+		}
+		_ = resp.Body.Close()
+		lastErr = nil
+		break
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+
+	if err := repo.MarkAnalyticsSynced(ids); err != nil {
+		utils.Warnf("[SYNC-ANALYTICS] failed to mark fallback events synced: %v", err)
+	}
+	utils.Warnf("[SYNC-ANALYTICS] Fallback analytics sync of %d events succeeded.", len(events))
 	return nil
 }
 

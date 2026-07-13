@@ -145,6 +145,29 @@
           </label>
         </div>
 
+        <div
+          class="form-group check-group"
+          style="margin-bottom: 16px; display: flex; align-items: flex-start; gap: 8px"
+        >
+          <label
+            class="checkbox-container"
+            style="display: flex; align-items: center; gap: 10px; cursor: pointer"
+          >
+            <input
+              id="analytics-enabled"
+              v-model="analyticsEnabled"
+              type="checkbox"
+              style="width: 18px; height: 18px; cursor: pointer"
+            />
+            <div class="check-label">
+              <strong>Help improve the app by sharing anonymous usage data</strong>
+              <p class="hint" style="margin: 0; font-size: 0.75rem; opacity: 0.7; line-height: 1.2;">
+                Telemetry events are anonymized. No personal information is ever collected.
+              </p>
+            </div>
+          </label>
+        </div>
+
         <button class="action-button" :disabled="!isStep1Valid" @click="step = 2">Next Step</button>
       </div>
 
@@ -531,6 +554,7 @@ function applyDurationPreset(preset) {
   studyEndTime.value = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`
 }
 const remindersEnabled = ref(true)
+const analyticsEnabled = ref(false)
 const cloudSyncURL = ref('')
 const apiToken = ref('')
 const selectedTheme = ref('light-classic')
@@ -750,7 +774,8 @@ async function completeOnboarding() {
       true, // default for ragEntireNotebook
       true, // default for ragQueueStudy
       'CLASSIC', // default defaultRemedialStrategy
-      '' // classroom_code — set later from Settings
+      '', // classroom_code — set later from Settings
+      analyticsEnabled.value
     )
 
     if (settingsRes.error) {

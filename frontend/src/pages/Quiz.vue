@@ -244,6 +244,7 @@ import {
   generateQuizForPageRange,
   generateFlashcardsForQuizTask,
   completeMilestoneExam,
+  trackAnalyticsEvent,
 } from '../services/appApi'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
@@ -480,6 +481,17 @@ async function submitQuiz() {
     }
     result.value = response?.result || null
     submitted.value = true
+
+    const notebook = notebooks.value.find((n) => n.id === taskMeta.value?.notebook_id)
+    const fileHash = notebook?.file_hash || ''
+    const currentQuizResult = response?.result
+    trackAnalyticsEvent('quiz_complete', fileHash, taskMeta.value?.start_page || 0, {
+      task_id: taskID.value,
+      score: currentQuizResult?.score || 0,
+      passed: currentQuizResult?.passed || false,
+      correct_count: currentQuizResult?.correct_count || 0,
+      total_count: currentQuizResult?.total_count || 0,
+    })
   } catch (err) {
     error.value = err?.message || 'Failed to submit quiz.'
   } finally {

@@ -217,7 +217,7 @@ Programmatic:   {{ isProgrammaticScroll }}
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { completeReading, getUserSettings, logFrontendEvent } from '../services/appApi'
+import { completeReading, getUserSettings, logFrontendEvent, trackAnalyticsEvent } from '../services/appApi'
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
 import ReaderChat from '../components/ReaderChat.vue'
@@ -402,6 +402,19 @@ watch(
         }
       })
     }
+  }
+)
+
+let trackPageDebounceId = null
+watch(
+  () => reader.currentPage.value,
+  (newVal) => {
+    if (!newVal) return
+    if (trackPageDebounceId) clearTimeout(trackPageDebounceId)
+    trackPageDebounceId = setTimeout(() => {
+      const fileHash = reader.readerContext.value?.notebookFileHash || ''
+      trackAnalyticsEvent('page_view', fileHash, newVal, {})
+    }, 1000)
   }
 )
 
@@ -722,6 +735,10 @@ async function completeSession() {
       completionError.value = done.error
       return
     }
+    const fileHash = reader.readerContext.value?.notebookFileHash || ''
+    trackAnalyticsEvent('reading_complete', fileHash, reader.currentPage.value, {
+      task_id: taskIDForCompletion
+    })
     const nextRoute = done?.quiz_task_id ? `/quiz?taskId=${done.quiz_task_id}` : '/dashboard'
     // Completion writes the follow-up quiz into the queue; navigation follows the existing route behavior.
     console.warn('[COMPLETE_SESSION] completeSession() before router.push', {

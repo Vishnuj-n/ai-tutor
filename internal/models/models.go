@@ -156,6 +156,7 @@ type ReadingTask struct {
 	StartPage   int    `json:"start_page"`
 	EndPage     int    `json:"end_page"`
 	CurrentPage int    `json:"current_page"`
+	FileHash    string `json:"file_hash,omitempty"`
 }
 
 // TodayPlan is the scheduler output consumed by the dashboard.
@@ -541,6 +542,15 @@ type UserSettings struct {
 	ClassroomCode           string `json:"classroom_code"`
 	StudentUsername         string `json:"student_username"`
 	LastSyncedAt            int64  `json:"last_synced_at"`
+	AnalyticsEnabled        bool   `json:"analytics_enabled"`
+}
+
+type AnalyticsEventSync struct {
+	EventType  string `json:"event_type"`
+	FileHash   string `json:"file_hash"`
+	PageNumber int    `json:"page_number"`
+	Metadata   string `json:"metadata"`
+	CreatedAt  string `json:"created_at"` // RFC3339 formatted string
 }
 
 // LLMTierSettings stores non-secret OpenAI-compatible provider config.

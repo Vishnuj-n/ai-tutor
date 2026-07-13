@@ -226,6 +226,7 @@ export function useReaderBase(taskID) {
         startPage: currentPage.value,
         endPage: navigationMaxPage.value || 0,
         mode: 'task',
+        notebookFileHash: task.file_hash || '',
       }
 
       return {

@@ -229,6 +229,7 @@ import {
   getReviewSession,
   recordCardReview,
   suspendFlashcard,
+  trackAnalyticsEvent,
 } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
@@ -348,6 +349,15 @@ async function rate(ratingKey) {
         error.value = `Failed to save review: ${res.error}`
         return
       }
+      
+      const notebook = notebooks.value.find((n) => n.id === selectedNotebookID.value)
+      const fileHash = notebook?.file_hash || ''
+      trackAnalyticsEvent('flashcard_review', fileHash, 0, {
+        task_id: reviewTaskID.value,
+        card_id: card.card_id,
+        rating: validRating.value,
+      })
+
       flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)
       if (sessionRemaining.value <= 0) {

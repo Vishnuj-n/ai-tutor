@@ -185,7 +185,8 @@ export function updateUserSettings(
   ragEntireNotebook,
   ragQueueStudy,
   defaultRemedialStrategy,
-  classroomCode
+  classroomCode,
+  analyticsEnabled
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -202,8 +203,14 @@ export function updateUserSettings(
     ragEntireNotebook,
     ragQueueStudy,
     defaultRemedialStrategy,
-    classroomCode
+    classroomCode,
+    analyticsEnabled
   )
+}
+
+export function trackAnalyticsEvent(eventType, fileHash, pageNumber, metadata) {
+  const metaStr = typeof metadata === 'object' ? JSON.stringify(metadata) : (metadata || '')
+  return appBridge().TrackAnalyticsEvent(eventType, fileHash || '', pageNumber || 0, metaStr)
 }
 
 export function getLLMSettings() {

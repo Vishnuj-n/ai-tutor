@@ -145,6 +145,30 @@
             </label>
           </div>
 
+          <div
+            class="form-group check-group"
+            style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
+          >
+            <label
+              class="checkbox-container"
+              style="display: flex; align-items: center; gap: 10px; cursor: pointer"
+            >
+              <input
+                id="analytics-enabled"
+                v-model="settings.analytics_enabled"
+                type="checkbox"
+                :disabled="loading || saving"
+                style="width: 18px; height: 18px; cursor: pointer"
+              />
+              <div class="check-label">
+                <strong>Help improve the app by sharing anonymous usage data</strong>
+                <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
+                  Telemetry events are anonymized. No personal information is ever collected.
+                </p>
+              </div>
+            </label>
+          </div>
+
           <div class="form-group check-group">
             <label class="checkbox-container">
               <input
@@ -806,6 +830,7 @@ const settings = ref({
   rag_queue_study: true,
   default_remedial_strategy: 'CLASSIC',
   classroom_code: '',
+  analytics_enabled: false,
 })
 
 const llmFastKey = ref('')
@@ -1260,7 +1285,8 @@ async function saveUserSettings() {
       settings.value.rag_entire_notebook,
       settings.value.rag_queue_study,
       settings.value.default_remedial_strategy,
-      settings.value.classroom_code || ''
+      settings.value.classroom_code || '',
+      settings.value.analytics_enabled
     )
     if (res.error) {
       error.value = res.error

@@ -894,9 +894,11 @@ func (r *Repository) GetReadingTask(taskID string) (*models.ReadingTask, error) 
 			COALESCE(sq.topic_id, ''),
 			COALESCE(sq.start_page, 0),
 			COALESCE(sq.end_page, 0),
-			COALESCE(rp.current_page, COALESCE(sq.start_page, 0))
+			COALESCE(rp.current_page, COALESCE(sq.start_page, 0)),
+			COALESCE(nb.file_hash, '')
 		FROM study_queue sq
 		LEFT JOIN reading_progress rp ON rp.task_id = sq.id
+		LEFT JOIN notebooks nb ON nb.id = sq.notebook_id
 		WHERE sq.id = ? AND sq.task_type IN ('READING', 'REREAD')
 	`, taskID).Scan(
 		&task.TaskID,
@@ -905,6 +907,7 @@ func (r *Repository) GetReadingTask(taskID string) (*models.ReadingTask, error) 
 		&task.StartPage,
 		&task.EndPage,
 		&task.CurrentPage,
+		&task.FileHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrTaskNotFound
@@ -1519,6 +1522,9 @@ func (r *Repository) GetQuestionsForQuizAttempts(attemptIDs []string) ([]models.
 			}
 			allQuestions = append(allQuestions, payload.Questions...)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return allQuestions, nil
 }
