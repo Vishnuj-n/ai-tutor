@@ -105,6 +105,8 @@ describe('Dashboard.vue Integration', () => {
       undefined,
       undefined,
       undefined,
+      '',
+      false,
       ''
     )
   })
