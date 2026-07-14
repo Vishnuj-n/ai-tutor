@@ -230,6 +230,7 @@ import {
   recordCardReview,
   suspendFlashcard,
   trackAnalyticsEvent,
+  getUserSettings,
 } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
@@ -248,6 +249,8 @@ const reviewIndex = ref(0)
 const reviewing = ref(false)
 const flipped = ref(false)
 const isSubmittingReview = ref(false)
+const analyticsEnabled = ref(false)
+const anonymousUserID = ref('')
 const reviewTaskID = ref('')
 const sessionRemaining = ref(0)
 const queueMode = computed(() => !!reviewTaskID.value)
@@ -277,6 +280,13 @@ onMounted(async () => {
     notebooks.value = Array.isArray(res) ? res.filter((n) => !n.error) : []
   } catch {
     error.value = 'Failed to load notebooks.'
+  }
+  try {
+    const settings = await getUserSettings()
+    analyticsEnabled.value = settings?.analytics_enabled ?? false
+    anonymousUserID.value = settings?.anonymous_user_id ?? ''
+  } catch (err) {
+    console.error('Failed to load user settings in Flashcards:', err)
   }
   if (route.query.taskId) {
     await loadQueueSession(String(route.query.taskId), String(route.query.notebookId || ''))
@@ -350,13 +360,16 @@ async function rate(ratingKey) {
         return
       }
       
-      const notebook = notebooks.value.find((n) => n.id === selectedNotebookID.value)
-      const fileHash = notebook?.file_hash || ''
-      trackAnalyticsEvent('flashcard_review', fileHash, 0, {
-        task_id: reviewTaskID.value,
-        card_id: card.card_id,
-        rating: validRating.value,
-      })
+      if (analyticsEnabled.value) {
+        const notebook = notebooks.value.find((n) => n.id === selectedNotebookID.value)
+        const fileHash = notebook?.file_hash || ''
+        trackAnalyticsEvent('flashcard_review', fileHash, 0, {
+          task_id: reviewTaskID.value,
+          card_id: card.card_id,
+          rating: validRating.value,
+          anonymous_user_id: anonymousUserID.value,
+        })
+      }
 
       flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)

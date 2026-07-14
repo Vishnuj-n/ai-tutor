@@ -245,6 +245,7 @@ import {
   generateFlashcardsForQuizTask,
   completeMilestoneExam,
   trackAnalyticsEvent,
+  getUserSettings,
 } from '../services/appApi'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
@@ -258,6 +259,8 @@ const error = ref('')
 const taskMeta = ref(null)
 const questions = ref([])
 const answers = ref({})
+const analyticsEnabled = ref(false)
+const anonymousUserID = ref('')
 const result = ref(null)
 const generatingFlashcards = ref(false)
 
@@ -310,6 +313,13 @@ const canRetryGeneration = computed(() => {
 
 onMounted(async () => {
   await loadNotebooks()
+  try {
+    const settings = await getUserSettings()
+    analyticsEnabled.value = settings?.analytics_enabled ?? false
+    anonymousUserID.value = settings?.anonymous_user_id ?? ''
+  } catch (err) {
+    console.error('Failed to load user settings in Quiz:', err)
+  }
   if (taskID.value) {
     await loadQuizTask()
   } else {
@@ -482,16 +492,19 @@ async function submitQuiz() {
     result.value = response?.result || null
     submitted.value = true
 
-    const notebook = notebooks.value.find((n) => n.id === taskMeta.value?.notebook_id)
-    const fileHash = notebook?.file_hash || ''
-    const currentQuizResult = response?.result
-    trackAnalyticsEvent('quiz_complete', fileHash, taskMeta.value?.start_page || 0, {
-      task_id: taskID.value,
-      score: currentQuizResult?.score || 0,
-      passed: currentQuizResult?.passed || false,
-      correct_count: currentQuizResult?.correct_count || 0,
-      total_count: currentQuizResult?.total_count || 0,
-    })
+    if (analyticsEnabled.value) {
+      const notebook = notebooks.value.find((n) => n.id === taskMeta.value?.notebook_id)
+      const fileHash = notebook?.file_hash || ''
+      const currentQuizResult = response?.result
+      trackAnalyticsEvent('quiz_complete', fileHash, taskMeta.value?.start_page || 0, {
+        task_id: taskID.value,
+        score: currentQuizResult?.score || 0,
+        passed: currentQuizResult?.passed || false,
+        correct_count: currentQuizResult?.correct_count || 0,
+        total_count: currentQuizResult?.total_count || 0,
+        anonymous_user_id: anonymousUserID.value,
+      })
+    }
   } catch (err) {
     error.value = err?.message || 'Failed to submit quiz.'
   } finally {

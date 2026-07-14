@@ -44,10 +44,11 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"classroom_code":             s.ClassroomCode,
 		"student_username":           s.StudentUsername,
 		"analytics_enabled":          s.AnalyticsEnabled,
+		"anonymous_user_id":          s.AnonymousUserID,
 	}
 }
 
-func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string, analyticsEnabled bool) map[string]interface{} {
+func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string, analyticsEnabled bool, anonymousUserID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": "database repository not initialized"}
@@ -84,6 +85,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 		DefaultRemedialStrategy: defaultRemedialStrategy,
 		ClassroomCode:           classroomCode,
 		AnalyticsEnabled:        analyticsEnabled,
+		AnonymousUserID:         anonymousUserID,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {

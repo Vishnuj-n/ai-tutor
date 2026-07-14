@@ -247,6 +247,8 @@ const completionError = ref('')
 const sessionTask = ref(null)
 const ragEnabled = ref(false)
 const ragQueueStudy = ref(true)
+const analyticsEnabled = ref(false)
+const anonymousUserID = ref('')
 const ragSettingsLoaded = ref(false)
 const ragSettingsError = ref(null)
 
@@ -405,20 +407,6 @@ watch(
   }
 )
 
-let trackPageDebounceId = null
-watch(
-  () => reader.currentPage.value,
-  (newVal) => {
-    if (!newVal) return
-    if (trackPageDebounceId) clearTimeout(trackPageDebounceId)
-    trackPageDebounceId = setTimeout(() => {
-      const fileHash = reader.readerContext.value?.notebookFileHash || ''
-      trackAnalyticsEvent('page_view', fileHash, newVal, {})
-    }, 1000)
-  }
-)
-
-
 
 const isTaskFlow = computed(() => {
   // Once context is settled, read mode from the context object.
@@ -453,6 +441,8 @@ async function loadRagSettings() {
     const settings = await getUserSettings()
     ragEnabled.value = settings?.rag_enabled ?? false
     ragQueueStudy.value = settings?.rag_queue_study ?? true
+    analyticsEnabled.value = settings?.analytics_enabled ?? false
+    anonymousUserID.value = settings?.anonymous_user_id ?? ''
   } catch (err) {
     console.error('Failed to load settings in Reader:', err)
     ragSettingsError.value = err?.message || 'Failed to load settings'
@@ -735,10 +725,13 @@ async function completeSession() {
       completionError.value = done.error
       return
     }
-    const fileHash = reader.readerContext.value?.notebookFileHash || ''
-    trackAnalyticsEvent('reading_complete', fileHash, reader.currentPage.value, {
-      task_id: taskIDForCompletion
-    })
+    if (analyticsEnabled.value) {
+      const fileHash = reader.readerContext.value?.notebookFileHash || ''
+      trackAnalyticsEvent('reading_complete', fileHash, reader.currentPage.value, {
+        task_id: taskIDForCompletion,
+        anonymous_user_id: anonymousUserID.value
+      })
+    }
     const nextRoute = done?.quiz_task_id ? `/quiz?taskId=${done.quiz_task_id}` : '/dashboard'
     // Completion writes the follow-up quiz into the queue; navigation follows the existing route behavior.
     console.warn('[COMPLETE_SESSION] completeSession() before router.push', {

@@ -775,7 +775,8 @@ async function completeOnboarding() {
       true, // default for ragQueueStudy
       'CLASSIC', // default defaultRemedialStrategy
       '', // classroom_code — set later from Settings
-      analyticsEnabled.value
+      analyticsEnabled.value,
+      '' // anonymous_user_id (will auto-generate on backend settings load)
     )
 
     if (settingsRes.error) {

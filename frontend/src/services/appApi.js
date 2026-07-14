@@ -186,7 +186,8 @@ export function updateUserSettings(
   ragQueueStudy,
   defaultRemedialStrategy,
   classroomCode,
-  analyticsEnabled
+  analyticsEnabled,
+  anonymousUserID
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -204,7 +205,8 @@ export function updateUserSettings(
     ragQueueStudy,
     defaultRemedialStrategy,
     classroomCode,
-    analyticsEnabled
+    analyticsEnabled,
+    anonymousUserID
   )
 }
 

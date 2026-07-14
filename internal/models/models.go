@@ -543,6 +543,7 @@ type UserSettings struct {
 	StudentUsername         string `json:"student_username"`
 	LastSyncedAt            int64  `json:"last_synced_at"`
 	AnalyticsEnabled        bool   `json:"analytics_enabled"`
+	AnonymousUserID         string `json:"anonymous_user_id"`
 }
 
 type AnalyticsEventSync struct {

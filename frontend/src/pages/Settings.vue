@@ -121,48 +121,36 @@
             </div>
           </div>
 
-          <div
-            class="form-group check-group"
-            style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
-          >
-            <label
-              class="checkbox-container"
-              style="display: flex; align-items: center; gap: 10px; cursor: pointer"
-            >
+          <div class="form-group check-group">
+            <label class="checkbox-container">
               <input
                 id="reminders-enabled"
                 v-model="settings.reminders_enabled"
                 type="checkbox"
                 :disabled="loading || saving"
-                style="width: 18px; height: 18px; cursor: pointer"
               />
+              <span class="checkmark"></span>
               <div class="check-label">
                 <strong>Enable Study Reminders</strong>
-                <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
+                <p class="hint">
                   Notify when daily study time starts and ends.
                 </p>
               </div>
             </label>
           </div>
 
-          <div
-            class="form-group check-group"
-            style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
-          >
-            <label
-              class="checkbox-container"
-              style="display: flex; align-items: center; gap: 10px; cursor: pointer"
-            >
+          <div class="form-group check-group">
+            <label class="checkbox-container">
               <input
                 id="analytics-enabled"
                 v-model="settings.analytics_enabled"
                 type="checkbox"
                 :disabled="loading || saving"
-                style="width: 18px; height: 18px; cursor: pointer"
               />
+              <span class="checkmark"></span>
               <div class="check-label">
                 <strong>Help improve the app by sharing anonymous usage data</strong>
-                <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
+                <p class="hint">
                   Telemetry events are anonymized. No personal information is ever collected.
                 </p>
               </div>
@@ -1286,7 +1274,8 @@ async function saveUserSettings() {
       settings.value.rag_queue_study,
       settings.value.default_remedial_strategy,
       settings.value.classroom_code || '',
-      settings.value.analytics_enabled
+      settings.value.analytics_enabled,
+      settings.value.anonymous_user_id || ''
     )
     if (res.error) {
       error.value = res.error
