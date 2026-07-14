@@ -19,7 +19,7 @@ func TestAnalyticsLifecycle(t *testing.T) {
 	}()
 
 	// 1. Telemetry should do nothing when AnalyticsEnabled is false
-	err = repo.TrackAnalyticsEvent("page_view", "hash-123", 4, `{"duration": 10}`)
+	err = repo.TrackAnalyticsEvent("reading_complete", "hash-123", 4, `{"duration": 10}`)
 	if err != nil {
 		t.Fatalf("TrackAnalyticsEvent failed on disabled state: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestAnalyticsLifecycle(t *testing.T) {
 	}
 
 	// 3. Track events
-	err = repo.TrackAnalyticsEvent("page_view", "hash-123", 4, `{"duration": 10}`)
+	err = repo.TrackAnalyticsEvent("reading_complete", "hash-123", 4, `{"duration": 10}`)
 	if err != nil {
 		t.Fatalf("TrackAnalyticsEvent failed: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestAnalyticsLifecycle(t *testing.T) {
 		t.Fatalf("expected 2 analytics events, got %d", len(payloads))
 	}
 
-	if payloads[0].EventType != "page_view" || payloads[0].FileHash != "hash-123" || payloads[0].PageNumber != 4 {
+	if payloads[0].EventType != "reading_complete" || payloads[0].FileHash != "hash-123" || payloads[0].PageNumber != 4 {
 		t.Errorf("unexpected first event payload: %+v", payloads[0])
 	}
 	if payloads[1].EventType != "quiz_complete" || payloads[1].Metadata != `{"score": 80}` {

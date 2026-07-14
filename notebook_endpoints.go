@@ -206,7 +206,13 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	_ = repo.UpdateNotebookStatus(notebookID, "analyzing")
+	if doc.PageCount <= 0 {
+		doc.PageCount = 1
+	}
+
+	if err := repo.UpdateNotebookStatus(notebookID, "analyzing"); err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to update notebook status: %v", err)}
+	}
 
 	// Fast path: bookmarks only, no LLM call
 	if !regenerate {
@@ -215,10 +221,15 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 			chapters := result.Chapters
 			draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
 			draftJSON, err := json.Marshal(draftToPersist)
-			if err == nil {
-				_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
+			if err != nil {
+				return map[string]interface{}{"error": fmt.Sprintf("failed to marshal draft: %v", err)}
 			}
-			_ = repo.UpdateNotebookStatus(notebookID, "draft_ready")
+			if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
+				return map[string]interface{}{"error": fmt.Sprintf("failed to persist syllabus draft: %v", err)}
+			}
+			if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
+				return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
+			}
 			return map[string]interface{}{
 				"notebook_id":   notebookID,
 				"page_count":    doc.PageCount,
@@ -230,9 +241,6 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		// No bookmarks found — create a single "General" chapter covering all pages
 		// User can edit this manually or click "AI Clean Up" for smarter extraction
 		endPage := doc.PageCount
-		if endPage <= 0 {
-			endPage = 1
-		}
 		chapters := []models.SyllabusChapterDraft{{
 			Title:     "General",
 			StartPage: 1,
@@ -240,10 +248,15 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		}}
 		draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
 		draftJSON, err := json.Marshal(draftToPersist)
-		if err == nil {
-			_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
+		if err != nil {
+			return map[string]interface{}{"error": fmt.Sprintf("failed to marshal fallback draft: %v", err)}
 		}
-		_ = repo.UpdateNotebookStatus(notebookID, "draft_ready")
+		if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
+			return map[string]interface{}{"error": fmt.Sprintf("failed to persist fallback draft: %v", err)}
+		}
+		if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
+			return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
+		}
 		return map[string]interface{}{
 			"notebook_id":   notebookID,
 			"page_count":    doc.PageCount,
@@ -254,52 +267,38 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 	}
 
 	// regenerate=true: full extraction + LLM (used by AI Clean Up)
-	// On any failure, fall back to bookmarks or single "General" chapter — never return an error.
-	var chapters []models.SyllabusChapterDraft
-	fallbackUsed := true
-
-	if a.heavyLLMProvider != nil {
-		result, llmErr := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
-		if llmErr == nil && len(result.Chapters) > 0 {
-			chapters = result.Chapters
-			fallbackUsed = result.FallbackUsed
-		}
+	// Stop and return error if LLM is unavailable or draft generation fails.
+	if a.heavyLLMProvider == nil {
+		return map[string]interface{}{"error": "heavy LLM provider is not available for AI cleanup"}
 	}
 
-	// LLM failed or unavailable — try bookmarks
-	if len(chapters) == 0 {
-		result, _ := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, nil)
-		if result != nil && len(result.Chapters) > 0 {
-			chapters = result.Chapters
-		}
+	result, llmErr := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
+	if llmErr != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("AI extraction failed: %v", llmErr)}
+	}
+	if len(result.Chapters) == 0 {
+		return map[string]interface{}{"error": "AI extraction returned no chapters"}
 	}
 
-	// Still no chapters — single "General" covering all pages
-	if len(chapters) == 0 {
-		endPage := doc.PageCount
-		if endPage <= 0 {
-			endPage = 1
-		}
-		chapters = []models.SyllabusChapterDraft{{
-			Title:     "General",
-			StartPage: 1,
-			EndPage:   endPage,
-		}}
-	}
-
-	draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
+	draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: result.Chapters}
 	draftJSON, err := json.Marshal(draftToPersist)
-	if err == nil {
-		_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
+	if err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to marshal draft: %v", err)}
+	}
+	if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to persist syllabus draft: %v", err)}
 	}
 
-	_ = repo.UpdateNotebookStatus(notebookID, "draft_ready")
+	if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
+	}
+
 	return map[string]interface{}{
 		"notebook_id":   notebookID,
 		"page_count":    doc.PageCount,
-		"chapters":      chapters,
+		"chapters":      result.Chapters,
 		"status":        "draft_ready",
-		"fallback_used": fallbackUsed,
+		"fallback_used": result.FallbackUsed,
 	}
 }
 
@@ -794,6 +793,7 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 			"remaining_words":  remainingWords,
 			"days_remaining":   0,
 			"sessions_per_day": 0,
+			"pace_label":       "",
 		}
 	}
 
@@ -817,12 +817,27 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 		sessionsPerDay = float64(dailyPace) / 2500.0
 	}
 
+	n := int(math.Ceil(sessionsPerDay))
+	paceLabel := ""
+	if n > 0 {
+		if n == 1 {
+			paceLabel = "On track — 1 session/day"
+		} else if n <= 2 {
+			paceLabel = "Moderate pace"
+		} else if n <= 4 {
+			paceLabel = "Tight schedule"
+		} else {
+			paceLabel = "Consider adding more books or extending deadline"
+		}
+	}
+
 	return map[string]interface{}{
-		"has_deadline":    true,
-		"deadline":        deadlineTime.Format("2006-01-02"),
-		"daily_pace":      dailyPace,
-		"remaining_words": remainingWords,
-		"days_remaining":  daysRemaining,
+		"has_deadline":     true,
+		"deadline":         deadlineTime.Format("2006-01-02"),
+		"daily_pace":       dailyPace,
+		"remaining_words":  remainingWords,
+		"days_remaining":   daysRemaining,
 		"sessions_per_day": sessionsPerDay,
+		"pace_label":       paceLabel,
 	}
 }

@@ -768,22 +768,8 @@ func (a *App) GetTask(taskID string) map[string]interface{} {
 
 	// Dynamic compile for MILESTONE_EXAM questions
 	if task.TaskType == models.StudyTaskTypeMilestoneExam {
-		var milestonePayload models.MilestoneExamPayload
-		if err := json.Unmarshal([]byte(task.PayloadJSON), &milestonePayload); err == nil && len(milestonePayload.Quizzes) > 0 {
-			attemptIDs := make([]string, 0, len(milestonePayload.Quizzes))
-			for id := range milestonePayload.Quizzes {
-				attemptIDs = append(attemptIDs, id)
-			}
-			questions, qErr := repo.GetQuestionsForQuizAttempts(attemptIDs)
-			if qErr == nil && len(questions) > 0 {
-				quizPayload := models.QuizTaskPayload{
-					Questions:    questions,
-					PassingScore: milestonePayload.PassingScore,
-				}
-				if quizPayload.PassingScore <= 0 {
-					quizPayload.PassingScore = 70
-				}
-				quizPayloadJSON, _ := json.Marshal(quizPayload)
+		if quizPayload, err := studypkg.CompileMilestonePayload(repo, task); err == nil && len(quizPayload.Questions) > 0 {
+			if quizPayloadJSON, mErr := json.Marshal(quizPayload); mErr == nil {
 				task.PayloadJSON = string(quizPayloadJSON)
 			}
 		}
@@ -932,45 +918,54 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE tasks: %v", resolveErr)
 	}
 
-	count, err := repo.CountCompletedQuizzesByNotebook(task.NotebookID)
-	if err != nil {
-		utils.Warnf("[MILESTONE_EXAM] quiz_count_failed notebookID=%s err=%v", task.NotebookID, err)
-	} else if count > 0 && count%10 == 0 {
-		attempts, attemptsErr := repo.GetLastNQuizAttemptsWithCorrectness(task.NotebookID, 10)
-		if attemptsErr != nil {
-			utils.Warnf("[MILESTONE_EXAM] recent_quiz_fetch_failed notebookID=%s err=%v", task.NotebookID, attemptsErr)
-		} else if len(attempts) > 0 {
-			exists, existsErr := repo.HasMilestoneExamForAttemptID(task.NotebookID, attempts[0].ID)
+	attempts, attemptsErr := repo.GetPassedQuizAttempts(task.NotebookID)
+	if attemptsErr != nil {
+		utils.Warnf("[MILESTONE_EXAM] passed_quizzes_fetch_failed notebookID=%s err=%v", task.NotebookID, attemptsErr)
+	} else {
+		numAttempts := len(attempts)
+		decades := numAttempts / 10
+		for d := 1; d <= decades; d++ {
+			endIdx := d * 10
+			startIdx := endIdx - 10
+			decadeAttempts := attempts[startIdx:endIdx]
+
+			representativeAttemptID := decadeAttempts[9].ID
+			exists, existsErr := repo.HasMilestoneExamForAttemptID(task.NotebookID, representativeAttemptID)
 			if existsErr != nil {
-				utils.Warnf("[MILESTONE_EXAM] dedupe_check_failed notebookID=%s attemptID=%s err=%v", task.NotebookID, attempts[0].ID, existsErr)
+				utils.Warnf("[MILESTONE_EXAM] dedupe_check_failed notebookID=%s attemptID=%s err=%v", task.NotebookID, representativeAttemptID, existsErr)
+				continue
 			}
 			if exists {
-				utils.Warnf("[MILESTONE_EXAM] skipped_duplicate notebookID=%s attemptID=%s", task.NotebookID, attempts[0].ID)
-			} else {
-				quizzes := make(map[string][]int, len(attempts))
-				passingScore := 70
-				for i, attempt := range attempts {
-					flags := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
-					if flags == nil {
-						utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s", task.NotebookID, attempt.ID)
-						continue
-					}
-					quizzes[attempt.ID] = flags
-					if i == 0 && attempt.PassingScore > 0 {
-						passingScore = attempt.PassingScore
-					}
-				}
+				continue
+			}
 
-				payload := models.MilestoneExamPayload{
-					Quizzes:      quizzes,
-					PassingScore: passingScore,
-					QuizCount:    len(attempts),
+			quizzes := make(map[string][]int, len(decadeAttempts))
+			passingScore := 70
+			for i, attempt := range decadeAttempts {
+				flags, flagErr := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
+				if flagErr != nil {
+					utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s err=%v", task.NotebookID, attempt.ID, flagErr)
+					continue
 				}
-				if insertErr := repo.InsertMilestoneExamTask(task.NotebookID, payload); insertErr != nil {
-					utils.Warnf("[MILESTONE_EXAM] insertion_failed notebookID=%s err=%v", task.NotebookID, insertErr)
-				} else {
-					utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", task.NotebookID, len(attempts))
+				if flags == nil {
+					utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s", task.NotebookID, attempt.ID)
+					continue
 				}
+				quizzes[attempt.ID] = flags
+				if i == 9 && attempt.PassingScore > 0 {
+					passingScore = attempt.PassingScore
+				}
+			}
+
+			payload := models.MilestoneExamPayload{
+				Quizzes:      quizzes,
+				PassingScore: passingScore,
+				QuizCount:    len(decadeAttempts),
+			}
+			if insertErr := repo.InsertMilestoneExamTask(task.NotebookID, payload); insertErr != nil {
+				utils.Warnf("[MILESTONE_EXAM] insertion_failed notebookID=%s err=%v", task.NotebookID, insertErr)
+			} else {
+				utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", task.NotebookID, len(decadeAttempts))
 			}
 		}
 	}

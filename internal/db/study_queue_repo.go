@@ -1090,18 +1090,93 @@ func (r *Repository) HasMilestoneExamForAttemptID(notebookID, attemptID string) 
 		return false, fmt.Errorf("attempt ID is required")
 	}
 
-	var count int
-	err := r.db.QueryRow(`
-		SELECT COUNT(*)
+	rows, err := r.db.Query(`
+		SELECT COALESCE(payload_json, '')
 		FROM study_queue
 		WHERE notebook_id = ?
 		  AND task_type = 'MILESTONE_EXAM'
-		  AND payload_json LIKE ?
-	`, notebookID, `%`+`"`+attemptID+`"`+`%`).Scan(&count)
+	`, notebookID)
 	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var payloadJSON string
+		if err := rows.Scan(&payloadJSON); err != nil {
+			return false, err
+		}
+		if payloadJSON == "" {
+			continue
+		}
+		var payload models.MilestoneExamPayload
+		if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+			return false, err
+		}
+		if _, ok := payload.Quizzes[attemptID]; ok {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// GetPassedQuizAttempts returns all passed quiz attempts for a notebook, ordered by completed_at ASC.
+func (r *Repository) GetPassedQuizAttempts(notebookID string) ([]QuizAttemptWithPayload, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return nil, fmt.Errorf("notebook ID is required")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT
+			qa.id,
+			qa.score,
+			qa.passed,
+			qa.answers_json,
+			qa.completed_at,
+			COALESCE(sq.payload_json, '')
+		FROM quiz_attempts qa
+		JOIN study_queue sq ON qa.task_id = sq.id
+		WHERE sq.notebook_id = ?
+		  AND sq.task_type = 'QUIZ'
+		  AND qa.passed = 1
+		ORDER BY qa.completed_at ASC
+	`, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var attempts []QuizAttemptWithPayload
+	for rows.Next() {
+		var attempt QuizAttemptWithPayload
+		if err := rows.Scan(
+			&attempt.ID,
+			&attempt.Score,
+			&attempt.Passed,
+			&attempt.AnswersJSON,
+			&attempt.CompletedAt,
+			&attempt.QuizPayload,
+		); err != nil {
+			return nil, err
+		}
+
+		var payload models.QuizTaskPayload
+		if err := json.Unmarshal([]byte(attempt.QuizPayload), &payload); err == nil && payload.PassingScore > 0 {
+			attempt.PassingScore = payload.PassingScore
+		} else {
+			attempt.PassingScore = 70
+		}
+
+		attempts = append(attempts, attempt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return attempts, nil
 }
 
 // EnsurePendingFlashcardGenerateTask inserts a new FLASHCARD_GENERATE task if none exists in PENDING or ACTIVE status for the topic.

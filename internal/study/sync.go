@@ -89,7 +89,6 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if settings.AnalyticsEnabled {
 			if fbErr := syncAnalyticsFallback(repo); fbErr != nil {
 				utils.Warnf("[SYNC] fallback analytics upload failed: %v", fbErr)
-				return fbErr
 			}
 		}
 		return nil // Cloud sync not configured
@@ -149,58 +148,19 @@ func TriggerCloudSync(repo *db.Repository) error {
 		return fmt.Errorf("failed to marshal sync payload: %w", err)
 	}
 
-	var resp *http.Response
-	var lastErr error
-	const attempts = 3
-	client := &http.Client{Timeout: 10 * time.Second}
+	headers := make(map[string]string)
+	anonKey := os.Getenv("CLOUD_API_TOKEN")
+	if anonKey == "" {
+		anonKey = os.Getenv("SUPABASE_ANON_KEY")
+	}
+	if anonKey != "" {
+		headers["apikey"] = anonKey
+		headers["Authorization"] = "Bearer " + anonKey
+	}
 
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			utils.Warnf("[SYNC] Retrying cloud sync, attempt %d/%d due to: %v", i+1, attempts, lastErr)
-			time.Sleep(1 * time.Second)
-		}
-
-		var req *http.Request
-		req, lastErr = http.NewRequest("POST", syncURL, bytes.NewBuffer(jsonBytes))
-		if lastErr != nil {
-			lastErr = fmt.Errorf("failed to create http request: %w", lastErr)
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		anonKey := os.Getenv("CLOUD_API_TOKEN")
-		if anonKey == "" {
-			anonKey = os.Getenv("SUPABASE_ANON_KEY")
-		}
-		if anonKey != "" {
-			req.Header.Set("apikey", anonKey)
-			req.Header.Set("Authorization", "Bearer "+anonKey)
-		}
-
-		resp, lastErr = client.Do(req)
-		if lastErr != nil {
-			lastErr = fmt.Errorf("network error during sync: %w", lastErr)
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("sync server returned status %d: %s", resp.StatusCode, string(bodyBytes))
-			continue
-		}
-
-		// Decode response body inside loop to catch decode failures as errors
-		var syncResp SyncResponse
-		decodeErr := json.NewDecoder(resp.Body).Decode(&syncResp)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			lastErr = fmt.Errorf("failed to decode sync response: %w", decodeErr)
-			continue
-		}
-
-		// Success!
-		lastErr = nil
-
+	var syncResp SyncResponse
+	lastErr := postJSONWithRetry(syncURL, jsonBytes, headers, 3, &syncResp)
+	if lastErr == nil {
 		// Handle assigned notebooks from teacher
 		if len(syncResp.NewNotebooks) > 0 {
 			utils.Warnf("[SYNC] Found %d new teacher assignments", len(syncResp.NewNotebooks))
@@ -235,11 +195,10 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if syncErr := repo.ResolveFlashcardGenerateTasksForTopic(""); syncErr != nil {
 			utils.Warnf("[SYNC] failed to resolve FLASHCARD_GENERATE tasks: %v", syncErr)
 		}
-		break
 	}
 
 	if lastErr != nil {
-		utils.Warnf("[SYNC] Cloud sync failed after %d attempts: %v", attempts, lastErr)
+		utils.Warnf("[SYNC] Cloud sync failed after %d attempts: %v", 3, lastErr)
 		// Insert FLASHCARD_GENERATE task if not already pending/active and a valid notebook exists
 		if len(notebooks) > 0 {
 			notebookID := notebooks[0].ID
@@ -277,44 +236,13 @@ func syncAnalyticsFallback(repo *db.Repository) error {
 		return fmt.Errorf("failed to marshal fallback analytics: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	var resp *http.Response
-	var lastErr error
-	const attempts = 3
-
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			utils.Warnf("[SYNC-ANALYTICS] Retrying fallback sync, attempt %d/%d due to: %v", i+1, attempts, lastErr)
-			time.Sleep(1 * time.Second)
-		}
-
-		req, reqErr := http.NewRequest("POST", researchURL, bytes.NewBuffer(jsonBytes))
-		if reqErr != nil {
-			lastErr = reqErr
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("apikey", researchToken)
-		req.Header.Set("Authorization", "Bearer "+researchToken)
-
-		resp, lastErr = client.Do(req)
-		if lastErr != nil {
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("research server returned status %d: %s", resp.StatusCode, string(bodyBytes))
-			continue
-		}
-		_ = resp.Body.Close()
-		lastErr = nil
-		break
+	headers := map[string]string{
+		"apikey":        researchToken,
+		"Authorization": "Bearer " + researchToken,
 	}
 
-	if lastErr != nil {
-		return lastErr
+	if err := postJSONWithRetry(researchURL, jsonBytes, headers, 3, nil); err != nil {
+		return err
 	}
 
 	if err := repo.MarkAnalyticsSynced(ids); err != nil {
@@ -322,6 +250,55 @@ func syncAnalyticsFallback(repo *db.Repository) error {
 	}
 	utils.Warnf("[SYNC-ANALYTICS] Fallback analytics sync of %d events succeeded.", len(events))
 	return nil
+}
+
+func postJSONWithRetry(url string, jsonBytes []byte, headers map[string]string, attempts int, decodeTarget interface{}) error {
+	client := &http.Client{Timeout: 10 * time.Second}
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			utils.Warnf("[SYNC-RETRY] Attempt %d/%d due to: %v", i+1, attempts, lastErr)
+			time.Sleep(1 * time.Second)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create http request: %w", err)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("network error: %w", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue
+		}
+
+		if decodeTarget != nil {
+			decodeErr := json.NewDecoder(resp.Body).Decode(decodeTarget)
+			_ = resp.Body.Close()
+			if decodeErr != nil {
+				lastErr = fmt.Errorf("failed to decode response: %w", decodeErr)
+				continue
+			}
+		} else {
+			_ = resp.Body.Close()
+		}
+
+		return nil
+	}
+	return lastErr
 }
 
 func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error {

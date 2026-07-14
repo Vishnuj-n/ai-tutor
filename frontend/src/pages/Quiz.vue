@@ -364,14 +364,13 @@ async function loadQuizTask() {
         ? JSON.parse(task.payload_json)
         : null
 
+    questions.value = Array.isArray(payload?.questions) ? payload.questions : []
     if (task.task_type === 'MILESTONE_EXAM') {
       isMilestoneExam.value = true
       milestonePayload.value = payload
-      questions.value = Array.isArray(payload?.questions) ? payload.questions : []
     } else {
       isMilestoneExam.value = false
       milestonePayload.value = null
-      questions.value = Array.isArray(payload?.questions) ? payload.questions : []
     }
     answers.value = {}
     submitted.value = false

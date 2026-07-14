@@ -816,7 +816,7 @@ onMounted(() => {
   width: 100%;
   max-width: 480px; /* slightly narrower */
   max-height: calc(100vh - 48px); /* Keep 24px margin top and bottom */
-  overflow-y: hidden;
+  overflow-y: auto;
   border-radius: 16px; /* 2 * 8px - more compact */
   padding: 16px 20px; /* reduced padding for a tighter fit */
   box-shadow: 0 16px 32px rgba(45, 51, 56, 0.08);

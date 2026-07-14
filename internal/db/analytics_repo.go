@@ -19,7 +19,7 @@ func (r *Repository) TrackAnalyticsEvent(eventType, fileHash string, pageNumber 
 
 	// Validate event type
 	switch eventType {
-	case "page_view", "reading_complete", "quiz_complete", "flashcard_review":
+	case "reading_complete", "quiz_complete":
 		// Allowed
 	default:
 		return fmt.Errorf("unsupported analytics event type: %s", eventType)

@@ -3,10 +3,10 @@
 
 CREATE TABLE IF NOT EXISTS public.anonymous_analytics_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    event_type TEXT NOT NULL CONSTRAINT check_event_type CHECK (event_type IN ('page_view', 'reading_complete', 'quiz_complete', 'flashcard_review')),
+    event_type TEXT NOT NULL CONSTRAINT check_event_type CHECK (event_type IN ('reading_complete', 'quiz_complete')),
     file_hash TEXT DEFAULT '',
     page_number INTEGER DEFAULT 0,
-    metadata JSONB CONSTRAINT check_metadata_size CHECK (octet_length(metadata::text) < 2048),
+    metadata JSONB CONSTRAINT check_metadata_size CHECK (octet_length(metadata::text) <= 2048),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS public.anonymous_analytics_events (
 ALTER TABLE public.anonymous_analytics_events ENABLE ROW LEVEL SECURITY;
 
 -- 1. Allow public/anonymous users to insert records
+-- NOTE: In production, abuse protection is enforced by routing writes through a Supabase Edge Function
+-- gatekeeper with per-IP rate limiting, preserving the validation constraints.
 CREATE POLICY "Allow anonymous inserts" 
 ON public.anonymous_analytics_events 
 FOR INSERT 
@@ -40,6 +42,8 @@ ON public.anonymous_analytics_events
 FOR DELETE 
 TO anon 
 USING (false);
+
+CREATE INDEX IF NOT EXISTS anonymous_analytics_events_created_at_idx ON public.anonymous_analytics_events (created_at);
 
 -- 3. Setup Automated Purge (90-day retention) via pg_cron
 DO $outer$

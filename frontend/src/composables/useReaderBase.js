@@ -284,6 +284,7 @@ export function useReaderBase(taskID) {
         startPage: currentPage.value,
         endPage: 0,
         mode: 'browse',
+        notebookFileHash: result?.notebook_file_hash || '',
       }
 
       return true

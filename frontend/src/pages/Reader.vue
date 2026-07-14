@@ -730,6 +730,8 @@ async function completeSession() {
       trackAnalyticsEvent('reading_complete', fileHash, reader.currentPage.value, {
         task_id: taskIDForCompletion,
         anonymous_user_id: anonymousUserID.value
+      }).catch(err => {
+        console.error('[READER] trackAnalyticsEvent reading_complete failed:', err)
       })
     }
     const nextRoute = done?.quiz_task_id ? `/quiz?taskId=${done.quiz_task_id}` : '/dashboard'

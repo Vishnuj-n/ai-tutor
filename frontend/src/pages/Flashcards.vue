@@ -229,7 +229,6 @@ import {
   getReviewSession,
   recordCardReview,
   suspendFlashcard,
-  trackAnalyticsEvent,
   getUserSettings,
 } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
@@ -360,16 +359,7 @@ async function rate(ratingKey) {
         return
       }
       
-      if (analyticsEnabled.value) {
-        const notebook = notebooks.value.find((n) => n.id === selectedNotebookID.value)
-        const fileHash = notebook?.file_hash || ''
-        trackAnalyticsEvent('flashcard_review', fileHash, 0, {
-          task_id: reviewTaskID.value,
-          card_id: card.card_id,
-          rating: validRating.value,
-          anonymous_user_id: anonymousUserID.value,
-        })
-      }
+
 
       flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)

@@ -493,12 +493,8 @@ const sessionsPerDay = computed(() => {
 })
 
 const paceLabel = computed(() => {
-  const n = sessionsPerDay.value
-  if (n === 0) return ''
-  if (n === 1) return 'On track — 1 session/day'
-  if (n <= 2) return 'Moderate pace'
-  if (n <= 4) return 'Tight schedule'
-  return 'Consider adding more books or extending deadline'
+  if (!activeProfilePace.value) return ''
+  return activeProfilePace.value.pace_label || ''
 })
 
 const timelineData = ref([])

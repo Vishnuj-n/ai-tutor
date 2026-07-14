@@ -17,7 +17,10 @@ func TestComputeCorrectnessFlags(t *testing.T) {
 		{"question_id":"q3","selected":"C"}
 	]`
 
-	flags := ComputeCorrectnessFlags(quizPayload, answersJSON)
+	flags, err := ComputeCorrectnessFlags(quizPayload, answersJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(flags) != 3 {
 		t.Fatalf("expected 3 flags, got %d", len(flags))
 	}
@@ -30,7 +33,10 @@ func TestComputeCorrectnessFlags(t *testing.T) {
 }
 
 func TestComputeCorrectnessFlagsReturnsNilForInvalidJSON(t *testing.T) {
-	flags := ComputeCorrectnessFlags("{", "[]")
+	flags, err := ComputeCorrectnessFlags("{", "[]")
+	if err == nil {
+		t.Fatalf("expected error for invalid payload JSON, got nil")
+	}
 	if flags != nil {
 		t.Fatalf("expected nil flags for invalid payload JSON, got %v", flags)
 	}

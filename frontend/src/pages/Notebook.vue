@@ -238,6 +238,7 @@
             type="text"
             class="chapter-input"
             placeholder="Notebook name"
+            :disabled="isAICleaning"
           />
         </div>
 
@@ -247,6 +248,7 @@
             id="notebook-priority"
             v-model.number="draftNotebookPriority"
             class="priority-select-modal"
+            :disabled="isAICleaning"
           >
             <option v-for="n in 10" :key="n" :value="n">
               {{ n }} - {{ n === 1 ? 'Lowest' : n === 10 ? 'Highest' : n === 5 ? 'Default' : '' }}
@@ -324,7 +326,7 @@
           <button
             type="button"
             class="btn-primary"
-            :disabled="isConfirmingDraft"
+            :disabled="isConfirmingDraft || isAICleaning"
             @click="confirmSyllabusDraft"
           >
             {{ isConfirmingDraft ? 'Confirming...' : 'Confirm and Ingest' }}
@@ -750,6 +752,7 @@ async function openSyllabusDraft(notebookID, notebookTitle = '') {
 }
 
 function closeSyllabusModal() {
+  if (isAICleaning.value) return
   showSyllabusModal.value = false
   isConfirmingDraft.value = false
 }
@@ -802,7 +805,8 @@ async function aiCleanupChapters() {
       showToast('AI cleaned up chapter list')
     }
   } catch (error) {
-    draftError.value = `AI cleanup failed: ${error.message}`
+    const message = error instanceof Error ? error.message : String(error)
+    draftError.value = `AI cleanup failed: ${message}`
   } finally {
     isAICleaning.value = false
   }
@@ -845,6 +849,7 @@ function showToast(message) {
 }
 
 async function confirmSyllabusDraft() {
+  if (isAICleaning.value) return
   if (!draftNotebookID.value) {
     draftError.value = 'Notebook id is missing for confirmation.'
     return
