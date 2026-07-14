@@ -4,14 +4,6 @@ import (
 	"github.com/open-spaced-repetition/go-fsrs/v4"
 )
 
-// safeUint64FromInt clamps negative ints to 0 before casting to uint64.
-func safeUint64FromInt(v int) uint64 {
-	if v < 0 {
-		return 0
-	}
-	return uint64(v)
-}
-
 // ScheduledTask represents one actionable study task for the day.
 type ScheduledTask struct {
 	ID              string `json:"id"`

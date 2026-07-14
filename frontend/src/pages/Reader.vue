@@ -147,13 +147,7 @@
           </div>
         </div>
 
-        <!-- Dev-only Scroll Debug Overlay -->
-        <pre v-if="isDev" class="debug-overlay">
-Scroll Status:  {{ scrollState.status }}
-Target Page:    {{ scrollState.targetPage }}
-Visible Page:   {{ currentVisiblePage }}
-Programmatic:   {{ isProgrammaticScroll }}
-        </pre>
+
 
         <!-- Right-edge PDF Controls -->
         <div
@@ -424,10 +418,15 @@ function onPageRendered(pageNum) {
   if (scrollState.value.status === 'loading' || scrollState.value.status === 'scrolling') {
     const targetPage = scrollState.value.targetPage || reader.currentPage.value
     if (pageNum === targetPage) {
-      setTimeout(() => {
-        setScrollStatus('ready')
-        logScroll('onPageRendered_scroll_complete', { targetPage })
-      }, 150)
+      nextTick(() => {
+        const scrolled = scrollToPage(targetPage)
+        if (scrolled) {
+          setTimeout(() => {
+            setScrollStatus('ready')
+            logScroll('onPageRendered_scroll_complete', { targetPage })
+          }, 150)
+        }
+      })
     }
   }
 }
@@ -469,7 +468,7 @@ async function resolveTaskContext(taskQuery) {
       logScroll('resolveTaskContext_immediate_scroll_success', { targetPage })
       setTimeout(() => setScrollStatus('ready'), 150)
     } else {
-      setScrollStatus('ready')
+      logScroll('resolveTaskContext_scroll_deferred', { targetPage })
     }
   } else {
     setScrollStatus('ready')
@@ -892,7 +891,6 @@ h3 {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 4px;
-  overflow: hidden;
 }
 
 .pdf-viewport {
@@ -1198,23 +1196,7 @@ button:disabled {
   justify-content: center;
 }
 
-.debug-overlay {
-  position: absolute;
-  top: 40px;
-  left: 10px;
-  background: rgba(0, 0, 0, 0.85);
-  color: #00ff00;
-  padding: 10px;
-  border-radius: 8px;
-  font-family: monospace;
-  font-size: 11px;
-  line-height: 1.4;
-  z-index: 100;
-  pointer-events: none;
-  margin: 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(0, 255, 0, 0.3);
-}
+
 
 .scroll-progress-bar {
   position: absolute;

@@ -256,13 +256,25 @@ onUnmounted(() => {
   min-height: 0;
   padding: 16px 20px;
   overflow-y: auto;
-  scrollbar-width: none;
   position: relative;
 }
 
 .content-shell::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 8px;
+  height: 8px;
+}
+
+.content-shell::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.content-shell::-webkit-scrollbar-thumb {
+  background: var(--surface-container, rgba(0, 0, 0, 0.15));
+  border-radius: 99px;
+}
+
+.content-shell::-webkit-scrollbar-thumb:hover {
+  background: var(--outline-variant, rgba(0, 0, 0, 0.3));
 }
 
 /* ── Global study reminder banner ── */

@@ -462,7 +462,6 @@ h1 {
   border-radius: 14px;
   padding: 20px;
   border: 1px solid var(--outline-variant);
-  flex: 1;
 }
 
 .feature-item {
