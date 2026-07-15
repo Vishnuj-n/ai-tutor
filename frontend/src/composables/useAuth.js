@@ -9,7 +9,11 @@ export function useAuth(reloadFn, errorRef, successRef) {
   const loggingIn = ref(false)
 
   async function handleLogin() {
-    if (!loginUsername.value.trim() || !loginPassword.value.trim() || !loginClassroomCode.value.trim()) {
+    if (
+      !loginUsername.value.trim() ||
+      !loginPassword.value.trim() ||
+      !loginClassroomCode.value.trim()
+    ) {
       loginError.value = 'All fields are required.'
       return
     }
@@ -57,8 +61,12 @@ export function useAuth(reloadFn, errorRef, successRef) {
   }
 
   return {
-    loginUsername, loginPassword, loginClassroomCode,
-    loginError, loggingIn,
-    handleLogin, handleLogout,
+    loginUsername,
+    loginPassword,
+    loginClassroomCode,
+    loginError,
+    loggingIn,
+    handleLogin,
+    handleLogout,
   }
 }

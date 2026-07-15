@@ -211,7 +211,7 @@ export function updateUserSettings(
 }
 
 export function trackAnalyticsEvent(eventType, fileHash, pageNumber, metadata) {
-  const metaStr = typeof metadata === 'object' ? JSON.stringify(metadata) : (metadata || '')
+  const metaStr = typeof metadata === 'object' ? JSON.stringify(metadata) : metadata || ''
   return appBridge().TrackAnalyticsEvent(eventType, fileHash || '', pageNumber || 0, metaStr)
 }
 
@@ -282,7 +282,6 @@ export function completeSocraticRescue(taskID) {
 export function completeMilestoneExam(taskID) {
   return appBridge().CompleteMilestoneExam(taskID)
 }
-
 
 export function getFlashcardDueTimeline() {
   return appBridge().GetFlashcardDueTimeline()

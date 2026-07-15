@@ -10,7 +10,9 @@
         <option value="dark-nord">Nord Frost (Cool Dark Mode)</option>
         <option value="dark-emerald">Forest Emerald</option>
       </select>
-      <p class="hint">Select a visual theme. Changing themes alters the colors of your study desk instantly.</p>
+      <p class="hint">
+        Select a visual theme. Changing themes alters the colors of your study desk instantly.
+      </p>
     </div>
   </article>
 </template>
@@ -37,7 +39,9 @@ select {
   padding: 12px 14px;
   font-size: 14px;
   font-family: inherit;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 select:focus {

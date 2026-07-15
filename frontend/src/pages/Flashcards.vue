@@ -132,9 +132,7 @@
                 </svg>
               </button>
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
-              <button class="flip-back-btn" @click="flipped = false">
-                Show Question
-              </button>
+              <button class="flip-back-btn" @click="flipped = false">Show Question</button>
               <div class="rating-row">
                 <button
                   v-for="r in ratings"
@@ -358,8 +356,6 @@ async function rate(ratingKey) {
         error.value = `Failed to save review: ${res.error}`
         return
       }
-      
-
 
       flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)
@@ -429,9 +425,7 @@ function handleKeydown(e) {
   // Prevent hotkeys when typing in inputs/textareas
   if (
     e.target &&
-    (e.target.tagName === 'INPUT' ||
-      e.target.tagName === 'TEXTAREA' ||
-      e.target.isContentEditable)
+    (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)
   ) {
     return
   }
@@ -953,7 +947,9 @@ async function loadQueueSession(taskID, notebookID = '') {
   color: var(--primary);
   background: var(--surface-container-highest);
   cursor: pointer;
-  transition: background-color 0.15s ease, transform 0.1s ease;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
   margin: 4px 0;
 }
 

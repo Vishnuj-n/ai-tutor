@@ -23,7 +23,7 @@
       v-if="userSettings.skip_to_reading_active"
       variant="info"
       icon="⚡"
-      title="&quot;Skip to Reading&quot; Escape Hatch Active"
+      title='"Skip to Reading" Escape Hatch Active'
       subtitle="Review tasks have been pushed to the background so you can focus on reading new chapters."
     />
     <StatusBanner
@@ -91,7 +91,11 @@
         <!-- Main Panel (Tasks / States) -->
         <div class="dashboard-main">
           <!-- Task List & Custom Hero Review Card -->
-          <div v-if="tasks.length > 0" class="tasks-container" style="display: flex; flex-direction: column; gap: 16px;">
+          <div
+            v-if="tasks.length > 0"
+            class="tasks-container"
+            style="display: flex; flex-direction: column; gap: 16px"
+          >
             <!-- High-Priority Today's Reviews Card -->
             <ReviewHeroCard
               v-if="reviewTask"
@@ -121,10 +125,7 @@
           <OnboardingCard v-else @go-to-notebooks="goToNotebooks" />
 
           <!-- Secondary Telemetry Widget -->
-          <TelemetryWidget
-            :pace="activeProfilePace"
-            :profile-name="activeProfileName"
-          />
+          <TelemetryWidget :pace="activeProfilePace" :profile-name="activeProfileName" />
         </div>
 
         <!-- Sidebar Panel (Streak Calendar & Forecast Chart) -->
@@ -135,10 +136,7 @@
             :calendar-days="calendarDays"
             :month-label="currentMonthLabel"
           />
-          <ForecastChart
-            :timeline-data="timelineData"
-            :max-flashcards-limit="maxFlashcardsLimit"
-          />
+          <ForecastChart :timeline-data="timelineData" :max-flashcards-limit="maxFlashcardsLimit" />
         </div>
       </div>
     </template>
@@ -227,7 +225,7 @@ const streakState = ref({
   current_streak: 0,
   longest_streak: 0,
   active_dates: [],
-  today_completed: false
+  today_completed: false,
 })
 const streakError = ref('')
 
@@ -256,11 +254,11 @@ const maxFlashcardsLimit = computed(() => {
 })
 
 const reviewTask = computed(() => {
-  return tasks.value.find(t => t.id === 'task-review-daily')
+  return tasks.value.find((t) => t.id === 'task-review-daily')
 })
 
 const nonReviewTasks = computed(() => {
-  return tasks.value.filter(t => t.id !== 'task-review-daily')
+  return tasks.value.filter((t) => t.id !== 'task-review-daily')
 })
 
 const flashcardsJustCreated = computed(() => {
@@ -381,7 +379,8 @@ async function loadAgenda() {
         streakState.value = streakRes
         streakError.value = ''
       } else {
-        streakError.value = (streakRes && streakRes.error) ? streakRes.error : 'Failed to retrieve streak'
+        streakError.value =
+          streakRes && streakRes.error ? streakRes.error : 'Failed to retrieve streak'
       }
     } catch (err) {
       console.error('Failed to get streak state', err)

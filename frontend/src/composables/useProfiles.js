@@ -1,5 +1,12 @@
 import { ref } from 'vue'
-import { getProfiles, createProfile, updateProfile, deleteProfile, getNotebooks, assignNotebookToProfile } from '../services/appApi'
+import {
+  getProfiles,
+  createProfile,
+  updateProfile,
+  deleteProfile,
+  getNotebooks,
+  assignNotebookToProfile,
+} from '../services/appApi'
 
 export function useProfiles(errorRef) {
   const profiles = ref([])
@@ -30,7 +37,10 @@ export function useProfiles(errorRef) {
   async function handleAddProfile({ name, deadline }) {
     try {
       const res = await createProfile(name, deadline)
-      if (res.error) { alert(res.error); return }
+      if (res.error) {
+        alert(res.error)
+        return
+      }
       showAddModal.value = false
       return true
     } catch (err) {
@@ -42,7 +52,10 @@ export function useProfiles(errorRef) {
   async function handleUpdateProfile({ name, deadline }) {
     try {
       const res = await updateProfile(editProfileId.value, name, deadline)
-      if (res.error) { alert(res.error); return }
+      if (res.error) {
+        alert(res.error)
+        return
+      }
       closeEditModal()
       return true
     } catch (err) {
@@ -52,10 +65,18 @@ export function useProfiles(errorRef) {
   }
 
   async function handleDeleteProfile(id) {
-    if (!confirm('Are you sure you want to delete this profile? Associated books will become unassigned.')) return false
+    if (
+      !confirm(
+        'Are you sure you want to delete this profile? Associated books will become unassigned.'
+      )
+    )
+      return false
     try {
       const res = await deleteProfile(id)
-      if (res.error) { alert(res.error); return false }
+      if (res.error) {
+        alert(res.error)
+        return false
+      }
       return true
     } catch (err) {
       alert(err.message || 'Failed to delete profile')
@@ -66,7 +87,10 @@ export function useProfiles(errorRef) {
   async function handleAssignProfile(notebookID, profileID) {
     try {
       const res = await assignNotebookToProfile(notebookID, profileID)
-      if (res.error) { alert(res.error); return false }
+      if (res.error) {
+        alert(res.error)
+        return false
+      }
       return true
     } catch (err) {
       alert(err.message || 'Failed to assign profile')
@@ -76,13 +100,19 @@ export function useProfiles(errorRef) {
 
   async function loadProfiles() {
     const res = await getProfiles()
-    if (res.error) { errorRef.value = res.error; return }
+    if (res.error) {
+      errorRef.value = res.error
+      return
+    }
     profiles.value = res.profiles || []
   }
 
   async function loadNotebooks() {
     const res = await getNotebooks()
-    if (res.error) { errorRef.value = res.error; return }
+    if (res.error) {
+      errorRef.value = res.error
+      return
+    }
     notebooks.value = res || []
   }
 
@@ -93,10 +123,20 @@ export function useProfiles(errorRef) {
   }
 
   return {
-    profiles, notebooks,
-    showAddModal, showEditModal, editProfileName, editProfileDeadline,
-    openEditModal, closeEditModal,
-    handleAddProfile, handleUpdateProfile, handleDeleteProfile, handleAssignProfile,
-    loadProfiles, loadNotebooks, formatUnixDate,
+    profiles,
+    notebooks,
+    showAddModal,
+    showEditModal,
+    editProfileName,
+    editProfileDeadline,
+    openEditModal,
+    closeEditModal,
+    handleAddProfile,
+    handleUpdateProfile,
+    handleDeleteProfile,
+    handleAssignProfile,
+    loadProfiles,
+    loadNotebooks,
+    formatUnixDate,
   }
 }

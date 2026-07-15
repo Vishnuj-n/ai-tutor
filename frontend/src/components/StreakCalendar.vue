@@ -1,6 +1,10 @@
 <template>
   <section class="streak-calendar-widget">
-    <div v-if="streakError" class="streak-error" style="color: var(--danger); font-size: 0.85rem; padding: 1rem; text-align: center;">
+    <div
+      v-if="streakError"
+      class="streak-error"
+      style="color: var(--danger); font-size: 0.85rem; padding: 1rem; text-align: center"
+    >
       {{ streakError }}
     </div>
     <template v-else>
@@ -13,43 +17,47 @@
           </div>
         </div>
         <div class="streak-stats-row">
-          <span class="streak-stat-item">Longest: <strong>{{ streakState.longest_streak }}d</strong></span>
+          <span class="streak-stat-item"
+            >Longest: <strong>{{ streakState.longest_streak }}d</strong></span
+          >
         </div>
       </header>
 
       <div class="calendar-month-title">{{ monthLabel }}</div>
-      
+
       <div class="calendar-grid">
         <!-- Weekday Headers -->
-        <span v-for="day in ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']" :key="day" class="calendar-header-cell">
+        <span
+          v-for="day in ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']"
+          :key="day"
+          class="calendar-header-cell"
+        >
           {{ day }}
         </span>
-        
+
         <!-- Empty Cells for Padding -->
-        <div 
-          v-for="(_, index) in calendarDays.filter(d => d.dayNum === null)" 
-          :key="'empty-' + index" 
+        <div
+          v-for="(_, index) in calendarDays.filter((d) => d.dayNum === null)"
+          :key="'empty-' + index"
           class="calendar-day-cell empty"
         ></div>
-        
+
         <!-- Actual Day Cells -->
         <div
-          v-for="day in calendarDays.filter(d => d.dayNum !== null)"
+          v-for="day in calendarDays.filter((d) => d.dayNum !== null)"
           :key="day.dayNum"
           class="calendar-day-cell"
-          :class="{ 
-            active: day.active, 
+          :class="{
+            active: day.active,
             today: day.today,
-            'has-hover': day.active
+            'has-hover': day.active,
           }"
         >
           <span class="day-number">{{ day.dayNum }}</span>
           <span v-if="day.active" class="active-indicator"></span>
-          
+
           <!-- Tooltip for active days -->
-          <div v-if="day.active" class="cell-tooltip">
-            Activity logged! Streak kept active.
-          </div>
+          <div v-if="day.active" class="cell-tooltip">Activity logged! Streak kept active.</div>
         </div>
       </div>
     </template>
@@ -60,7 +68,12 @@
 defineProps({
   streakState: {
     type: Object,
-    default: () => ({ current_streak: 0, longest_streak: 0, active_dates: [], today_completed: false }),
+    default: () => ({
+      current_streak: 0,
+      longest_streak: 0,
+      active_dates: [],
+      today_completed: false,
+    }),
   },
   streakError: { type: String, default: '' },
   calendarDays: { type: Array, default: () => [] },
@@ -104,9 +117,18 @@ defineProps({
 }
 
 @keyframes pulse-flame {
-  0% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4)); }
-  50% { transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(230, 126, 34, 0.8)); }
-  100% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4)); }
+  0% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4));
+  }
+  50% {
+    transform: scale(1.15);
+    filter: drop-shadow(0 0 8px rgba(230, 126, 34, 0.8));
+  }
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4));
+  }
 }
 
 .streak-counts {
@@ -247,7 +269,10 @@ defineProps({
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
   z-index: 20;
   pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    visibility 0.2s;
 }
 
 .calendar-day-cell.has-hover:hover .cell-tooltip {
@@ -258,7 +283,7 @@ defineProps({
 
 /* Arrow for tooltip */
 .cell-tooltip::after {
-  content: "";
+  content: '';
   position: absolute;
   top: 100%;
   left: 50%;

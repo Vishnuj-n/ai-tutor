@@ -86,9 +86,18 @@ export function useRAG(settings) {
   }
 
   return {
-    showRagModal, isSettingUpRag, ragStatus, ragPercent,
-    ragMessage, ragDetail, ragError, ragSetupCompleted,
-    onRagToggle, startRagSetup, handleRagModalDismiss, closeRagModal,
+    showRagModal,
+    isSettingUpRag,
+    ragStatus,
+    ragPercent,
+    ragMessage,
+    ragDetail,
+    ragError,
+    ragSetupCompleted,
+    onRagToggle,
+    startRagSetup,
+    handleRagModalDismiss,
+    closeRagModal,
     cleanup,
   }
 }

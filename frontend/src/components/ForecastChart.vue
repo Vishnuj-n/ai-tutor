@@ -16,8 +16,8 @@
           <!-- Definitions for Gradients -->
           <defs>
             <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="var(--primary)" stop-opacity="0.25"/>
-              <stop offset="100%" stop-color="var(--primary)" stop-opacity="0.0"/>
+              <stop offset="0%" stop-color="var(--primary)" stop-opacity="0.25" />
+              <stop offset="100%" stop-color="var(--primary)" stop-opacity="0.0" />
             </linearGradient>
           </defs>
 
@@ -37,12 +37,7 @@
               class="chart-grid-line"
             />
             <!-- Text label -->
-            <text
-              x="22"
-              :y="tick.y + 3.5"
-              class="y-axis-label"
-              text-anchor="end"
-            >
+            <text x="22" :y="tick.y + 3.5" class="y-axis-label" text-anchor="end">
               {{ tick.value }}
             </text>
           </g>
@@ -51,7 +46,13 @@
           <path :d="areaPathData" fill="url(#chartGrad)" />
 
           <!-- Main Line Path -->
-          <path :d="linePathData" fill="none" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round" />
+          <path
+            :d="linePathData"
+            fill="none"
+            stroke="var(--primary)"
+            stroke-width="2.5"
+            stroke-linecap="round"
+          />
 
           <!-- Data Points (interactive dots) -->
           <g v-for="(pt, idx) in chartPoints" :key="idx">
@@ -81,7 +82,12 @@
 
       <!-- X Axis Labels -->
       <div class="chart-x-axis">
-        <div v-for="(pt, idx) in chartPoints" :key="idx" class="x-label-container" :style="{ left: pt.percentX + '%' }">
+        <div
+          v-for="(pt, idx) in chartPoints"
+          :key="idx"
+          class="x-label-container"
+          :style="{ left: pt.percentX + '%' }"
+        >
           <span class="x-label">{{ pt.dayLabel }}</span>
           <span class="x-sublabel">{{ pt.count }}</span>
         </div>
@@ -264,7 +270,9 @@ const areaPathData = computed(() => {
   stroke: var(--primary);
   stroke-width: 2.5px;
   cursor: pointer;
-  transition: r 0.15s ease, fill 0.15s ease;
+  transition:
+    r 0.15s ease,
+    fill 0.15s ease;
 }
 
 .chart-dot:hover {
@@ -286,7 +294,9 @@ const areaPathData = computed(() => {
   z-index: 10;
   pointer-events: none;
   min-width: 120px;
-  transition: left 0.1s ease, top 0.1s ease;
+  transition:
+    left 0.1s ease,
+    top 0.1s ease;
 }
 
 .tooltip-date {

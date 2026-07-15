@@ -147,8 +147,6 @@
           </div>
         </div>
 
-
-
         <!-- Right-edge PDF Controls -->
         <div
           v-if="reader.pdfVisible.value && !reader.loadingBundle.value && !pdfLoadError"
@@ -211,7 +209,12 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { completeReading, getUserSettings, logFrontendEvent, trackAnalyticsEvent } from '../services/appApi'
+import {
+  completeReading,
+  getUserSettings,
+  logFrontendEvent,
+  trackAnalyticsEvent,
+} from '../services/appApi'
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
 import ReaderChat from '../components/ReaderChat.vue'
@@ -399,7 +402,6 @@ watch(
     }
   }
 )
-
 
 const isTaskFlow = computed(() => {
   // Once context is settled, read mode from the context object.
@@ -727,8 +729,8 @@ async function completeSession() {
       const fileHash = reader.readerContext.value?.notebookFileHash || ''
       trackAnalyticsEvent('reading_complete', fileHash, reader.currentPage.value, {
         task_id: taskIDForCompletion,
-        anonymous_user_id: anonymousUserID.value
-      }).catch(err => {
+        anonymous_user_id: anonymousUserID.value,
+      }).catch((err) => {
         console.error('[READER] trackAnalyticsEvent reading_complete failed:', err)
       })
     }
@@ -936,8 +938,6 @@ h3 {
   will-change: filter;
 }
 
-
-
 .completion-message {
   margin: 0;
   font-size: 13px;
@@ -1113,8 +1113,6 @@ button:disabled {
   }
 }
 
-
-
 /* Right-edge PDF Controls */
 .pdf-edge-controls {
   position: absolute;
@@ -1194,8 +1192,6 @@ button:disabled {
   align-items: center;
   justify-content: center;
 }
-
-
 
 .scroll-progress-bar {
   position: absolute;

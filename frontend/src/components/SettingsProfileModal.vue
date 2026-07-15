@@ -4,7 +4,11 @@
       <h2>{{ isEdit ? 'Edit Profile' : 'New Study Profile' }}</h2>
       <div class="form-group">
         <label>Profile Name</label>
-        <input v-model="localName" type="text" :placeholder="isEdit ? '' : 'e.g. UPSC, Semester Finals'" />
+        <input
+          v-model="localName"
+          type="text"
+          :placeholder="isEdit ? '' : 'e.g. UPSC, Semester Finals'"
+        />
       </div>
       <div class="form-group">
         <label>Target Deadline</label>
@@ -38,8 +42,18 @@ defineEmits(['close', 'save'])
 const localName = ref(props.initialName)
 const localDeadline = ref(props.initialDeadline)
 
-watch(() => props.initialName, (v) => { localName.value = v })
-watch(() => props.initialDeadline, (v) => { localDeadline.value = v })
+watch(
+  () => props.initialName,
+  (v) => {
+    localName.value = v
+  }
+)
+watch(
+  () => props.initialDeadline,
+  (v) => {
+    localDeadline.value = v
+  }
+)
 </script>
 
 <style scoped>

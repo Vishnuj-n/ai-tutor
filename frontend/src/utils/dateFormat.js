@@ -4,8 +4,18 @@
  */
 
 export const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ]
 
 /**
@@ -79,7 +89,7 @@ export function buildCalendarDays(year, month, activeDates = []) {
       dayNum: d,
       dateString: dStr,
       active: isActive,
-      today: isToday
+      today: isToday,
     })
   }
 

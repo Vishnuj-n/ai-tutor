@@ -37,7 +37,9 @@
     >
       <span v-if="task.action_type === 'flashcard_generate' && isSyncing">Generating...</span>
       <span v-else-if="task.action_type === 'flashcard_generate'">Generate</span>
-      <span v-else-if="task.action_type === 'READING' || task.action_type === 'REREAD'">Resume</span>
+      <span v-else-if="task.action_type === 'READING' || task.action_type === 'REREAD'"
+        >Resume</span
+      >
       <span v-else>Start</span>
     </button>
   </article>

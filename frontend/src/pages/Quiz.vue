@@ -2,7 +2,15 @@
   <StudyPageLayout
     eyebrow="Assessment"
     :title="taskMeta?.task_type === 'MILESTONE_EXAM' ? 'Milestone Exam' : 'Quiz'"
-    :subtitle="taskMeta ? (taskMeta.task_type === 'MILESTONE_EXAM' ? 'Cumulative Notebook Assessment' : (taskMeta.start_page || taskMeta.end_page ? `Pages ${taskMeta.start_page}–${taskMeta.end_page}` : 'Pages N/A')) : ''"
+    :subtitle="
+      taskMeta
+        ? taskMeta.task_type === 'MILESTONE_EXAM'
+          ? 'Cumulative Notebook Assessment'
+          : taskMeta.start_page || taskMeta.end_page
+            ? `Pages ${taskMeta.start_page}–${taskMeta.end_page}`
+            : 'Pages N/A'
+        : ''
+    "
   >
     <!-- Toolbar: notebook selector (manual mode only) -->
     <template v-if="!taskID && !generating && questions.length === 0" #toolbar>
@@ -127,8 +135,8 @@
         <div class="warning-text">
           <p class="warning-title">Generation Warning / Network Error</p>
           <p class="warning-detail">
-            Flashcard generation could not be completed automatically. A retry task has been
-            added to your queue. You can also try retrying the generation now.
+            Flashcard generation could not be completed automatically. A retry task has been added
+            to your queue. You can also try retrying the generation now.
           </p>
           <p class="warning-message">
             Reason: {{ result.flashcards_generation_message || 'Unknown error' }}
@@ -1067,4 +1075,3 @@ async function handleContinue() {
   margin-top: 12px;
 }
 </style>
-

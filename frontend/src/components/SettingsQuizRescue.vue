@@ -2,8 +2,8 @@
   <article class="panel form-grid">
     <h2>Quiz Failure Rescue</h2>
     <p class="hint" style="margin-top: -10px; margin-bottom: 8px">
-      Choose what happens when you fail a quiz. Customize the remediation track to match your
-      study style.
+      Choose what happens when you fail a quiz. Customize the remediation track to match your study
+      style.
     </p>
 
     <div class="form-group">
@@ -21,7 +21,10 @@
           />
           <div class="option-content">
             <span class="option-title">Classic Track</span>
-            <span class="option-desc">Reread first, then Socratic tutor if you fail again (dense text, sequential learning)</span>
+            <span class="option-desc"
+              >Reread first, then Socratic tutor if you fail again (dense text, sequential
+              learning)</span
+            >
           </div>
         </label>
 
@@ -38,7 +41,9 @@
           />
           <div class="option-content">
             <span class="option-title">Fast Track</span>
-            <span class="option-desc">Go directly to Socratic AI tutor (deeper encoding, conceptual topics)</span>
+            <span class="option-desc"
+              >Go directly to Socratic AI tutor (deeper encoding, conceptual topics)</span
+            >
           </div>
         </label>
       </div>

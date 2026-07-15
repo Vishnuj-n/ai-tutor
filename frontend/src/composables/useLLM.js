@@ -1,7 +1,10 @@
 import { ref, watch } from 'vue'
 import {
-  getLLMSettings, updateLLMSettings, saveLLMAPIKey,
-  deleteLLMAPIKey, getLLMProviderPreset,
+  getLLMSettings,
+  updateLLMSettings,
+  saveLLMAPIKey,
+  deleteLLMAPIKey,
+  getLLMProviderPreset,
 } from '../services/appApi'
 
 export function useLLM(loading, errorRef, successRef) {
@@ -11,16 +14,22 @@ export function useLLM(loading, errorRef, successRef) {
   const llmSettings = ref({
     use_same_for_heavy: true,
     fast: {
-      tier: 'fast', provider: 'groq',
+      tier: 'fast',
+      provider: 'groq',
       base_url: 'https://api.groq.com/openai',
       model: 'openai/gpt-oss-120b',
-      timeout_ms: 60000, api_key_source: 'keyring', has_api_key: false,
+      timeout_ms: 60000,
+      api_key_source: 'keyring',
+      has_api_key: false,
     },
     heavy: {
-      tier: 'heavy', provider: 'groq',
+      tier: 'heavy',
+      provider: 'groq',
       base_url: 'https://api.groq.com/openai',
       model: 'openai/gpt-oss-120b',
-      timeout_ms: 90000, api_key_source: 'keyring', has_api_key: false,
+      timeout_ms: 90000,
+      api_key_source: 'keyring',
+      has_api_key: false,
     },
   })
 
@@ -28,11 +37,15 @@ export function useLLM(loading, errorRef, successRef) {
   const llmHeavyKey = ref('')
 
   let saveTimer = null
-  watch([llmSettings, llmFastKey, llmHeavyKey], () => {
-    if (loading.value || savingLLM.value) return
-    clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => saveLLMProviderSettings(), 800)
-  }, { deep: true })
+  watch(
+    [llmSettings, llmFastKey, llmHeavyKey],
+    () => {
+      if (loading.value || savingLLM.value) return
+      clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => saveLLMProviderSettings(), 800)
+    },
+    { deep: true }
+  )
 
   async function applyProviderPreset(tier) {
     presetLoading.value = true
@@ -60,19 +73,31 @@ export function useLLM(loading, errorRef, successRef) {
         fast: { ...llmSettings.value.fast },
         heavy: { ...llmSettings.value.heavy },
       })
-      if (res.error) { errorRef.value = res.error; return }
+      if (res.error) {
+        errorRef.value = res.error
+        return
+      }
 
       if (llmFastKey.value.trim()) {
         const keyRes = await saveLLMAPIKey('fast', llmFastKey.value.trim())
-        if (keyRes.error) { errorRef.value = keyRes.error; return }
+        if (keyRes.error) {
+          errorRef.value = keyRes.error
+          return
+        }
         if (llmSettings.value.use_same_for_heavy) {
           const heavyKeyRes = await saveLLMAPIKey('heavy', llmFastKey.value.trim())
-          if (heavyKeyRes.error) { errorRef.value = heavyKeyRes.error; return }
+          if (heavyKeyRes.error) {
+            errorRef.value = heavyKeyRes.error
+            return
+          }
         }
       }
       if (!llmSettings.value.use_same_for_heavy && llmHeavyKey.value.trim()) {
         const keyRes = await saveLLMAPIKey('heavy', llmHeavyKey.value.trim())
-        if (keyRes.error) { errorRef.value = keyRes.error; return }
+        if (keyRes.error) {
+          errorRef.value = keyRes.error
+          return
+        }
       }
 
       llmFastKey.value = ''
@@ -93,9 +118,15 @@ export function useLLM(loading, errorRef, successRef) {
     try {
       savingLLM.value = true
       const fastRes = await deleteLLMAPIKey('fast')
-      if (fastRes.error) { errorRef.value = fastRes.error; return }
+      if (fastRes.error) {
+        errorRef.value = fastRes.error
+        return
+      }
       const heavyRes = await deleteLLMAPIKey('heavy')
-      if (heavyRes.error) { errorRef.value = heavyRes.error; return }
+      if (heavyRes.error) {
+        errorRef.value = heavyRes.error
+        return
+      }
       successRef.value = 'Stored AI provider keys removed.'
       setTimeout(() => (successRef.value = ''), 4000)
     } catch (err) {
@@ -107,7 +138,10 @@ export function useLLM(loading, errorRef, successRef) {
 
   async function loadLLM() {
     const res = await getLLMSettings()
-    if (res.error) { errorRef.value = res.error; return false }
+    if (res.error) {
+      errorRef.value = res.error
+      return false
+    }
     if (res.settings) llmSettings.value = res.settings
     return true
   }
@@ -117,9 +151,15 @@ export function useLLM(loading, errorRef, successRef) {
   }
 
   return {
-    llmSettings, llmFastKey, llmHeavyKey,
-    savingLLM, presetLoading,
-    applyProviderPreset, saveLLMProviderSettings, removeLLMKeys,
-    loadLLM, cleanup,
+    llmSettings,
+    llmFastKey,
+    llmHeavyKey,
+    savingLLM,
+    presetLoading,
+    applyProviderPreset,
+    saveLLMProviderSettings,
+    removeLLMKeys,
+    loadLLM,
+    cleanup,
   }
 }

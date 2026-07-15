@@ -2,8 +2,8 @@
   <article class="panel form-grid">
     <h2>AI Provider</h2>
     <p class="hint" style="margin-top: -10px; margin-bottom: 8px">
-      Provider settings are saved in SQLite. API keys are saved in the OS credential manager
-      through the backend.
+      Provider settings are saved in SQLite. API keys are saved in the OS credential manager through
+      the backend.
     </p>
 
     <div class="form-group">
@@ -53,7 +53,11 @@
         @input="$emit('update:llmFastKey', $event.target.value)"
       />
       <p class="hint">
-        {{ llmSettings.fast.has_api_key ? 'A fast-tier key is stored.' : 'No fast-tier key stored yet.' }}
+        {{
+          llmSettings.fast.has_api_key
+            ? 'A fast-tier key is stored.'
+            : 'No fast-tier key stored yet.'
+        }}
       </p>
     </div>
 
@@ -108,7 +112,11 @@
           @input="$emit('update:llmHeavyKey', $event.target.value)"
         />
         <p class="hint">
-          {{ llmSettings.heavy.has_api_key ? 'A heavy-tier key is stored.' : 'No heavy-tier key stored yet.' }}
+          {{
+            llmSettings.heavy.has_api_key
+              ? 'A heavy-tier key is stored.'
+              : 'No heavy-tier key stored yet.'
+          }}
         </p>
       </div>
     </div>
@@ -152,7 +160,9 @@ select {
   padding: 12px 14px;
   font-size: 14px;
   font-family: inherit;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 input:focus,

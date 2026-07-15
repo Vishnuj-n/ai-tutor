@@ -21,7 +21,12 @@ const props = defineProps({
   subtitle: { type: String, default: '' },
 })
 
-const LEGACY_PREFIXES = { info: 'info', rescue: 'rescue', success: 'flashcard-success', error: 'error' }
+const LEGACY_PREFIXES = {
+  info: 'info',
+  rescue: 'rescue',
+  success: 'flashcard-success',
+  error: 'error',
+}
 const legacyPrefix = computed(() => LEGACY_PREFIXES[props.variant] || props.variant)
 </script>
 
@@ -68,30 +73,46 @@ const legacyPrefix = computed(() => LEGACY_PREFIXES[props.variant] || props.vari
   background: rgba(230, 126, 34, 0.1);
   border: 1px solid rgba(230, 126, 34, 0.2);
 }
-.banner--info .banner-icon { background: #e67e22; }
-.banner--info .banner-title { color: #e67e22; }
+.banner--info .banner-icon {
+  background: #e67e22;
+}
+.banner--info .banner-title {
+  color: #e67e22;
+}
 
 /* --- Variant: rescue (socratic rescue) --- */
 .banner--rescue {
   background: rgba(211, 84, 0, 0.1);
   border: 1px solid rgba(211, 84, 0, 0.2);
 }
-.banner--rescue .banner-icon { background: #d35400; }
-.banner--rescue .banner-title { color: #d35400; }
+.banner--rescue .banner-icon {
+  background: #d35400;
+}
+.banner--rescue .banner-title {
+  color: #d35400;
+}
 
 /* --- Variant: success (flashcard creation) --- */
 .banner--success {
   background: rgba(46, 204, 113, 0.1);
   border-color: rgba(46, 204, 113, 0.2);
 }
-.banner--success .banner-icon { background: #2ecc71; }
-.banner--success .banner-title { color: #2ecc71; }
+.banner--success .banner-icon {
+  background: #2ecc71;
+}
+.banner--success .banner-title {
+  color: #2ecc71;
+}
 
 /* --- Variant: error --- */
 .banner--error {
   background: rgba(235, 94, 85, 0.1);
   border-color: rgba(235, 94, 85, 0.2);
 }
-.banner--error .banner-icon { background: #eb5e55; }
-.banner--error .banner-title { color: #eb5e55; }
+.banner--error .banner-icon {
+  background: #eb5e55;
+}
+.banner--error .banner-title {
+  color: #eb5e55;
+}
 </style>

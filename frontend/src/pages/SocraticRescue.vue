@@ -73,16 +73,34 @@
             prompt containing the topic's source material below.
           </p>
 
-          <div v-if="failedQuestions && failedQuestions.length > 0" class="failed-questions-preview">
+          <div
+            v-if="failedQuestions && failedQuestions.length > 0"
+            class="failed-questions-preview"
+          >
             <h3>Failed Quiz Questions</h3>
             <div class="failed-questions-list">
               <div v-for="(q, idx) in failedQuestions" :key="idx" class="failed-question-item">
-                <p class="question-prompt"><strong>Q{{ idx + 1 }}:</strong> {{ q.prompt }}</p>
+                <p class="question-prompt">
+                  <strong>Q{{ idx + 1 }}:</strong> {{ q.prompt }}
+                </p>
                 <ul class="options-list">
-                  <li v-for="opt in q.options" :key="opt" :class="{ 'correct-opt': opt === q.correct_answer, 'user-opt': opt === q.user_answer }">
+                  <li
+                    v-for="opt in q.options"
+                    :key="opt"
+                    :class="{
+                      'correct-opt': opt === q.correct_answer,
+                      'user-opt': opt === q.user_answer,
+                    }"
+                  >
                     {{ opt }}
-                    <span v-if="opt === q.correct_answer" class="opt-label correct-label">(Correct)</span>
-                    <span v-if="opt === q.user_answer && opt !== q.correct_answer" class="opt-label user-label">(Your Answer)</span>
+                    <span v-if="opt === q.correct_answer" class="opt-label correct-label"
+                      >(Correct)</span
+                    >
+                    <span
+                      v-if="opt === q.user_answer && opt !== q.correct_answer"
+                      class="opt-label user-label"
+                      >(Your Answer)</span
+                    >
                   </li>
                 </ul>
               </div>
@@ -90,7 +108,9 @@
           </div>
           <div v-else-if="failedQuestionsError" class="failed-questions-preview">
             <h3>Failed Quiz Questions</h3>
-            <p class="error-text" style="color: var(--danger); font-size: 0.9rem;">{{ failedQuestionsError }}</p>
+            <p class="error-text" style="color: var(--danger); font-size: 0.9rem">
+              {{ failedQuestionsError }}
+            </p>
           </div>
 
           <div class="source-preview">
@@ -142,7 +162,12 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getTopicSectionsContent, completeSocraticRescue, GetTaskContext, activateTask } from '../services/appApi'
+import {
+  getTopicSectionsContent,
+  completeSocraticRescue,
+  GetTaskContext,
+  activateTask,
+} from '../services/appApi'
 
 const route = useRoute()
 const router = useRouter()

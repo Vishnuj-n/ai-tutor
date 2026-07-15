@@ -2,7 +2,13 @@
 import Sidebar from './components/Sidebar.vue'
 import { useRoute } from 'vue-router'
 import { onMounted, onUnmounted, ref } from 'vue'
-import { getUserSettings, updateUserSettings, getTodayPlan, checkForUpdates, openRepoURL } from './services/appApi'
+import {
+  getUserSettings,
+  updateUserSettings,
+  getTodayPlan,
+  checkForUpdates,
+  openRepoURL,
+} from './services/appApi'
 
 const route = useRoute()
 
@@ -256,10 +262,14 @@ onUnmounted(() => {
               <span class="version-arrow">→</span>
               <span class="version-badge latest">v{{ latestVersion }}</span>
             </div>
-            <p class="warning-text">Click "Get Update" to go to the releases repository and download the latest version.</p>
+            <p class="warning-text">
+              Click "Get Update" to go to the releases repository and download the latest version.
+            </p>
           </div>
           <div class="update-modal-footer">
-            <button class="modal-btn secondary" @click="showUpdateModal = false">Remind Me Later</button>
+            <button class="modal-btn secondary" @click="showUpdateModal = false">
+              Remind Me Later
+            </button>
             <button class="modal-btn primary" @click="goToUpdatePage">Get Update</button>
           </div>
         </div>
@@ -449,8 +459,12 @@ onUnmounted(() => {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .update-modal {
@@ -468,8 +482,14 @@ onUnmounted(() => {
 }
 
 @keyframes scaleUp {
-  from { transform: scale(0.95); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .update-modal-header {

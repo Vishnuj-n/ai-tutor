@@ -3,34 +3,25 @@
     <h2>Application Updates</h2>
     <div class="update-section">
       <div class="status-info">
-        <p class="current-ver">Current Version: <strong>v{{ currentVersion }}</strong></p>
+        <p class="current-ver">
+          Current Version: <strong>v{{ currentVersion }}</strong>
+        </p>
         <p v-if="updateChecked && !updateAvailable" class="status-text success">
           ✓ Your application is up to date!
         </p>
         <p v-if="updateChecked && updateAvailable" class="status-text warning">
-          ⚠️ A new version (<strong>v{{ latestVersion }}</strong>) is available!
+          ⚠️ A new version (<strong>v{{ latestVersion }}</strong
+          >) is available!
         </p>
-        <p v-if="error" class="status-text error">
-          Error checking updates: {{ error }}
-        </p>
+        <p v-if="error" class="status-text error">Error checking updates: {{ error }}</p>
       </div>
 
       <div class="action-buttons">
-        <button 
-          type="button" 
-          class="btn-check" 
-          :disabled="checking" 
-          @click="performCheck"
-        >
+        <button type="button" class="btn-check" :disabled="checking" @click="performCheck">
           {{ checking ? 'Checking...' : 'Check for Updates' }}
         </button>
 
-        <button 
-          v-if="updateAvailable" 
-          type="button" 
-          class="btn-redirect" 
-          @click="redirectToRepo"
-        >
+        <button v-if="updateAvailable" type="button" class="btn-redirect" @click="redirectToRepo">
           Get Update (Redirect to Repository)
         </button>
       </div>
@@ -71,9 +62,11 @@ function redirectToRepo() {
 
 onMounted(() => {
   // Grab the app version initially
-  checkForUpdates().then(res => {
-    currentVersion.value = res.current_version
-  }).catch(() => {})
+  checkForUpdates()
+    .then((res) => {
+      currentVersion.value = res.current_version
+    })
+    .catch(() => {})
 })
 </script>
 

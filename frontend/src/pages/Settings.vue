@@ -170,36 +170,68 @@ const success = ref('')
 
 // Composables — all share the same error/success refs
 const {
-  settings, loading, saving,
-  studyDuration, applyDurationPreset,
-  loadSettings, cleanup: cleanupSettings,
+  settings,
+  loading,
+  saving,
+  studyDuration,
+  applyDurationPreset,
+  loadSettings,
+  cleanup: cleanupSettings,
 } = useSettings(error, success)
 
 const {
-  llmSettings, llmFastKey, llmHeavyKey,
+  llmSettings,
+  llmFastKey,
+  llmHeavyKey,
   savingLLM,
-  applyProviderPreset, removeLLMKeys, loadLLM, cleanup: cleanupLLM,
+  applyProviderPreset,
+  removeLLMKeys,
+  loadLLM,
+  cleanup: cleanupLLM,
 } = useLLM(loading, error, success)
 
 const {
-  profiles, notebooks,
-  showAddModal, showEditModal, editProfileName, editProfileDeadline,
-  openEditModal, closeEditModal,
-  handleAddProfile, handleUpdateProfile, handleDeleteProfile, handleAssignProfile,
-  loadProfiles, loadNotebooks, formatUnixDate,
+  profiles,
+  notebooks,
+  showAddModal,
+  showEditModal,
+  editProfileName,
+  editProfileDeadline,
+  openEditModal,
+  closeEditModal,
+  handleAddProfile,
+  handleUpdateProfile,
+  handleDeleteProfile,
+  handleAssignProfile,
+  loadProfiles,
+  loadNotebooks,
+  formatUnixDate,
 } = useProfiles(error)
 
 const {
-  showRagModal, isSettingUpRag, ragStatus, ragPercent,
-  ragMessage, ragDetail, ragError, ragSetupCompleted,
-  onRagToggle, startRagSetup, handleRagModalDismiss, closeRagModal,
+  showRagModal,
+  isSettingUpRag,
+  ragStatus,
+  ragPercent,
+  ragMessage,
+  ragDetail,
+  ragError,
+  ragSetupCompleted,
+  onRagToggle,
+  startRagSetup,
+  handleRagModalDismiss,
+  closeRagModal,
   cleanup: cleanupRAG,
 } = useRAG(settings)
 
 const {
-  loginUsername, loginPassword, loginClassroomCode,
-  loginError, loggingIn,
-  handleLogin, handleLogout,
+  loginUsername,
+  loginPassword,
+  loginClassroomCode,
+  loginError,
+  loggingIn,
+  handleLogin,
+  handleLogout,
 } = useAuth(loadAllData, error, success)
 
 async function loadAllData() {
@@ -225,7 +257,10 @@ async function runManualSync() {
   syncing.value = true
   try {
     const res = await triggerCloudSync()
-    if (res.error) { error.value = res.error; return }
+    if (res.error) {
+      error.value = res.error
+      return
+    }
     await loadAllData()
     success.value = 'Sync completed successfully!'
     setTimeout(() => (success.value = ''), 4000)
@@ -247,11 +282,15 @@ onMounted(async () => {
   try {
     const envRes = await getAppEnv()
     isDev.value = envRes?.env === 'dev'
-  } catch (_) { isDev.value = false }
+  } catch (_) {
+    isDev.value = false
+  }
   try {
     const cfgRes = await getCloudConfig()
     cloudConfigured.value = cfgRes?.configured === true
-  } catch (_) { cloudConfigured.value = false }
+  } catch (_) {
+    cloudConfigured.value = false
+  }
   await loadAllData()
 })
 

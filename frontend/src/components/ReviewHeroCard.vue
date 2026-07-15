@@ -12,17 +12,15 @@
           <span class="stat-lbl">Due Today</span>
         </div>
         <div class="review-hero-stat">
-          <span class="stat-num">{{ totalDueReviewCards > dueReviewCards ? totalDueReviewCards - dueReviewCards : 0 }}</span>
+          <span class="stat-num">{{
+            totalDueReviewCards > dueReviewCards ? totalDueReviewCards - dueReviewCards : 0
+          }}</span>
           <span class="stat-lbl">Remaining Overdue</span>
         </div>
       </div>
       <p class="review-hero-meta">{{ task.meta }}</p>
     </div>
-    <button
-      type="button"
-      class="primary-btn review-hero-btn"
-      @click="$emit('start', task)"
-    >
+    <button type="button" class="primary-btn review-hero-btn" @click="$emit('start', task)">
       Start Review
     </button>
   </article>

@@ -44,7 +44,7 @@
     <SettingsToggle
       v-model="settings.skip_to_reading_active"
       :disabled="disabled"
-      title="Enable &quot;Skip to Reading&quot; (Escape Hatch)"
+      title='Enable "Skip to Reading" (Escape Hatch)'
       hint="Temporarily deprioritizes review backlogs, letting you read new material first. FSRS records remain safe."
     />
   </article>
@@ -82,7 +82,9 @@ input[type='number'] {
   padding: 12px 14px;
   font-size: 14px;
   font-family: inherit;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 input[type='number']:focus {

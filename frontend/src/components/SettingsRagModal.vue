@@ -9,7 +9,9 @@
 
       <div class="rag-setup-box">
         <div class="setup-header">
-          <span v-if="ragStatus" class="status-badge" :class="ragStatus">{{ ragStatus.toUpperCase() }}</span>
+          <span v-if="ragStatus" class="status-badge" :class="ragStatus">{{
+            ragStatus.toUpperCase()
+          }}</span>
           <span class="setup-msg">{{ ragMessage }}</span>
         </div>
 
@@ -22,7 +24,9 @@
       </div>
 
       <div class="modal-actions">
-        <button class="cancel-btn" :disabled="isSettingUpRag" @click="$emit('dismiss')">Cancel</button>
+        <button class="cancel-btn" :disabled="isSettingUpRag" @click="$emit('dismiss')">
+          Cancel
+        </button>
 
         <button
           v-if="!ragSetupCompleted"
@@ -113,13 +117,34 @@ defineEmits(['dismiss', 'start', 'finish'])
   color: #121212;
 }
 
-.status-badge.checking { background: #f59e0b; color: #121212; }
-.status-badge.acquiring { background: #3b82f6; color: #ffffff; }
-.status-badge.verifying { background: #8b5cf6; color: #ffffff; }
-.status-badge.extracting { background: #14b8a6; color: #ffffff; }
-.status-badge.initializing { background: #06b6d4; color: #ffffff; }
-.status-badge.ready { background: #10b981; color: #ffffff; }
-.status-badge.failed { background: #ef4444; color: #ffffff; }
+.status-badge.checking {
+  background: #f59e0b;
+  color: #121212;
+}
+.status-badge.acquiring {
+  background: #3b82f6;
+  color: #ffffff;
+}
+.status-badge.verifying {
+  background: #8b5cf6;
+  color: #ffffff;
+}
+.status-badge.extracting {
+  background: #14b8a6;
+  color: #ffffff;
+}
+.status-badge.initializing {
+  background: #06b6d4;
+  color: #ffffff;
+}
+.status-badge.ready {
+  background: #10b981;
+  color: #ffffff;
+}
+.status-badge.failed {
+  background: #ef4444;
+  color: #ffffff;
+}
 
 .setup-msg {
   font-size: 13px;

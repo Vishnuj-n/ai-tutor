@@ -1,17 +1,12 @@
 <template>
-  <section v-if="pace && pace.has_deadline" class="telemetry-widget" style="margin-top: 24px;">
+  <section v-if="pace && pace.has_deadline" class="telemetry-widget" style="margin-top: 24px">
     <div class="telemetry-card card">
       <h2 class="telemetry-header">Profile Study Pacing ({{ profileName }})</h2>
       <div class="telemetry-grid">
         <div class="telemetry-item">
           <div class="telemetry-title-row">
-            <span class="telemetry-doc-title"
-              >Target Exam Deadline: {{ pace.deadline }}</span
-            >
-            <span
-              class="telemetry-days-left"
-              :class="{ warning: pace.days_remaining <= 3 }"
-            >
+            <span class="telemetry-doc-title">Target Exam Deadline: {{ pace.deadline }}</span>
+            <span class="telemetry-days-left" :class="{ warning: pace.days_remaining <= 3 }">
               ({{ formatDaysRemaining(pace.days_remaining) }})
             </span>
           </div>
@@ -26,8 +21,9 @@
             </div>
             <div class="telemetry-progress-info">
               <div class="progress-details">
-                <span>Remaining words:
-                  <strong>{{ pace.remaining_words }}</strong></span>
+                <span
+                  >Remaining words: <strong>{{ pace.remaining_words }}</strong></span
+                >
               </div>
               <div v-if="paceLabel" class="pace-label">
                 {{ paceLabel }}

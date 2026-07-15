@@ -11,13 +11,11 @@
         <p><strong>Username:</strong> {{ settings.student_username || 'Student' }}</p>
         <p><strong>Classroom:</strong> {{ settings.classroom_code }}</p>
       </div>
-      <button type="button" class="sync-btn danger-btn" @click="$emit('logout')">
-        Sign Out
-      </button>
+      <button type="button" class="sync-btn danger-btn" @click="$emit('logout')">Sign Out</button>
     </div>
 
     <div v-else class="login-form-container">
-      <p class="field-hint" style="margin-bottom: 1.25rem;">
+      <p class="field-hint" style="margin-bottom: 1.25rem">
         Sign in with your student credentials to enable cloud sync and receive assignments.
       </p>
 
@@ -61,12 +59,7 @@
         />
       </div>
 
-      <button
-        type="button"
-        class="sync-btn"
-        :disabled="loggingIn"
-        @click="$emit('login')"
-      >
+      <button type="button" class="sync-btn" :disabled="loggingIn" @click="$emit('login')">
         {{ loggingIn ? 'Signing In...' : 'Sign In & Sync' }}
       </button>
     </div>
@@ -99,7 +92,13 @@ defineProps({
   loggingIn: { type: Boolean, default: false },
 })
 
-defineEmits(['login', 'logout', 'update:loginUsername', 'update:loginPassword', 'update:loginClassroomCode'])
+defineEmits([
+  'login',
+  'logout',
+  'update:loginUsername',
+  'update:loginPassword',
+  'update:loginClassroomCode',
+])
 </script>
 
 <style scoped>
@@ -119,7 +118,9 @@ input[type='url'] {
   padding: 12px 14px;
   font-size: 14px;
   font-family: inherit;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 input:focus {
@@ -182,9 +183,18 @@ h2 {
 }
 
 @keyframes pulse {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
 
 .user-details {
