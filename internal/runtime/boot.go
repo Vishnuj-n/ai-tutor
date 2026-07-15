@@ -263,7 +263,7 @@ func ResolveDBPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(appDir, "ai-tutor.db"), nil
+	return filepath.Join(appDir, "Studyloop.db"), nil
 }
 
 func ResolveNotebookDir() (string, error) {

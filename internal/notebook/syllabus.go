@@ -7,12 +7,16 @@ import (
 	"sort"
 	"strings"
 
+	"ai-tutor/internal/embeddings"
+	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
+	"ai-tutor/internal/utils"
 )
 
 // LLMProvider interface for LLM operations.
 type LLMProvider interface {
 	GenerateAnswer(prompt string) (string, error)
+	GetLimits() llm.ModelLimits
 }
 
 const topicExtractionMaxChars = 30000
@@ -62,6 +66,37 @@ func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *Extracte
 			bookName = "(unknown)"
 		}
 
+		// Token budgeting: cap prompt to fit within model's input limit.
+		limits := llmProvider.GetLimits()
+		maxInputTokens := limits.MaxInputTokens
+		const baseOverheadTokens = 500
+		const safetyMarginTokens = 500
+		availableBudget := maxInputTokens - baseOverheadTokens - safetyMarginTokens
+		if availableBudget < 1000 {
+			availableBudget = 1000
+		}
+		utils.Warnf("[SYLLABUS_PIPELINE] model_limits model=%s max_input=%d budget=%d", "syllabus", maxInputTokens, availableBudget)
+
+		// Truncate bookmark context and sample to fit budget.
+		// Estimate tokens ~ 4 chars per token.
+		bookmarkChars := len(bookmarkContext)
+		sampleChars := len(sample)
+		totalChars := bookmarkChars + sampleChars
+		maxChars := availableBudget * 4
+		if totalChars > maxChars && totalChars > 0 {
+			// Proportionally truncate both
+			bookmarkRatio := float64(bookmarkChars) / float64(totalChars)
+			sampleRatio := float64(sampleChars) / float64(totalChars)
+			bookmarkMaxChars := int(float64(maxChars) * bookmarkRatio)
+			sampleMaxChars := int(float64(maxChars) * sampleRatio)
+			if len(bookmarkContext) > bookmarkMaxChars {
+				bookmarkContext = truncateToCharBoundary(bookmarkContext, bookmarkMaxChars)
+			}
+			if len(sample) > sampleMaxChars {
+				sample = truncateToCharBoundary(sample, sampleMaxChars)
+			}
+		}
+
 		prompt := fmt.Sprintf(`You are extracting a study syllabus from a document.
 
 Document: %s
@@ -84,6 +119,13 @@ Rules:
 - Derive title and page range from both the bookmark tree and the text sample.
 - Do not emit duplicates or wrapper nodes that are just groupings of sub-chapters.`,
 			bookName, strings.ToLower(fileType), doc.PageCount, bookmarkContext, sample)
+
+		// Final token check
+		promptTokens, err := embeddings.CountTokens(prompt)
+		if err == nil && promptTokens > maxInputTokens {
+			return nil, fmt.Errorf("prompt exceeds model context limit: %d > %d tokens", promptTokens, maxInputTokens)
+		}
+
 		raw, err := llmProvider.GenerateAnswer(prompt)
 		if err != nil {
 			return nil, fmt.Errorf("AI generation failed: %w", err)
@@ -246,4 +288,17 @@ func firstN(text string, n int) string {
 		return text
 	}
 	return text[:n]
+}
+
+// truncateToCharBoundary truncates text to maxChars, preferring a newline boundary.
+func truncateToCharBoundary(text string, maxChars int) string {
+	if len(text) <= maxChars {
+		return text
+	}
+	truncated := text[:maxChars]
+	// Prefer breaking at a newline for cleaner context.
+	if idx := strings.LastIndex(truncated, "\n"); idx > maxChars/2 {
+		return truncated[:idx]
+	}
+	return truncated
 }
