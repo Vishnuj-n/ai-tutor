@@ -283,8 +283,8 @@ export function completeMilestoneExam(taskID) {
   return appBridge().CompleteMilestoneExam(taskID)
 }
 
-export function getFlashcardDueTimeline() {
-  return appBridge().GetFlashcardDueTimeline()
+export function getFlashcardDueTimeline(timezoneOffsetMinutes) {
+  return appBridge().GetFlashcardDueTimeline(timezoneOffsetMinutes)
 }
 
 export function getAppEnv() {

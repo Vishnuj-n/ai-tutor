@@ -42,6 +42,7 @@ export function useProfiles(errorRef) {
         return
       }
       showAddModal.value = false
+      await loadProfiles()
       return true
     } catch (err) {
       alert(err.message || 'Failed to create profile')
@@ -57,6 +58,7 @@ export function useProfiles(errorRef) {
         return
       }
       closeEditModal()
+      await loadProfiles()
       return true
     } catch (err) {
       alert(err.message || 'Failed to update profile')
@@ -77,6 +79,7 @@ export function useProfiles(errorRef) {
         alert(res.error)
         return false
       }
+      await loadProfiles()
       return true
     } catch (err) {
       alert(err.message || 'Failed to delete profile')
@@ -91,6 +94,7 @@ export function useProfiles(errorRef) {
         alert(res.error)
         return false
       }
+      await loadNotebooks()
       return true
     } catch (err) {
       alert(err.message || 'Failed to assign profile')

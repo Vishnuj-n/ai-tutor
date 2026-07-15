@@ -99,31 +99,33 @@
       @confirm="handleConfirmSyllabus"
     />
 
-    <transition name="toast-fade">
-      <div v-if="showFallbackToast" class="fallback-toast">
-        <div class="fallback-toast-inner">
-          <span class="fallback-toast-title">Fallback used</span>
-          <p>{{ fallbackToastMessage }}</p>
+    <div class="toast-stack">
+      <transition name="toast-fade">
+        <div v-if="showFallbackToast" class="fallback-toast">
+          <div class="fallback-toast-inner">
+            <span class="fallback-toast-title">Fallback used</span>
+            <p>{{ fallbackToastMessage }}</p>
+          </div>
         </div>
-      </div>
-    </transition>
-    <transition name="toast-fade">
-      <div v-if="showActionToast" class="action-toast">
-        <div class="action-toast-inner">
-          <span class="fallback-toast-title">Notice</span>
-          <p>{{ actionToastMessage }}</p>
+      </transition>
+      <transition name="toast-fade">
+        <div v-if="showActionToast" class="action-toast">
+          <div class="action-toast-inner">
+            <span class="fallback-toast-title">Notice</span>
+            <p>{{ actionToastMessage }}</p>
+          </div>
         </div>
-      </div>
-    </transition>
-    <transition name="toast-fade">
-      <div v-if="isDraftingSyllabus" class="drafting-toast">
-        <div class="drafting-toast-inner">
-          <div class="spinner"></div>
-          <span class="drafting-title">Preparing chapter draft...</span>
-          <p>{{ draftingNotebookTitle }}</p>
+      </transition>
+      <transition name="toast-fade">
+        <div v-if="isDraftingSyllabus" class="drafting-toast">
+          <div class="drafting-toast-inner">
+            <div class="spinner"></div>
+            <span class="drafting-title">Preparing chapter draft...</span>
+            <p>{{ draftingNotebookTitle }}</p>
+          </div>
         </div>
-      </div>
-    </transition>
+      </transition>
+    </div>
   </div>
 </template>
 
@@ -156,7 +158,6 @@ import NotebookSyllabusModal from '../components/NotebookSyllabusModal.vue'
 
 const uploadProgress = ref(0)
 const uploadError = ref('')
-const uploadSuccess = ref(false)
 const successMessage = ref('')
 const notebooks = ref([])
 const availableTopics = ref([])
@@ -188,6 +189,7 @@ const isDraftingSyllabus = ref(false)
 const draftingNotebookTitle = ref('')
 const isAICleaning = ref(false)
 const activeProfileID = ref('')
+let loadNotebooksToken = 0
 const ragEnabled = ref(false)
 const ragNotebookChapter = ref(true)
 
@@ -324,27 +326,30 @@ async function loadTopics() {
 }
 
 async function loadNotebooks() {
+  const token = ++loadNotebooksToken
   loading.value = true
   notebooksError.value = ''
   try {
-    // Pass activeProfileID to filter notebooks by profile (for profile isolation)
     const result = await fetchNotebooks('', activeProfileID.value)
+    if (token !== loadNotebooksToken) return
     if (Array.isArray(result) && result.length > 0 && result[0].error) {
       throw new Error(result[0].error)
     }
     notebooks.value = Array.isArray(result) ? result : []
   } catch (error) {
+    if (token !== loadNotebooksToken) return
     console.error('Failed to load notebooks:', error)
     notebooksError.value = error instanceof Error ? error.message : String(error)
     notebooks.value = []
   } finally {
-    loading.value = false
+    if (token === loadNotebooksToken) {
+      loading.value = false
+    }
   }
 }
 
 async function uploadFile(file) {
   uploadError.value = ''
-  uploadSuccess.value = false
   successMessage.value = ''
   ingestionStatusMessage.value = ''
   ingestionNotebookID.value = ''
@@ -395,10 +400,8 @@ async function uploadFile(file) {
     }
 
     uploadProgress.value = 100
-    uploadSuccess.value = true
     setTimeout(() => {
       uploadProgress.value = 0
-      uploadSuccess.value = false
       successMessage.value = ''
       ingestionStatusMessage.value = ''
       ingestionNotebookID.value = ''
@@ -662,9 +665,9 @@ async function confirmSyllabusDraft() {
       showToast('Notebook metadata updated')
     }
   } catch (error) {
-    draftError.value = `Failed to confirm syllabus: ${error.message}`
-    uploadError.value = `Failed to confirm syllabus: ${error.message}`
-    showToast(`Failed to confirm syllabus: ${error.message}`)
+    const message = error instanceof Error ? error.message : String(error)
+    draftError.value = `Failed to confirm syllabus: ${message}`
+    showToast(`Failed to confirm syllabus: ${message}`)
   } finally {
     isConfirmingDraft.value = false
   }
@@ -768,13 +771,25 @@ async function updatePriority(notebookId, priority) {
   gap: 16px;
 }
 
-.action-toast,
-.fallback-toast,
-.drafting-toast {
+.toast-stack {
   position: fixed;
   right: 20px;
   bottom: 20px;
   z-index: 1300;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast-stack > * {
+  pointer-events: auto;
+}
+
+.action-toast,
+.fallback-toast,
+.drafting-toast {
+  position: relative;
 }
 
 .action-toast-inner,
@@ -843,40 +858,9 @@ async function updatePriority(notebookId, priority) {
     grid-template-columns: 1fr;
   }
 
-  .fallback-toast {
-    position: fixed;
+  .toast-stack {
     left: 20px;
-    bottom: 20px;
-    z-index: 1300;
-  }
-
-  .fallback-toast-inner {
-    max-width: 320px;
-    padding: 14px 16px;
-    background: #b33939;
-    color: #fff;
-    border-radius: 14px;
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-  }
-
-  .fallback-toast-title {
-    display: block;
-    font-weight: 700;
-    margin-bottom: 4px;
-  }
-
-  .toast-fade-enter-active,
-  .toast-fade-leave-active {
-    transition:
-      opacity 0.25s ease,
-      transform 0.25s ease;
-  }
-
-  .toast-fade-enter-from,
-  .toast-fade-leave-to {
-    opacity: 0;
-    transform: translateY(12px);
+    right: auto;
   }
 }
 

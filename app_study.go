@@ -1341,15 +1341,16 @@ type FlashcardDuePoint struct {
 }
 
 // GetFlashcardDueTimeline returns the review card load over the next 7 days.
-func (a *App) GetFlashcardDueTimeline() map[string]interface{} {
+func (a *App) GetFlashcardDueTimeline(timezoneOffsetMinutes int) map[string]interface{} {
 	repo, errMap := requireRepo(a)
 	if errMap != nil {
 		return errMap
 	}
 
-	now := time.Now()
+	loc := time.FixedZone("ClientZone", -timezoneOffsetMinutes*60)
+	now := time.Now().In(loc)
 	y, m, d := now.Date()
-	midnight := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
 	endOfToday := midnight.Add(24 * time.Hour).Unix()
 
 	timeline := make([]FlashcardDuePoint, 7)
