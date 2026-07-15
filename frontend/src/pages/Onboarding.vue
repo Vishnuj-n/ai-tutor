@@ -147,7 +147,7 @@
 
         <div
           class="form-group check-group"
-          style="margin-bottom: 16px; display: flex; align-items: flex-start; gap: 8px"
+          style="margin-bottom: 8px; display: flex; align-items: flex-start; gap: 8px"
         >
           <label
             class="checkbox-container"
