@@ -65,36 +65,31 @@ export function useSettings(errorRef, successRef) {
       computeDuration()
       if (loading.value) return
 
-      const val = settings.value.max_flashcards_per_session
-      if (typeof val !== 'number' || isNaN(val) || val < 5 || val > 200) {
-        errorRef.value = 'Max flashcards per session must be between 5 and 200.'
-        return
-      }
-      const start = settings.value.study_start_time
-      const end = settings.value.study_end_time
-      if (!start || !end || start >= end) {
-        errorRef.value = 'Study start time must be strictly earlier than end time.'
-        return
-      }
-      if (
-        errorRef.value === 'Max flashcards per session must be between 5 and 200.' ||
-        errorRef.value === 'Study start time must be strictly earlier than end time.'
-      ) {
-        errorRef.value = ''
-      }
-
       clearTimeout(saveTimer)
       saveTimer = setTimeout(() => saveUserSettings(), 800)
     },
     { deep: true }
   )
 
-  async function saveUserSettings() {
+  async function saveUserSettings(skipValidation = false) {
     errorRef.value = ''
     successRef.value = ''
     try {
       saving.value = true
       const s = settings.value
+      if (!skipValidation) {
+        const val = s.max_flashcards_per_session
+        if (typeof val !== 'number' || isNaN(val) || val < 5 || val > 200) {
+          errorRef.value = 'Max flashcards per session must be between 5 and 200.'
+          return
+        }
+        const start = s.study_start_time
+        const end = s.study_end_time
+        if (!start || !end || start >= end) {
+          errorRef.value = 'Study start time must be strictly earlier than end time.'
+          return
+        }
+      }
       const res = await updateUserSettings(
         s.max_flashcards_per_session,
         s.study_start_time,

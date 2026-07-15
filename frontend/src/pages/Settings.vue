@@ -247,8 +247,9 @@ async function loadAllData() {
   }
 }
 
-async function setActiveProfile(profileID) {
+function setActiveProfile(profileID) {
   settings.value.active_profile_id = profileID
+  saveUserSettings(true)
 }
 
 async function runManualSync() {
