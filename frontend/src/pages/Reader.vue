@@ -221,7 +221,6 @@ import 'vue-pdf-embed/dist/styles/textLayer.css'
 
 const route = useRoute()
 const router = useRouter()
-const isDev = import.meta.env.DEV
 
 // Get task ID from route (task flow only - manual flow deprecated)
 const routeTaskID = computed(() => {

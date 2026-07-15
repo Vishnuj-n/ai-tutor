@@ -6,8 +6,6 @@ export function useProfiles(errorRef) {
   const notebooks = ref([])
 
   const showAddModal = ref(false)
-  const newProfileName = ref('')
-  const newProfileDeadline = ref('')
 
   const showEditModal = ref(false)
   const editProfileId = ref('')
