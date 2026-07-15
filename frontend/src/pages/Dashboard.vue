@@ -18,57 +18,35 @@
       </div>
     </header>
 
-    <!-- Escape Hatch Status Banner -->
-    <article v-if="userSettings.skip_to_reading_active" class="card info-banner">
-      <div class="info-content">
-        <span class="info-icon">⚡</span>
-        <div class="info-text">
-          <p class="info-title">"Skip to Reading" Escape Hatch Active</p>
-          <p class="info-subtitle">
-            Review tasks have been pushed to the background so you can focus on reading new
-            chapters.
-          </p>
-        </div>
-      </div>
-    </article>
-
-    <!-- Socratic Rescue Active Banner -->
-    <article v-if="hasSocraticRescueTask" class="card rescue-banner">
-      <div class="rescue-content">
-        <span class="rescue-icon">🛡</span>
-        <div class="rescue-text">
-          <p class="rescue-title">Concept Rescue Active</p>
-          <p class="rescue-subtitle">
-            Your study queue is locked because you failed the quiz twice on this topic. You must
-            complete the Socratic tutor rescue session to unblock your timeline.
-          </p>
-        </div>
-      </div>
-    </article>
-
-    <!-- Flashcard creation confirmation banner -->
-    <article v-if="flashcardsJustCreated" class="card flashcard-success-banner">
-      <div class="flashcard-success-content">
-        <span class="flashcard-success-icon">✓</span>
-        <div class="flashcard-success-text">
-          <p class="flashcard-success-title">Flashcards generated successfully!</p>
-          <p class="flashcard-success-subtitle">
-            {{ flashcardsJustCreated }} cards scheduled for spaced repetition.
-          </p>
-        </div>
-      </div>
-    </article>
-
-    <!-- Action error banner -->
-    <article v-if="actionError" class="card error-banner">
-      <div class="error-content">
-        <span class="error-icon">⚠</span>
-        <div class="error-text">
-          <p class="error-title">Error starting task</p>
-          <p class="error-subtitle">{{ actionError }}</p>
-        </div>
-      </div>
-    </article>
+    <!-- Status Banners -->
+    <StatusBanner
+      v-if="userSettings.skip_to_reading_active"
+      variant="info"
+      icon="⚡"
+      title="&quot;Skip to Reading&quot; Escape Hatch Active"
+      subtitle="Review tasks have been pushed to the background so you can focus on reading new chapters."
+    />
+    <StatusBanner
+      v-if="hasSocraticRescueTask"
+      variant="rescue"
+      icon="🛡"
+      title="Concept Rescue Active"
+      subtitle="Your study queue is locked because you failed the quiz twice on this topic. You must complete the Socratic tutor rescue session to unblock your timeline."
+    />
+    <StatusBanner
+      v-if="flashcardsJustCreated"
+      variant="success"
+      icon="✓"
+      :title="'Flashcards generated successfully!'"
+      :subtitle="flashcardsJustCreated + ' cards scheduled for spaced repetition.'"
+    />
+    <StatusBanner
+      v-if="actionError"
+      variant="error"
+      icon="⚠"
+      title="Error starting task"
+      :subtitle="actionError"
+    />
 
     <article class="status-strip">
       <div>
@@ -115,78 +93,23 @@
           <!-- Task List & Custom Hero Review Card -->
           <div v-if="tasks.length > 0" class="tasks-container" style="display: flex; flex-direction: column; gap: 16px;">
             <!-- High-Priority Today's Reviews Card -->
-            <article v-if="reviewTask" class="card review-hero-card">
-              <div class="review-hero-header">
-                <span class="review-hero-tag">HIGH PRIORITY</span>
-                <span class="review-hero-estimate">{{ reviewTask.estimate_minutes }} min review</span>
-              </div>
-              <div class="review-hero-body">
-                <h2>Today's Reviews</h2>
-                <div class="review-hero-stats">
-                  <div class="review-hero-stat">
-                    <span class="stat-num">{{ dueReviewCards }}</span>
-                    <span class="stat-lbl">Due Today</span>
-                  </div>
-                  <div class="review-hero-stat">
-                    <span class="stat-num">{{ totalDueReviewCards > dueReviewCards ? totalDueReviewCards - dueReviewCards : 0 }}</span>
-                    <span class="stat-lbl">Remaining Overdue</span>
-                  </div>
-                </div>
-                <p class="review-hero-meta">{{ reviewTask.meta }}</p>
-              </div>
-              <button
-                type="button"
-                class="primary-btn review-hero-btn"
-                @click="startTask(reviewTask)"
-              >
-                Start Review
-              </button>
-            </article>
+            <ReviewHeroCard
+              v-if="reviewTask"
+              :task="reviewTask"
+              :due-review-cards="dueReviewCards"
+              :total-due-review-cards="totalDueReviewCards"
+              @start="startTask"
+            />
 
             <!-- Task List (Other Interleaved Tasks) -->
             <div v-if="nonReviewTasks.length > 0" class="task-list">
-              <article v-for="task in nonReviewTasks" :key="task.id" class="card task-card">
-                <div class="task-header">
-                  <span class="task-type" :class="task.action_type.toLowerCase()">{{
-                    formatTaskType(task.action_type)
-                  }}</span>
-                  <span
-                    v-if="task.action_type !== 'flashcard_generate' && task.estimate_minutes > 0"
-                    class="task-estimate"
-                    >{{ task.estimate_minutes }} min</span
-                  >
-                </div>
-                <!-- ponytail: if reading task, show Continue Reading heading prefix -->
-                <h3 v-if="task.action_type === 'READING' || task.action_type === 'REREAD'">
-                  Continue Reading: {{ task.title }}
-                </h3>
-                <h3 v-else>{{ task.title }}</h3>
-                <p class="task-meta">
-                  {{
-                    task.meta
-                      ? task.meta
-                      : task.start_page !== undefined &&
-                          task.start_page !== null &&
-                          task.end_page !== undefined &&
-                          task.end_page !== null
-                        ? 'Pages ' + task.start_page + '-' + task.end_page
-                        : 'Pages N/A'
-                  }}
-                </p>
-                <button
-                  type="button"
-                  class="primary-btn"
-                  :class="{ 'sync-btn': task.action_type === 'flashcard_generate' }"
-                  :aria-label="'Start task ' + (task.title || task.id)"
-                  :disabled="task.action_type === 'flashcard_generate' && isSyncing"
-                  @click="startTask(task)"
-                >
-                  <span v-if="task.action_type === 'flashcard_generate' && isSyncing">Generating...</span>
-                  <span v-else-if="task.action_type === 'flashcard_generate'">Generate</span>
-                  <span v-else-if="task.action_type === 'READING' || task.action_type === 'REREAD'">Resume</span>
-                  <span v-else>Start</span>
-                </button>
-              </article>
+              <TaskCard
+                v-for="task in nonReviewTasks"
+                :key="task.id"
+                :task="task"
+                :is-syncing="isSyncing"
+                @start="startTask"
+              />
             </div>
           </div>
 
@@ -195,226 +118,27 @@
             <p class="muted">You've completed all tasks for today. Great work!</p>
           </div>
 
-          <div v-else class="card onboarding-card">
-            <div class="onboarding-content">
-              <h2>Your study queue is empty</h2>
-              <p class="onboarding-desc">
-                Upload a PDF textbook and the app builds a study queue of reading tasks, quizzes, and
-                flashcards for you.
-              </p>
-              <div class="onboarding-steps">
-                <div class="onboarding-step">
-                  <span class="step-number">1</span>
-                  <span class="step-label">Upload a PDF</span>
-                </div>
-                <div class="onboarding-divider"></div>
-                <div class="onboarding-step">
-                  <span class="step-number">2</span>
-                  <span class="step-label">Read chapters</span>
-                </div>
-                <div class="onboarding-divider"></div>
-                <div class="onboarding-step">
-                  <span class="step-number">3</span>
-                  <span class="step-label">Quiz & review</span>
-                </div>
-              </div>
-              <button class="primary-btn onboarding-cta" @click="goToNotebooks">
-                Upload your first textbook
-              </button>
-            </div>
-          </div>
+          <OnboardingCard v-else @go-to-notebooks="goToNotebooks" />
 
-          <!-- Secondary Telemetry Widget placed at the bottom of the main dashboard column -->
-          <section v-if="activeProfilePace && activeProfilePace.has_deadline" class="telemetry-widget" style="margin-top: 24px;">
-            <div class="telemetry-card card">
-              <h2 class="telemetry-header">Profile Study Pacing ({{ activeProfileName }})</h2>
-              <div class="telemetry-grid">
-                <div class="telemetry-item">
-                  <div class="telemetry-title-row">
-                    <span class="telemetry-doc-title"
-                      >Target Exam Deadline: {{ activeProfilePace.deadline }}</span
-                    >
-                    <span
-                      class="telemetry-days-left"
-                      :class="{ warning: activeProfilePace.days_remaining <= 3 }"
-                    >
-                      ({{ formatDaysRemaining(activeProfilePace.days_remaining) }})
-                    </span>
-                  </div>
-                  <div class="telemetry-metric-row">
-                    <div class="telemetry-metric">
-                      <span class="metric-value">{{ activeProfilePace.daily_pace }}</span>
-                      <span class="metric-label">words / day</span>
-                    </div>
-                    <div class="telemetry-metric">
-                      <span class="metric-value">{{ sessionsPerDay }}</span>
-                      <span class="metric-label">sessions / day</span>
-                    </div>
-                    <div class="telemetry-progress-info">
-                      <div class="progress-details">
-                        <span>Remaining words:
-                          <strong>{{ activeProfilePace.remaining_words }}</strong></span>
-                      </div>
-                      <div v-if="paceLabel" class="pace-label">
-                        {{ paceLabel }}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
+          <!-- Secondary Telemetry Widget -->
+          <TelemetryWidget
+            :pace="activeProfilePace"
+            :profile-name="activeProfileName"
+          />
         </div>
 
         <!-- Sidebar Panel (Streak Calendar & Forecast Chart) -->
         <div class="dashboard-sidebar">
-          <!-- Calendar Streak Widget -->
-          <section class="streak-calendar-widget card">
-            <div v-if="streakError" class="streak-error" style="color: var(--danger); font-size: 0.85rem; padding: 1rem; text-align: center;">
-              {{ streakError }}
-            </div>
-            <template v-else>
-              <header class="streak-header-row">
-                <div class="streak-title-container">
-                  <span class="streak-flame-icon" :class="{ active: streakState.today_completed }">🔥</span>
-                  <div class="streak-counts">
-                    <span class="streak-count-val">{{ streakState.current_streak }}</span>
-                    <span class="streak-count-label">day streak</span>
-                  </div>
-                </div>
-                <div class="streak-stats-row">
-                  <span class="streak-stat-item">Longest: <strong>{{ streakState.longest_streak }}d</strong></span>
-                </div>
-              </header>
-
-              <div class="calendar-month-title">{{ currentMonthLabel }}</div>
-              
-              <div class="calendar-grid">
-                <!-- Weekday Headers -->
-                <span v-for="day in ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']" :key="day" class="calendar-header-cell">
-                  {{ day }}
-                </span>
-                
-                <!-- Empty Cells for Padding -->
-                <div 
-                  v-for="(_, index) in calendarDays.filter(d => d.dayNum === null)" 
-                  :key="'empty-' + index" 
-                  class="calendar-day-cell empty"
-                ></div>
-                
-                <!-- Actual Day Cells -->
-                <div
-                  v-for="day in calendarDays.filter(d => d.dayNum !== null)"
-                  :key="day.dayNum"
-                  class="calendar-day-cell"
-                  :class="{ 
-                    active: day.active, 
-                    today: day.today,
-                    'has-hover': day.active
-                  }"
-                >
-                  <span class="day-number">{{ day.dayNum }}</span>
-                  <span v-if="day.active" class="active-indicator"></span>
-                  
-                  <!-- Tooltip for active days -->
-                  <div v-if="day.active" class="cell-tooltip">
-                    Activity logged! Streak kept active.
-                  </div>
-                </div>
-              </div>
-            </template>
-          </section>
-
-          <!-- Forecast Chart -->
-          <section v-if="timelineData && timelineData.length > 0" class="forecast-widget">
-            <div class="forecast-card card">
-              <div class="forecast-header-row">
-                <div>
-                  <h2 class="forecast-header">Flashcard Review Forecast</h2>
-                  <p class="forecast-subtitle">Review load forecast by date</p>
-                </div>
-                <div class="forecast-legend">
-                  <span class="legend-item"><span class="legend-dot due-dot"></span>Due Cards</span>
-                </div>
-              </div>
-
-              <div class="chart-container">
-                <svg class="forecast-chart" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet">
-                  <!-- Definitions for Gradients -->
-                  <defs>
-                    <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="var(--primary)" stop-opacity="0.25"/>
-                      <stop offset="100%" stop-color="var(--primary)" stop-opacity="0.0"/>
-                    </linearGradient>
-                  </defs>
-
-                  <!-- Axis Lines -->
-                  <line x1="30" y1="50" x2="30" y2="250" class="axis-line" />
-                  <line x1="30" y1="250" x2="370" y2="250" class="axis-line" />
-
-                  <!-- Y Axis Labels & Grid Lines -->
-                  <g v-for="tick in yTicks" :key="tick.value" class="chart-y-tick">
-                    <!-- Grid line -->
-                    <line
-                      v-if="tick.value !== 0"
-                      x1="30"
-                      :y1="tick.y"
-                      x2="370"
-                      :y2="tick.y"
-                      class="chart-grid-line"
-                    />
-                    <!-- Text label -->
-                    <text
-                      x="22"
-                      :y="tick.y + 3.5"
-                      class="y-axis-label"
-                      text-anchor="end"
-                    >
-                      {{ tick.value }}
-                    </text>
-                  </g>
-
-                  <!-- Shading Area under the curve -->
-                  <path :d="areaPathData" fill="url(#chartGrad)" />
-
-                  <!-- Main Line Path -->
-                  <path :d="linePathData" fill="none" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round" />
-
-                  <!-- Data Points (interactive dots) -->
-                  <g v-for="(pt, idx) in chartPoints" :key="idx">
-                    <circle
-                      :cx="pt.x"
-                      :cy="pt.y"
-                      r="5"
-                      class="chart-dot"
-                      @mouseenter="hoveredPoint = pt"
-                      @mouseleave="hoveredPoint = null"
-                    />
-                  </g>
-                </svg>
-
-                <!-- Tooltip overlay -->
-                <div
-                  v-if="hoveredPoint"
-                  class="chart-tooltip"
-                  :style="{ left: hoveredPoint.tooltipX + '%', top: hoveredPoint.percentY + '%' }"
-                >
-                  <div class="tooltip-date">{{ hoveredPoint.dayLabel }} ({{ hoveredPoint.date }})</div>
-                  <div class="tooltip-value">
-                    <strong>{{ hoveredPoint.count }}</strong> due cards
-                  </div>
-                </div>
-              </div>
-
-              <!-- X Axis Labels -->
-              <div class="chart-x-axis">
-                <div v-for="(pt, idx) in chartPoints" :key="idx" class="x-label-container" :style="{ left: pt.percentX + '%' }">
-                  <span class="x-label">{{ pt.dayLabel }}</span>
-                  <span class="x-sublabel">{{ pt.count }}</span>
-                </div>
-              </div>
-            </div>
-          </section>
+          <StreakCalendar
+            :streak-state="streakState"
+            :streak-error="streakError"
+            :calendar-days="calendarDays"
+            :month-label="currentMonthLabel"
+          />
+          <ForecastChart
+            :timeline-data="timelineData"
+            :max-flashcards-limit="maxFlashcardsLimit"
+          />
         </div>
       </div>
     </template>
@@ -455,10 +179,20 @@ import {
   getFlashcardDueTimeline,
   getStreakState,
 } from '../services/appApi'
+import { buildCalendarDays, MONTH_NAMES } from '../utils/dateFormat'
+
+import StatusBanner from '../components/StatusBanner.vue'
+import ReviewHeroCard from '../components/ReviewHeroCard.vue'
+import TaskCard from '../components/TaskCard.vue'
+import OnboardingCard from '../components/OnboardingCard.vue'
+import TelemetryWidget from '../components/TelemetryWidget.vue'
+import StreakCalendar from '../components/StreakCalendar.vue'
+import ForecastChart from '../components/ForecastChart.vue'
 
 const router = useRouter()
 const route = useRoute()
 
+// --- Reactive State ---
 const loading = ref(true)
 const error = ref('')
 const actionError = ref('')
@@ -487,18 +221,7 @@ const userSettings = ref({
 const activeProfilePace = ref(null)
 const lastPersistedProfile = ref('')
 
-const sessionsPerDay = computed(() => {
-  if (!activeProfilePace.value) return 0
-  return Math.ceil(activeProfilePace.value.sessions_per_day)
-})
-
-const paceLabel = computed(() => {
-  if (!activeProfilePace.value) return ''
-  return activeProfilePace.value.pace_label || ''
-})
-
 const timelineData = ref([])
-const hoveredPoint = ref(null)
 
 const streakState = ref({
   current_streak: 0,
@@ -508,53 +231,26 @@ const streakState = ref({
 })
 const streakError = ref('')
 
+const appEnv = ref('')
+const forcingRescue = ref(false)
+const forcingSync = ref(false)
+const devMessage = ref('')
+const isSyncing = ref(false)
+
+// --- Calendar computeds ---
 const currentDate = new Date()
 const currentYear = currentDate.getFullYear()
 const currentMonth = currentDate.getMonth()
 
-const monthNames = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
-]
-
 const currentMonthLabel = computed(() => {
-  return `${monthNames[currentMonth]} ${currentYear}`
+  return `${MONTH_NAMES[currentMonth]} ${currentYear}`
 })
 
 const calendarDays = computed(() => {
-  const days = []
-  const totalDays = new Date(currentYear, currentMonth + 1, 0).getDate()
-  const firstDay = new Date(currentYear, currentMonth, 1).getDay()
-  
-  for (let i = 0; i < firstDay; i++) {
-    days.push({ dayNum: null, dateString: null, active: false, today: false })
-  }
-  
-  const todayLocalStr = getLocalDateString(new Date())
-  
-  for (let d = 1; d <= totalDays; d++) {
-    const dStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    const isActive = streakState.value?.active_dates?.includes(dStr) || false
-    const isToday = dStr === todayLocalStr
-    
-    days.push({
-      dayNum: d,
-      dateString: dStr,
-      active: isActive,
-      today: isToday
-    })
-  }
-  
-  return days
+  return buildCalendarDays(currentYear, currentMonth, streakState.value?.active_dates || [])
 })
 
-function getLocalDateString(date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
+// --- Task computeds ---
 const maxFlashcardsLimit = computed(() => {
   return userSettings.value.max_flashcards_per_session || 30
 })
@@ -567,67 +263,6 @@ const nonReviewTasks = computed(() => {
   return tasks.value.filter(t => t.id !== 'task-review-daily')
 })
 
-const yAxisMax = computed(() => {
-  if (!timelineData.value || timelineData.value.length === 0) return 40
-  const counts = timelineData.value.map((d) => d.card_count)
-  const rawMax = Math.max(...counts, maxFlashcardsLimit.value, 10)
-  let maxVal = Math.ceil(rawMax * 1.2)
-  if (maxVal % 4 !== 0) {
-    maxVal += 4 - (maxVal % 4)
-  }
-  return maxVal
-})
-
-const yTicks = computed(() => {
-  const maxVal = yAxisMax.value
-  const steps = [0, 0.25, 0.5, 0.75, 1]
-  return steps.map((pct) => {
-    return {
-      value: Math.round(maxVal * pct),
-      y: 250 - pct * 200,
-    }
-  })
-})
-
-const chartPoints = computed(() => {
-  if (!timelineData.value || timelineData.value.length === 0) return []
-  const maxVal = yAxisMax.value
-  const len = timelineData.value.length
-
-  return timelineData.value.map((d, i) => {
-    // scale to 400x300 viewport
-    const x = len === 1 ? 200 : 30 + (i / (len - 1)) * 340
-    const y = 250 - (d.card_count / maxVal) * 200
-    const exceeds = d.card_count > maxFlashcardsLimit.value
-    const px = len === 1 ? 50 : 7 + (i / (len - 1)) * 86
-    return {
-      x,
-      y,
-      percentX: px,
-      tooltipX: px,
-      tooltipY: y,
-      percentY: (y / 300) * 100,
-      dayLabel: d.day_label,
-      date: d.date,
-      count: d.card_count,
-      exceeds,
-    }
-  })
-})
-
-const linePathData = computed(() => {
-  const pts = chartPoints.value
-  if (pts.length === 0) return ''
-  return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-})
-
-const areaPathData = computed(() => {
-  const pts = chartPoints.value
-  if (pts.length === 0) return ''
-  const linePath = linePathData.value
-  return `${linePath} L ${pts[pts.length - 1].x} 250 L ${pts[0].x} 250 Z`
-})
-
 const flashcardsJustCreated = computed(() => {
   const created = Number.parseInt(route.query.flashcardsCreated, 10)
   return isNaN(created) || created <= 0 ? 0 : created
@@ -638,16 +273,11 @@ const activeProfileName = computed(() => {
   return p ? p.name : 'Unknown'
 })
 
-const appEnv = ref('')
-const forcingRescue = ref(false)
-const forcingSync = ref(false)
-const devMessage = ref('')
-const isSyncing = ref(false)
-
 const hasSocraticRescueTask = computed(() => {
   return tasks.value.some((t) => t.action_type === 'socratic_remedial')
 })
 
+// --- Lifecycle ---
 onMounted(async () => {
   try {
     const envRes = await getAppEnv()
@@ -665,6 +295,7 @@ onMounted(async () => {
   await loadAgenda()
 })
 
+// --- Data Fetching ---
 async function loadAgenda() {
   try {
     loading.value = true
@@ -763,6 +394,7 @@ async function loadAgenda() {
   }
 }
 
+// --- User Actions ---
 async function changeActiveProfile(event) {
   const newProfileID = event?.target?.value ?? ''
   const oldProfileID = lastPersistedProfile.value
@@ -842,12 +474,6 @@ async function toggleEscapeHatch() {
   }
 }
 
-function formatDaysRemaining(days) {
-  if (days === 0) return 'today!'
-  if (days < 0) return 'passed'
-  return `${days} days left`
-}
-
 async function runFlashcardSyncInline(task) {
   try {
     isSyncing.value = true
@@ -865,19 +491,45 @@ async function runFlashcardSyncInline(task) {
   }
 }
 
-function formatTaskType(type) {
-  const t = (type || '').toLowerCase()
-  if (t === 'reading') return 'Reading'
-  if (t === 'flashcard_review') return 'Review'
-  if (t === 'quiz') return 'Quiz'
-  if (t === 'examiner') return 'Examiner'
-  if (t === 'reread') return 'Reread'
-  if (t === 'socratic_remedial') return 'Concept Rescue'
-  if (t === 'flashcard_generate') return 'Generate Flashcards'
-  if (t === 'milestone_exam') return 'Milestone Exam'
-  return type
+function startTask(task) {
+  let routePath = '/dashboard'
+  const query = {
+    topicId: task.topic_id,
+    notebookId: task.notebook_id,
+    startPage: task.start_page,
+    endPage: task.end_page,
+    taskId: task.id,
+  }
+
+  const action = (task.action_type || '').toLowerCase()
+  if (action === 'reading') {
+    routePath = '/reader'
+  } else if (action === 'flashcard_review') {
+    routePath = '/flashcards'
+  } else if (action === 'quiz' || action === 'milestone_exam') {
+    routePath = '/quiz'
+  } else if (action === 'examiner' || action === 'written') {
+    routePath = '/examiner'
+  } else if (action === 'reread') {
+    routePath = '/reader'
+  } else if (action === 'socratic_remedial') {
+    routePath = '/socratic-rescue'
+  } else if (action === 'flashcard_generate') {
+    runFlashcardSyncInline(task)
+    return
+  } else {
+    actionError.value = `Unknown task action type: ${task.action_type}`
+    return
+  }
+
+  router.push({ path: routePath, query })
 }
 
+function goToNotebooks() {
+  router.push('/notebooks')
+}
+
+// --- Dev Mode ---
 async function forceRescueState() {
   forcingRescue.value = true
   devMessage.value = ''
@@ -933,44 +585,6 @@ async function forceSyncTask() {
   } finally {
     forcingSync.value = false
   }
-}
-
-function goToNotebooks() {
-  router.push('/notebooks')
-}
-
-function startTask(task) {
-  let routePath = '/dashboard'
-  const query = {
-    topicId: task.topic_id,
-    notebookId: task.notebook_id,
-    startPage: task.start_page,
-    endPage: task.end_page,
-    taskId: task.id,
-  }
-
-  const action = (task.action_type || '').toLowerCase()
-  if (action === 'reading') {
-    routePath = '/reader'
-  } else if (action === 'flashcard_review') {
-    routePath = '/flashcards'
-  } else if (action === 'quiz' || action === 'milestone_exam') {
-    routePath = '/quiz'
-  } else if (action === 'examiner' || action === 'written') {
-    routePath = '/examiner'
-  } else if (action === 'reread') {
-    routePath = '/reader'
-  } else if (action === 'socratic_remedial') {
-    routePath = '/socratic-rescue'
-  } else if (action === 'flashcard_generate') {
-    runFlashcardSyncInline(task)
-    return
-  } else {
-    actionError.value = `Unknown task action type: ${task.action_type}`
-    return
-  }
-
-  router.push({ path: routePath, query })
 }
 </script>
 
@@ -1071,45 +685,6 @@ function startTask(task) {
   color: var(--muted-text);
 }
 
-/* Banners */
-.info-banner {
-  background: rgba(230, 126, 34, 0.1);
-  border: 1px solid rgba(230, 126, 34, 0.2);
-}
-
-.info-content {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px;
-}
-
-.info-icon {
-  width: 40px;
-  height: 40px;
-  background: #e67e22;
-  color: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.info-title {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 700;
-  color: #e67e22;
-}
-
-.info-subtitle {
-  margin: 0;
-  font-size: 13px;
-}
-
 .card {
   background: var(--surface-container-lowest);
   border: 1px solid var(--outline-variant);
@@ -1130,315 +705,43 @@ function startTask(task) {
   color: var(--muted-text);
 }
 
-/* Onboarding empty state */
-.onboarding-card {
-  padding: 48px 40px;
-  text-align: center;
-}
-
-.onboarding-content {
-  max-width: 420px;
-  margin: 0 auto;
-}
-
-.onboarding-card h2 {
-  margin: 0 0 12px;
-  font-size: 26px;
-  font-family: 'Manrope', sans-serif;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.onboarding-desc {
-  margin: 0 0 32px;
-  font-size: 15px;
-  color: var(--muted-text);
-  line-height: 1.6;
-}
-
-.onboarding-steps {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  margin-bottom: 36px;
-}
-
-.onboarding-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
-
-.step-number {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: rgba(108, 92, 231, 0.1);
-  color: var(--primary);
-  font-weight: 700;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.step-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--on-surface);
-}
-
-.onboarding-divider {
-  width: 40px;
-  height: 1px;
-  background: var(--outline-variant);
-  margin: 0 12px;
-  margin-bottom: 20px;
-}
-
-.onboarding-cta {
-  padding: 14px 32px;
-  font-size: 15px;
-  border-radius: 14px;
-}
-
-/* Telemetry styles */
-.telemetry-widget {
-  margin-bottom: 8px;
-}
-
-.telemetry-card {
-  padding: 24px;
-}
-
-.telemetry-header {
-  margin: 0 0 16px;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.telemetry-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.telemetry-item {
-  border: 1px solid var(--outline-variant);
-  border-radius: 12px;
-  padding: 16px;
-  background: var(--surface-container-low);
-}
-
-.telemetry-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 12px;
-}
-
-.telemetry-doc-title {
-  flex: 1;
-}
-
-.telemetry-days-left {
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.telemetry-days-left.warning {
+.error-card h2 {
   color: #eb5e55;
-  font-weight: 700;
 }
 
-.telemetry-metric-row {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-}
-
-.telemetry-metric {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.metric-value {
-  font-size: 28px;
-  font-family: 'Manrope', sans-serif;
-  font-weight: 800;
-  color: var(--primary);
-  line-height: 1;
-}
-
-.metric-label {
-  font-size: 12px;
-  color: var(--muted-text);
-  font-weight: 600;
-}
-
-.telemetry-progress-info {
-  flex: 1;
-  text-align: right;
-  font-size: 13px;
-  color: var(--muted-text);
-}
-
-.pace-label {
-  margin-top: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--primary);
-}
-
-/* Task cards */
 .task-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
 }
 
-.task-card {
-  padding: 20px;
+/* Dashboard Two-Column Layout Grid */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+@media (min-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr 310px;
+    align-items: start;
+  }
+}
+
+.dashboard-main {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  transition:
-    transform 0.2s,
-    border-color 0.2s;
-}
-
-.task-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--primary);
-}
-
-.task-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.task-type {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--primary);
-  background: rgba(108, 92, 231, 0.1);
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-
-.task-estimate {
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.task-card h3 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.3;
-}
-
-.task-meta {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted-text);
-  flex: 1;
-}
-
-.primary-btn {
-  background: var(--primary);
-  color: var(--on-primary);
-  border: none;
-  border-radius: 10px;
-  padding: 10px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.primary-btn:hover {
-  opacity: 0.9;
-}
-
-.flashcard-success-banner {
-  background: rgba(46, 204, 113, 0.1);
-  border-color: rgba(46, 204, 113, 0.2);
-}
-
-.flashcard-success-icon {
-  background: #2ecc71;
-  color: white;
-}
-
-.flashcard-success-title {
-  color: #2ecc71;
-}
-
-.error-card h2 {
-  color: #eb5e55;
-}
-
-.rescue-banner {
-  background: rgba(211, 84, 0, 0.1);
-  border: 1px solid rgba(211, 84, 0, 0.2);
-}
-
-.rescue-content {
-  display: flex;
-  align-items: center;
   gap: 16px;
-  padding: 12px;
 }
 
-.rescue-icon {
-  width: 40px;
-  height: 40px;
-  background: #d35400;
-  color: white;
-  border-radius: 50%;
+.dashboard-sidebar {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: 700;
-  flex-shrink: 0;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.rescue-title {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 700;
-  color: #d35400;
-}
-
-.rescue-subtitle {
-  margin: 0;
-  font-size: 13px;
-}
-
-.task-type.flashcard_generate {
-  color: #c0392b;
-  background: rgba(192, 41, 43, 0.1);
-}
-
-.task-type.socratic_remedial {
-  color: #d35400;
-  background: rgba(211, 84, 0, 0.1);
-}
-
-.primary-btn.sync-btn {
-  background: linear-gradient(135deg, #c0392b, #e74c3c);
-  box-shadow: 0 4px 10px rgba(192, 41, 43, 0.15);
-}
-
+/* Dev Panel */
 .dev-panel {
   margin-top: 32px;
   padding: 20px;
@@ -1493,500 +796,5 @@ function startTask(task) {
   font-size: 12px;
   font-weight: 600;
   color: #16a085;
-}
-
-/* Dashboard Two-Column Layout Grid */
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 24px;
-}
-
-@media (min-width: 1024px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr 310px;
-    align-items: start;
-  }
-}
-
-.dashboard-main {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.dashboard-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-/* Forecast Widget Styles */
-.forecast-widget {
-  margin-bottom: 8px;
-}
-
-.forecast-card {
-  padding: 16px;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-height: 250px;
-}
-
-.forecast-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-}
-
-.forecast-header {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--on-surface);
-}
-
-.forecast-subtitle {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.forecast-legend {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted-text);
-  margin-top: 4px;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.legend-dot.due-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--primary);
-}
-
-.chart-container {
-  position: relative;
-  width: 100%;
-  flex: 1;
-  min-height: 130px;
-  background: var(--surface-container-lowest);
-  border-radius: 12px;
-}
-
-.forecast-chart {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.chart-grid-line {
-  stroke: var(--outline-variant);
-  stroke-width: 1px;
-  stroke-opacity: 0.6;
-  stroke-dasharray: 2 4;
-}
-
-.axis-line {
-  stroke: var(--outline-variant);
-  stroke-width: 1px;
-  stroke-opacity: 0.8;
-}
-
-.y-axis-label {
-  font-size: 10px;
-  font-weight: 600;
-  fill: var(--muted-text);
-  font-family: inherit;
-}
-
-.chart-dot {
-  fill: var(--surface-container-lowest);
-  stroke: var(--primary);
-  stroke-width: 2.5px;
-  cursor: pointer;
-  transition: r 0.15s ease, fill 0.15s ease;
-}
-
-.chart-dot:hover {
-  r: 7px;
-  fill: var(--primary);
-}
-
-/* Tooltip */
-.chart-tooltip {
-  position: absolute;
-  transform: translate(-50%, -100%);
-  margin-top: -12px;
-  background: var(--surface-bright);
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
-  padding: 8px 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  backdrop-filter: blur(8px);
-  z-index: 10;
-  pointer-events: none;
-  min-width: 120px;
-  transition: left 0.1s ease, top 0.1s ease;
-}
-
-.tooltip-date {
-  font-size: 11px;
-  color: var(--muted-text);
-  font-weight: 500;
-  margin-bottom: 2px;
-}
-
-.tooltip-value {
-  font-size: 13px;
-  color: var(--on-surface);
-}
-
-/* X Axis */
-.chart-x-axis {
-  position: relative;
-  height: 36px;
-  margin-top: 4px;
-  width: 100%;
-}
-
-.x-label-container {
-  position: absolute;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.x-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted-text);
-}
-
-.x-sublabel {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--on-surface);
-  margin-top: 2px;
-}
-
-/* Streak Calendar Widget Styles */
-.streak-calendar-widget {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--surface-container-low);
-  border: 1px solid var(--outline-variant);
-  border-radius: 16px;
-}
-
-.streak-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--outline-variant);
-  padding-bottom: 12px;
-}
-
-.streak-title-container {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.streak-flame-icon {
-  font-size: 24px;
-  display: inline-block;
-  transition: transform 0.3s ease;
-}
-
-.streak-flame-icon.active {
-  animation: pulse-flame 2s infinite ease-in-out;
-}
-
-@keyframes pulse-flame {
-  0% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4)); }
-  50% { transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(230, 126, 34, 0.8)); }
-  100% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(230, 126, 34, 0.4)); }
-}
-
-.streak-counts {
-  display: flex;
-  flex-direction: column;
-}
-
-.streak-count-val {
-  font-family: 'Manrope', sans-serif;
-  font-size: 20px;
-  font-weight: 800;
-  line-height: 1.1;
-  color: var(--on-surface);
-}
-
-.streak-count-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted-text);
-}
-
-.streak-stats-row {
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.streak-stats-row strong {
-  color: var(--on-surface);
-}
-
-.calendar-month-title {
-  font-family: 'Manrope', sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--on-surface);
-  margin-bottom: -4px;
-  text-align: left;
-}
-
-.calendar-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-  width: 100%;
-}
-
-.calendar-header-cell {
-  font-size: 11px;
-  font-weight: 700;
-  text-align: center;
-  color: var(--muted-text);
-  padding: 4px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-.calendar-day-cell {
-  position: relative;
-  aspect-ratio: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface-container-lowest);
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
-  cursor: default;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.calendar-day-cell.empty {
-  background: transparent;
-  border-color: transparent;
-  pointer-events: none;
-}
-
-.day-number {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--on-surface);
-  z-index: 1;
-}
-
-.calendar-day-cell.today {
-  border-color: var(--primary);
-  box-shadow: inset 0 0 0 1px var(--primary);
-}
-
-.calendar-day-cell.today .day-number {
-  color: var(--primary);
-  font-weight: 800;
-}
-
-/* Active Completed State */
-.calendar-day-cell.active {
-  background: var(--primary-container);
-  border-color: var(--primary);
-}
-
-.calendar-day-cell.active .day-number {
-  color: var(--on-primary-container);
-  font-weight: 700;
-}
-
-.active-indicator {
-  position: absolute;
-  bottom: 4px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background-color: var(--primary);
-}
-
-/* Hover and Tooltips */
-.calendar-day-cell.has-hover:hover {
-  transform: scale(1.12);
-  z-index: 10;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-}
-
-.cell-tooltip {
-  visibility: hidden;
-  opacity: 0;
-  position: absolute;
-  bottom: 125%;
-  left: 50%;
-  transform: translateX(-50%) scale(0.9);
-  background: var(--surface-container-high);
-  color: var(--on-surface);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--outline-variant);
-  white-space: nowrap;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
-  z-index: 20;
-  pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
-}
-
-.calendar-day-cell.has-hover:hover .cell-tooltip {
-  visibility: visible;
-  opacity: 1;
-  transform: translateX(-50%) scale(1);
-}
-
-/* Arrow for tooltip */
-.cell-tooltip::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border-width: 5px;
-  border-style: solid;
-  border-color: var(--surface-container-high) transparent transparent transparent;
-}
-
-/* High-Priority Review Hero Card */
-.review-hero-card {
-  background: var(--surface-container-low);
-  border: 1px solid var(--primary);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-  padding: 24px;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-  position: relative;
-  overflow: hidden;
-  border-radius: 16px;
-}
-
-@media (min-width: 768px) {
-  .review-hero-card {
-    grid-template-columns: 1fr auto;
-    align-items: center;
-    gap: 32px;
-  }
-}
-
-.review-hero-header {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.review-hero-tag {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  color: var(--primary);
-  background: rgba(108, 92, 231, 0.1);
-  padding: 4px 8px;
-  border-radius: 6px;
-  text-transform: uppercase;
-}
-
-.review-hero-estimate {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted-text);
-}
-
-.review-hero-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.review-hero-body h2 {
-  margin: 0;
-  font-family: 'Manrope', sans-serif;
-  font-size: 28px;
-  font-weight: 800;
-  color: var(--on-surface);
-}
-
-.review-hero-stats {
-  display: flex;
-  gap: 24px;
-  margin-top: 4px;
-}
-
-.review-hero-stat {
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-num {
-  font-family: 'Manrope', sans-serif;
-  font-size: 32px;
-  font-weight: 800;
-  color: var(--on-surface);
-  line-height: 1;
-}
-
-.stat-lbl {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted-text);
-  text-transform: uppercase;
-  margin-top: 4px;
-}
-
-.review-hero-meta {
-  margin: 0;
-  font-size: 14px;
-  color: var(--muted-text);
-}
-
-.review-hero-btn {
-  justify-self: stretch;
-  padding: 14px 28px;
-  font-size: 16px;
-  height: auto;
-}
-
-@media (min-width: 768px) {
-  .review-hero-btn {
-    justify-self: end;
-  }
 }
 </style>
