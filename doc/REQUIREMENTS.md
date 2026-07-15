@@ -70,7 +70,7 @@ Local-first desktop study assistant. Users upload documents, system creates a de
 
 6. **Data Storage**
    - Local per-user config dir (e.g. `<config>/ai-tutor/`)
-   - SQLite DB (`ai-tutor.db`) + `uploads/` folder
+   - SQLite DB (`Studyloop.db`) + `uploads/` folder
    - UUID-prefixed filenames
    - `.gitignore` patterns for DB/uploads
 
