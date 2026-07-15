@@ -16,113 +16,33 @@
     </div>
 
     <!-- Upload Section -->
-    <div class="upload-section">
-      <div class="upload-card">
-        <div class="upload-icon">📄</div>
-        <h3>Upload Document</h3>
-        <p>Drag and drop or click to select PDF, TXT, or MD files</p>
-
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".pdf,.txt,.md"
-          style="display: none"
-          @change="handleFileSelect"
-        />
-
-        <div
-          class="drop-zone"
-          :class="{ dragging: isDragging }"
-          @click="triggerFilePicker"
-          @dragover.prevent="isDragging = true"
-          @dragleave.prevent="isDragging = false"
-          @drop.prevent="handleFileDrop"
-        >
-          <p class="drop-title">Drop files here</p>
-          <button type="button" class="upload-cta">Choose File</button>
-          <p class="drop-hint">or drag and drop PDF, TXT, MD up to 50 MB</p>
-        </div>
-
-        <div v-if="uploadProgress > 0 && uploadProgress < 100" class="progress">
-          <div class="progress-bar" :style="{ width: uploadProgress + '%' }"></div>
-          <span>{{ uploadProgress }}%</span>
-          <p v-if="ingestionStatusMessage" class="progress-label">{{ ingestionStatusMessage }}</p>
-        </div>
-
-        <div v-if="indexingStatusMessage" class="progress indexing-progress">
-          <p class="progress-label">{{ indexingStatusMessage }}</p>
-        </div>
-
-        <div v-if="uploadError" class="error-message">
-          {{ uploadError }}
-        </div>
-
-        <div v-if="successMessage" class="success-message">{{ successMessage }}</div>
-      </div>
-    </div>
+    <NotebookUpload
+      :upload-progress="uploadProgress"
+      :ingestion-status-message="ingestionStatusMessage"
+      :indexing-status-message="indexingStatusMessage"
+      :upload-error="uploadError"
+      :success-message="successMessage"
+      @upload-file="uploadFile"
+    />
 
     <!-- Active Lane (prioritized section) -->
     <div v-if="!loading && activeNotebooks.length > 0" class="active-lane-section">
       <h2>Active Lane ({{ activeNotebooks.length }} / 4)</h2>
       <p class="section-hint">Your currently studying textbooks. Maximum 4 active at a time.</p>
       <div class="notebook-grid">
-        <div
+        <NotebookCard
           v-for="notebook in activeNotebooks"
           :key="notebook.id"
-          class="notebook-card active-notebook-card"
-        >
-          <button
-            class="btn-edit-pen"
-            title="Edit notebook and chapters"
-            @click="openSyllabusDraft(notebook.id, notebook.title)"
-          >
-            ✎
-          </button>
-          <div class="notebook-header-card">
-            <div class="file-icon active-icon">{{ getFileIcon(notebook.file_type) }}</div>
-            <div class="notebook-info">
-              <h3>{{ notebook.title }}</h3>
-              <p class="meta">{{ notebook.file_type.toUpperCase() }}</p>
-              <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
-              <p class="meta">{{ notebook.chunk_count }} chunks</p>
-            </div>
-          </div>
-
-          <div
-            v-if="notebook.topic_id"
-            class="notebook-topic"
-            style="display: flex; align-items: center; gap: 8px"
-          >
-            <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
-            <RouterLink
-              v-if="ragEnabled && ragNotebookChapter"
-              :to="`/tutor?topic_id=${notebook.topic_id}&notebook_id=${notebook.id}`"
-              class="tutor-link-btn"
-              title="Ask Tutor (RAG)"
-              style="text-decoration: none; font-size: 13px"
-            >
-              ◎ Ask Tutor
-            </RouterLink>
-          </div>
-
-          <div class="notebook-priority">
-            <label class="priority-label">Priority:</label>
-            <select
-              :value="notebook.priority || 5"
-              class="priority-select"
-              @change="(e) => updatePriority(notebook.id, Number.parseInt(e.target.value))"
-            >
-              <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
-            </select>
-          </div>
-
-          <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
-
-          <div class="notebook-actions">
-            <button class="btn-sleep" @click="setStudyStatus(notebook.id, 'dormant')">Sleep</button>
-            <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
-          </div>
-        </div>
+          :notebook="notebook"
+          :available-topics="availableTopics"
+          :rag-enabled="ragEnabled"
+          :rag-notebook-chapter="ragNotebookChapter"
+          variant="active"
+          @edit-syllabus="openSyllabusDraft"
+          @update-priority="updatePriority"
+          @change-status="setStudyStatus"
+          @delete="deleteNotebook"
+        />
       </div>
     </div>
 
@@ -147,193 +67,38 @@
       </div>
 
       <div v-if="!loading && dormantNotebooks.length > 0" class="notebook-grid">
-        <div
+        <NotebookCard
           v-for="notebook in dormantNotebooks"
           :key="notebook.id"
-          class="notebook-card dormant-notebook-card"
-        >
-          <button
-            class="btn-edit-pen"
-            title="Edit notebook and chapters"
-            @click="openSyllabusDraft(notebook.id, notebook.title)"
-          >
-            ✎
-          </button>
-          <div class="notebook-header-card">
-            <div class="file-icon">{{ getFileIcon(notebook.file_type) }}</div>
-            <div class="notebook-info">
-              <h3>{{ notebook.title }}</h3>
-              <p class="meta">{{ notebook.file_type.toUpperCase() }}</p>
-              <p v-if="notebook.page_count > 0" class="meta">{{ notebook.page_count }} pages</p>
-              <p class="meta">{{ notebook.chunk_count }} chunks</p>
-              <p class="meta">Status: {{ formatStatus(notebook.status) }}</p>
-            </div>
-          </div>
-
-          <div
-            v-if="notebook.topic_id"
-            class="notebook-topic"
-            style="display: flex; align-items: center; gap: 8px"
-          >
-            <span class="badge">{{ getTopicTitle(notebook.topic_id) }}</span>
-            <RouterLink
-              v-if="ragEnabled && ragNotebookChapter"
-              :to="`/tutor?topic_id=${notebook.topic_id}&notebook_id=${notebook.id}`"
-              class="tutor-link-btn"
-              title="Ask Tutor (RAG)"
-              style="text-decoration: none; font-size: 13px"
-            >
-              ◎ Ask Tutor
-            </RouterLink>
-          </div>
-
-          <div v-else class="notebook-topic">
-            <span class="badge muted">No topic linked</span>
-          </div>
-
-          <div class="notebook-priority">
-            <label class="priority-label">Priority:</label>
-            <select
-              :value="notebook.priority || 5"
-              class="priority-select"
-              @change="(e) => updatePriority(notebook.id, Number.parseInt(e.target.value))"
-            >
-              <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
-            </select>
-          </div>
-
-          <div class="notebook-date">Uploaded: {{ formatDate(notebook.uploaded_at) }}</div>
-
-          <div class="notebook-actions">
-            <button
-              class="btn-activate"
-              :disabled="activeNotebooks.length >= 4"
-              @click="setStudyStatus(notebook.id, 'active')"
-            >
-              Activate
-            </button>
-            <button class="btn-delete" @click="deleteNotebook(notebook.id)">Delete</button>
-          </div>
-        </div>
+          :notebook="notebook"
+          :available-topics="availableTopics"
+          :rag-enabled="ragEnabled"
+          :rag-notebook-chapter="ragNotebookChapter"
+          variant="dormant"
+          :active-limit-reached="activeNotebooks.length >= 4"
+          @edit-syllabus="openSyllabusDraft"
+          @update-priority="updatePriority"
+          @change-status="setStudyStatus"
+          @delete="deleteNotebook"
+        />
       </div>
     </div>
 
-    <div v-if="showSyllabusModal" class="modal-backdrop">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3>Verify Syllabus Chapters</h3>
-          <button type="button" class="modal-close" @click="closeSyllabusModal">×</button>
-        </div>
+    <!-- Syllabus Modal -->
+    <NotebookSyllabusModal
+      :show="showSyllabusModal"
+      :notebook-title="draftNotebookTitle"
+      :notebook-priority="draftNotebookPriority"
+      :page-count="draftPageCount"
+      :chapters="draftChapters"
+      :is-confirming="isConfirmingDraft"
+      :is-cleaning="isAICleaning"
+      :error="draftError"
+      @close="closeSyllabusModal"
+      @ai-cleanup="aiCleanupChapters"
+      @confirm="handleConfirmSyllabus"
+    />
 
-        <p class="modal-warning">
-          Use absolute PDF page numbers. Page labels shown inside the PDF viewer may differ from
-          file page numbers.
-        </p>
-
-        <div class="modal-title-edit">
-          <label for="notebook-title">Notebook title</label>
-          <input
-            id="notebook-title"
-            v-model="draftNotebookTitle"
-            type="text"
-            class="chapter-input"
-            placeholder="Notebook name"
-            :disabled="isAICleaning"
-          />
-        </div>
-
-        <div class="modal-priority-edit">
-          <label for="notebook-priority">Notebook priority (1-10)</label>
-          <select
-            id="notebook-priority"
-            v-model.number="draftNotebookPriority"
-            class="priority-select-modal"
-            :disabled="isAICleaning"
-          >
-            <option v-for="n in 10" :key="n" :value="n">
-              {{ n }} - {{ n === 1 ? 'Lowest' : n === 10 ? 'Highest' : n === 5 ? 'Default' : '' }}
-            </option>
-          </select>
-          <p class="priority-hint">Higher-priority notebooks appear earlier in your study queue.</p>
-        </div>
-
-        <div v-if="draftError" class="error-message modal-error">{{ draftError }}</div>
-
-        <div class="chapter-table-wrap">
-          <table class="chapter-table">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Start Page</th>
-                <th>End Page</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(chapter, index) in draftChapters" :key="`chapter-${index}`">
-                <td>
-                  <input
-                    v-model="chapter.title"
-                    type="text"
-                    class="chapter-input"
-                    placeholder="Chapter title"
-                    :disabled="isAICleaning"
-                  />
-                </td>
-                <td>
-                  <input
-                    v-model.number="chapter.start_page"
-                    type="number"
-                    min="1"
-                    :max="draftPageCount"
-                    class="chapter-input chapter-page"
-                    :disabled="isAICleaning"
-                    @change="sanitizeChapterPages(chapter)"
-                  />
-                </td>
-                <td>
-                  <input
-                    v-model.number="chapter.end_page"
-                    type="number"
-                    min="1"
-                    :max="draftPageCount"
-                    class="chapter-input chapter-page"
-                    :disabled="isAICleaning"
-                    @change="sanitizeChapterPages(chapter)"
-                  />
-                </td>
-                <td>
-                  <button type="button" class="row-delete" :disabled="isAICleaning" @click="removeDraftChapter(index)">
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="modal-actions">
-          <button type="button" class="btn-secondary" :disabled="isAICleaning" @click="addDraftChapter">Add Chapter</button>
-          <button
-            type="button"
-            class="btn-ai-cleanup"
-            :disabled="isAICleaning"
-            @click="aiCleanupChapters"
-          >
-            {{ isAICleaning ? 'Cleaning up...' : 'AI Clean Up' }}
-          </button>
-          <button type="button" class="btn-secondary" :disabled="isAICleaning" @click="closeSyllabusModal">Cancel</button>
-          <button
-            type="button"
-            class="btn-primary"
-            :disabled="isConfirmingDraft || isAICleaning"
-            @click="confirmSyllabusDraft"
-          >
-            {{ isConfirmingDraft ? 'Confirming...' : 'Confirm and Ingest' }}
-          </button>
-        </div>
-      </div>
-    </div>
     <transition name="toast-fade">
       <div v-if="showFallbackToast" class="fallback-toast">
         <div class="fallback-toast-inner">
@@ -385,8 +150,10 @@ import {
   ResolveFilePaths,
 } from '../../wailsjs/runtime/runtime'
 
-const fileInput = ref(null)
-const isDragging = ref(false)
+import NotebookUpload from '../components/NotebookUpload.vue'
+import NotebookCard from '../components/NotebookCard.vue'
+import NotebookSyllabusModal from '../components/NotebookSyllabusModal.vue'
+
 const uploadProgress = ref(0)
 const uploadError = ref('')
 const uploadSuccess = ref(false)
@@ -575,25 +342,6 @@ async function loadNotebooks() {
   }
 }
 
-function triggerFilePicker() {
-  fileInput.value?.click()
-}
-
-function handleFileSelect(event) {
-  const files = event.target.files
-  if (files.length > 0) {
-    uploadFile(files[0])
-  }
-}
-
-function handleFileDrop(event) {
-  isDragging.value = false
-  const files = event.dataTransfer.files
-  if (files.length > 0) {
-    uploadFile(files[0])
-  }
-}
-
 async function uploadFile(file) {
   uploadError.value = ''
   uploadSuccess.value = false
@@ -654,9 +402,6 @@ async function uploadFile(file) {
       successMessage.value = ''
       ingestionStatusMessage.value = ''
       ingestionNotebookID.value = ''
-      if (fileInput.value) {
-        fileInput.value.value = ''
-      }
       void loadNotebooks()
     }, 2000)
   } catch (error) {
@@ -757,18 +502,6 @@ function closeSyllabusModal() {
   isConfirmingDraft.value = false
 }
 
-function addDraftChapter() {
-  const start =
-    draftChapters.value.length > 0
-      ? Number(draftChapters.value[draftChapters.value.length - 1].end_page) + 1
-      : 1
-  draftChapters.value.push({
-    title: `Chapter ${draftChapters.value.length + 1}`,
-    start_page: Math.min(start, draftPageCount.value),
-    end_page: draftPageCount.value,
-  })
-}
-
 async function aiCleanupChapters() {
   if (!draftNotebookID.value || isAICleaning.value) return
 
@@ -782,7 +515,8 @@ async function aiCleanupChapters() {
     }
 
     const chapters = Array.isArray(result?.chapters) ? result.chapters : []
-    draftPageCount.value = Number(result?.page_count) > 0 ? Number(result.page_count) : draftPageCount.value
+    draftPageCount.value =
+      Number(result?.page_count) > 0 ? Number(result.page_count) : draftPageCount.value
     draftChapters.value =
       chapters.length > 0
         ? chapters.map((ch) => ({
@@ -812,18 +546,6 @@ async function aiCleanupChapters() {
   }
 }
 
-function removeDraftChapter(index) {
-  draftChapters.value.splice(index, 1)
-}
-
-function sanitizeChapterPages(chapter) {
-  chapter.start_page = Math.max(1, Math.min(Number(chapter.start_page) || 1, draftPageCount.value))
-  chapter.end_page = Math.max(
-    chapter.start_page,
-    Math.min(Number(chapter.end_page) || chapter.start_page, draftPageCount.value)
-  )
-}
-
 function chaptersEqual(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
     return false
@@ -846,6 +568,13 @@ function showToast(message) {
     showActionToast.value = false
     actionToastTimer.value = null
   }, 5000)
+}
+
+async function handleConfirmSyllabus({ title, priority, chapters }) {
+  draftNotebookTitle.value = title
+  draftNotebookPriority.value = priority
+  draftChapters.value = chapters
+  await confirmSyllabusDraft()
 }
 
 async function confirmSyllabusDraft() {
@@ -973,31 +702,6 @@ async function updatePriority(notebookId, priority) {
     uploadError.value = `Failed to update priority: ${error.message}`
   }
 }
-
-function getFileIcon(fileType) {
-  const icons = {
-    pdf: '📕',
-    txt: '📄',
-    md: '📝',
-  }
-  return icons[fileType] || '📄'
-}
-
-function getTopicTitle(topicId) {
-  const topic = availableTopics.value.find((t) => t.id === topicId)
-  return topic ? topic.title : 'No topic'
-}
-
-function formatStatus(status) {
-  if (!status) {
-    return 'uploaded'
-  }
-  return status.replaceAll('_', ' ')
-}
-
-function formatDate(dateString) {
-  return new Date(dateString).toLocaleDateString()
-}
 </script>
 
 <style scoped>
@@ -1024,137 +728,11 @@ function formatDate(dateString) {
   color: var(--muted-text);
 }
 
-.upload-section {
-  display: block;
-  margin-bottom: 48px;
-}
-
-.upload-card {
-  background: var(--surface-container-low);
-  border-radius: 16px;
-  padding: 24px;
-}
-
-.upload-icon {
-  font-size: 48px;
-  text-align: center;
-  margin-bottom: 16px;
-}
-
-.upload-card h3 {
-  margin: 0 0 8px;
-  font-size: 18px;
-  color: var(--on-surface);
-}
-
-.upload-card p {
-  margin: 0 0 16px;
-  font-size: 14px;
-  color: var(--muted-text);
-}
-
-.drop-zone {
-  border: 1px solid var(--outline-variant);
-  border-radius: 14px;
-  padding: 28px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background: var(--surface-container-lowest);
-  min-height: 170px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-}
-
-.drop-zone:hover,
-.drop-zone.dragging {
-  background: rgba(0, 91, 193, 0.06);
-  border-color: var(--primary);
-}
-
-.drop-title {
-  margin: 0;
-  font-size: 18px;
-  font-family: 'Manrope', sans-serif;
-  font-weight: 700;
-  color: var(--on-surface);
-}
-
-.upload-cta {
-  border: none;
-  border-radius: 12px;
-  padding: 12px 20px;
-  font-size: 14px;
-  font-family: 'Manrope', sans-serif;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  color: var(--on-primary);
-  background: linear-gradient(15deg, var(--primary), var(--primary-dim));
-  cursor: pointer;
-}
-
-.drop-hint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted-text);
-}
-
-.progress {
-  margin-top: 16px;
-  position: relative;
-}
-
-.progress-bar {
-  height: 4px;
-  background: var(--primary);
-  border-radius: 2px;
-  transition: width 0.3s;
-}
-
-.progress span {
-  display: block;
-  font-size: 12px;
-  color: var(--muted-text);
-  margin-top: 8px;
-  text-align: center;
-}
-
-.progress-label {
-  margin: 8px 0 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.indexing-progress {
-  margin-top: 12px;
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--surface-container-low);
-}
-
-.indexing-progress .progress-bar {
-  background: linear-gradient(15deg, #2e7d32, #4caf50);
-}
-
 .error-message {
   margin-top: 12px;
   padding: 12px;
   background: #ffebee;
   color: #c62828;
-  border-radius: 6px;
-  font-size: 14px;
-}
-
-.success-message {
-  margin-top: 12px;
-  padding: 12px;
-  background: #e8f5e9;
-  color: #2e7d32;
   border-radius: 6px;
   font-size: 14px;
 }
@@ -1187,354 +765,6 @@ function formatDate(dateString) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 16px;
-}
-
-.notebook-card {
-  background: var(--surface-container);
-  border-radius: 12px;
-  padding: 16px;
-  border: 1px solid var(--outline-variant);
-  transition: all 0.2s;
-  position: relative;
-}
-
-.notebook-card:hover {
-  box-shadow: 0 2px 8px rgba(45, 51, 56, 0.06);
-}
-
-.notebook-header-card {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.btn-edit-pen {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-  width: 30px;
-  height: 30px;
-  font-size: 15px;
-  cursor: pointer;
-}
-
-.btn-edit-pen:hover {
-  background: var(--surface-container-high, #e6e9ef);
-}
-
-.file-icon {
-  font-size: 28px;
-  flex-shrink: 0;
-}
-
-.notebook-info h3 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--on-surface);
-  word-break: break-word;
-}
-
-.meta {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.notebook-topic {
-  margin-bottom: 12px;
-}
-
-.badge {
-  display: inline-block;
-  background: var(--surface-container-low);
-  color: var(--primary);
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.badge.muted {
-  color: var(--muted-text);
-}
-
-.notebook-date {
-  font-size: 12px;
-  color: var(--muted-text);
-  margin-bottom: 12px;
-}
-
-.notebook-priority {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.priority-label {
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.priority-select {
-  padding: 4px 8px;
-  border: 1px solid var(--outline-variant);
-  border-radius: 4px;
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.priority-select:hover {
-  border-color: var(--primary);
-}
-
-.notebook-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.btn-delete {
-  flex: 1;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-weight: 600;
-}
-
-.btn-delete {
-  background: #ffe9e8;
-  color: #b5423d;
-}
-
-.btn-delete:hover {
-  opacity: 0.9;
-}
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(18, 22, 28, 0.58);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  z-index: 1200;
-}
-
-.modal-card {
-  width: 90vw;
-  max-width: 1100px;
-  max-height: 90vh;
-  overflow: auto;
-  background: var(--surface-container-lowest);
-  border: 1px solid var(--outline-variant);
-  border-radius: 14px;
-  padding: 24px;
-  z-index: 1300;
-  position: relative;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.modal-header h3 {
-  margin: 0;
-  font-size: 18px;
-  color: var(--on-surface);
-}
-
-.modal-close {
-  border: 0;
-  background: transparent;
-  color: var(--muted-text);
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.modal-warning {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: #fff8e6;
-  color: #8c6700;
-  font-size: 13px;
-}
-
-.modal-title-edit {
-  margin: 0 0 12px;
-}
-
-.modal-title-edit label {
-  display: block;
-  font-size: 12px;
-  color: var(--muted-text);
-  margin-bottom: 6px;
-}
-
-.modal-priority-edit {
-  margin: 0 0 12px;
-}
-
-.modal-priority-edit label {
-  display: block;
-  font-size: 12px;
-  color: var(--muted-text);
-  margin-bottom: 6px;
-}
-
-.priority-select-modal {
-  width: 100%;
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-  cursor: pointer;
-}
-
-.priority-select-modal:hover {
-  border-color: var(--primary);
-}
-
-.priority-hint {
-  margin: 6px 0 0;
-  font-size: 11px;
-  color: var(--muted-text);
-}
-
-.modal-error {
-  margin-bottom: 10px;
-}
-
-.chapter-table-wrap {
-  overflow-x: auto;
-}
-
-.chapter-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.chapter-table th,
-.chapter-table td {
-  text-align: left;
-  border-bottom: 1px solid var(--outline-variant);
-  padding: 8px;
-  vertical-align: middle;
-}
-
-.chapter-table th:nth-child(1),
-.chapter-table td:nth-child(1) {
-  width: 50%;
-  min-width: 250px;
-}
-
-.chapter-table th:nth-child(2),
-.chapter-table td:nth-child(2),
-.chapter-table th:nth-child(3),
-.chapter-table td:nth-child(3) {
-  width: 20%;
-  min-width: 110px;
-}
-
-.chapter-table th:nth-child(4),
-.chapter-table td:nth-child(4) {
-  width: 10%;
-  min-width: 80px;
-}
-
-.chapter-table th {
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.chapter-input {
-  width: 100%;
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-}
-
-.chapter-page {
-  min-width: 100px;
-}
-
-.row-delete {
-  border: 0;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: #ffe9e8;
-  color: #b5423d;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.btn-secondary,
-.btn-primary {
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.btn-secondary {
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-}
-
-.btn-primary {
-  background: var(--primary);
-  color: var(--on-primary);
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-ai-cleanup {
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-weight: 700;
-  cursor: pointer;
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
-  color: white;
-  transition: all 0.2s;
-}
-
-.btn-ai-cleanup:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
-}
-
-.btn-ai-cleanup:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .action-toast,
@@ -1612,10 +842,6 @@ function formatDate(dateString) {
     grid-template-columns: 1fr;
   }
 
-  .modal-actions {
-    flex-wrap: wrap;
-  }
-
   .fallback-toast {
     position: fixed;
     left: 20px;
@@ -1670,54 +896,4 @@ function formatDate(dateString) {
   font-size: 13px;
   color: var(--muted-text, #888);
 }
-
-.active-notebook-card {
-  border-color: var(--primary);
-  box-shadow:
-    0 0 0 1px var(--primary),
-    0 4px 12px rgba(108, 92, 231, 0.15);
-}
-
-.active-icon {
-  color: var(--primary);
-}
-
-/* ── New Action Buttons ───────────────────────────────── */
-.btn-activate {
-  background: linear-gradient(135deg, var(--primary), #7c3aed);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-activate:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(108, 92, 231, 0.3);
-}
-
-.btn-activate:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-sleep {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-sleep:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-}
-
 </style>
