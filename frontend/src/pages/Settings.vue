@@ -49,6 +49,8 @@
 
         <SettingsTheme :settings="settings" :disabled="loading || saving" />
 
+        <SettingsUpdate />
+
         <SettingsAccount
           :settings="settings"
           :is-dev="isDev"
@@ -152,6 +154,7 @@ import SettingsStudyBudget from '../components/SettingsStudyBudget.vue'
 import SettingsQuizRescue from '../components/SettingsQuizRescue.vue'
 import SettingsAIProvider from '../components/SettingsAIProvider.vue'
 import SettingsTheme from '../components/SettingsTheme.vue'
+import SettingsUpdate from '../components/SettingsUpdate.vue'
 import SettingsAccount from '../components/SettingsAccount.vue'
 import SettingsProfilesPanel from '../components/SettingsProfilesPanel.vue'
 import SettingsTextbooksPanel from '../components/SettingsTextbooksPanel.vue'

@@ -316,6 +316,14 @@ export function devForceFlashcardGenerate(notebookID) {
   return appBridge().DevForceFlashcardGenerate(notebookID)
 }
 
+export function checkForUpdates() {
+  return appBridge().CheckForUpdates()
+}
+
+export function openRepoURL() {
+  return appBridge().OpenRepoURL()
+}
+
 export function logFrontendEvent(level, component, event, details = '') {
   try {
     const bridge = window?.go?.main?.App
