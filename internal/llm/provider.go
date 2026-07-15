@@ -67,6 +67,7 @@ func LoadConfigFromEnvForPrefix(prefix string) *Config {
 	}
 
 	config.Limits = getModelLimits(config.Model)
+	applyEnvLimitsOverride(prefix, &config.Limits)
 
 	return config
 }
@@ -94,6 +95,7 @@ func LoadConfigFromSettingsForPrefix(prefix string, settings models.LLMTierSetti
 		config.TimeoutMs = 30000
 	}
 	config.Limits = getModelLimits(config.Model)
+	applyEnvLimitsOverride(prefix, &config.Limits)
 	return config
 }
 
@@ -151,8 +153,8 @@ func getModelLimits(model string) ModelLimits {
 		}
 	case strings.Contains(model, "gpt-oss-120b"):
 		return ModelLimits{
-			MaxInputTokens:  50000, // ~60% of 128k context
-			MaxOutputTokens: 4000,
+			MaxInputTokens:  6000, // Safe default for standard on_demand tier (Limit 8000 TPM)
+			MaxOutputTokens: 1500,
 		}
 	case strings.Contains(model, "gpt-oss-20b"):
 		return ModelLimits{
@@ -165,6 +167,18 @@ func getModelLimits(model string) ModelLimits {
 			MaxInputTokens:  30000,
 			MaxOutputTokens: 3000,
 		}
+	}
+}
+
+func applyEnvLimitsOverride(prefix string, limits *ModelLimits) {
+	maxInputKeys := prefixedKeys(prefix, "LLM_MAX_INPUT_TOKENS", "MAX_INPUT_TOKENS")
+	maxOutputKeys := prefixedKeys(prefix, "LLM_MAX_OUTPUT_TOKENS", "MAX_OUTPUT_TOKENS")
+
+	if envMaxInput := firstEnvInt(0, maxInputKeys...); envMaxInput > 0 {
+		limits.MaxInputTokens = envMaxInput
+	}
+	if envMaxOutput := firstEnvInt(0, maxOutputKeys...); envMaxOutput > 0 {
+		limits.MaxOutputTokens = envMaxOutput
 	}
 }
 

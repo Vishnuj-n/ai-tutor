@@ -614,12 +614,13 @@ async function confirmSyllabusDraft() {
   isConfirmingDraft.value = true
 
   try {
+    const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
+
     if (titleChanged) {
       const titleResult = await apiUpdateNotebookTitle(draftNotebookID.value, trimmedTitle)
       if (titleResult?.error) {
         throw new Error(titleResult.error)
       }
-      const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
       if (notebook) {
         notebook.title = trimmedTitle
       }
@@ -633,15 +634,15 @@ async function confirmSyllabusDraft() {
       if (priorityResult?.error) {
         throw new Error(priorityResult.error)
       }
-      const notebook = notebooks.value.find((nb) => nb.id === draftNotebookID.value)
       if (notebook) {
         notebook.priority = draftNotebookPriority.value
       }
     }
 
-    // Only call ConfirmNotebookSyllabus if chapters actually changed
-    // This avoids expensive re-ingestion when only notebook title or priority changed
-    if (chaptersChanged) {
+    // Only call ConfirmNotebookSyllabus if chapters actually changed OR if notebook is not yet chunked
+    // This avoids expensive re-ingestion when only notebook title or priority changed on already-ingested books
+    const isNotChunked = !notebook || notebook.status !== 'chunked'
+    if (chaptersChanged || isNotChunked) {
       const result = await apiConfirmNotebookSyllabus(draftNotebookID.value, sanitized)
       if (result?.error) {
         throw new Error(result.error)
