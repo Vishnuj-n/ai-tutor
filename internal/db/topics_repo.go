@@ -370,6 +370,7 @@ func (r *Repository) QueryNextReadingTopic() (models.ReadingTopicCursor, bool, e
 		  AND n.id IS NOT NULL
 		  AND n.id != ''
 		  AND n.study_status = 'active'
+		  AND n.status = 'chunked'
 	`
 	var args []interface{}
 	if activeProfileStr != "" {

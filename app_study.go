@@ -708,21 +708,36 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 
-	// Generate quiz from full assigned chunk range (no page validation)
-	chunks, err := repo.GetChunksForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
+	// Generate quiz from all topic chunks.
+	// Chunks can have page_num values outside the task's page bounds due to
+	// gap-filling logic in chapterIndexForPage (pages between/after chapters
+	// get assigned to the nearest chapter). The page range is for reading
+	// navigation, not quiz content.
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup topicID=%q", task.TopicID)
+	chunks, err := repo.GetChunksForTopic(task.TopicID)
 	if err != nil {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup error taskID=%s err=%v", taskID, err)
 		return map[string]interface{}{"error": err.Error()}
 	}
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup result: got %d chunks for topicID=%q", len(chunks), task.TopicID)
+
+	if len(chunks) == 0 {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading no chunks found for topicID=%q — notebook content not indexed", task.TopicID)
+		return map[string]interface{}{
+			"error": "notebook content not yet indexed — please re-confirm your syllabus from the notebook page",
+			"code":  422,
+		}
+	}
 
 	chunkIDs := make([]string, 0, len(chunks))
 	chunkTextByID := make(map[string]string, len(chunks))
-	for _, chunk := range chunks {
+	for i, chunk := range chunks {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk[%d] id=%q topicID=%q textLen=%d", i, chunk.ID, chunk.TopicID, len(chunk.Text))
 		chunkIDs = append(chunkIDs, chunk.ID)
 		chunkTextByID[chunk.ID] = chunk.Text
 	}
 
-	utils.Warnf("[QUIZ] CompleteReading before GenerateQuizSync taskID=%s topicID=%s chunkCount=%d", taskID, task.TopicID, len(chunkIDs))
+	utils.Warnf("[QUIZ] CompleteReading before GenerateQuizSync taskID=%s topicID=%q chunkCount=%d chunkIDs=%v", taskID, task.TopicID, len(chunkIDs), chunkIDs)
 	quizPayload, err := a.studyService.GenerateQuizSync(task.TopicID, chunkIDs, chunkTextByID)
 	if err != nil {
 		utils.Warnf("[QUIZ] CompleteReading GenerateQuizSync error taskID=%s err=%v", taskID, err)
