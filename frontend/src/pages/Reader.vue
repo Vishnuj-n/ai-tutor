@@ -74,9 +74,8 @@
     <div v-else class="layout" :class="{ collapsed: chat.chatCollapsed.value }">
       <article class="panel stage">
         <!-- Scroll Progress Bar -->
-        <div v-if="reader.pdfVisible.value || reader.loadingBundle.value" class="scroll-progress-bar" :class="{ 'is-loading': pageLoading }" aria-hidden="true">
-          <div v-if="pageLoading" class="scroll-progress-loading-fill"></div>
-          <div v-else class="scroll-progress-fill" :style="{ width: `${progressPercentage}%` }"></div>
+        <div class="scroll-progress-bar" aria-hidden="true">
+          <div class="scroll-progress-fill" :style="{ width: `${progressPercentage}%` }"></div>
         </div>
 
         <div class="stage-head">
@@ -102,7 +101,7 @@
           </div>
         </div>
 
-        <div v-if="reader.loadingBundle.value || (reader.pdfVisible.value && !sharedPdfDoc)" class="empty">Loading document...</div>
+        <div v-if="reader.loadingBundle.value" class="empty">Loading document...</div>
         <div v-else-if="!reader.pdfVisible.value" class="empty">
           PDF not available for selected notebook/topic.
         </div>
@@ -136,7 +135,7 @@
             >
               <vue-pdf-embed
                 v-if="renderedPages[pageNum]"
-                :source="sharedPdfDoc"
+                :source="reader.notebookUrl.value"
                 :page="pageNum"
                 :text-layer="false"
                 :annotation-layer="false"
@@ -219,7 +218,7 @@ import {
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
 import ReaderChat from '../components/ReaderChat.vue'
-import VuePdfEmbed, { usePdfDocument } from 'vue-pdf-embed'
+import VuePdfEmbed from 'vue-pdf-embed'
 import 'vue-pdf-embed/dist/styles/annotationLayer.css'
 import 'vue-pdf-embed/dist/styles/textLayer.css'
 
@@ -236,12 +235,6 @@ const routeTaskID = computed(() => {
 const reader = useReaderBase(routeTaskID)
 const chat = useChat()
 provide('chat', chat)
-
-// Load the PDF document once to share it across page renderers
-const pdfSource = computed(() => reader.notebookUrl.value)
-const { doc: sharedPdfDoc } = usePdfDocument({
-  source: pdfSource,
-})
 
 // Local state for completion
 const completingSession = ref(false)
@@ -289,26 +282,6 @@ watch(resolvedTaskID, (next, prev) => {
 const pdfViewportRef = ref(null)
 const pdfScalerRef = ref(null)
 const pdfLoadError = ref('')
-
-// Track render completion of individual PDF pages
-const completedPages = ref({})
-
-// Clear render completion tracking on document source changes
-watch(
-  () => reader.notebookUrl.value,
-  () => {
-    completedPages.value = {}
-  }
-)
-
-// Active page rendering / document loading detection
-const pageLoading = computed(() => {
-  if (pdfLoadError.value) return false
-  if (reader.loadingBundle.value) return true
-  if (reader.pdfVisible.value && !sharedPdfDoc.value) return true
-  const currentPage = reader.currentPage.value
-  return !completedPages.value[currentPage]
-})
 
 // Custom PDF Viewer Zoom & View Modes
 const BASE_PAGE_WIDTH = 800
@@ -443,7 +416,6 @@ const isTaskFlow = computed(() => {
 
 function onPageRendered(pageNum) {
   logScroll('onPageRendered', { pageNum })
-  completedPages.value[pageNum] = true
   if (scrollState.value.status === 'loading' || scrollState.value.status === 'scrolling') {
     const targetPage = scrollState.value.targetPage || reader.currentPage.value
     if (pageNum === targetPage) {
@@ -1238,30 +1210,5 @@ button:disabled {
   height: 100%;
   background: linear-gradient(90deg, var(--primary-dim), var(--primary));
   transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.scroll-progress-loading-fill {
-  height: 100%;
-  width: 30%;
-  background: var(--primary);
-  position: absolute;
-  top: 0;
-  left: 0;
-  border-radius: 3px;
-  animation: indeterminate-loading-bar 1.5s infinite ease-in-out;
-}
-
-@keyframes indeterminate-loading-bar {
-  0% {
-    left: -30%;
-    width: 30%;
-  }
-  50% {
-    width: 40%;
-  }
-  100% {
-    left: 100%;
-    width: 30%;
-  }
 }
 </style>

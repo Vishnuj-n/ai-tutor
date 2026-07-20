@@ -148,6 +148,7 @@ export function useReaderBase(taskID) {
         return null
       }
 
+      console.time('[PERF] initializeReadingSession (Wails→Go→SQLite)')
       const result = await initializeReadingSession(
         taskID.value,
         notebookId,
@@ -155,6 +156,7 @@ export function useReaderBase(taskID) {
         startPage,
         endPage
       )
+      console.timeEnd('[PERF] initializeReadingSession (Wails→Go→SQLite)')
 
       // Defensive: check ok flag first (backend contract)
       if (!result?.ok) {
