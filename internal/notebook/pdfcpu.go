@@ -61,6 +61,7 @@ func runPDFCPUBookmarksExport(filePath string, uploadDir string) ([]byte, error)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 		cmd := exec.CommandContext(ctx, pdfcpuPath, "bookmarks", "export", absFilePath, tmpPath)
+		hideConsoleWindow(cmd)
 		_, runErr := cmd.Output()
 		cancel() // Cancel context to release resources
 

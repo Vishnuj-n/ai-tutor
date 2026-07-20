@@ -173,6 +173,7 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 		"notebook_id": bundle.NotebookID, "notebook_title": bundle.NotebookTitle,
 		"notebook_url": bundle.NotebookURL, "file_type": bundle.FileType,
 		"page_count": bundle.PageCount, "sections": lightSections,
+		"notebook_file_hash": bundle.NotebookFileHash,
 	}
 }
 

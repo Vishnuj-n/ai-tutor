@@ -4,8 +4,7 @@
       <div class="brand">
         <div class="brand-mark">S</div>
         <div>
-          <p class="brand-title">The Scholar OS</p>
-          <p class="brand-subtitle">Study Operating System</p>
+          <p class="brand-title">The StudyLoop</p>
         </div>
       </div>
 

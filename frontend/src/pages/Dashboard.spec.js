@@ -50,7 +50,12 @@ describe('Dashboard.vue Integration', () => {
       skip_to_reading_active: false,
     })
     appApi.getProfileDailyPace.mockResolvedValue({ completed_today: 0, target_today: 10 })
-    appApi.getStreakState.mockResolvedValue({ current_streak: 2, longest_streak: 5, active_dates: [], today_completed: false })
+    appApi.getStreakState.mockResolvedValue({
+      current_streak: 2,
+      longest_streak: 5,
+      active_dates: [],
+      today_completed: false,
+    })
     appApi.getFlashcardDueTimeline.mockResolvedValue({ timeline: [], error: null })
   })
 
@@ -105,6 +110,8 @@ describe('Dashboard.vue Integration', () => {
       undefined,
       undefined,
       undefined,
+      '',
+      false,
       ''
     )
   })

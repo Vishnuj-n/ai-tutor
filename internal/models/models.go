@@ -4,14 +4,6 @@ import (
 	"github.com/open-spaced-repetition/go-fsrs/v4"
 )
 
-// safeUint64FromInt clamps negative ints to 0 before casting to uint64.
-func safeUint64FromInt(v int) uint64 {
-	if v < 0 {
-		return 0
-	}
-	return uint64(v)
-}
-
 // ScheduledTask represents one actionable study task for the day.
 type ScheduledTask struct {
 	ID              string `json:"id"`
@@ -29,15 +21,16 @@ type ScheduledTask struct {
 type StudyTaskType string
 
 const (
-	StudyTaskTypeFlashcardReview StudyTaskType = "FLASHCARD_REVIEW"
-	StudyTaskTypeReread          StudyTaskType = "REREAD"
-	StudyTaskTypeQuiz            StudyTaskType = "QUIZ"
-	StudyTaskTypeReading         StudyTaskType = "READING"
-	StudyTaskTypeExaminer        StudyTaskType = "EXAMINER"
-	StudyTaskTypeSocraticRemedial StudyTaskType = "SOCRATIC_REMEDIAL"
+	StudyTaskTypeFlashcardReview   StudyTaskType = "FLASHCARD_REVIEW"
+	StudyTaskTypeReread            StudyTaskType = "REREAD"
+	StudyTaskTypeQuiz              StudyTaskType = "QUIZ"
+	StudyTaskTypeMilestoneExam     StudyTaskType = "MILESTONE_EXAM"
+	StudyTaskTypeReading           StudyTaskType = "READING"
+	StudyTaskTypeExaminer          StudyTaskType = "EXAMINER"
+	StudyTaskTypeSocraticRemedial  StudyTaskType = "SOCRATIC_REMEDIAL"
 	StudyTaskTypeFlashcardGenerate StudyTaskType = "FLASHCARD_GENERATE"
 	// Deprecated: Use StudyTaskTypeFlashcardGenerate instead
-	StudyTaskTypeFlashcardSync     StudyTaskType = StudyTaskTypeFlashcardGenerate
+	StudyTaskTypeFlashcardSync StudyTaskType = StudyTaskTypeFlashcardGenerate
 )
 
 type StudyTaskStatus string
@@ -87,6 +80,12 @@ type CompletionResult struct {
 type QuizTaskPayload struct {
 	Questions    []QuizTaskQuestion `json:"questions"`
 	PassingScore int                `json:"passing_score"`
+}
+
+type MilestoneExamPayload struct {
+	Quizzes      map[string][]int `json:"quizzes"`
+	PassingScore int              `json:"passing_score"`
+	QuizCount    int              `json:"quiz_count"`
 }
 
 type QuizTaskQuestion struct {
@@ -149,6 +148,7 @@ type ReadingTask struct {
 	StartPage   int    `json:"start_page"`
 	EndPage     int    `json:"end_page"`
 	CurrentPage int    `json:"current_page"`
+	FileHash    string `json:"file_hash,omitempty"`
 }
 
 // TodayPlan is the scheduler output consumed by the dashboard.
@@ -265,17 +265,18 @@ type ReaderSection struct {
 
 // ReaderTopicBundle contains notebook metadata plus section/page mapping for reader UI.
 type ReaderTopicBundle struct {
-	TopicID        string          `json:"topic_id"`
-	TopicTitle     string          `json:"topic_title"`
-	NotebookID     string          `json:"notebook_id,omitempty"`
-	NotebookTitle  string          `json:"notebook_title,omitempty"`
-	NotebookURL    string          `json:"notebook_url,omitempty"`
-	FileType       string          `json:"file_type,omitempty"`
-	PageCount      int             `json:"page_count"`
-	TopicStartPage int             `json:"topic_start_page"`
-	TopicEndPage   int             `json:"topic_end_page"`
-	Sections       []ReaderSection `json:"sections"`
-	Subtopics      []Subtopic      `json:"subtopics,omitempty"`
+	TopicID          string          `json:"topic_id"`
+	TopicTitle       string          `json:"topic_title"`
+	NotebookID       string          `json:"notebook_id,omitempty"`
+	NotebookTitle    string          `json:"notebook_title,omitempty"`
+	NotebookURL      string          `json:"notebook_url,omitempty"`
+	NotebookFileHash string          `json:"notebook_file_hash,omitempty"`
+	FileType         string          `json:"file_type,omitempty"`
+	PageCount        int             `json:"page_count"`
+	TopicStartPage   int             `json:"topic_start_page"`
+	TopicEndPage     int             `json:"topic_end_page"`
+	Sections         []ReaderSection `json:"sections"`
+	Subtopics        []Subtopic      `json:"subtopics,omitempty"`
 }
 
 // QuizQuestion is a generated question persisted per topic.
@@ -403,19 +404,17 @@ type FSRSReviewLog struct {
 
 // SyncLogEntry is the log entry sent to cloud with file hash and page number as identifiers.
 type SyncLogEntry struct {
-	ID             string `json:"id"`
-	FileHash       string `json:"file_hash"`
-	PageNumber     int    `json:"page_number"`
-	ActivityType   string `json:"activity_type"`
-	ReferenceID    string `json:"reference_id"`
-	ReviewedAt     int64  `json:"reviewed_at"`
-	Rating         int    `json:"rating"`
-	ScheduledDays  int    `json:"scheduled_days"`
+	ID              string `json:"id"`
+	FileHash        string `json:"file_hash"`
+	PageNumber      int    `json:"page_number"`
+	ActivityType    string `json:"activity_type"`
+	ReferenceID     string `json:"reference_id"`
+	ReviewedAt      int64  `json:"reviewed_at"`
+	Rating          int    `json:"rating"`
+	ScheduledDays   int    `json:"scheduled_days"`
 	StateBeforeJSON string `json:"state_before_json"`
-	StateAfterJSON string `json:"state_after_json"`
+	StateAfterJSON  string `json:"state_after_json"`
 }
-
-
 
 // CardToFlashcardState converts go-fsrs Card to our FlashcardState
 func CardToFlashcardState(card fsrs.Card) FlashcardState {
@@ -536,6 +535,16 @@ type UserSettings struct {
 	ClassroomCode           string `json:"classroom_code"`
 	StudentUsername         string `json:"student_username"`
 	LastSyncedAt            int64  `json:"last_synced_at"`
+	AnalyticsEnabled        bool   `json:"analytics_enabled"`
+	AnonymousUserID         string `json:"anonymous_user_id"`
+}
+
+type AnalyticsEventSync struct {
+	EventType  string `json:"event_type"`
+	FileHash   string `json:"file_hash"`
+	PageNumber int    `json:"page_number"`
+	Metadata   string `json:"metadata"`
+	CreatedAt  string `json:"created_at"` // RFC3339 formatted string
 }
 
 // LLMTierSettings stores non-secret OpenAI-compatible provider config.

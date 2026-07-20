@@ -44,10 +44,11 @@ type NotebookSyncRecord struct {
 }
 
 type SyncPayload struct {
-	UserToken     string               `json:"user_token"`
-	ClassroomCode string               `json:"classroom_code"`
-	Notebooks     []NotebookSyncRecord `json:"notebooks"`
-	Logs          []models.SyncLogEntry `json:"logs"`
+	UserToken     string                      `json:"user_token"`
+	ClassroomCode string                      `json:"classroom_code"`
+	Notebooks     []NotebookSyncRecord        `json:"notebooks"`
+	Logs          []models.SyncLogEntry       `json:"logs"`
+	Analytics     []models.AnalyticsEventSync `json:"analytics,omitempty"`
 }
 
 type SyncResponse struct {
@@ -85,6 +86,11 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if syncErr := repo.ResolveFlashcardGenerateTasksForTopic(""); syncErr != nil {
 			utils.Warnf("[SYNC] failed to resolve FLASHCARD_GENERATE tasks: %v", syncErr)
 		}
+		if settings.AnalyticsEnabled {
+			if fbErr := syncAnalyticsFallback(repo); fbErr != nil {
+				utils.Warnf("[SYNC] fallback analytics upload failed: %v", fbErr)
+			}
+		}
 		return nil // Cloud sync not configured
 	}
 
@@ -118,11 +124,23 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 	utils.Warnf("[SYNC] delta logs to send: %d (since %d)", len(logs), settings.LastSyncedAt)
 
+	// Fetch unsynced local analytics events if consent is enabled
+	var unsyncedEvents []models.AnalyticsEventSync
+	var eventIDs []int64
+	if settings.AnalyticsEnabled {
+		var aErr error
+		unsyncedEvents, eventIDs, aErr = repo.GetUnsyncedAnalyticsEvents()
+		if aErr != nil {
+			utils.Warnf("[SYNC] failed to fetch unsynced analytics: %v", aErr)
+		}
+	}
+
 	payload := SyncPayload{
 		UserToken:     apiToken,
 		ClassroomCode: settings.ClassroomCode,
 		Notebooks:     notebookRecords,
 		Logs:          logs,
+		Analytics:     unsyncedEvents,
 	}
 
 	jsonBytes, err := json.Marshal(payload)
@@ -130,58 +148,19 @@ func TriggerCloudSync(repo *db.Repository) error {
 		return fmt.Errorf("failed to marshal sync payload: %w", err)
 	}
 
-	var resp *http.Response
-	var lastErr error
-	const attempts = 3
-	client := &http.Client{Timeout: 10 * time.Second}
+	headers := make(map[string]string)
+	anonKey := os.Getenv("CLOUD_API_TOKEN")
+	if anonKey == "" {
+		anonKey = os.Getenv("SUPABASE_ANON_KEY")
+	}
+	if anonKey != "" {
+		headers["apikey"] = anonKey
+		headers["Authorization"] = "Bearer " + anonKey
+	}
 
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			utils.Warnf("[SYNC] Retrying cloud sync, attempt %d/%d due to: %v", i+1, attempts, lastErr)
-			time.Sleep(1 * time.Second)
-		}
-
-		var req *http.Request
-		req, lastErr = http.NewRequest("POST", syncURL, bytes.NewBuffer(jsonBytes))
-		if lastErr != nil {
-			lastErr = fmt.Errorf("failed to create http request: %w", lastErr)
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		anonKey := os.Getenv("CLOUD_API_TOKEN")
-		if anonKey == "" {
-			anonKey = os.Getenv("SUPABASE_ANON_KEY")
-		}
-		if anonKey != "" {
-			req.Header.Set("apikey", anonKey)
-			req.Header.Set("Authorization", "Bearer "+anonKey)
-		}
-
-		resp, lastErr = client.Do(req)
-		if lastErr != nil {
-			lastErr = fmt.Errorf("network error during sync: %w", lastErr)
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("sync server returned status %d: %s", resp.StatusCode, string(bodyBytes))
-			continue
-		}
-
-		// Decode response body inside loop to catch decode failures as errors
-		var syncResp SyncResponse
-		decodeErr := json.NewDecoder(resp.Body).Decode(&syncResp)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			lastErr = fmt.Errorf("failed to decode sync response: %w", decodeErr)
-			continue
-		}
-
-		// Success!
-		lastErr = nil
-
+	var syncResp SyncResponse
+	lastErr := postJSONWithRetry(syncURL, jsonBytes, headers, 3, &syncResp)
+	if lastErr == nil {
 		// Handle assigned notebooks from teacher
 		if len(syncResp.NewNotebooks) > 0 {
 			utils.Warnf("[SYNC] Found %d new teacher assignments", len(syncResp.NewNotebooks))
@@ -204,15 +183,22 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if setErr := repo.SetLastSyncedAt(maxReviewedAt); setErr != nil {
 			utils.Warnf("[SYNC] failed to persist last_synced_at: %v", setErr)
 		}
+
+		// Mark sent analytics events as synced in local SQLite
+		if len(eventIDs) > 0 {
+			if markErr := repo.MarkAnalyticsSynced(eventIDs); markErr != nil {
+				utils.Warnf("[SYNC] failed to mark analytics synced: %v", markErr)
+			}
+		}
+
 		// Sync completed successfully. Clear any pending FLASHCARD_GENERATE tasks.
 		if syncErr := repo.ResolveFlashcardGenerateTasksForTopic(""); syncErr != nil {
 			utils.Warnf("[SYNC] failed to resolve FLASHCARD_GENERATE tasks: %v", syncErr)
 		}
-		break
 	}
 
 	if lastErr != nil {
-		utils.Warnf("[SYNC] Cloud sync failed after %d attempts: %v", attempts, lastErr)
+		utils.Warnf("[SYNC] Cloud sync failed after %d attempts: %v", 3, lastErr)
 		// Insert FLASHCARD_GENERATE task if not already pending/active and a valid notebook exists
 		if len(notebooks) > 0 {
 			notebookID := notebooks[0].ID
@@ -225,6 +211,94 @@ func TriggerCloudSync(repo *db.Repository) error {
 
 	utils.Warnf("[SYNC] Cloud sync completed successfully.")
 	return nil
+}
+
+func syncAnalyticsFallback(repo *db.Repository) error {
+	events, ids, err := repo.GetUnsyncedAnalyticsEvents()
+	if err != nil {
+		return fmt.Errorf("failed to fetch unsynced analytics for fallback: %w", err)
+	}
+	if len(events) == 0 {
+		return nil
+	}
+
+	researchURL := os.Getenv("RESEARCH_ANALYTICS_URL")
+	if researchURL == "" {
+		researchURL = "https://rptpauakhdsqinpcnebw.supabase.co/rest/v1/anonymous_analytics_events"
+	}
+	researchToken := os.Getenv("RESEARCH_ANALYTICS_ANON_KEY")
+	if researchToken == "" {
+		researchToken = "sb_publishable_aL0Wgco3ZzH_OS64pP4g-w_tWRN_bNf"
+	}
+
+	jsonBytes, err := json.Marshal(events)
+	if err != nil {
+		return fmt.Errorf("failed to marshal fallback analytics: %w", err)
+	}
+
+	headers := map[string]string{
+		"apikey":        researchToken,
+		"Authorization": "Bearer " + researchToken,
+	}
+
+	if err := postJSONWithRetry(researchURL, jsonBytes, headers, 3, nil); err != nil {
+		return err
+	}
+
+	if err := repo.MarkAnalyticsSynced(ids); err != nil {
+		utils.Warnf("[SYNC-ANALYTICS] failed to mark fallback events synced: %v", err)
+	}
+	utils.Warnf("[SYNC-ANALYTICS] Fallback analytics sync of %d events succeeded.", len(events))
+	return nil
+}
+
+func postJSONWithRetry(url string, jsonBytes []byte, headers map[string]string, attempts int, decodeTarget interface{}) error {
+	client := &http.Client{Timeout: 10 * time.Second}
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			utils.Warnf("[SYNC-RETRY] Attempt %d/%d due to: %v", i+1, attempts, lastErr)
+			time.Sleep(1 * time.Second)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create http request: %w", err)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("network error: %w", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue
+		}
+
+		if decodeTarget != nil {
+			decodeErr := json.NewDecoder(resp.Body).Decode(decodeTarget)
+			_ = resp.Body.Close()
+			if decodeErr != nil {
+				lastErr = fmt.Errorf("failed to decode response: %w", decodeErr)
+				continue
+			}
+		} else {
+			_ = resp.Body.Close()
+		}
+
+		return nil
+	}
+	return lastErr
 }
 
 func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error {

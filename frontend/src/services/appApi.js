@@ -146,6 +146,10 @@ export function draftNotebookSyllabus(notebookID, regenerate = false) {
   return appBridge().DraftNotebookSyllabus(notebookID, regenerate)
 }
 
+export function aiCleanupNotebookSyllabus(notebookID) {
+  return appBridge().AICleanupNotebookSyllabus(notebookID)
+}
+
 export function confirmNotebookSyllabus(notebookID, chapters) {
   return appBridge().ConfirmNotebookSyllabus(notebookID, chapters)
 }
@@ -181,7 +185,9 @@ export function updateUserSettings(
   ragEntireNotebook,
   ragQueueStudy,
   defaultRemedialStrategy,
-  classroomCode
+  classroomCode,
+  analyticsEnabled,
+  anonymousUserID
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -198,8 +204,15 @@ export function updateUserSettings(
     ragEntireNotebook,
     ragQueueStudy,
     defaultRemedialStrategy,
-    classroomCode
+    classroomCode,
+    analyticsEnabled,
+    anonymousUserID
   )
+}
+
+export function trackAnalyticsEvent(eventType, fileHash, pageNumber, metadata) {
+  const metaStr = typeof metadata === 'object' ? JSON.stringify(metadata) : metadata || ''
+  return appBridge().TrackAnalyticsEvent(eventType, fileHash || '', pageNumber || 0, metaStr)
 }
 
 export function getLLMSettings() {
@@ -266,8 +279,12 @@ export function completeSocraticRescue(taskID) {
   return appBridge().CompleteSocraticRescue(taskID)
 }
 
-export function getFlashcardDueTimeline() {
-  return appBridge().GetFlashcardDueTimeline()
+export function completeMilestoneExam(taskID) {
+  return appBridge().CompleteMilestoneExam(taskID)
+}
+
+export function getFlashcardDueTimeline(timezoneOffsetMinutes) {
+  return appBridge().GetFlashcardDueTimeline(timezoneOffsetMinutes)
 }
 
 export function getAppEnv() {
@@ -296,6 +313,14 @@ export function devForceSocraticRescue(notebookID, topicID) {
 
 export function devForceFlashcardGenerate(notebookID) {
   return appBridge().DevForceFlashcardGenerate(notebookID)
+}
+
+export function checkForUpdates() {
+  return appBridge().CheckForUpdates()
+}
+
+export function openRepoURL() {
+  return appBridge().OpenRepoURL()
 }
 
 export function logFrontendEvent(level, component, event, details = '') {

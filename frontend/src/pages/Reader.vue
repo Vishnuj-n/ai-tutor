@@ -147,14 +147,6 @@
           </div>
         </div>
 
-        <!-- Dev-only Scroll Debug Overlay -->
-        <pre v-if="isDev" class="debug-overlay">
-Scroll Status:  {{ scrollState.status }}
-Target Page:    {{ scrollState.targetPage }}
-Visible Page:   {{ currentVisiblePage }}
-Programmatic:   {{ isProgrammaticScroll }}
-        </pre>
-
         <!-- Right-edge PDF Controls -->
         <div
           v-if="reader.pdfVisible.value && !reader.loadingBundle.value && !pdfLoadError"
@@ -217,7 +209,12 @@ Programmatic:   {{ isProgrammaticScroll }}
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { completeReading, getUserSettings, logFrontendEvent } from '../services/appApi'
+import {
+  completeReading,
+  getUserSettings,
+  logFrontendEvent,
+  trackAnalyticsEvent,
+} from '../services/appApi'
 import { useReaderBase } from '../composables/useReaderBase'
 import { useChat } from '../composables/useChat'
 import ReaderChat from '../components/ReaderChat.vue'
@@ -227,7 +224,6 @@ import 'vue-pdf-embed/dist/styles/textLayer.css'
 
 const route = useRoute()
 const router = useRouter()
-const isDev = import.meta.env.DEV
 
 // Get task ID from route (task flow only - manual flow deprecated)
 const routeTaskID = computed(() => {
@@ -247,6 +243,8 @@ const completionError = ref('')
 const sessionTask = ref(null)
 const ragEnabled = ref(false)
 const ragQueueStudy = ref(true)
+const analyticsEnabled = ref(false)
+const anonymousUserID = ref('')
 const ragSettingsLoaded = ref(false)
 const ragSettingsError = ref(null)
 
@@ -405,8 +403,6 @@ watch(
   }
 )
 
-
-
 const isTaskFlow = computed(() => {
   // Once context is settled, read mode from the context object.
   // Fall back to route query during the initialization window (context not yet set).
@@ -423,10 +419,15 @@ function onPageRendered(pageNum) {
   if (scrollState.value.status === 'loading' || scrollState.value.status === 'scrolling') {
     const targetPage = scrollState.value.targetPage || reader.currentPage.value
     if (pageNum === targetPage) {
-      setTimeout(() => {
-        setScrollStatus('ready')
-        logScroll('onPageRendered_scroll_complete', { targetPage })
-      }, 150)
+      nextTick(() => {
+        const scrolled = scrollToPage(targetPage)
+        if (scrolled) {
+          setTimeout(() => {
+            setScrollStatus('ready')
+            logScroll('onPageRendered_scroll_complete', { targetPage })
+          }, 150)
+        }
+      })
     }
   }
 }
@@ -440,6 +441,8 @@ async function loadRagSettings() {
     const settings = await getUserSettings()
     ragEnabled.value = settings?.rag_enabled ?? false
     ragQueueStudy.value = settings?.rag_queue_study ?? true
+    analyticsEnabled.value = settings?.analytics_enabled ?? false
+    anonymousUserID.value = settings?.anonymous_user_id ?? ''
   } catch (err) {
     console.error('Failed to load settings in Reader:', err)
     ragSettingsError.value = err?.message || 'Failed to load settings'
@@ -466,7 +469,7 @@ async function resolveTaskContext(taskQuery) {
       logScroll('resolveTaskContext_immediate_scroll_success', { targetPage })
       setTimeout(() => setScrollStatus('ready'), 150)
     } else {
-      setScrollStatus('ready')
+      logScroll('resolveTaskContext_scroll_deferred', { targetPage })
     }
   } else {
     setScrollStatus('ready')
@@ -722,6 +725,15 @@ async function completeSession() {
       completionError.value = done.error
       return
     }
+    if (analyticsEnabled.value) {
+      const fileHash = reader.readerContext.value?.notebookFileHash || ''
+      trackAnalyticsEvent('reading_complete', fileHash, reader.currentPage.value, {
+        task_id: taskIDForCompletion,
+        anonymous_user_id: anonymousUserID.value,
+      }).catch((err) => {
+        console.error('[READER] trackAnalyticsEvent reading_complete failed:', err)
+      })
+    }
     const nextRoute = done?.quiz_task_id ? `/quiz?taskId=${done.quiz_task_id}` : '/dashboard'
     // Completion writes the follow-up quiz into the queue; navigation follows the existing route behavior.
     console.warn('[COMPLETE_SESSION] completeSession() before router.push', {
@@ -880,7 +892,6 @@ h3 {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 4px;
-  overflow: hidden;
 }
 
 .pdf-viewport {
@@ -926,8 +937,6 @@ h3 {
   max-width: none !important;
   will-change: filter;
 }
-
-
 
 .completion-message {
   margin: 0;
@@ -1104,8 +1113,6 @@ button:disabled {
   }
 }
 
-
-
 /* Right-edge PDF Controls */
 .pdf-edge-controls {
   position: absolute;
@@ -1184,24 +1191,6 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.debug-overlay {
-  position: absolute;
-  top: 40px;
-  left: 10px;
-  background: rgba(0, 0, 0, 0.85);
-  color: #00ff00;
-  padding: 10px;
-  border-radius: 8px;
-  font-family: monospace;
-  font-size: 11px;
-  line-height: 1.4;
-  z-index: 100;
-  pointer-events: none;
-  margin: 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(0, 255, 0, 0.3);
 }
 
 .scroll-progress-bar {

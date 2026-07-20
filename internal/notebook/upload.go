@@ -30,9 +30,9 @@ type Service struct {
 }
 
 const (
-	DefaultSemanticChunkTargetWords = 150
-	semanticChunkLowerBoundWords    = 100
-	semanticChunkUpperBoundWords    = 200
+	DefaultChunkTargetWords = 150
+	chunkLowerBoundWords    = 100
+	chunkUpperBoundWords    = 200
 )
 
 // Option customizes Service dependencies for testing and advanced setups.
@@ -466,71 +466,9 @@ func (s *Service) extractPDFSample(filePath string, doc *ExtractedDocument, maxP
 	totalPages := reader.NumPage()
 	doc.PageCount = totalPages
 
-	// Extract only a sample of pages for syllabus drafting
 	limit := min(maxPages, totalPages)
 
 	for pageIndex := 1; pageIndex <= limit; pageIndex++ {
-		page := reader.Page(pageIndex)
-		if page.V.IsNull() {
-			continue
-		}
-		text, pageErr := page.GetPlainText(nil)
-		if pageErr != nil {
-			return fmt.Errorf("failed to read pdf page %d: %w", pageIndex, pageErr)
-		}
-
-		normalized := embeddings.NormalizeWhitespace(text)
-		if normalized == "" {
-			continue
-		}
-
-		doc.Sections = append(doc.Sections, ExtractedSection{
-			Heading: fmt.Sprintf("Page %d", pageIndex),
-			Text:    normalized,
-			PageNum: pageIndex,
-		})
-	}
-
-	if len(doc.Sections) > 0 {
-		return nil
-	}
-
-	plainReader, plainErr := reader.GetPlainText()
-	if plainErr != nil {
-		return fmt.Errorf("pdf did not contain extractable text: %w", plainErr)
-	}
-
-	var buf bytes.Buffer
-	if _, copyErr := io.Copy(&buf, plainReader); copyErr != nil {
-		return fmt.Errorf("failed to read plain pdf text: %w", copyErr)
-	}
-
-	normalized := embeddings.NormalizeWhitespace(buf.String())
-	if normalized == "" {
-		return fmt.Errorf("pdf did not contain extractable text")
-	}
-	doc.Sections = append(doc.Sections, ExtractedSection{
-		Heading: "Document",
-		Text:    normalized,
-		PageNum: 1,
-	})
-
-	return nil
-}
-
-func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) error {
-	file, reader, err := s.openPDF(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read pdf: %w", err)
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-
-	totalPages := reader.NumPage()
-	doc.PageCount = totalPages
-
-	for pageIndex := 1; pageIndex <= totalPages; pageIndex++ {
 		page := reader.Page(pageIndex)
 		if page.V.IsNull() {
 			continue
@@ -573,16 +511,21 @@ func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) er
 	}
 
 	doc.WordCount = len(strings.Fields(normalized))
-	doc.Sections = []ExtractedSection{{
+	doc.Sections = append(doc.Sections, ExtractedSection{
 		Heading: "Document",
 		Text:    normalized,
 		PageNum: 1,
-	}}
+	})
+
 	if doc.PageCount == 0 {
 		doc.PageCount = 1
 	}
 
 	return nil
+}
+
+func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) error {
+	return s.extractPDFSample(filePath, doc, math.MaxInt32)
 }
 
 type wordSpan struct {
@@ -591,11 +534,11 @@ type wordSpan struct {
 	text  string
 }
 
-// SplitPageIntoChunks splits page-local text near semantic boundaries around targetWords.
+// SplitPageIntoChunks splits page-local text near punctuation/newline boundaries around targetWords.
 // It never crosses page boundaries because callers provide one page body at a time.
 func SplitPageIntoChunks(text string, targetWords int) []string {
 	if targetWords <= 0 {
-		targetWords = DefaultSemanticChunkTargetWords
+		targetWords = DefaultChunkTargetWords
 	}
 
 	spans := tokenizeWordSpans(text)
@@ -613,7 +556,7 @@ func SplitPageIntoChunks(text string, targetWords int) []string {
 			break
 		}
 
-		lower := start + semanticChunkLowerBoundWords
+		lower := start + chunkLowerBoundWords
 		if lower <= start {
 			lower = start + 1
 		}
@@ -621,7 +564,7 @@ func SplitPageIntoChunks(text string, targetWords int) []string {
 			lower = len(spans)
 		}
 
-		upper := start + semanticChunkUpperBoundWords
+		upper := start + chunkUpperBoundWords
 		if upper > len(spans) {
 			upper = len(spans)
 		}

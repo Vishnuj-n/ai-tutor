@@ -1,8 +1,16 @@
 <template>
   <StudyPageLayout
     eyebrow="Assessment"
-    :title="taskMeta ? 'Quiz' : 'Quiz'"
-    :subtitle="taskMeta ? `Pages ${taskMeta.start_page}–${taskMeta.end_page}` : ''"
+    :title="taskMeta?.task_type === 'MILESTONE_EXAM' ? 'Milestone Exam' : 'Quiz'"
+    :subtitle="
+      taskMeta
+        ? taskMeta.task_type === 'MILESTONE_EXAM'
+          ? 'Cumulative Notebook Assessment'
+          : taskMeta.start_page || taskMeta.end_page
+            ? `Pages ${taskMeta.start_page}–${taskMeta.end_page}`
+            : 'Pages N/A'
+        : ''
+    "
   >
     <!-- Toolbar: notebook selector (manual mode only) -->
     <template v-if="!taskID && !generating && questions.length === 0" #toolbar>
@@ -127,8 +135,8 @@
         <div class="warning-text">
           <p class="warning-title">Generation Warning / Network Error</p>
           <p class="warning-detail">
-            Flashcard generation could not be completed automatically. A retry task has been
-            added to your queue. You can also try retrying the generation now.
+            Flashcard generation could not be completed automatically. A retry task has been added
+            to your queue. You can also try retrying the generation now.
           </p>
           <p class="warning-message">
             Reason: {{ result.flashcards_generation_message || 'Unknown error' }}
@@ -181,6 +189,14 @@
     <!-- Empty state: no questions -->
     <article v-else-if="questions.length === 0 && !generating" class="state-panel">
       <p class="state-text">No quiz questions found for this task.</p>
+      <button
+        v-if="isMilestoneExam"
+        class="primary-btn retry-generation-btn"
+        :disabled="submitting"
+        @click="submitMilestone"
+      >
+        {{ submitting ? 'Completing...' : 'Complete Milestone Exam' }}
+      </button>
     </article>
 
     <!-- Quiz form -->
@@ -235,6 +251,9 @@ import {
   getNotebooks,
   generateQuizForPageRange,
   generateFlashcardsForQuizTask,
+  completeMilestoneExam,
+  trackAnalyticsEvent,
+  getUserSettings,
 } from '../services/appApi'
 import StudyPageLayout from '../components/StudyPageLayout.vue'
 
@@ -248,8 +267,13 @@ const error = ref('')
 const taskMeta = ref(null)
 const questions = ref([])
 const answers = ref({})
+const analyticsEnabled = ref(false)
+const anonymousUserID = ref('')
 const result = ref(null)
 const generatingFlashcards = ref(false)
+
+const isMilestoneExam = ref(false)
+const milestonePayload = ref(null)
 
 // Manual generation state
 const notebooks = ref([])
@@ -297,6 +321,13 @@ const canRetryGeneration = computed(() => {
 
 onMounted(async () => {
   await loadNotebooks()
+  try {
+    const settings = await getUserSettings()
+    analyticsEnabled.value = settings?.analytics_enabled ?? false
+    anonymousUserID.value = settings?.anonymous_user_id ?? ''
+  } catch (err) {
+    console.error('Failed to load user settings in Quiz:', err)
+  }
   if (taskID.value) {
     await loadQuizTask()
   } else {
@@ -330,8 +361,8 @@ async function loadQuizTask() {
     }
 
     const task = response?.task
-    if (!task || task.task_type !== 'QUIZ') {
-      error.value = 'Task is not a quiz task.'
+    if (!task || (task.task_type !== 'QUIZ' && task.task_type !== 'MILESTONE_EXAM')) {
+      error.value = 'Task is not a quiz or milestone exam task.'
       return
     }
 
@@ -342,6 +373,13 @@ async function loadQuizTask() {
         : null
 
     questions.value = Array.isArray(payload?.questions) ? payload.questions : []
+    if (task.task_type === 'MILESTONE_EXAM') {
+      isMilestoneExam.value = true
+      milestonePayload.value = payload
+    } else {
+      isMilestoneExam.value = false
+      milestonePayload.value = null
+    }
     answers.value = {}
     submitted.value = false
     result.value = null
@@ -349,6 +387,23 @@ async function loadQuizTask() {
     error.value = err?.message || 'Failed to load quiz task.'
   } finally {
     loading.value = false
+  }
+}
+
+async function submitMilestone() {
+  submitting.value = true
+  error.value = ''
+  try {
+    const res = await completeMilestoneExam(taskID.value)
+    if (res && res.error) {
+      error.value = res.error
+    } else {
+      router.push('/dashboard')
+    }
+  } catch (err) {
+    error.value = err?.message || 'Failed to complete milestone exam.'
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -443,6 +498,20 @@ async function submitQuiz() {
     }
     result.value = response?.result || null
     submitted.value = true
+
+    if (analyticsEnabled.value) {
+      const notebook = notebooks.value.find((n) => n.id === taskMeta.value?.notebook_id)
+      const fileHash = notebook?.file_hash || ''
+      const currentQuizResult = response?.result
+      trackAnalyticsEvent('quiz_complete', fileHash, taskMeta.value?.start_page || 0, {
+        task_id: taskID.value,
+        score: currentQuizResult?.score || 0,
+        passed: currentQuizResult?.passed || false,
+        correct_count: currentQuizResult?.correct_count || 0,
+        total_count: currentQuizResult?.total_count || 0,
+        anonymous_user_id: anonymousUserID.value,
+      })
+    }
   } catch (err) {
     error.value = err?.message || 'Failed to submit quiz.'
   } finally {
@@ -907,5 +976,102 @@ async function handleContinue() {
 .retry-generation-btn {
   margin-top: 12px;
   min-width: 120px;
+}
+
+/* ── Milestone Exam ───────────────────────────── */
+.milestone-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.milestone-header {
+  border-bottom: 1px solid var(--outline-variant);
+  padding-bottom: 16px;
+}
+
+.milestone-title {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.milestone-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted-text);
+  line-height: 1.5;
+}
+
+.milestone-attempts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.milestone-attempt-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface-container-high);
+  border-radius: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--outline-variant);
+}
+
+.attempt-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.attempt-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.attempt-score {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.attempt-flags {
+  display: flex;
+  gap: 6px;
+}
+
+.flag-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.flag-dot--correct {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+  border: 1px solid rgba(46, 204, 113, 0.3);
+}
+
+.flag-dot--incorrect {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  border: 1px solid rgba(231, 76, 60, 0.3);
+}
+
+.milestone-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 </style>

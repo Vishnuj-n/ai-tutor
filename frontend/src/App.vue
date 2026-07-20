@@ -2,7 +2,13 @@
 import Sidebar from './components/Sidebar.vue'
 import { useRoute } from 'vue-router'
 import { onMounted, onUnmounted, ref } from 'vue'
-import { getUserSettings, updateUserSettings, getTodayPlan } from './services/appApi'
+import {
+  getUserSettings,
+  updateUserSettings,
+  getTodayPlan,
+  checkForUpdates,
+  openRepoURL,
+} from './services/appApi'
 
 const route = useRoute()
 
@@ -200,9 +206,32 @@ function closeBanner() {
   banner.value.show = false
 }
 
+const showUpdateModal = ref(false)
+const currentVersion = ref('')
+const latestVersion = ref('')
+
+async function checkAppUpdates() {
+  try {
+    const res = await checkForUpdates()
+    if (res && res.update_available) {
+      currentVersion.value = res.current_version
+      latestVersion.value = res.latest_version
+      showUpdateModal.value = true
+    }
+  } catch (err) {
+    console.error('Failed to check for updates on startup:', err)
+  }
+}
+
+function goToUpdatePage() {
+  showUpdateModal.value = false
+  openRepoURL()
+}
+
 onMounted(() => {
   syncScheduler()
   window.addEventListener('settings-updated', syncScheduler)
+  checkAppUpdates()
 })
 
 onUnmounted(() => {
@@ -219,6 +248,33 @@ onUnmounted(() => {
     <Sidebar v-if="route.path !== '/onboarding'" />
 
     <main class="content-shell">
+      <!-- Update Alert Modal -->
+      <div v-if="showUpdateModal" class="update-modal-overlay">
+        <div class="update-modal">
+          <div class="update-modal-header">
+            <span class="warning-icon">🚀</span>
+            <h2>Update Available</h2>
+          </div>
+          <div class="update-modal-body">
+            <p class="update-msg">A new update for Studyloop is ready!</p>
+            <div class="version-badge-container">
+              <span class="version-badge current">v{{ currentVersion }}</span>
+              <span class="version-arrow">→</span>
+              <span class="version-badge latest">v{{ latestVersion }}</span>
+            </div>
+            <p class="warning-text">
+              Click "Get Update" to go to the releases repository and download the latest version.
+            </p>
+          </div>
+          <div class="update-modal-footer">
+            <button class="modal-btn secondary" @click="showUpdateModal = false">
+              Remind Me Later
+            </button>
+            <button class="modal-btn primary" @click="goToUpdatePage">Get Update</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Global study reminder banner -->
       <div v-if="banner.show" class="study-alert-banner">
         <div class="banner-content">
@@ -256,13 +312,25 @@ onUnmounted(() => {
   min-height: 0;
   padding: 16px 20px;
   overflow-y: auto;
-  scrollbar-width: none;
   position: relative;
 }
 
 .content-shell::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 8px;
+  height: 8px;
+}
+
+.content-shell::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.content-shell::-webkit-scrollbar-thumb {
+  background: var(--surface-container, rgba(0, 0, 0, 0.15));
+  border-radius: 99px;
+}
+
+.content-shell::-webkit-scrollbar-thumb:hover {
+  background: var(--outline-variant, rgba(0, 0, 0, 0.3));
 }
 
 /* ── Global study reminder banner ── */
@@ -371,5 +439,164 @@ onUnmounted(() => {
   .content-shell {
     padding: 16px;
   }
+}
+
+/* ── Update Alert Modal ── */
+.update-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.update-modal {
+  background: var(--surface-container-lowest, #0f172a);
+  border: 1px solid color-mix(in srgb, var(--primary, #4f46e5) 30%, var(--outline-variant));
+  border-radius: 20px;
+  padding: 32px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  animation: scaleUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes scaleUp {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.update-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.warning-icon {
+  font-size: 28px;
+}
+
+.update-modal-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--on-surface, #ffffff);
+}
+
+.update-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--on-surface, #f8fafc);
+}
+
+.update-msg {
+  margin: 0;
+  font-size: 15px;
+}
+
+.version-badge-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--surface-container-low, rgba(255, 255, 255, 0.03));
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 10%, transparent);
+}
+
+.version-badge {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.version-badge.current {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.version-badge.latest {
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.version-arrow {
+  color: var(--muted-text, #94a3b8);
+  font-weight: bold;
+}
+
+.warning-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-text, #94a3b8);
+  line-height: 1.5;
+}
+
+.update-modal-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.modal-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modal-btn.primary {
+  background: var(--primary, #4f46e5);
+  color: var(--on-primary, #ffffff);
+}
+
+.modal-btn.primary:hover {
+  background: var(--primary-hover, #4338ca);
+}
+
+.modal-btn.secondary {
+  background: transparent;
+  color: var(--muted-text, #94a3b8);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 30%, transparent);
+}
+
+.modal-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--on-surface, #ffffff);
 }
 </style>

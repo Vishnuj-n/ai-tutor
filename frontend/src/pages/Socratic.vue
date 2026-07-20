@@ -160,7 +160,7 @@
               >
                 <p class="citation-popover-title">Source Chunks</p>
                 <div
-                  v-for="(chunk, cIdx) in (message.chunkTexts || [])"
+                  v-for="(chunk, cIdx) in message.chunkTexts || []"
                   :key="cIdx"
                   class="citation-chunk"
                 >
@@ -480,7 +480,12 @@ async function submitQuestion() {
   await scrollToBottom()
 
   try {
-    const result = await askSocratic(selectedNotebookID.value, topicID, question, conversationHistory)
+    const result = await askSocratic(
+      selectedNotebookID.value,
+      topicID,
+      question,
+      conversationHistory
+    )
 
     if (result.error) {
       const isNetworkError =

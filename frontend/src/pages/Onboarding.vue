@@ -45,7 +45,10 @@
             step="5"
             required
           />
-          <p class="hint" style="margin-top: 4px; font-size: 0.85rem; opacity: 0.7">
+          <p
+            class="hint"
+            style="margin-top: 2px; font-size: 0.75rem; opacity: 0.7; line-height: 1.2"
+          >
             Caps spacing repetition reviews active in any single study session.
           </p>
         </div>
@@ -60,14 +63,22 @@
             <div class="time-input-group">
               <label for="study-start-time" class="time-label">Start</label>
               <div class="time-input-wrapper">
-                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="12" y1="6.5" x2="12" y2="7"/>
-                  <line x1="12" y1="17" x2="12" y2="17.5"/>
-                  <line x1="6.5" y1="12" x2="7" y2="12"/>
-                  <line x1="17" y1="12" x2="17.5" y2="12"/>
-                  <polyline points="12,8 12,12 14.5,13.5"/>
-                  <circle cx="12" cy="12" r="0.75" fill="currentColor"/>
+                <svg
+                  class="time-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="6.5" x2="12" y2="7" />
+                  <line x1="12" y1="17" x2="12" y2="17.5" />
+                  <line x1="6.5" y1="12" x2="7" y2="12" />
+                  <line x1="17" y1="12" x2="17.5" y2="12" />
+                  <polyline points="12,8 12,12 14.5,13.5" />
+                  <circle cx="12" cy="12" r="0.75" fill="currentColor" />
                 </svg>
                 <input
                   id="study-start-time"
@@ -81,21 +92,29 @@
 
             <div class="time-connector">
               <svg viewBox="0 0 24 8" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M0 4 L20 4 M16 1 L20 4 L16 7"/>
+                <path d="M0 4 L20 4 M16 1 L20 4 L16 7" />
               </svg>
             </div>
 
             <div class="time-input-group">
               <label for="study-end-time" class="time-label">End</label>
               <div class="time-input-wrapper">
-                <svg class="time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="12" y1="6.5" x2="12" y2="7"/>
-                  <line x1="12" y1="17" x2="12" y2="17.5"/>
-                  <line x1="6.5" y1="12" x2="7" y2="12"/>
-                  <line x1="17" y1="12" x2="17.5" y2="12"/>
-                  <polyline points="12,8 12,12 14.5,13.5"/>
-                  <circle cx="12" cy="12" r="0.75" fill="currentColor"/>
+                <svg
+                  class="time-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="6.5" x2="12" y2="7" />
+                  <line x1="12" y1="17" x2="12" y2="17.5" />
+                  <line x1="6.5" y1="12" x2="7" y2="12" />
+                  <line x1="17" y1="12" x2="17.5" y2="12" />
+                  <polyline points="12,8 12,12 14.5,13.5" />
+                  <circle cx="12" cy="12" r="0.75" fill="currentColor" />
                 </svg>
                 <input
                   id="study-end-time"
@@ -124,7 +143,7 @@
 
         <div
           class="form-group check-group"
-          style="margin-bottom: 24px; display: flex; align-items: flex-start; gap: 8px"
+          style="margin-bottom: 8px; display: flex; align-items: flex-start; gap: 8px"
         >
           <label
             class="checkbox-container"
@@ -138,8 +157,31 @@
             />
             <div class="check-label">
               <strong>Enable Study Reminders</strong>
-              <p class="hint" style="margin: 2px 0 0 0; font-size: 0.85rem; opacity: 0.7">
+              <p class="hint" style="margin: 0; font-size: 0.75rem; opacity: 0.7; line-height: 1.2">
                 Notify when daily study time starts and ends.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        <div
+          class="form-group check-group"
+          style="margin-bottom: 8px; display: flex; align-items: flex-start; gap: 8px"
+        >
+          <label
+            class="checkbox-container"
+            style="display: flex; align-items: center; gap: 10px; cursor: pointer"
+          >
+            <input
+              id="analytics-enabled"
+              v-model="analyticsEnabled"
+              type="checkbox"
+              style="width: 18px; height: 18px; cursor: pointer"
+            />
+            <div class="check-label">
+              <strong>Help improve the app by sharing anonymous usage data</strong>
+              <p class="hint" style="margin: 0; font-size: 0.75rem; opacity: 0.7; line-height: 1.2">
+                Telemetry events are anonymized. No personal information is ever collected.
               </p>
             </div>
           </label>
@@ -531,6 +573,7 @@ function applyDurationPreset(preset) {
   studyEndTime.value = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`
 }
 const remindersEnabled = ref(true)
+const analyticsEnabled = ref(false)
 const cloudSyncURL = ref('')
 const apiToken = ref('')
 const selectedTheme = ref('light-classic')
@@ -750,7 +793,9 @@ async function completeOnboarding() {
       true, // default for ragEntireNotebook
       true, // default for ragQueueStudy
       'CLASSIC', // default defaultRemedialStrategy
-      '' // classroom_code — set later from Settings
+      '', // classroom_code — set later from Settings
+      analyticsEnabled.value,
+      '' // anonymous_user_id (will auto-generate on backend settings load)
     )
 
     if (settingsRes.error) {
@@ -792,7 +837,7 @@ onMounted(() => {
   max-height: calc(100vh - 48px); /* Keep 24px margin top and bottom */
   overflow-y: auto;
   border-radius: 16px; /* 2 * 8px - more compact */
-  padding: 24px; /* 3 * 8px - reduced padding for a tighter fit */
+  padding: 16px 20px; /* reduced padding for a tighter fit */
   box-shadow: 0 16px 32px rgba(45, 51, 56, 0.08);
   box-sizing: border-box;
   background: var(--surface-container-lowest);
@@ -816,13 +861,13 @@ onMounted(() => {
 
 .header-section {
   text-align: center;
-  margin-bottom: 16px; /* 8px grid */
+  margin-bottom: 8px; /* 8px grid */
 }
 
 .logo-orb {
-  width: 48px; /* 8px grid */
-  height: 48px; /* 8px grid */
-  margin: 0 auto 8px; /* 8px grid */
+  width: 36px; /* reduced from 48px */
+  height: 36px; /* reduced from 48px */
+  margin: 0 auto 6px; /* 8px grid */
   background: linear-gradient(135deg, var(--primary-dim), var(--primary));
   color: var(--on-primary);
   border-radius: 50%;
@@ -831,23 +876,23 @@ onMounted(() => {
   justify-content: center;
   font-family: 'Manrope', sans-serif;
   font-weight: 800;
-  font-size: 16px;
+  font-size: 14px;
   letter-spacing: -0.05em;
   box-shadow: 0 0 24px rgba(99, 102, 241, 0.15); /* 8px grid shadow size */
 }
 
 h1 {
   font-family: 'Manrope', sans-serif; /* Display font */
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 800;
-  margin: 0 0 4px; /* 8px grid */
+  margin: 0 0 2px; /* 8px grid */
   letter-spacing: -0.02em; /* Spec: -2% tracking */
   color: var(--on-surface);
 }
 
 .subtitle {
   color: var(--muted-text);
-  font-size: 14px;
+  font-size: 12px;
   margin: 0;
 }
 
@@ -855,7 +900,7 @@ h1 {
   height: 6px; /* 8px grid */
   background: var(--outline-variant);
   border-radius: 3px;
-  margin-bottom: 16px; /* 8px grid */
+  margin-bottom: 12px; /* 8px grid */
   overflow: hidden;
 }
 
@@ -868,22 +913,22 @@ h1 {
 .step-container {
   display: flex;
   flex-direction: column;
-  gap: 16px; /* 8px grid */
+  gap: 12px; /* 8px grid */
 }
 
 h2 {
   font-family: 'Manrope', sans-serif; /* Display font */
-  font-size: 16px; /* 8px scale */
+  font-size: 14px; /* 8px scale */
   font-weight: 700;
   margin: 0;
   letter-spacing: -0.02em; /* Spec: -2% tracking */
 }
 
 .description {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted-text);
-  line-height: 1.5;
-  margin: -8px 0 8px; /* 8px grid */
+  line-height: 1.4;
+  margin: -6px 0 4px; /* 8px grid */
 }
 
 .form-group:focus-within label {
@@ -906,15 +951,31 @@ select {
   background: var(--surface-container-low);
   border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent); /* Spec ghost border */
   border-radius: 12px; /* xl: 12px/0.75rem */
-  padding: 10px 14px; /* 8px grid friendly - slightly more compact */
+  padding: 8px 12px; /* 8px grid friendly - slightly more compact */
   color: var(--on-surface);
-  font-size: 14px;
+  font-size: 13px;
   font-family: inherit;
   transition:
     border-color 0.2s,
     background-color 0.2s;
   box-sizing: border-box;
   width: 100%;
+}
+
+.time-input {
+  padding-left: 36px;
+}
+
+.time-icon {
+  left: 12px !important;
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.quick-durations {
+  margin-top: 8px !important;
+  padding-top: 8px !important;
+  gap: 6px !important;
 }
 
 input::placeholder {
@@ -1075,7 +1136,9 @@ select:focus {
   font-size: 12px;
   font-weight: 600;
   color: var(--muted-text);
-  transition: color 0.2s ease, font-weight 0.2s ease;
+  transition:
+    color 0.2s ease,
+    font-weight 0.2s ease;
 }
 
 .theme-card.active .theme-label {
@@ -1227,6 +1290,6 @@ select:focus {
 
 /* Onboarding-specific override */
 .time-range-section {
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 </style>

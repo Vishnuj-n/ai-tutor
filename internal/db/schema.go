@@ -243,7 +243,6 @@ func InitSchema(tx *sql.Tx) error {
 			FOREIGN KEY (card_id) REFERENCES fsrs_cards(id) ON DELETE CASCADE
 		)`,
 
-		// Add this block inside the schema array in InitSchema
 		`CREATE TABLE IF NOT EXISTS manual_flashcards (
 		id TEXT PRIMARY KEY,
 		notebook_id TEXT NOT NULL,
@@ -252,6 +251,15 @@ func InitSchema(tx *sql.Tx) error {
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
 )`,
+		`CREATE TABLE IF NOT EXISTS analytics_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_type TEXT NOT NULL,
+			file_hash TEXT DEFAULT '',
+			page_number INTEGER DEFAULT 0,
+			metadata TEXT DEFAULT '',
+			synced BOOLEAN DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	// Execute all table creation statements
@@ -277,6 +285,7 @@ func InitSchema(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_task_completed_at ON quiz_attempts(task_id, completed_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_reread_attempts_last_attempt_at ON reread_attempts(last_attempt_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_manual_flashcards_notebook_id ON manual_flashcards(notebook_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_analytics_events_synced ON analytics_events(synced)`,
 	}
 
 	for _, stmt := range indexes {
@@ -384,6 +393,8 @@ var alterStatements = []struct {
 	{"user_settings", "student_username", "ALTER TABLE user_settings ADD COLUMN student_username TEXT DEFAULT ''"},
 	{"user_settings", "last_synced_at", "ALTER TABLE user_settings ADD COLUMN last_synced_at INTEGER DEFAULT 0"},
 	{"notebooks", "file_hash", "ALTER TABLE notebooks ADD COLUMN file_hash TEXT DEFAULT ''"},
+	{"user_settings", "analytics_enabled", "ALTER TABLE user_settings ADD COLUMN analytics_enabled BOOLEAN DEFAULT 0"},
+	{"user_settings", "anonymous_user_id", "ALTER TABLE user_settings ADD COLUMN anonymous_user_id TEXT DEFAULT ''"},
 }
 
 func columnExists(tx *sql.Tx, table, column string) (bool, error) {
@@ -404,6 +415,9 @@ func columnExists(tx *sql.Tx, table, column string) (bool, error) {
 		if strings.EqualFold(name, column) {
 			return true, nil
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
 	}
 	return false, nil
 }

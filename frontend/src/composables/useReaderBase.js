@@ -148,6 +148,7 @@ export function useReaderBase(taskID) {
         return null
       }
 
+      console.time('[PERF] initializeReadingSession (Wails→Go→SQLite)')
       const result = await initializeReadingSession(
         taskID.value,
         notebookId,
@@ -155,6 +156,7 @@ export function useReaderBase(taskID) {
         startPage,
         endPage
       )
+      console.timeEnd('[PERF] initializeReadingSession (Wails→Go→SQLite)')
 
       // Defensive: check ok flag first (backend contract)
       if (!result?.ok) {
@@ -226,6 +228,7 @@ export function useReaderBase(taskID) {
         startPage: currentPage.value,
         endPage: navigationMaxPage.value || 0,
         mode: 'task',
+        notebookFileHash: task.file_hash || '',
       }
 
       return {
@@ -283,6 +286,7 @@ export function useReaderBase(taskID) {
         startPage: currentPage.value,
         endPage: 0,
         mode: 'browse',
+        notebookFileHash: result?.notebook_file_hash || '',
       }
 
       return true

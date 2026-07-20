@@ -12,6 +12,7 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/scheduler"
+	studypkg "ai-tutor/internal/study"
 	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
@@ -83,12 +84,110 @@ func aggregateQueueTasks(active, pending []models.StudyQueueTask) ([]models.Sche
 	return queueTasks, activeTopics, learningMinutes, actionCounts
 }
 
+// calculateStreak computes current and longest streaks from a set of completion timestamps.
+// timezoneOffsetMinutes is the JS-style offset (UTC+5:30 → -330).
+func calculateStreak(times []time.Time, timezoneOffsetMinutes int) (currentStreak, longestStreak int, activeDates []string) {
+	loc := time.FixedZone("ClientZone", -timezoneOffsetMinutes*60)
+	nowClient := time.Now().In(loc)
+	todayStr := nowClient.Format("2006-01-02")
+	yesterdayStr := nowClient.AddDate(0, 0, -1).Format("2006-01-02")
+
+	dateSet := make(map[string]bool)
+	for _, t := range times {
+		dateSet[t.In(loc).Format("2006-01-02")] = true
+	}
+
+	sortedDates := make([]string, 0, len(dateSet))
+	for d := range dateSet {
+		sortedDates = append(sortedDates, d)
+	}
+	sort.Strings(sortedDates)
+
+	activeDates = sortedDates
+
+	if len(sortedDates) == 0 {
+		return 0, 0, activeDates
+	}
+
+	// Longest streak
+	streakTemp := 0
+	var prevDate time.Time
+	for _, dateStr := range sortedDates {
+		d, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		if err != nil {
+			continue
+		}
+		if streakTemp == 0 {
+			streakTemp = 1
+		} else {
+			daysDiff := int(d.Sub(prevDate).Hours()+0.5) / 24
+			if daysDiff == 1 {
+				streakTemp++
+			} else if daysDiff > 1 {
+				if streakTemp > longestStreak {
+					longestStreak = streakTemp
+				}
+				streakTemp = 1
+			}
+		}
+		prevDate = d
+	}
+	if streakTemp > longestStreak {
+		longestStreak = streakTemp
+	}
+
+	// Current streak
+	anchorDate := nowClient
+	if !dateSet[todayStr] && dateSet[yesterdayStr] {
+		anchorDate = nowClient.AddDate(0, 0, -1)
+	}
+	if dateSet[anchorDate.Format("2006-01-02")] {
+		currentStreak = 1
+		for {
+			prevDayStr := anchorDate.AddDate(0, 0, -currentStreak).Format("2006-01-02")
+			if !dateSet[prevDayStr] {
+				break
+			}
+			currentStreak++
+		}
+	}
+
+	return currentStreak, longestStreak, activeDates
+}
+
+// mapTaskError translates repository errors into API response maps.
+func mapTaskError(err error) map[string]interface{} {
+	switch err {
+	case db.ErrTaskNotFound:
+		return map[string]interface{}{"error": "ErrNotFound", "code": 404}
+	case db.ErrTaskNotActive:
+		return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
+	case db.ErrTaskNotPending:
+		return map[string]interface{}{"error": "ErrTaskNotPending", "code": 409}
+	case db.ErrReviewLinkNotPending:
+		return map[string]interface{}{"error": "ErrCardAlreadyReviewed", "code": 409}
+	case db.ErrReviewSessionOpen:
+		return map[string]interface{}{"error": "ErrReviewSessionIncomplete", "code": 409}
+	default:
+		return map[string]interface{}{"error": err.Error()}
+	}
+}
+
+// requireRepo returns the repository or an error map if uninitialized.
+func requireRepo(a *App) (*db.Repository, map[string]interface{}) {
+	repo := a.getRepo()
+	if repo == nil {
+		return nil, map[string]interface{}{"error": "database repository not initialized"}
+	}
+	return repo, nil
+}
+
 // ---------- Main App Methods ----------
 
 func (a *App) GetTodayPlan() map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if a.scheduler == nil {
 		return map[string]interface{}{"error": "scheduler not initialized"}
@@ -214,6 +313,7 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 	if titleBase == "" {
 		titleBase = "Task"
 	}
+	titleBase = utils.CleanTopicTitle(titleBase)
 
 	titlePrefix := "Task"
 	switch task.TaskType {
@@ -221,6 +321,8 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 		titlePrefix = "Read"
 	case models.StudyTaskTypeQuiz:
 		titlePrefix = "Quiz"
+	case models.StudyTaskTypeMilestoneExam:
+		titlePrefix = "Milestone Exam"
 	case models.StudyTaskTypeReread:
 		titlePrefix = "Reread"
 	case models.StudyTaskTypeFlashcardReview:
@@ -265,9 +367,9 @@ func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
 }
 
 func (a *App) ActivateTask(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if taskID == models.ReviewTaskDailyID {
 		return map[string]interface{}{"ok": true}
@@ -278,43 +380,56 @@ func (a *App) ActivateTask(taskID string) map[string]interface{} {
 		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s loadError=%v", taskID, err)
 	}
 	if err := repo.ActivateTask(taskID); err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		case db.ErrTaskNotPending:
-			return map[string]interface{}{"error": "ErrTaskNotPending", "code": 409}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) CompleteTask(taskID string, result models.CompletionResult) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if strings.TrimSpace(taskID) == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
 	if err := repo.CompleteTask(taskID, result); err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		case db.ErrTaskNotActive:
-			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
+	}
+	return map[string]interface{}{"ok": true}
+}
+
+// CompleteMilestoneExam completes an active MILESTONE_EXAM task.
+// ponytail: simplest way to complete milestone task with no flashcard generation.
+func (a *App) CompleteMilestoneExam(taskID string) map[string]interface{} {
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return map[string]interface{}{"error": "task ID is required"}
+	}
+	task, err := repo.GetTaskByID(taskID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if task.TaskType != models.StudyTaskTypeMilestoneExam {
+		return map[string]interface{}{"error": "task is not a MILESTONE_EXAM task"}
+	}
+	err = repo.CompleteTask(taskID, models.CompletionResult{
+		Status: models.StudyTaskStatusCompleted,
+	})
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) GetStreakState(timezoneOffsetMinutes int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 
 	times, err := repo.GetCompletedTaskTimes()
@@ -322,126 +437,44 @@ func (a *App) GetStreakState(timezoneOffsetMinutes int) map[string]interface{} {
 		return map[string]interface{}{"error": fmt.Sprintf("failed to get completed times: %v", err)}
 	}
 
-	// Determine user's local timezone from offset in minutes.
-	// JS getTimezoneOffset() returns difference in minutes between UTC and local time.
-	// For UTC+5:30, JS returns -330.
-	// In Go, UTC+5:30 is 19800 seconds east of UTC.
-	// Thus: secondsEastOfUTC = -timezoneOffsetMinutes * 60.
+	currentStreak, longestStreak, activeDates := calculateStreak(times, timezoneOffsetMinutes)
+
 	loc := time.FixedZone("ClientZone", -timezoneOffsetMinutes*60)
-
-	nowClient := time.Now().In(loc)
-	todayStr := nowClient.Format("2006-01-02")
-	yesterdayStr := nowClient.AddDate(0, 0, -1).Format("2006-01-02")
-
-	// Group and deduplicate by date string in user's timezone.
-	dateSet := make(map[string]bool)
-	for _, t := range times {
-		localDate := t.In(loc).Format("2006-01-02")
-		dateSet[localDate] = true
-	}
-
-	// Sort dates ascending.
-	var sortedDates []string
-	for d := range dateSet {
-		sortedDates = append(sortedDates, d)
-	}
-	sort.Strings(sortedDates)
-
-	longestStreak := 0
-	currentStreak := 0
-
-	if len(sortedDates) > 0 {
-		// Calculate longest streak
-		streakTemp := 0
-		var prevDate time.Time
-		for _, dateStr := range sortedDates {
-			d, err := time.ParseInLocation("2006-01-02", dateStr, loc)
-			if err != nil {
-				continue
-			}
-			if streakTemp == 0 {
-				streakTemp = 1
-			} else {
-				// Calculate days difference safely
-				daysDiff := int(d.Sub(prevDate).Hours()+0.5) / 24
-				if daysDiff == 1 {
-					streakTemp++
-				} else if daysDiff > 1 {
-					if streakTemp > longestStreak {
-						longestStreak = streakTemp
-					}
-					streakTemp = 1
-				}
-			}
-			prevDate = d
-		}
-		if streakTemp > longestStreak {
-			longestStreak = streakTemp
-		}
-
-		// Calculate current streak
-		if dateSet[todayStr] {
-			currentStreak = 1
-			currDate := nowClient
-			for {
-				prevDayStr := currDate.AddDate(0, 0, -1).Format("2006-01-02")
-				if dateSet[prevDayStr] {
-					currentStreak++
-					currDate = currDate.AddDate(0, 0, -1)
-				} else {
-					break
-				}
-			}
-		} else if dateSet[yesterdayStr] {
-			currentStreak = 1
-			currDate := nowClient.AddDate(0, 0, -1)
-			for {
-				prevDayStr := currDate.AddDate(0, 0, -1).Format("2006-01-02")
-				if dateSet[prevDayStr] {
-					currentStreak++
-					currDate = currDate.AddDate(0, 0, -1)
-				} else {
-					break
-				}
-			}
+	todayStr := time.Now().In(loc).Format("2006-01-02")
+	todayCompleted := false
+	for _, d := range activeDates {
+		if d == todayStr {
+			todayCompleted = true
+			break
 		}
 	}
-
-	// Create list of active dates
-	activeDatesList := []string{}
-	activeDatesList = append(activeDatesList, sortedDates...)
 
 	return map[string]interface{}{
 		"current_streak":  currentStreak,
 		"longest_streak":  longestStreak,
-		"active_dates":    activeDatesList,
-		"today_completed": dateSet[todayStr],
+		"active_dates":    activeDates,
+		"today_completed": todayCompleted,
 	}
 }
 
 func (a *App) SkipTask(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if strings.TrimSpace(taskID) == "" {
 		return map[string]interface{}{"error": "task ID is required", "code": 400}
 	}
 	if err := repo.SkipTask(taskID); err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) GetQueueState(notebookID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if strings.TrimSpace(notebookID) == "" {
 		return map[string]interface{}{"error": "notebook ID is required", "code": 400}
@@ -562,9 +595,9 @@ func (a *App) activateReadingSessionTask(taskID string) map[string]interface{} {
 // Accepts the full routing context so scheduler-suggested tasks (not yet in study_queue)
 // can be materialized as real queue rows on first open.
 func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, startPage, endPage int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	taskID = strings.TrimSpace(taskID)
 	notebookID = strings.TrimSpace(notebookID)
@@ -635,9 +668,9 @@ func (a *App) InitializeReadingSession(taskID, notebookID, topicID string, start
 }
 
 func (a *App) CompleteReading(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -675,21 +708,36 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 
-	// Generate quiz from full assigned chunk range (no page validation)
-	chunks, err := repo.GetChunksForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
+	// Generate quiz from all topic chunks.
+	// Chunks can have page_num values outside the task's page bounds due to
+	// gap-filling logic in chapterIndexForPage (pages between/after chapters
+	// get assigned to the nearest chapter). The page range is for reading
+	// navigation, not quiz content.
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup topicID=%q", task.TopicID)
+	chunks, err := repo.GetChunksForTopic(task.TopicID)
 	if err != nil {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup error taskID=%s err=%v", taskID, err)
 		return map[string]interface{}{"error": err.Error()}
 	}
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup result: got %d chunks for topicID=%q", len(chunks), task.TopicID)
+
+	if len(chunks) == 0 {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading no chunks found for topicID=%q — notebook content not indexed", task.TopicID)
+		return map[string]interface{}{
+			"error": "notebook content not yet indexed — please re-confirm your syllabus from the notebook page",
+			"code":  422,
+		}
+	}
 
 	chunkIDs := make([]string, 0, len(chunks))
 	chunkTextByID := make(map[string]string, len(chunks))
-	for _, chunk := range chunks {
+	for i, chunk := range chunks {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk[%d] id=%q topicID=%q textLen=%d", i, chunk.ID, chunk.TopicID, len(chunk.Text))
 		chunkIDs = append(chunkIDs, chunk.ID)
 		chunkTextByID[chunk.ID] = chunk.Text
 	}
 
-	utils.Warnf("[QUIZ] CompleteReading before GenerateQuizSync taskID=%s topicID=%s chunkCount=%d", taskID, task.TopicID, len(chunkIDs))
+	utils.Warnf("[QUIZ] CompleteReading before GenerateQuizSync taskID=%s topicID=%q chunkCount=%d chunkIDs=%v", taskID, task.TopicID, len(chunkIDs), chunkIDs)
 	quizPayload, err := a.studyService.GenerateQuizSync(task.TopicID, chunkIDs, chunkTextByID)
 	if err != nil {
 		utils.Warnf("[QUIZ] CompleteReading GenerateQuizSync error taskID=%s err=%v", taskID, err)
@@ -720,9 +768,9 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 }
 
 func (a *App) GetTask(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -730,18 +778,25 @@ func (a *App) GetTask(taskID string) map[string]interface{} {
 	}
 	task, err := repo.GetTaskByID(taskID)
 	if err != nil {
-		if err == db.ErrTaskNotFound {
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		}
-		return map[string]interface{}{"error": err.Error()}
+		return mapTaskError(err)
 	}
+
+	// Dynamic compile for MILESTONE_EXAM questions
+	if task.TaskType == models.StudyTaskTypeMilestoneExam {
+		if quizPayload, err := studypkg.CompileMilestonePayload(repo, task); err == nil && len(quizPayload.Questions) > 0 {
+			if quizPayloadJSON, mErr := json.Marshal(quizPayload); mErr == nil {
+				task.PayloadJSON = string(quizPayloadJSON)
+			}
+		}
+	}
+
 	return map[string]interface{}{"task": task}
 }
 
 func (a *App) GetTaskContext(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -749,10 +804,7 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 	}
 	task, err := repo.GetTaskByID(taskID)
 	if err != nil {
-		if err == db.ErrTaskNotFound {
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		}
-		return map[string]interface{}{"error": err.Error()}
+		return mapTaskError(err)
 	}
 	externalPrompt := ""
 	if task.TaskType == models.StudyTaskTypeSocraticRemedial {
@@ -824,9 +876,8 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 }
 
 func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -835,23 +886,15 @@ func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int
 }
 
 func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	result, err := a.studyService.SubmitQuizAttempt(taskID, answers)
 	if err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		case db.ErrTaskNotActive:
-			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
 	}
 	return map[string]interface{}{"result": result}
 }
@@ -859,9 +902,9 @@ func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[
 // GenerateFlashcardsForQuizTask generates flashcards based on a passed quiz task.
 // Newly generated cards are future-dated and do not create an immediate review task.
 func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -890,6 +933,58 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE tasks: %v", resolveErr)
 	}
 
+	attempts, attemptsErr := repo.GetPassedQuizAttempts(task.NotebookID)
+	if attemptsErr != nil {
+		utils.Warnf("[MILESTONE_EXAM] passed_quizzes_fetch_failed notebookID=%s err=%v", task.NotebookID, attemptsErr)
+	} else {
+		numAttempts := len(attempts)
+		decades := numAttempts / 10
+		for d := 1; d <= decades; d++ {
+			endIdx := d * 10
+			startIdx := endIdx - 10
+			decadeAttempts := attempts[startIdx:endIdx]
+
+			representativeAttemptID := decadeAttempts[9].ID
+			exists, existsErr := repo.HasMilestoneExamForAttemptID(task.NotebookID, representativeAttemptID)
+			if existsErr != nil {
+				utils.Warnf("[MILESTONE_EXAM] dedupe_check_failed notebookID=%s attemptID=%s err=%v", task.NotebookID, representativeAttemptID, existsErr)
+				continue
+			}
+			if exists {
+				continue
+			}
+
+			quizzes := make(map[string][]int, len(decadeAttempts))
+			passingScore := 70
+			for i, attempt := range decadeAttempts {
+				flags, flagErr := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
+				if flagErr != nil {
+					utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s err=%v", task.NotebookID, attempt.ID, flagErr)
+					continue
+				}
+				if flags == nil {
+					utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s", task.NotebookID, attempt.ID)
+					continue
+				}
+				quizzes[attempt.ID] = flags
+				if i == 9 && attempt.PassingScore > 0 {
+					passingScore = attempt.PassingScore
+				}
+			}
+
+			payload := models.MilestoneExamPayload{
+				Quizzes:      quizzes,
+				PassingScore: passingScore,
+				QuizCount:    len(decadeAttempts),
+			}
+			if insertErr := repo.InsertMilestoneExamTask(task.NotebookID, payload); insertErr != nil {
+				utils.Warnf("[MILESTONE_EXAM] insertion_failed notebookID=%s err=%v", task.NotebookID, insertErr)
+			} else {
+				utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", task.NotebookID, len(decadeAttempts))
+			}
+		}
+	}
+
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
 	utils.Warnf("[DASHBOARD] dashboard_redirect_after_generation taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
 
@@ -903,9 +998,8 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 // ---------- Manual Mode endpoints ----------
 
 func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -914,9 +1008,8 @@ func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int
 }
 
 func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -925,9 +1018,9 @@ func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage in
 }
 
 func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -980,9 +1073,9 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 }
 
 func (a *App) GetReviewSession(taskID string, notebookID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -1020,89 +1113,55 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 
 	session, err := a.studyService.GetReviewSession(taskID)
 	if err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
 	}
 	return map[string]interface{}{"session": session}
 }
 
 func (a *App) RecordCardReview(taskID, cardID string, rating int) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	remaining, err := a.studyService.RecordCardReview(taskID, cardID, rating)
 	if err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		case db.ErrTaskNotActive:
-			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
-		case db.ErrReviewLinkNotPending:
-			return map[string]interface{}{"error": "ErrCardAlreadyReviewed", "code": 409}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
 	}
 	return map[string]interface{}{"ok": true, "remaining": remaining}
 }
 
 func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	if err := a.studyService.CompleteReviewSession(taskID); err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		case db.ErrTaskNotActive:
-			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
-		case db.ErrReviewSessionOpen:
-			return map[string]interface{}{"error": "ErrReviewSessionIncomplete", "code": 409}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
 	}
 	return map[string]interface{}{"ok": true}
 }
 
 func (a *App) SuspendFlashcard(taskID, cardID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
 	}
 	remaining, err := a.studyService.SuspendFlashcard(taskID, cardID)
 	if err != nil {
-		switch err {
-		case db.ErrTaskNotFound:
-			return map[string]interface{}{"error": "ErrNotFound", "code": 404}
-		case db.ErrTaskNotActive:
-			return map[string]interface{}{"error": "ErrTaskNotActive", "code": 409}
-		default:
-			return map[string]interface{}{"error": err.Error()}
-		}
+		return mapTaskError(err)
 	}
 	return map[string]interface{}{"ok": true, "remaining": remaining}
 }
 
 func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	if _, errMap := requireRepo(a); errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -1135,9 +1194,9 @@ func (a *App) DevForceSocraticRescue(notebookID, topicID string) map[string]inte
 	if os.Getenv("APP_ENV") != "dev" {
 		return map[string]interface{}{"error": "forbidden: dev mode only"}
 	}
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 
 	tx, err := repo.Begin()
@@ -1189,9 +1248,9 @@ func (a *App) DevForceFlashcardGenerate(notebookID string) map[string]interface{
 	if os.Getenv("APP_ENV") != "dev" {
 		return map[string]interface{}{"error": "forbidden: dev mode only"}
 	}
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	topics, err := repo.GetNotebookTopicsWithBounds(notebookID)
 	if err != nil || len(topics) == 0 {
@@ -1217,9 +1276,9 @@ func (a *App) DevForceFlashcardGenerate(notebookID string) map[string]interface{
 
 // RetryFlashcardGeneration retries generating flashcards for a failed FLASHCARD_GENERATE task.
 func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": "study service not initialized"}
@@ -1297,15 +1356,16 @@ type FlashcardDuePoint struct {
 }
 
 // GetFlashcardDueTimeline returns the review card load over the next 7 days.
-func (a *App) GetFlashcardDueTimeline() map[string]interface{} {
-	repo := a.getRepo()
-	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+func (a *App) GetFlashcardDueTimeline(timezoneOffsetMinutes int) map[string]interface{} {
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
 	}
 
-	now := time.Now()
+	loc := time.FixedZone("ClientZone", -timezoneOffsetMinutes*60)
+	now := time.Now().In(loc)
 	y, m, d := now.Date()
-	midnight := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
 	endOfToday := midnight.Add(24 * time.Hour).Unix()
 
 	timeline := make([]FlashcardDuePoint, 7)

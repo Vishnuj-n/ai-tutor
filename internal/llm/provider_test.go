@@ -45,3 +45,28 @@ func TestLoadConfigFromEnvForPrefixFallsBackToLegacyVars(t *testing.T) {
 		t.Fatalf("unexpected TimeoutMs: %d", config.TimeoutMs)
 	}
 }
+
+func TestGetModelLimitsDefault(t *testing.T) {
+	limits := getModelLimits("openai/gpt-oss-120b")
+	if limits.MaxInputTokens != 6000 {
+		t.Errorf("expected MaxInputTokens for gpt-oss-120b to be 6000, got %d", limits.MaxInputTokens)
+	}
+	if limits.MaxOutputTokens != 1500 {
+		t.Errorf("expected MaxOutputTokens for gpt-oss-120b to be 1500, got %d", limits.MaxOutputTokens)
+	}
+}
+
+func TestLoadConfigLimitsOverride(t *testing.T) {
+	t.Setenv("FAST_LLM_MODEL", "openai/gpt-oss-120b")
+	t.Setenv("FAST_LLM_MAX_INPUT_TOKENS", "12345")
+	t.Setenv("FAST_LLM_MAX_OUTPUT_TOKENS", "54321")
+
+	config := LoadConfigFromEnvForPrefix("FAST_LLM")
+	if config.Limits.MaxInputTokens != 12345 {
+		t.Fatalf("expected MaxInputTokens override 12345, got %d", config.Limits.MaxInputTokens)
+	}
+	if config.Limits.MaxOutputTokens != 54321 {
+		t.Fatalf("expected MaxOutputTokens override 54321, got %d", config.Limits.MaxOutputTokens)
+	}
+}
+

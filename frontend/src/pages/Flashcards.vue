@@ -132,9 +132,7 @@
                 </svg>
               </button>
               <p class="card-text answer-text">{{ currentCard.answer }}</p>
-              <button class="flip-back-btn" @click="flipped = false">
-                Show Question
-              </button>
+              <button class="flip-back-btn" @click="flipped = false">Show Question</button>
               <div class="rating-row">
                 <button
                   v-for="r in ratings"
@@ -229,6 +227,7 @@ import {
   getReviewSession,
   recordCardReview,
   suspendFlashcard,
+  getUserSettings,
 } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
 import ErrorMessage from '../components/ErrorMessage.vue'
@@ -247,6 +246,8 @@ const reviewIndex = ref(0)
 const reviewing = ref(false)
 const flipped = ref(false)
 const isSubmittingReview = ref(false)
+const analyticsEnabled = ref(false)
+const anonymousUserID = ref('')
 const reviewTaskID = ref('')
 const sessionRemaining = ref(0)
 const queueMode = computed(() => !!reviewTaskID.value)
@@ -276,6 +277,13 @@ onMounted(async () => {
     notebooks.value = Array.isArray(res) ? res.filter((n) => !n.error) : []
   } catch {
     error.value = 'Failed to load notebooks.'
+  }
+  try {
+    const settings = await getUserSettings()
+    analyticsEnabled.value = settings?.analytics_enabled ?? false
+    anonymousUserID.value = settings?.anonymous_user_id ?? ''
+  } catch (err) {
+    console.error('Failed to load user settings in Flashcards:', err)
   }
   if (route.query.taskId) {
     await loadQueueSession(String(route.query.taskId), String(route.query.notebookId || ''))
@@ -348,6 +356,7 @@ async function rate(ratingKey) {
         error.value = `Failed to save review: ${res.error}`
         return
       }
+
       flipped.value = false
       sessionRemaining.value = Number(res.remaining ?? 0)
       if (sessionRemaining.value <= 0) {
@@ -416,9 +425,7 @@ function handleKeydown(e) {
   // Prevent hotkeys when typing in inputs/textareas
   if (
     e.target &&
-    (e.target.tagName === 'INPUT' ||
-      e.target.tagName === 'TEXTAREA' ||
-      e.target.isContentEditable)
+    (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)
   ) {
     return
   }
@@ -940,7 +947,9 @@ async function loadQueueSession(taskID, notebookID = '') {
   color: var(--primary);
   background: var(--surface-container-highest);
   cursor: pointer;
-  transition: background-color 0.15s ease, transform 0.1s ease;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
   margin: 4px 0;
 }
 

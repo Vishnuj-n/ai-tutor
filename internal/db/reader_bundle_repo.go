@@ -40,11 +40,12 @@ func (r *Repository) GetReaderTopicBundle(topicID string, notebookID string) (*m
 	var filePath sql.NullString
 	var fileType sql.NullString
 	var pageCount sql.NullInt64
+	var fileHashRow sql.NullString
 
 	var err error
 	if selectedNotebookID != "" {
 		err = r.db.QueryRow(`
-			SELECT id, title, file_path, file_type, COALESCE(page_count, 0)
+			SELECT id, title, file_path, file_type, COALESCE(page_count, 0), COALESCE(file_hash, '')
 			FROM notebooks n
 			WHERE n.id = ?
 			  AND (
@@ -57,13 +58,13 @@ func (r *Repository) GetReaderTopicBundle(topicID string, notebookID string) (*m
 				)
 			  )
 			LIMIT 1
-		`, selectedNotebookID, topicID, topicID).Scan(&notebookIDRow, &notebookTitle, &filePath, &fileType, &pageCount)
+		`, selectedNotebookID, topicID, topicID).Scan(&notebookIDRow, &notebookTitle, &filePath, &fileType, &pageCount, &fileHashRow)
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("selected notebook does not contain this topic")
 		}
 	} else {
 		err = r.db.QueryRow(`
-			SELECT id, title, file_path, file_type, page_count
+			SELECT id, title, file_path, file_type, page_count, file_hash
 			FROM (
 				SELECT
 					n.id,
@@ -71,6 +72,7 @@ func (r *Repository) GetReaderTopicBundle(topicID string, notebookID string) (*m
 					n.file_path,
 					n.file_type,
 					COALESCE(n.page_count, 0) AS page_count,
+					COALESCE(n.file_hash, '') AS file_hash,
 					n.uploaded_at,
 					0 AS rank
 				FROM notebooks n
@@ -84,6 +86,7 @@ func (r *Repository) GetReaderTopicBundle(topicID string, notebookID string) (*m
 					n.file_path,
 					n.file_type,
 					COALESCE(n.page_count, 0) AS page_count,
+					COALESCE(n.file_hash, '') AS file_hash,
 					n.uploaded_at,
 					1 AS rank
 				FROM notebooks n
@@ -93,7 +96,7 @@ func (r *Repository) GetReaderTopicBundle(topicID string, notebookID string) (*m
 			)
 			ORDER BY rank ASC, uploaded_at DESC, id ASC
 			LIMIT 1
-		`, topicID, topicID).Scan(&notebookIDRow, &notebookTitle, &filePath, &fileType, &pageCount)
+		`, topicID, topicID).Scan(&notebookIDRow, &notebookTitle, &filePath, &fileType, &pageCount, &fileHashRow)
 	}
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
@@ -104,6 +107,9 @@ func (r *Repository) GetReaderTopicBundle(topicID string, notebookID string) (*m
 	}
 	if notebookTitle.Valid {
 		bundle.NotebookTitle = notebookTitle.String
+	}
+	if fileHashRow.Valid {
+		bundle.NotebookFileHash = fileHashRow.String
 	}
 	if filePath.Valid {
 		// Convert filesystem path to URL path for the file server

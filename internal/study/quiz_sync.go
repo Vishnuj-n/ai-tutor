@@ -308,8 +308,21 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	if err != nil {
 		return models.QuizResult{}, err
 	}
-	if task.TaskType != models.StudyTaskTypeQuiz {
-		return models.QuizResult{}, fmt.Errorf("task is not a QUIZ task")
+	if task.TaskType != models.StudyTaskTypeQuiz && task.TaskType != models.StudyTaskTypeMilestoneExam {
+		return models.QuizResult{}, fmt.Errorf("task is not a QUIZ or MILESTONE_EXAM task")
+	}
+	if task.TaskType == models.StudyTaskTypeMilestoneExam {
+		quizPayload, err := CompileMilestonePayload(s.repo, task)
+		if err != nil {
+			return models.QuizResult{}, err
+		}
+		if len(quizPayload.Questions) > 0 {
+			quizPayloadJSON, mErr := json.Marshal(quizPayload)
+			if mErr != nil {
+				return models.QuizResult{}, fmt.Errorf("failed to build milestone exam payload: %w", mErr)
+			}
+			task.PayloadJSON = string(quizPayloadJSON)
+		}
 	}
 	if task.Status != models.StudyTaskStatusActive {
 		return models.QuizResult{}, db.ErrTaskNotActive
@@ -376,7 +389,6 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	rereadAttemptCount := 0
 	manualReviewRecommended := false
 	completionStatus := models.StudyTaskStatusCompleted
-	var resultPayload []byte
 
 	strategy, _ := s.repo.GetRemedialStrategy()
 
@@ -470,19 +482,9 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		return models.QuizResult{}, fmt.Errorf("failed to save quiz attempt: %w", err)
 	}
 
-	resultPayload, _ = json.Marshal(map[string]interface{}{
-		"score":                     score,
-		"passed":                    passed,
-		"correct_count":             correctCount,
-		"total_count":               totalCount,
-		"manual_review_recommended": manualReviewRecommended,
-		"reread_attempt_count":      rereadAttemptCount,
-		"max_reread_attempts":       maxAutomaticRereadAttempts,
-	})
-
 	if err := s.repo.CompleteTaskTx(tx, task.ID, models.CompletionResult{
 		Status:    completionStatus,
-		Payload:   string(resultPayload),
+		Payload:   "", // ponytail: preserve original questions payload in study_queue for milestone exams
 		FollowUps: followUps,
 	}); err != nil {
 		return models.QuizResult{}, err

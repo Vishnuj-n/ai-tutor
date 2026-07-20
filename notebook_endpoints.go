@@ -85,8 +85,8 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		}
 	}
 
-	// Extract normalized document content for metadata and downstream auto-analysis.
-	doc, err := a.notebookService.ExtractDocument(uploadResult.FilePath, uploadResult.FileType)
+	// Extract lightweight metadata for page count and size details during initial upload.
+	meta, err := a.notebookService.ExtractMetadata(uploadResult.FilePath, uploadResult.FileType)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{
@@ -104,7 +104,7 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 	}
 
 	// Create notebook record as unlinked; Sprint 11 uses a draft/confirm ingestion flow.
-	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", fileHash, doc.PageCount)
+	err = repo.CreateNotebook(uploadResult.ID, uploadResult.FileName, uploadResult.FilePath, uploadResult.FileType, "", fileHash, meta.PageCount)
 	if err != nil {
 		_ = a.notebookService.DeleteFile(uploadResult.FilePath)
 		return map[string]interface{}{
@@ -132,8 +132,8 @@ func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[st
 		"file_name":     uploadResult.FileName,
 		"file_type":     uploadResult.FileType,
 		"size":          uploadResult.Size,
-		"page_count":    doc.PageCount,
-		"word_count":    doc.WordCount,
+		"page_count":    meta.PageCount,
+		"word_count":    meta.WordCount,
 		"chunk_count":   0,
 		"indexed_count": 0,
 		"failed_count":  0,
@@ -156,8 +156,9 @@ func (a *App) resolveExplicitActiveProfileID() string {
 }
 
 // DraftNotebookSyllabus creates editable chapter ranges for HITL verification.
-// If regenerate=false and a draft exists in DB, returns the persisted draft without re-running extraction/LLM.
-// If regenerate=true or no draft exists, runs extraction/LLM and persists the result.
+// Uses bookmark extraction only (no LLM) for fast default response.
+// If regenerate=true, runs full extraction+LLM (same as AICleanupNotebookSyllabus).
+// If regenerate=false and a draft exists in DB, returns the persisted draft.
 func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
@@ -186,7 +187,6 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 			return map[string]interface{}{"error": err.Error()}
 		}
 		if draftJSON != "" {
-			// Parse and return persisted draft
 			var persistedDraft models.SyllabusDraft
 			if err := json.Unmarshal([]byte(draftJSON), &persistedDraft); err == nil {
 				return map[string]interface{}{
@@ -200,54 +200,112 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		}
 	}
 
-	// No persisted draft or regenerate=true: run extraction and LLM
-	// Use lightweight sample extraction for faster response time
-	// Only extract first 30 pages for LLM context instead of full document
+	// Extract lightweight document sample for page count
 	doc, err := a.notebookService.ExtractDocumentSample(nb.FilePath, nb.FileType, 30)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	_ = repo.UpdateNotebookStatus(notebookID, "analyzing")
-	result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
-	if err != nil {
-		_ = repo.UpdateNotebookStatus(notebookID, "failed")
-		return map[string]interface{}{"error": err.Error()}
+	if doc.PageCount <= 0 {
+		doc.PageCount = 1
 	}
 
-	chapters := result.Chapters
-	fallbackUsed := result.FallbackUsed
-	if len(chapters) == 0 {
-		endPage := doc.PageCount
-		if endPage <= 0 {
-			endPage = 1
+	if err := repo.UpdateNotebookStatus(notebookID, "analyzing"); err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to update notebook status: %v", err)}
+	}
+
+	// Fast path: bookmarks only, no LLM call
+	if !regenerate {
+		result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, nil)
+		if err == nil && len(result.Chapters) > 0 {
+			chapters := result.Chapters
+			draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
+			draftJSON, err := json.Marshal(draftToPersist)
+			if err != nil {
+				return map[string]interface{}{"error": fmt.Sprintf("failed to marshal draft: %v", err)}
+			}
+			if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
+				return map[string]interface{}{"error": fmt.Sprintf("failed to persist syllabus draft: %v", err)}
+			}
+			if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
+				return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
+			}
+			return map[string]interface{}{
+				"notebook_id":   notebookID,
+				"page_count":    doc.PageCount,
+				"chapters":      chapters,
+				"status":        "draft_ready",
+				"fallback_used": false,
+			}
 		}
-		chapters = []models.SyllabusChapterDraft{{
+		// No bookmarks found — create a single "General" chapter covering all pages
+		// User can edit this manually or click "AI Clean Up" for smarter extraction
+		endPage := doc.PageCount
+		chapters := []models.SyllabusChapterDraft{{
 			Title:     "General",
 			StartPage: 1,
 			EndPage:   endPage,
 		}}
-		fallbackUsed = true
+		draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
+		draftJSON, err := json.Marshal(draftToPersist)
+		if err != nil {
+			return map[string]interface{}{"error": fmt.Sprintf("failed to marshal fallback draft: %v", err)}
+		}
+		if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
+			return map[string]interface{}{"error": fmt.Sprintf("failed to persist fallback draft: %v", err)}
+		}
+		if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
+			return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
+		}
+		return map[string]interface{}{
+			"notebook_id":   notebookID,
+			"page_count":    doc.PageCount,
+			"chapters":      chapters,
+			"status":        "draft_ready",
+			"fallback_used": true,
+		}
 	}
 
-	// Persist the draft for future use
-	draftToPersist := models.SyllabusDraft{
-		PageCount: doc.PageCount,
-		Chapters:  chapters,
+	// regenerate=true: full extraction + LLM (used by AI Clean Up)
+	// Stop and return error if LLM is unavailable or draft generation fails.
+	if a.heavyLLMProvider == nil {
+		return map[string]interface{}{"error": "heavy LLM provider is not available for AI cleanup"}
 	}
+
+	result, llmErr := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, a.heavyLLMProvider)
+	if llmErr != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("AI extraction failed: %v", llmErr)}
+	}
+	if len(result.Chapters) == 0 {
+		return map[string]interface{}{"error": "AI extraction returned no chapters"}
+	}
+
+	draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: result.Chapters}
 	draftJSON, err := json.Marshal(draftToPersist)
-	if err == nil {
-		_ = repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON))
+	if err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to marshal draft: %v", err)}
+	}
+	if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to persist syllabus draft: %v", err)}
 	}
 
-	_ = repo.UpdateNotebookStatus(notebookID, "draft_ready")
+	if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
+		return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
+	}
+
 	return map[string]interface{}{
 		"notebook_id":   notebookID,
 		"page_count":    doc.PageCount,
-		"chapters":      chapters,
+		"chapters":      result.Chapters,
 		"status":        "draft_ready",
-		"fallback_used": fallbackUsed,
+		"fallback_used": result.FallbackUsed,
 	}
+}
+
+// AICleanupNotebookSyllabus re-runs chapter extraction with LLM to improve bookmark-based drafts.
+// Explicit user action — not called automatically.
+func (a *App) AICleanupNotebookSyllabus(notebookID string) map[string]interface{} {
+	return a.DraftNotebookSyllabus(notebookID, true)
 }
 
 // ConfirmNotebookSyllabus commits notebook ingestion from user-confirmed chapter bounds.
@@ -370,8 +428,12 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 	topicIDs := make([]string, 0, len(normalized))
 
 	for i, ch := range normalized {
+		chTitle := strings.TrimSpace(ch.Title)
+		if chTitle == "" {
+			chTitle = fmt.Sprintf("Chapter %d", i+1)
+		}
 		// Sanitize topic ID: lowercase, replace non-alphanumerics with hyphens, collapse duplicates
-		sanitized := strings.ToLower(strings.TrimSpace(ch.Title))
+		sanitized := strings.ToLower(chTitle)
 		// Replace any character not in [a-z0-9] with hyphen
 		var result []rune
 		for _, r := range sanitized {
@@ -401,7 +463,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 		topicItems = append(topicItems, db.TopicBatchItem{
 			TopicID: topicID,
-			Title:   ch.Title,
+			Title:   chTitle,
 		})
 
 		boundsItems = append(boundsItems, db.TopicPageBoundsBatchItem{
@@ -731,6 +793,7 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 			"remaining_words":  remainingWords,
 			"days_remaining":   0,
 			"sessions_per_day": 0,
+			"pace_label":       "",
 		}
 	}
 
@@ -754,12 +817,27 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 		sessionsPerDay = float64(dailyPace) / 2500.0
 	}
 
+	n := int(math.Ceil(sessionsPerDay))
+	paceLabel := ""
+	if n > 0 {
+		if n == 1 {
+			paceLabel = "On track — 1 session/day"
+		} else if n <= 2 {
+			paceLabel = "Moderate pace"
+		} else if n <= 4 {
+			paceLabel = "Tight schedule"
+		} else {
+			paceLabel = "Consider adding more books or extending deadline"
+		}
+	}
+
 	return map[string]interface{}{
-		"has_deadline":    true,
-		"deadline":        deadlineTime.Format("2006-01-02"),
-		"daily_pace":      dailyPace,
-		"remaining_words": remainingWords,
-		"days_remaining":  daysRemaining,
+		"has_deadline":     true,
+		"deadline":         deadlineTime.Format("2006-01-02"),
+		"daily_pace":       dailyPace,
+		"remaining_words":  remainingWords,
+		"days_remaining":   daysRemaining,
 		"sessions_per_day": sessionsPerDay,
+		"pace_label":       paceLabel,
 	}
 }

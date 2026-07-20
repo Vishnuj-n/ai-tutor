@@ -114,10 +114,6 @@ func CloseMultiFileLogger() {
 
 // ---------- Global Level Helpers ----------
 
-func Debugf(format string, args ...any) {
-	slog.Debug(fmt.Sprintf(format, args...))
-}
-
 func Infof(format string, args ...any) {
 	slog.Info(fmt.Sprintf(format, args...))
 }
@@ -211,16 +207,4 @@ func LogSchedulerDecision(topicID string, startPage, endPage int, tokenBudget, r
 		"tokenBudget", tokenBudget, "reason", reason)
 }
 
-// ---------- Boot / Init Logging ----------
 
-// LogBoot logs a named RAG/boot initialization step with its outcome.
-func LogBoot(stage, outcome, detail string) {
-	RagLogger.Info("boot", "stage", stage, "outcome", outcome, "detail", detail)
-}
-
-// ---------- Retrieval Logging ----------
-
-// LogRetrieval logs a single retrieval call with its scope, mode, and result count.
-func LogRetrieval(scope, mode, id string, topK, got int, reason string) {
-	RagLogger.Info("retrieval", "scope", scope, "mode", mode, "id", id, "topK", topK, "got", got, "reason", reason)
-}

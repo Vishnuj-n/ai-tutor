@@ -39,6 +39,7 @@ Marks task complete + triggers follow-ups.
 | `quiz_result` | Quiz completion | `score`, `passed`. No FSRS update. |
 | `read_complete` | Reading completion | `pages_read` (informational) |
 | `flashcard_review` | Flashcard session | `cards_reviewed`, `ratings`. Updates FSRS. |
+| `milestone_exam_result` | Milestone exam completion | `score`, `passed`, `answers_json`. Aggregated from last 10 quizzes. |
 | `skip` | User skips task | `reason` (optional) |
 
 **Side effects:** Updates status, may insert follow-ups, skipped tasks preserve audit trail.
@@ -109,6 +110,27 @@ Suspends a card (removed from future reviews). Returns remaining pending card co
 
 ---
 
+## Milestone Exam API
+
+### CompleteMilestoneExam
+Completes an active MILESTONE_EXAM task. Returns score and pass/fail result.
+
+### GetQuestionsForQuizAttempts
+Retrieves all quiz questions from original study_queue payload_json for given quiz attempt IDs. Used by milestone exam to reconstruct questions from past attempts.
+
+---
+
+## Milestone Exam API
+
+### CompleteMilestoneExam
+Completes an active MILESTONE_EXAM task. Validates task type, evaluates answers against correctness arrays in `payload_json`, records attempt, and returns score/passed.
+
+**Trigger:** Auto-inserted after every 10th completed quiz per notebook (`count % 10 == 0`).
+
+**Payload format:** `{"quizzes": {"<attempt_id>": [1,0,1,0]}, "passing_score": 70}` — correctness arrays computed at insert time.
+
+---
+
 ## GetTopicSectionsContent
 Returns joined text of all sections in a topic (used by SocraticRescue).
 
@@ -148,10 +170,20 @@ const (
   TaskTypeQuiz            TaskType = "QUIZ"
   TaskTypeReread          TaskType = "REREAD"
   TaskTypeFlashcardReview TaskType = "FLASHCARD_REVIEW"
+  TaskTypeMilestoneExam   TaskType = "MILESTONE_EXAM"
   TaskTypeExaminer        TaskType = "EXAMINER"
   TaskTypeSocraticRemedial TaskType = "SOCRATIC_REMEDIAL"
   TaskTypeFlashcardSync   TaskType = "FLASHCARD_GENERATE"
 )
+```
+
+### Milestone Exam Payload
+```go
+type MilestoneExamPayload struct {
+    Quizzes      map[string][]int `json:"quizzes"`      // attempt_id → correctness flags
+    PassingScore int              `json:"passing_score"` // e.g. 70
+    QuizCount    int              `json:"quiz_count"`    // number of quizzes aggregated
+}
 ```
 
 ### Task Status

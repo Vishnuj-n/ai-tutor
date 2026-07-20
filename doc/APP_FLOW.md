@@ -31,8 +31,9 @@ Dashboard fetches next PENDING task
 | 3 | `FLASHCARD_REVIEW` |
 | 4 | `REREAD` |
 | 5 | `QUIZ` |
-| 6 | `READING` |
-| 7 | `EXAMINER` |
+| 6 | `MILESTONE_EXAM` |
+| 7 | `READING` |
+| 8 | `EXAMINER` |
 
 Then apply notebook priority bias within each tier.
 
@@ -92,6 +93,7 @@ Reader does not route to Quiz. Only generated follow-up quiz tasks transition th
 ```
 QUIZ → COMPLETED
 → Insert FLASHCARD_REVIEW or move to next task
+→ If 10th quiz for notebook: insert MILESTONE_EXAM
 → Dashboard shows next
 ```
 
@@ -162,19 +164,38 @@ On sync failure after retries → `FLASHCARD_GENERATE` task inserted (priority t
 
 ---
 
-## 6. Examiner Mode
+## 6. Milestone Exam
 
-Optional written assessments. Triggered after mastery (e.g., quiz > 80%). Tier 7 priority (reviews/reading not blocked). User-triggered, not hidden.
+Aggregate exam from past quiz attempts for a notebook. Triggered every 10 completed quizzes per notebook.
+
+**Flow:**
+1. After quiz completion, backend counts completed quizzes for the notebook
+2. If count is a multiple of 10 (`count % 10 == 0`) → `MILESTONE_EXAM` task inserted
+3. Milestone exam reuses questions from last 10 quiz attempts (no new LLM generation)
+4. User completes the aggregate exam → score computed from embedded correctness arrays
+5. Pass → topic/notebook progression. Fail → standard remediation flow.
+
+**Key behaviors:**
+- Reuses existing quiz questions (no LLM call for generation)
+- Deduplicates: prevents duplicate milestone exams for same quiz attempt
+- Priority tier 2 (between QUIZ at tier 3 and READING at tier 1)
+- Skips corrupt quiz attempts gracefully
 
 ---
 
-## 6a. Dashboard Streak Calendar
+## 6a. Examiner Mode
+
+Optional written assessments. Triggered after mastery (e.g., quiz > 80%). Lowest queue priority (tier 0). Reviews/reading not blocked. User-triggered, not hidden.
+
+---
+
+## 6b. Dashboard Streak Calendar
 
 Monthly calendar widget tracks study consistency. Timezone-aware, highlights active days, shows current/longest streak, fire icon pulses on today's completion.
 
 ---
 
-## 6b. Cloud Sync
+## 6c. Cloud Sync
 
 Stable SHA-256 file hashes + page numbers replace local IDs for cross-student analytics. Delta sync (only unsent logs). `classroom_code` for teacher-student association.
 
@@ -198,6 +219,7 @@ All AI generation sync. Click Complete → Spinner → LLM call → Response →
 - Empty queue: "All caught up! Upload a new PDF."
 - AI unavailable: explicit error, no fallback
 - Queue state: always visible via SQLite
+- AI cleanup failed: graceful fallback to bookmark chapters or single "General" chapter
 - Quiz gen failed: explicit error, retry available
 
 **Skip semantics:**
