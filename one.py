@@ -7,7 +7,7 @@ LINE_LIMIT = 800
 VALID_EXTENSIONS = {
     ".py", ".go", ".js", ".ts", ".tsx", ".jsx",
     ".java", ".cpp", ".c", ".cs", ".rs",
-    ".html", ".css", ".scss", ".sql", ".json",
+    ".html", ".css", ".scss", ".sql",
     ".yaml", ".yml", ".sh",".vue"
 }
 
