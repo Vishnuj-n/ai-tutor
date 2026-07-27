@@ -244,11 +244,11 @@ func ResolveAppDir() (string, error) {
 	// Prod/default: use a stable per-user directory and guarantee it exists.
 	var dir string
 	if cfgDir, err := os.UserConfigDir(); err == nil && cfgDir != "" {
-		dir = filepath.Join(cfgDir, "ai-tutor")
+		dir = filepath.Join(cfgDir, "Studyloop")
 	} else if cacheDir, err := os.UserCacheDir(); err == nil && cacheDir != "" {
-		dir = filepath.Join(cacheDir, "ai-tutor")
+		dir = filepath.Join(cacheDir, "Studyloop")
 	} else if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
-		dir = filepath.Join(homeDir, ".ai-tutor")
+		dir = filepath.Join(homeDir, ".Studyloop")
 	} else {
 		return "", fmt.Errorf("failed to resolve application data directory")
 	}

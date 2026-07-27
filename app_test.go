@@ -26,7 +26,7 @@ var testRepo *db.Repository
 
 func initTestDB(t *testing.T) {
 	t.Helper()
-	tempDB := filepath.Join(t.TempDir(), "ai-tutor-test.db")
+	tempDB := filepath.Join(t.TempDir(), "studyloop-test.db")
 	repo, err := db.Init(tempDB, "")
 	if err != nil {
 		t.Fatalf("failed to init test db: %v", err)
@@ -45,7 +45,7 @@ func initTestDB(t *testing.T) {
 
 func initCleanTestDB(t *testing.T) {
 	t.Helper()
-	tempDB := filepath.Join(t.TempDir(), "ai-tutor-test.db")
+	tempDB := filepath.Join(t.TempDir(), "studyloop-test.db")
 	repo, err := db.Init(tempDB, "")
 	if err != nil {
 		t.Fatalf("failed to init clean test db: %v", err)
