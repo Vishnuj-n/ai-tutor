@@ -176,6 +176,7 @@ const {
   studyDuration,
   applyDurationPreset,
   loadSettings,
+  saveUserSettings,
   cleanup: cleanupSettings,
 } = useSettings(error, success)
 

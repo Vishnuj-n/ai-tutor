@@ -117,6 +117,7 @@
         <div v-for="(message, idx) in messages" :key="idx" :class="['bubble-row', message.role]">
           <article class="bubble">
             <p v-if="message.role === 'user'" class="message-text">{{ message.text }}</p>
+            <!-- eslint-disable-next-line vue/no-v-html -->
             <div v-else class="markdown-body" v-html="renderMarkdown(message.text)"></div>
 
             <div v-if="message.role === 'assistant' && message.error" class="message-error">
@@ -527,7 +528,8 @@ async function initiateSocraticSession() {
 
   try {
     const topicID = effectiveTopicID.value
-    const result = await askSocratic(selectedNotebookID.value, topicID, '__START__')
+    const startPrompt = '__START__'
+    const result = await askSocratic(selectedNotebookID.value, topicID, startPrompt)
 
     if (result.error) {
       const isNetworkError =

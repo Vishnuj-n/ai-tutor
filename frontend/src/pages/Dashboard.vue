@@ -165,9 +165,6 @@ import { onMounted, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   getDashboardOverview,
-  getTodayPlan,
-  getProfiles,
-  getUserSettings,
   updateUserSettings,
   getProfileDailyPace,
   retryFlashcardGeneration,
@@ -176,7 +173,6 @@ import {
   devForceFlashcardGenerate,
   getNotebooks,
   getFlashcardDueTimeline,
-  getStreakState,
 } from '../services/appApi'
 import { buildCalendarDays, MONTH_NAMES } from '../utils/dateFormat'
 
