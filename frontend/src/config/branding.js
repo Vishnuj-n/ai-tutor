@@ -1,3 +1,4 @@
 export const BRANDING = {
-  appName: 'ScholarOS',
+  appName: 'The StudyLoop',
 }
+
