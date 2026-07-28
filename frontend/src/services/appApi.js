@@ -93,6 +93,10 @@ export function getTodayPlan() {
   return appBridge().GetTodayPlan()
 }
 
+export function getDashboardOverview(timezoneOffsetMinutes) {
+  return appBridge().GetDashboardOverview(timezoneOffsetMinutes)
+}
+
 export function getStreakState(timezoneOffsetMinutes) {
   return appBridge().GetStreakState(timezoneOffsetMinutes)
 }

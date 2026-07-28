@@ -90,6 +90,11 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 					utils.Warnf("%s", res.AiInitError)
 				} else {
 					// Re-initialize DB, this time with the staged vec0.dll
+					// Close Phase 1 non-vector DB connection pool first to prevent SQLite file lock races on Windows
+					if res.Repo != nil {
+						_ = res.Repo.Close()
+						res.Repo = nil
+					}
 					var loadErr error
 					if newRepo, err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
 						loadErr = fmt.Errorf("failed to reload DB with vector extension: %w", err)
@@ -97,8 +102,7 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 						loadErr = fmt.Errorf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
 						_ = newRepo.Close()
 					} else {
-						// Success, close the old one and swap
-						_ = res.Repo.Close()
+						// Success
 						res.Repo = newRepo
 					}
 
@@ -110,7 +114,6 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 						if fbErr != nil {
 							return nil, fmt.Errorf("failed to reload DB even without vector extension: %w", fbErr)
 						}
-						_ = res.Repo.Close()
 						res.Repo = fbRepo
 					} else {
 						// Init ONNX embedder using paths from AssetManager

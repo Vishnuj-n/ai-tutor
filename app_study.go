@@ -457,6 +457,21 @@ func (a *App) GetStreakState(timezoneOffsetMinutes int) map[string]interface{} {
 	}
 }
 
+// GetDashboardOverview consolidates settings, profiles, today plan, and streak state into a single IPC payload.
+func (a *App) GetDashboardOverview(timezoneOffsetMinutes int) map[string]interface{} {
+	settings := a.GetUserSettings()
+	profiles := a.GetProfiles()
+	todayPlan := a.GetTodayPlan()
+	streakState := a.GetStreakState(timezoneOffsetMinutes)
+
+	return map[string]interface{}{
+		"settings":     settings,
+		"profiles":     profiles,
+		"today_plan":   todayPlan,
+		"streak_state": streakState,
+	}
+}
+
 func (a *App) SkipTask(taskID string) map[string]interface{} {
 	repo, errMap := requireRepo(a)
 	if errMap != nil {

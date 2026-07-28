@@ -137,7 +137,7 @@
                 v-if="renderedPages[pageNum]"
                 :source="reader.notebookUrl.value"
                 :page="pageNum"
-                :text-layer="false"
+                :text-layer="true"
                 :annotation-layer="false"
                 @rendered="() => onPageRendered(pageNum)"
                 @loading-failed="handlePDFLoadFailed"
