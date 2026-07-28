@@ -28,3 +28,11 @@ func TestVersionCompareHelper(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckForUpdates(t *testing.T) {
+	app := &App{}
+	res := app.CheckForUpdates()
+	if ver, ok := res["current_version"].(string); !ok || ver == "" {
+		t.Errorf("Expected current_version to be populated in CheckForUpdates response, got %v", res["current_version"])
+	}
+}

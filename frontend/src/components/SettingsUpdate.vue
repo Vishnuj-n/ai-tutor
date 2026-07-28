@@ -36,7 +36,7 @@ import { checkForUpdates, openRepoURL } from '../services/appApi'
 const checking = ref(false)
 const updateChecked = ref(false)
 const updateAvailable = ref(false)
-const currentVersion = ref('1.0.0')
+const currentVersion = ref('1.2.0')
 const latestVersion = ref('')
 const error = ref('')
 
@@ -45,10 +45,17 @@ async function performCheck() {
   error.value = ''
   try {
     const res = await checkForUpdates()
-    currentVersion.value = res.current_version
-    latestVersion.value = res.latest_version
-    updateAvailable.value = res.update_available
+    if (res?.current_version) {
+      currentVersion.value = res.current_version
+    }
+    if (res?.latest_version) {
+      latestVersion.value = res.latest_version
+    }
+    updateAvailable.value = !!res?.update_available
     updateChecked.value = true
+    if (res?.error) {
+      error.value = res.error
+    }
   } catch (err) {
     error.value = err.message || 'Failed to check updates'
   } finally {
@@ -64,7 +71,12 @@ onMounted(() => {
   // Grab the app version initially
   checkForUpdates()
     .then((res) => {
-      currentVersion.value = res.current_version
+      if (res?.current_version) {
+        currentVersion.value = res.current_version
+      }
+      if (res?.error) {
+        error.value = res.error
+      }
     })
     .catch(() => {})
 })
