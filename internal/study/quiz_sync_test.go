@@ -68,7 +68,7 @@ func TestBuildQuizContext(t *testing.T) {
 	}
 
 	// Budget that easily fits c1 and c2
-	res, err := buildQuizContext([]string{"c1", "c2"}, chunkText, 1000, 300)
+	res, err := buildQuizContext([]string{"c1", "c2"}, chunkText, 1000)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestBuildQuizContext(t *testing.T) {
 	}
 
 	// Budget that fits c1 but not c2 (e.g. availableBudget = 15)
-	resSmall, err := buildQuizContext([]string{"c1", "c2"}, chunkText, 15, 300)
+	resSmall, err := buildQuizContext([]string{"c1", "c2"}, chunkText, 15)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

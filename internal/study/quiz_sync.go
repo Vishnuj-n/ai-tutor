@@ -160,7 +160,6 @@ func buildQuizContext(
 	normalizedChunkIDs []string,
 	chunkTextByID map[string]string,
 	availableBudget int,
-	baseOverheadTokens int,
 ) (quizContextResult, error) {
 	totalWordCount := 0
 	currentTokens := 0
@@ -288,7 +287,7 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		availableBudget = 1000
 	}
 
-	ctxRes, err := buildQuizContext(normalizedChunkIDs, chunkTextByID, availableBudget, baseOverheadTokens)
+	ctxRes, err := buildQuizContext(normalizedChunkIDs, chunkTextByID, availableBudget)
 	if err != nil {
 		return models.QuizTaskPayload{}, err
 	}
