@@ -46,10 +46,10 @@ async function performCheck() {
   try {
     const res = await checkForUpdates()
     if (res?.current_version) {
-      currentVersion.value = res.current_version
+      currentVersion.value = String(res.current_version).replace(/^v+/, '')
     }
     if (res?.latest_version) {
-      latestVersion.value = res.latest_version
+      latestVersion.value = String(res.latest_version).replace(/^v+/, '')
     }
     updateAvailable.value = !!res?.update_available
     updateChecked.value = true
@@ -72,7 +72,7 @@ onMounted(() => {
   checkForUpdates()
     .then((res) => {
       if (res?.current_version) {
-        currentVersion.value = res.current_version
+        currentVersion.value = String(res.current_version).replace(/^v+/, '')
       }
       if (res?.error) {
         error.value = res.error

@@ -214,8 +214,8 @@ async function checkAppUpdates() {
   try {
     const res = await checkForUpdates()
     if (res && res.update_available) {
-      currentVersion.value = res.current_version
-      latestVersion.value = res.latest_version
+      currentVersion.value = (res.current_version || '').replace(/^v+/, '')
+      latestVersion.value = (res.latest_version || '').replace(/^v+/, '')
       showUpdateModal.value = true
     }
   } catch (err) {

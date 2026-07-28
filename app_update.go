@@ -70,21 +70,21 @@ func (a *App) CheckForUpdates() map[string]interface{} {
 	if remoteVersionClean != "" && remoteVersionClean != currentVersionClean {
 		return map[string]interface{}{
 			"update_available": true,
-			"latest_version":   remoteVersion,
-			"current_version":  appVer,
-			"url":              "https://github.com/Vishnuj-n/ai-tutor",
+			"latest_version":   remoteVersionClean,
+			"current_version":  currentVersionClean,
+			"url":              "https://github.com/Vishnuj-n/ai-tutor/releases",
 		}
 	}
 
 	return map[string]interface{}{
 		"update_available": false,
-		"latest_version":   remoteVersion,
-		"current_version":  appVer,
+		"latest_version":   remoteVersionClean,
+		"current_version":  currentVersionClean,
 	}
 }
 
 // OpenRepoURL opens the GitHub repository releases page in the user's default system browser.
 func (a *App) OpenRepoURL() {
 	// ponytail: use native OS browser via Wails runtime wrapper
-	wailsruntime.BrowserOpenURL(a.ctx, "https://github.com/Vishnuj-n/ai-tutor")
+	wailsruntime.BrowserOpenURL(a.ctx, "https://github.com/Vishnuj-n/ai-tutor/releases")
 }
