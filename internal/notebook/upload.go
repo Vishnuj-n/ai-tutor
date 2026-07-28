@@ -39,7 +39,8 @@ const (
 type Option func(*Service)
 
 // WithExtractPDFFunc overrides PDF extraction logic.
-func WithExtractPDFFunc(fn func(string, *ExtractedDocument) error) Option {
+// Called from upload_test.go; exported as a test seam.
+func WithExtractPDFFunc(fn func(string, *ExtractedDocument) error) Option { //nolint:deadcode,unused
 	return func(s *Service) {
 		if fn != nil {
 			s.extractPDF = fn

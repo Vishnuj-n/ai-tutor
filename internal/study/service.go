@@ -563,7 +563,9 @@ func scaledQuizQuestionCount(wordCount int) int {
 	}
 }
 
-func ScaledFlashcardCount(wordCount int) int {
+// ScaledFlashcardCount is exported as a test-observable constant-mapping.
+// Called from quiz_flashcard_test.go; not dead code.
+func ScaledFlashcardCount(wordCount int) int { //nolint:deadcode,unused
 	switch {
 	case wordCount <= QuizTokenThresholdLow:
 		return FlashcardCountLow
