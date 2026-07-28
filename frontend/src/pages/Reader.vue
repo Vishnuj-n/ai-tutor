@@ -921,7 +921,7 @@ h3 {
   margin: 0 auto !important;
   padding: 0 !important;
   width: 100% !important;
-  height: 100% !important;
+  height: auto !important;
   border: none !important;
   box-shadow: none !important;
 }
