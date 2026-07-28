@@ -525,13 +525,9 @@ async function initiateSocraticSession() {
   isLoading.value = true
   globalError.value = ''
 
-  const startPrompt = isRescueMode.value
-    ? "Let's start the Concept Rescue session. Please ask me a guiding question about the topic to help me clear up my confusion."
-    : "Let's start our Socratic discussion. Please introduce yourself and ask me a starting question to check my understanding of this material."
-
   try {
     const topicID = effectiveTopicID.value
-    const result = await askSocratic(selectedNotebookID.value, topicID, startPrompt)
+    const result = await askSocratic(selectedNotebookID.value, topicID, '__START__')
 
     if (result.error) {
       const isNetworkError =

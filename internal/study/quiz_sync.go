@@ -264,8 +264,8 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		return models.QuizTaskPayload{}, err
 	}
 
-	// If chunkTextByID is not provided, fall back to database lookup
-	if chunkTextByID == nil {
+	// ponytail: fall back to DB lookup if chunkTextByID is nil or empty
+	if len(chunkTextByID) == 0 {
 		chunkTextByID, err = s.loadChunkTextFallback(topicID)
 		if err != nil {
 			return models.QuizTaskPayload{}, err

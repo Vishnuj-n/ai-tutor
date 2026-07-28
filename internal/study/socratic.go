@@ -174,8 +174,8 @@ func (s *StudyService) AskSocratic(notebookID string, topicID string, question s
 	if notebookID == "" {
 		return nil, retrieval.ErrInvalidNotebookContext
 	}
-	if question == "" {
-		return nil, fmt.Errorf("question is required")
+	if question == "" || question == "__START__" {
+		question = "Let's start our Socratic discussion. Please ask me an initial guiding question about this topic to test my understanding."
 	}
 	if s.fastLLMProvider == nil {
 		return nil, fmt.Errorf("FAST_LLM provider not initialized")
