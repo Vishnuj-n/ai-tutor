@@ -119,20 +119,19 @@ func (vi *VectorIndexer) indexChunks(
 		if err != nil {
 			utils.Warnf("embedding failed for chunk %s: %v", chunk.ID, err)
 			failedChunks[chunk.ID] = struct{}{}
-			continue
+		} else {
+			hash := computeTextHash(chunk.Text)
+
+			vectorBatch = append(vectorBatch, db.ChunkVectorBatchItem{
+				ChunkID: chunk.ID,
+				Vector:  vector,
+			})
+
+			embeddingBatch = append(embeddingBatch, db.ChunkEmbeddingBatchItem{
+				ChunkID: chunk.ID,
+				Hash:    hash,
+			})
 		}
-
-		hash := computeTextHash(chunk.Text)
-
-		vectorBatch = append(vectorBatch, db.ChunkVectorBatchItem{
-			ChunkID: chunk.ID,
-			Vector:  vector,
-		})
-
-		embeddingBatch = append(embeddingBatch, db.ChunkEmbeddingBatchItem{
-			ChunkID: chunk.ID,
-			Hash:    hash,
-		})
 
 		if emitProgress != nil && ((i+1)%10 == 0 || i == len(chunksToReindex)-1) {
 			emitProgress(i+1, len(chunksToReindex), len(failedChunks))
@@ -166,7 +165,12 @@ func (vi *VectorIndexer) indexChunks(
 		}
 	}
 
-	reindexed := len(vectorBatch) - len(failedChunks)
+	reindexed := 0
+	for _, item := range vectorBatch {
+		if _, failed := failedChunks[item.ChunkID]; !failed {
+			reindexed++
+		}
+	}
 	utils.Infof("Indexing complete for %s %s: reindexed=%d, skipped=%d, failed=%d", scopeType, scopeID, reindexed, skipped, len(failedChunks))
 	return len(failedChunks), nil
 }
@@ -267,11 +271,19 @@ func (vi *VectorIndexer) IndexNotebook(notebookID string) error {
 	)
 
 	if err != nil || failedCount > 0 {
-		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED")
-		return err
+		indexingErr := err
+		if indexingErr == nil {
+			indexingErr = fmt.Errorf("indexing completed with %d failed chunks", failedCount)
+		}
+		if statusErr := vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED"); statusErr != nil {
+			return fmt.Errorf("indexing error: %v, status update failed: %w", indexingErr, statusErr)
+		}
+		return indexingErr
 	}
 
-	_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY")
+	if statusErr := vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY"); statusErr != nil {
+		return fmt.Errorf("failed to update status to READY: %w", statusErr)
+	}
 	return nil
 }
 

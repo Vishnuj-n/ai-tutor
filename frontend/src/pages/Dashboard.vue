@@ -326,7 +326,7 @@ async function loadAgenda() {
       totalDueReviewCards.value = response.total_due_review_cards || 0
 
       const activeNotebookCount = response.active_notebook_count || 0
-      hasActiveStudyContent.value = response.tasks.length > 0 || activeNotebookCount > 0
+      hasActiveStudyContent.value = tasks.value.length > 0 || activeNotebookCount > 0
     } else if (overview.today_plan && overview.today_plan.error) {
       error.value = overview.today_plan.error
       return

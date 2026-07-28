@@ -97,6 +97,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	// Sync scheduled task with Windows Task Scheduler (purges old tasks first)
 	if err := scheduler.SyncStudyStartTask(s.StudyStartTime, s.RemindersEnabled); err != nil {
 		utils.Errorf("SyncStudyStartTask failed: %v", err)
+		return map[string]interface{}{"error": fmt.Sprintf("failed to sync scheduled task: %v", err)}
 	}
 
 	// Only mutate runtime after successful persistence.

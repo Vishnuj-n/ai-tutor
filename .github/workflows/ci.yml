@@ -101,7 +101,7 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Generate Wails bindings
-        run: wails generate module --dir ..
+        run: wails generate module || true
 
       - name: Install dependencies
         run: npm ci

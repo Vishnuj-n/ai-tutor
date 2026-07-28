@@ -163,7 +163,7 @@ func buildQuizContext(
 	baseOverheadTokens int,
 ) (quizContextResult, error) {
 	totalWordCount := 0
-	currentTokens := baseOverheadTokens
+	currentTokens := 0
 	contextParts := make([]string, 0, len(normalizedChunkIDs))
 	truncatedCount := 0
 

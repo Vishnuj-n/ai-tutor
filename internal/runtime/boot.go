@@ -188,25 +188,22 @@ func initializeAI(ctx context.Context, res *BootResult, dbPath string) (*embeddi
 		res.Repo = nil
 	}
 
-	var loadErr error
-	if newRepo, err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
-		loadErr = fmt.Errorf("failed to reload DB with vector extension: %w", err)
-	} else if !newRepo.IsVecExtensionLoaded() {
-		loadErr = fmt.Errorf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
-		_ = newRepo.Close()
-	} else {
-		res.Repo = newRepo
-	}
-
-	if loadErr != nil {
-		res.AiInitError = loadErr.Error()
+	newRepo, err := db.Init(dbPath, am.Vec0DllPath())
+	if err != nil {
+		res.AiInitError = fmt.Sprintf("failed to reload DB with vector extension: %v", err)
 		utils.Errorf("%s. Falling back to non-vector DB initialization.", res.AiInitError)
-		// Fallback: reload DB without extension so startup doesn't fail.
 		fbRepo, fbErr := db.Init(dbPath, "")
 		if fbErr != nil {
 			return nil, fmt.Errorf("failed to reload DB even without vector extension: %w", fbErr)
 		}
 		res.Repo = fbRepo
+		return nil, nil
+	}
+
+	res.Repo = newRepo
+	if !newRepo.IsVecExtensionLoaded() {
+		res.AiInitError = "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)"
+		utils.Warnf("%s", res.AiInitError)
 		return nil, nil
 	}
 

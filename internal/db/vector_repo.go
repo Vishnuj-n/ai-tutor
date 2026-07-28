@@ -224,16 +224,11 @@ func (r *Repository) searchVectors(
 	extraLogKv ...interface{},
 ) ([]string, error) {
 	reqLog := []interface{}{"vector_repo: " + funcName + " requested", scopeKey, scopeID, "k", k, "embeddingDimension", r.embeddingDimension, "queryVectorLen", len(queryVector)}
-	if len(extraLogKv) >= 2 && extraLogKv[0] == "startPage" {
-		reqLog = append(reqLog, extraLogKv[:4]...)
-	}
+	reqLog = append(reqLog, extraLogKv...)
 	utils.RagLogger.Info(reqLog[0].(string), reqLog[1:]...)
 
 	if scopeID == "" {
-		if scopeKey == "topicID" {
-			return nil, fmt.Errorf("topic id is required")
-		}
-		return nil, fmt.Errorf("notebook id is required")
+		return nil, fmt.Errorf("%s id is required", scopeTag)
 	}
 	if len(queryVector) == 0 {
 		return nil, fmt.Errorf("query vector is required")
