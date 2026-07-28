@@ -38,8 +38,6 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    forks: {
-      singleFork: true
-    }
+    pool: 'vmThreads',
   }
 })

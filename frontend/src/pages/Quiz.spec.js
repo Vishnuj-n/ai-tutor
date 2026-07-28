@@ -15,6 +15,7 @@ vi.mock('../services/appApi', () => ({
   getNotebooks: vi.fn(),
   generateQuizForPageRange: vi.fn(),
   generateFlashcardsForQuizTask: vi.fn(),
+  getUserSettings: vi.fn(),
 }))
 
 // Mock vue-router hooks
