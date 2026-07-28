@@ -125,45 +125,15 @@ func (s *StudyService) RecordCardReview(taskID, cardID string, rating int) (int,
 		return 0, fmt.Errorf("rating must be between 1 and 4")
 	}
 
-	tx, err := s.repo.Begin()
-	if err != nil {
-		return 0, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	return s.withFlashcardTaskTx(taskID, func(tx *sql.Tx) error {
+		if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
+			return err
 		}
-	}()
-
-	task, err := s.repo.GetTaskByIDTx(tx, taskID)
-	if err != nil {
-		return 0, err
-	}
-	if task.TaskType != models.StudyTaskTypeFlashcardReview {
-		return 0, fmt.Errorf("task %s is not a flashcard review task", taskID)
-	}
-	if task.Status != models.StudyTaskStatusActive {
-		return 0, db.ErrTaskNotActive
-	}
-
-	if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
-		return 0, err
-	}
-	if _, _, _, err := s.applyFlashcardReview(tx, cardID, rating); err != nil {
-		return 0, err
-	}
-
-	remaining, err := s.repo.RemainingReviewTaskCardsTx(tx, taskID)
-	if err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	committed = true
-	return remaining, nil
+		if _, _, _, err := s.applyFlashcardReview(tx, cardID, rating); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *StudyService) CompleteReviewSession(taskID string) error {
@@ -183,6 +153,18 @@ func (s *StudyService) SuspendFlashcard(taskID, cardID string) (int, error) {
 		return 0, fmt.Errorf("task ID and card ID are required")
 	}
 
+	return s.withFlashcardTaskTx(taskID, func(tx *sql.Tx) error {
+		if err := s.repo.SuspendFlashcardTx(tx, cardID); err != nil {
+			return err
+		}
+		if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (s *StudyService) withFlashcardTaskTx(taskID string, fn func(tx *sql.Tx) error) (int, error) {
 	tx, err := s.repo.Begin()
 	if err != nil {
 		return 0, err
@@ -205,11 +187,7 @@ func (s *StudyService) SuspendFlashcard(taskID, cardID string) (int, error) {
 		return 0, db.ErrTaskNotActive
 	}
 
-	if err := s.repo.SuspendFlashcardTx(tx, cardID); err != nil {
-		return 0, err
-	}
-
-	if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
+	if err := fn(tx); err != nil {
 		return 0, err
 	}
 
