@@ -42,28 +42,45 @@ func NewVectorIndexer(repo *db.Repository, embedder *embeddings.OnnxEmbedder, co
 // Uses hash-based incremental indexing: only recomputes vectors if source text has changed.
 // Emits progress events during processing.
 func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
+	_, err := vi.indexChunks(
+		topicID,
+		"topic",
+		func() ([]models.Chunk, error) { return vi.repo.GetChunksForTopic(topicID) },
+		func() (map[string]string, error) { return vi.repo.GetChunkEmbeddingRefsForTopic(topicID) },
+		func(processed, total, failed int) { vi.emitIndexingProgress(topicID, processed, total, failed) },
+	)
+	return err
+}
+
+// indexChunks consolidates shared incremental embedding generation and batch persistence logic.
+func (vi *VectorIndexer) indexChunks(
+	scopeID string,
+	scopeType string,
+	fetchChunks func() ([]models.Chunk, error),
+	fetchRefs func() (map[string]string, error),
+	emitProgress func(processed, total, failed int),
+) (int, error) {
 	if vi.embedder == nil {
-		return fmt.Errorf("embedder not initialized")
+		return 0, fmt.Errorf("embedder not initialized")
 	}
 
-	// Fetch all chunks for the topic
-	chunks, err := vi.repo.GetChunksForTopic(topicID)
+	chunks, err := fetchChunks()
 	if err != nil {
-		return fmt.Errorf("failed to fetch chunks for topic %s: %w", topicID, err)
+		return 0, fmt.Errorf("failed to fetch chunks for %s %s: %w", scopeType, scopeID, err)
 	}
 
 	if len(chunks) == 0 {
-		utils.Infof("No chunks found for topic %s", topicID)
-		return nil
+		utils.Infof("No chunks found for %s %s", scopeType, scopeID)
+		return 0, nil
 	}
 
-	utils.Infof("Indexing %d chunks for topic %s", len(chunks), topicID)
+	utils.Infof("Indexing %d chunks for %s %s", len(chunks), scopeType, scopeID)
 
 	chunkHashRefs := map[string]string{}
 	if vi.config.RecomputeOnHashMismatch && !vi.config.ForceReindex {
-		chunkHashRefs, err = vi.repo.GetChunkEmbeddingRefsForTopic(topicID)
+		chunkHashRefs, err = fetchRefs()
 		if err != nil {
-			return fmt.Errorf("failed to fetch embedding refs for topic %s: %w", topicID, err)
+			return 0, fmt.Errorf("failed to fetch embedding refs for %s %s: %w", scopeType, scopeID, err)
 		}
 	}
 
@@ -75,7 +92,6 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		shouldReindex := vi.config.ForceReindex
 
 		if !shouldReindex && vi.config.RecomputeOnHashMismatch {
-			// Check if source text hash still matches
 			shouldReindex = !doesHashMatch(chunk, chunkHashRefs)
 		}
 
@@ -87,11 +103,11 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	}
 
 	if len(chunksToReindex) == 0 {
-		utils.Infof("Indexing complete for topic %s: reindexed=0, skipped=%d, failed=0", topicID, skipped)
-		return nil
+		utils.Infof("Indexing complete for %s %s: reindexed=0, skipped=%d, failed=0", scopeType, scopeID, skipped)
+		return 0, nil
 	}
 
-	utils.Infof("Processing %d chunks for reindexing in topic %s", len(chunksToReindex), topicID)
+	utils.Infof("Processing %d chunks for reindexing in %s %s", len(chunksToReindex), scopeType, scopeID)
 
 	// Generate embeddings for all chunks that need reindexing
 	vectorBatch := make([]db.ChunkVectorBatchItem, 0, len(chunksToReindex))
@@ -99,41 +115,37 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 	failedChunks := make(map[string]struct{})
 
 	for i, chunk := range chunksToReindex {
-		// Generate new embedding
 		vector, err := vi.embedder.Embed(chunk.Text)
 		if err != nil {
 			utils.Warnf("embedding failed for chunk %s: %v", chunk.ID, err)
 			failedChunks[chunk.ID] = struct{}{}
-			continue
+		} else {
+			hash := computeTextHash(chunk.Text)
+
+			vectorBatch = append(vectorBatch, db.ChunkVectorBatchItem{
+				ChunkID: chunk.ID,
+				Vector:  vector,
+			})
+
+			embeddingBatch = append(embeddingBatch, db.ChunkEmbeddingBatchItem{
+				ChunkID: chunk.ID,
+				Hash:    hash,
+			})
 		}
 
-		hash := computeTextHash(chunk.Text)
-
-		vectorBatch = append(vectorBatch, db.ChunkVectorBatchItem{
-			ChunkID: chunk.ID,
-			Vector:  vector,
-		})
-
-		embeddingBatch = append(embeddingBatch, db.ChunkEmbeddingBatchItem{
-			ChunkID: chunk.ID,
-			Hash:    hash,
-		})
-
-		// Emit progress event every 10 chunks or at the end
-		if (i+1)%10 == 0 || i == len(chunksToReindex)-1 {
-			vi.emitIndexingProgress(topicID, i+1, len(chunksToReindex), len(failedChunks))
+		if emitProgress != nil && ((i+1)%10 == 0 || i == len(chunksToReindex)-1) {
+			emitProgress(i+1, len(chunksToReindex), len(failedChunks))
 		}
 	}
 
 	if len(vectorBatch) == 0 {
-		utils.Infof("Indexing complete for topic %s: reindexed=0, skipped=%d, failed=%d", topicID, skipped, len(failedChunks))
-		return nil
+		utils.Infof("Indexing complete for %s %s: reindexed=0, skipped=%d, failed=%d", scopeType, scopeID, skipped, len(failedChunks))
+		return len(failedChunks), nil
 	}
 
 	// Batch store vectors
 	if err := vi.repo.UpsertChunkVectorsBatch(vectorBatch); err != nil {
-		utils.Warnf("failed to batch store vectors for topic %s: %v", topicID, err)
-		// Fall back to individual operations on batch failure
+		utils.Warnf("failed to batch store vectors for %s %s: %v", scopeType, scopeID, err)
 		for _, item := range vectorBatch {
 			if err := vi.repo.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
 				utils.Warnf("failed to store vector for chunk %s: %v", item.ChunkID, err)
@@ -144,8 +156,7 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 
 	// Batch update embedding metadata
 	if err := vi.repo.UpdateChunkEmbeddingsBatch(embeddingBatch); err != nil {
-		utils.Warnf("failed to batch update embedding metadata for topic %s: %v", topicID, err)
-		// Fall back to individual operations on batch failure
+		utils.Warnf("failed to batch update embedding metadata for %s %s: %v", scopeType, scopeID, err)
 		for _, item := range embeddingBatch {
 			if err := vi.repo.UpdateChunkEmbedding(item.ChunkID, item.Hash); err != nil {
 				utils.Warnf("failed to update chunk embedding metadata for chunk %s: %v", item.ChunkID, err)
@@ -154,9 +165,14 @@ func (vi *VectorIndexer) IndexTopicChunks(topicID string) error {
 		}
 	}
 
-	reindexed := len(vectorBatch) - len(failedChunks)
-	utils.Infof("Indexing complete for topic %s: reindexed=%d, skipped=%d, failed=%d", topicID, reindexed, skipped, len(failedChunks))
-	return nil
+	reindexed := 0
+	for _, item := range vectorBatch {
+		if _, failed := failedChunks[item.ChunkID]; !failed {
+			reindexed++
+		}
+	}
+	utils.Infof("Indexing complete for %s %s: reindexed=%d, skipped=%d, failed=%d", scopeType, scopeID, reindexed, skipped, len(failedChunks))
+	return len(failedChunks), nil
 }
 
 // IndexAllTopics reindexes all topics in the database.
@@ -246,126 +262,27 @@ func (vi *VectorIndexer) IndexNotebook(notebookID string) error {
 		return fmt.Errorf("failed to update indexing status to INDEXING: %w", err)
 	}
 
-	// Fetch all chunks for the notebook
-	chunks, err := vi.repo.GetChunksForNotebook(notebookID)
-	if err != nil {
-		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED")
-		return fmt.Errorf("failed to fetch chunks for notebook %s: %w", notebookID, err)
-	}
+	failedCount, err := vi.indexChunks(
+		notebookID,
+		"notebook",
+		func() ([]models.Chunk, error) { return vi.repo.GetChunksForNotebook(notebookID) },
+		func() (map[string]string, error) { return vi.repo.GetChunkEmbeddingRefsForNotebook(notebookID) },
+		func(processed, total, failed int) { vi.emitNotebookIndexingProgress(notebookID, processed, total, failed) },
+	)
 
-	if len(chunks) == 0 {
-		utils.Infof("No chunks found for notebook %s", notebookID)
-		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY")
-		return nil
-	}
-
-	utils.Infof("Indexing %d chunks for notebook %s", len(chunks), notebookID)
-
-	chunkHashRefs := map[string]string{}
-	if vi.config.RecomputeOnHashMismatch && !vi.config.ForceReindex {
-		chunkHashRefs, err = vi.repo.GetChunkEmbeddingRefsForNotebook(notebookID)
-		if err != nil {
-			_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED")
-			return fmt.Errorf("failed to fetch embedding refs for notebook %s: %w", notebookID, err)
+	if err != nil || failedCount > 0 {
+		indexingErr := err
+		if indexingErr == nil {
+			indexingErr = fmt.Errorf("indexing completed with %d failed chunks", failedCount)
 		}
-	}
-
-	// Collect chunks that need reindexing
-	chunksToReindex := make([]models.Chunk, 0)
-	skipped := 0
-
-	for _, chunk := range chunks {
-		shouldReindex := vi.config.ForceReindex
-
-		if !shouldReindex && vi.config.RecomputeOnHashMismatch {
-			// Check if source text hash still matches
-			shouldReindex = !doesHashMatch(chunk, chunkHashRefs)
+		if statusErr := vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED"); statusErr != nil {
+			return fmt.Errorf("indexing error: %v, status update failed: %w", indexingErr, statusErr)
 		}
-
-		if shouldReindex {
-			chunksToReindex = append(chunksToReindex, chunk)
-		} else {
-			skipped++
-		}
+		return indexingErr
 	}
 
-	if len(chunksToReindex) == 0 {
-		utils.Infof("Indexing complete for notebook %s: reindexed=0, skipped=%d, failed=0", notebookID, skipped)
-		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY")
-		return nil
-	}
-
-	utils.Infof("Processing %d chunks for reindexing in notebook %s", len(chunksToReindex), notebookID)
-
-	// Generate embeddings for all chunks that need reindexing
-	vectorBatch := make([]db.ChunkVectorBatchItem, 0, len(chunksToReindex))
-	embeddingBatch := make([]db.ChunkEmbeddingBatchItem, 0, len(chunksToReindex))
-	failedChunks := make(map[string]struct{})
-
-	for i, chunk := range chunksToReindex {
-		// Generate new embedding
-		vector, err := vi.embedder.Embed(chunk.Text)
-		if err != nil {
-			utils.Warnf("embedding failed for chunk %s: %v", chunk.ID, err)
-			failedChunks[chunk.ID] = struct{}{}
-			continue
-		}
-
-		hash := computeTextHash(chunk.Text)
-
-		vectorBatch = append(vectorBatch, db.ChunkVectorBatchItem{
-			ChunkID: chunk.ID,
-			Vector:  vector,
-		})
-
-		embeddingBatch = append(embeddingBatch, db.ChunkEmbeddingBatchItem{
-			ChunkID: chunk.ID,
-			Hash:    hash,
-		})
-
-		// Emit progress event every 10 chunks or at the end
-		if (i+1)%10 == 0 || i == len(chunksToReindex)-1 {
-			vi.emitNotebookIndexingProgress(notebookID, i+1, len(chunksToReindex), len(failedChunks))
-		}
-	}
-
-	if len(vectorBatch) == 0 {
-		utils.Infof("Indexing complete for notebook %s: reindexed=0, skipped=%d, failed=%d", notebookID, skipped, len(failedChunks))
-		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED")
-		return nil
-	}
-
-	// Batch store vectors
-	if err := vi.repo.UpsertChunkVectorsBatch(vectorBatch); err != nil {
-		utils.Warnf("failed to batch store vectors for notebook %s: %v", notebookID, err)
-		// Fall back to individual operations on batch failure
-		for _, item := range vectorBatch {
-			if err := vi.repo.UpsertChunkVector(item.ChunkID, item.Vector); err != nil {
-				utils.Warnf("failed to store vector for chunk %s: %v", item.ChunkID, err)
-				failedChunks[item.ChunkID] = struct{}{}
-			}
-		}
-	}
-
-	// Batch update embedding metadata
-	if err := vi.repo.UpdateChunkEmbeddingsBatch(embeddingBatch); err != nil {
-		utils.Warnf("failed to batch update embedding metadata for notebook %s: %v", notebookID, err)
-		// Fall back to individual operations on batch failure
-		for _, item := range embeddingBatch {
-			if err := vi.repo.UpdateChunkEmbedding(item.ChunkID, item.Hash); err != nil {
-				utils.Warnf("failed to update chunk embedding metadata for chunk %s: %v", item.ChunkID, err)
-				failedChunks[item.ChunkID] = struct{}{}
-			}
-		}
-	}
-
-	reindexed := len(vectorBatch) - len(failedChunks)
-	utils.Infof("Indexing complete for notebook %s: reindexed=%d, skipped=%d, failed=%d", notebookID, reindexed, skipped, len(failedChunks))
-	
-	if len(failedChunks) > 0 {
-		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "FAILED")
-	} else {
-		_ = vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY")
+	if statusErr := vi.repo.UpdateNotebookIndexingStatus(notebookID, "READY"); statusErr != nil {
+		return fmt.Errorf("failed to update status to READY: %w", statusErr)
 	}
 	return nil
 }

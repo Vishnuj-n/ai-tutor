@@ -25,7 +25,7 @@ func (a *App) CheckForUpdates() map[string]interface{} {
 			"error":            err.Error(),
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return map[string]interface{}{

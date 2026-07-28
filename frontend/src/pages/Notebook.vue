@@ -529,12 +529,10 @@ async function aiCleanupChapters() {
           }))
         : [{ title: 'General', start_page: 1, end_page: draftPageCount.value }]
 
-    // Update snapshot so "Confirm" only re-ingests if user edits further
-    originalDraftChapters.value = draftChapters.value.map((ch) => ({
-      title: String(ch.title || '').trim(),
-      start_page: Number(ch.start_page) || 1,
-      end_page: Number(ch.end_page) || 1,
-    }))
+    // NOTE: Do NOT update originalDraftChapters here.
+    // originalDraftChapters represents what is persisted in the DB.
+    // Resetting it to the AI-cleaned result would make chaptersChanged=false
+    // on the next Confirm click, silently skipping re-ingestion entirely.
 
     if (result?.fallback_used) {
       showToast('AI unavailable — using bookmark chapters')

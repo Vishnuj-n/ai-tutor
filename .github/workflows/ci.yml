@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  go-lint:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,90 +27,35 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Build frontend for embed
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Create dummy frontend dist for Go embed
+        run: mkdir -p frontend/dist && touch frontend/dist/index.html
+
+      - name: Generate Wails bindings
+        run: wails generate module
+
+      - name: Install frontend dependencies & build
         run: |
           npm ci
           npm run build
         working-directory: frontend
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Generate Wails bindings
-        run: wails generate module
-
-      - uses: golangci/golangci-lint-action@v6
+      - name: Run Go linter
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           install-mode: goinstall
           args: --timeout=5m ./...
 
-  go-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build frontend for embed
-        run: |
-          npm ci
-          npm run build
-        working-directory: frontend
-
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Generate Wails bindings
-        run: wails generate module
-
-      - name: Run all Go tests
+      - name: Run Go tests
         run: go test -v -count=1 -race ./...
 
-  frontend:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Generate Wails bindings
-        run: wails generate module --dir ..
-
-      - name: Lint
+      - name: Lint frontend
         run: npm run lint
+        working-directory: frontend
 
-      - name: Test
+      - name: Test frontend
         run: npm test
+        working-directory: frontend

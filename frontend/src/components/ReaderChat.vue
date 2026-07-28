@@ -35,7 +35,6 @@
       </div>
 
       <div ref="messagesPaneRef" class="messages">
-        <!-- eslint-disable-next-line vue/no-v-html -->
         <article
           v-for="(msg, idx) in chat.chatMessages.value"
           :key="msg.id || idx"
@@ -44,6 +43,7 @@
         >
           <p class="role">{{ msg.role === 'user' ? 'You' : 'Tutor' }}</p>
           <p v-if="msg.role === 'user'">{{ msg.text }}</p>
+          <!-- eslint-disable-next-line vue/no-v-html -->
           <div v-else class="markdown-body" v-html="chat.renderMarkdown(msg.text)"></div>
         </article>
       </div>

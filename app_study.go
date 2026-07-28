@@ -205,79 +205,66 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	var plan *models.TodayPlan
-	planSource := "queue-materialized"
-	if len(activeQueueTasks) > 0 || len(pendingQueueTasks) > 0 {
-		// Bypass scheduler's synthetic BuildTodayPlan to save DB scan and token budget cycles.
-		// Query due review cards and daily minutes directly.
-		dueCards, err := repo.QueryDueReviewCards(now.Unix())
+	// ponytail: rely 100% on study_queue and due cards, no synthetic scheduler fallback
+	dueCards, err := repo.QueryDueReviewCards(now.Unix())
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	maxFlashcards := settings.MaxFlashcardsPerSession
+	if maxFlashcards <= 0 {
+		maxFlashcards = 30
+	}
+
+	dailyStudyMinutes := calculateDailyStudyMinutes(settings.StudyStartTime, settings.StudyEndTime)
+	materializedCards, deferredCards, safeReviewBudget := calculateFlashcardBudgets(dueCards, maxFlashcards)
+	queueTasks, activeTopics, learningMinutes, actionCounts := aggregateQueueTasks(activeQueueTasks, pendingQueueTasks)
+
+	if materializedCards > 0 {
+		bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
 		if err != nil {
-			return map[string]interface{}{"error": err.Error()}
-		}
-		settings, err := repo.GetUserSettings()
-		if err != nil {
-			return map[string]interface{}{"error": err.Error()}
-		}
-		maxFlashcards := settings.MaxFlashcardsPerSession
-		if maxFlashcards <= 0 {
-			maxFlashcards = 30
-		}
-
-		dailyStudyMinutes := calculateDailyStudyMinutes(settings.StudyStartTime, settings.StudyEndTime)
-		materializedCards, deferredCards, safeReviewBudget := calculateFlashcardBudgets(dueCards, maxFlashcards)
-		queueTasks, activeTopics, learningMinutes, actionCounts := aggregateQueueTasks(activeQueueTasks, pendingQueueTasks)
-
-		if materializedCards > 0 {
-			bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
-			if err != nil {
-				utils.Warnf("failed to get next due review notebook: %v", err)
-			} else if bestNotebookID != "" {
-				reviewCardsForTask := materializedCards
-				if selectedDueCards < reviewCardsForTask {
-					reviewCardsForTask = selectedDueCards
-				}
-
-				reviewTask := models.ScheduledTask{
-					ID:              models.ReviewTaskDailyID,
-					ActionType:      "flashcard_review",
-					Title:           fmt.Sprintf("Flashcard Review: %d cards", reviewCardsForTask),
-					EstimateMinutes: safeReviewBudget,
-					Priority:        1,
-					NotebookID:      bestNotebookID,
-					Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", reviewCardsForTask),
-				}
-				queueTasks = append([]models.ScheduledTask{reviewTask}, queueTasks...)
-				actionCounts["flashcard_review"]++
+			utils.Warnf("failed to get next due review notebook: %v", err)
+		} else if bestNotebookID != "" {
+			reviewCardsForTask := materializedCards
+			if selectedDueCards < reviewCardsForTask {
+				reviewCardsForTask = selectedDueCards
 			}
-		}
 
-		plan = &models.TodayPlan{
-			Date:                now.Format("2006-01-02"),
-			TotalMinutes:        dailyStudyMinutes,
-			ReviewMinutes:       safeReviewBudget,
-			LearningMinutes:     learningMinutes,
-			DueReviewCards:      materializedCards,
-			TotalDueReviewCards: dueCards,
-			DeferredReviewCards: deferredCards,
-			ActiveTopics:        activeTopics,
-			Tasks:               queueTasks,
-			IsEstimate:          false,
+			reviewTask := models.ScheduledTask{
+				ID:              models.ReviewTaskDailyID,
+				ActionType:      "flashcard_review",
+				Title:           fmt.Sprintf("Flashcard Review: %d cards", reviewCardsForTask),
+				EstimateMinutes: safeReviewBudget,
+				Priority:        1,
+				NotebookID:      bestNotebookID,
+				Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", reviewCardsForTask),
+			}
+			queueTasks = append([]models.ScheduledTask{reviewTask}, queueTasks...)
+			actionCounts["flashcard_review"]++
 		}
+	}
 
-		utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
-		utils.Warnf("[TODAY_PLAN] planner aggregation dueReviewCards=%d reviewMinutes=%d queueActionCounts=%v", plan.DueReviewCards, plan.ReviewMinutes, actionCounts)
-		if actionCounts["flashcard_review"] > 0 {
-			utils.Warnf("[FLASHCARD_PIPELINE] today_plan_review_detected flashcard_review_count=%d", actionCounts["flashcard_review"])
-		}
-	} else {
-		// Fallback to synthetic scheduler plan if queue is empty
-		syntheticPlan, err := a.scheduler.BuildTodayPlan(now)
-		if err != nil {
-			return map[string]interface{}{"error": err.Error()}
-		}
-		plan = syntheticPlan
-		planSource = "scheduler-fallback"
-		utils.Warnf("[TODAY_PLAN] synthetic plan fallback taskCount=%d", len(plan.Tasks))
+	planSource := "queue-materialized"
+	plan := &models.TodayPlan{
+		Date:                now.Format("2006-01-02"),
+		TotalMinutes:        dailyStudyMinutes,
+		ReviewMinutes:       safeReviewBudget,
+		LearningMinutes:     learningMinutes,
+		DueReviewCards:      materializedCards,
+		TotalDueReviewCards: dueCards,
+		DeferredReviewCards: deferredCards,
+		ActiveTopics:        activeTopics,
+		Tasks:               queueTasks,
+		IsEstimate:          false,
+	}
+
+	utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
+	utils.Warnf("[TODAY_PLAN] planner aggregation dueReviewCards=%d reviewMinutes=%d queueActionCounts=%v", plan.DueReviewCards, plan.ReviewMinutes, actionCounts)
+	if actionCounts["flashcard_review"] > 0 {
+		utils.Warnf("[FLASHCARD_PIPELINE] today_plan_review_detected flashcard_review_count=%d", actionCounts["flashcard_review"])
 	}
 
 	// Count active notebooks for the dashboard empty-state distinction.
@@ -454,6 +441,21 @@ func (a *App) GetStreakState(timezoneOffsetMinutes int) map[string]interface{} {
 		"longest_streak":  longestStreak,
 		"active_dates":    activeDates,
 		"today_completed": todayCompleted,
+	}
+}
+
+// GetDashboardOverview consolidates settings, profiles, today plan, and streak state into a single IPC payload.
+func (a *App) GetDashboardOverview(timezoneOffsetMinutes int) map[string]interface{} {
+	settings := a.GetUserSettings()
+	profiles := a.GetProfiles()
+	todayPlan := a.GetTodayPlan()
+	streakState := a.GetStreakState(timezoneOffsetMinutes)
+
+	return map[string]interface{}{
+		"settings":     settings,
+		"profiles":     profiles,
+		"today_plan":   todayPlan,
+		"streak_state": streakState,
 	}
 }
 

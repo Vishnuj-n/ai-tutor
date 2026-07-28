@@ -102,22 +102,17 @@ func (s *StudyService) GenerateQuizForPageRange(notebookID string, startPage, en
 	}
 }
 
-func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunkTextByID map[string]string) (models.QuizTaskPayload, error) {
-	topicID = strings.TrimSpace(topicID)
-	if topicID == "" {
-		return models.QuizTaskPayload{}, fmt.Errorf("topic ID is required")
-	}
-	if s.fastLLMProvider == nil {
-		return models.QuizTaskPayload{}, fmt.Errorf("FAST_LLM provider not initialized")
-	}
-
+func (s *StudyService) resolveNotebookTitle(topicID string) string {
 	notebookTitle := topicID
 	if nbID, err := s.repo.GetNotebookIDByTopic(topicID); err == nil && nbID != "" {
 		if nb, err := s.repo.GetNotebookByID(nbID); err == nil && nb != nil && nb.Title != "" {
 			notebookTitle = nb.Title
 		}
 	}
+	return notebookTitle
+}
 
+func normalizeChunkIDs(chunkIDs []string) ([]string, error) {
 	normalizedChunkIDs := make([]string, 0, len(chunkIDs))
 	seen := make(map[string]struct{}, len(chunkIDs))
 	for _, id := range chunkIDs {
@@ -132,45 +127,42 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		normalizedChunkIDs = append(normalizedChunkIDs, trimmed)
 	}
 	if len(normalizedChunkIDs) == 0 {
-		return models.QuizTaskPayload{}, fmt.Errorf("at least one chunk ID is required")
+		return nil, fmt.Errorf("at least one chunk ID is required")
 	}
 
 	const maxChunks = 24
 	if len(normalizedChunkIDs) > maxChunks {
 		normalizedChunkIDs = normalizedChunkIDs[:maxChunks]
 	}
+	return normalizedChunkIDs, nil
+}
 
-	// If chunkTextByID is not provided, fall back to database lookup
-	if chunkTextByID == nil {
-		chunks, err := s.repo.GetChunksForTopic(topicID)
-		if err != nil {
-			return models.QuizTaskPayload{}, fmt.Errorf("failed to load topic chunks: %w", err)
-		}
-		chunkTextByID = make(map[string]string, len(chunks))
-		for _, chunk := range chunks {
-			chunkTextByID[chunk.ID] = strings.TrimSpace(chunk.Text)
-		}
+func (s *StudyService) loadChunkTextFallback(topicID string) (map[string]string, error) {
+	chunks, err := s.repo.GetChunksForTopic(topicID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load topic chunks: %w", err)
 	}
-
-	// Get model-specific token limits
-	llm := s.fastLLMProvider
-	modelName := providerModelName(llm)
-	limits := llm.GetLimits()
-	maxInputTokens := limits.MaxInputTokens
-	maxOutputTokens := limits.MaxOutputTokens
-	utils.Warnf("[QUIZ_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
-
-	// Estimate token limits and budget
-	const baseOverheadTokens = 300
-	const safetyMarginTokens = 500
-	availableBudget := maxInputTokens - baseOverheadTokens - safetyMarginTokens
-	if availableBudget < 1000 {
-		availableBudget = 1000
+	chunkTextByID := make(map[string]string, len(chunks))
+	for _, chunk := range chunks {
+		chunkTextByID[chunk.ID] = strings.TrimSpace(chunk.Text)
 	}
+	return chunkTextByID, nil
+}
 
-	// Calculate word count and build context within token budget
+type quizContextResult struct {
+	contextParts   []string
+	totalWordCount int
+	currentTokens  int
+	truncatedCount int
+}
+
+func buildQuizContext(
+	normalizedChunkIDs []string,
+	chunkTextByID map[string]string,
+	availableBudget int,
+) (quizContextResult, error) {
 	totalWordCount := 0
-	currentTokens := baseOverheadTokens
+	currentTokens := 0
 	contextParts := make([]string, 0, len(normalizedChunkIDs))
 	truncatedCount := 0
 
@@ -196,27 +188,30 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 	}
 
 	if len(contextParts) == 0 {
-		return models.QuizTaskPayload{}, fmt.Errorf("no chunk context found for quiz generation")
+		return quizContextResult{}, fmt.Errorf("no chunk context found for quiz generation")
 	}
 
-	if truncatedCount > 0 {
-		utils.Warnf("[QUIZ_PIPELINE] chunk_trimming total_chunks=%d included=%d truncated=%d budget_used=%d available=%d",
-			len(normalizedChunkIDs), len(contextParts), truncatedCount, currentTokens, availableBudget)
-	}
+	return quizContextResult{
+		contextParts:   contextParts,
+		totalWordCount: totalWordCount,
+		currentTokens:  currentTokens,
+		truncatedCount: truncatedCount,
+	}, nil
+}
 
-	targetCount := scaledQuizQuestionCount(totalWordCount)
-
-	prompt := strings.Join([]string{
+func buildQuizPrompt(notebookTitle string, targetCount int, contextParts []string) string {
+	return strings.Join([]string{
 		"You are an expert academic tutor and quiz generator creating a quiz for spaced repetition study.",
 		"Return STRICT JSON only.",
 		fmt.Sprintf("Notebook: \"%s\"", notebookTitle),
 		fmt.Sprintf("Generate exactly %d multiple-choice questions from the provided chunks.", targetCount),
 		"",
 		"=== ADAPTIVE CONTENT RULES ===",
-		"Before generating questions, classify the text type using the notebook title as context:",
-		"- FACTUAL/TECHNICAL (exam prep, current affairs, engineering, history): Test specific facts, dates, definitions, formulas, and concrete data points.",
-		"- CONCEPTUAL/NARRATIVE (philosophy, self-help, psychology, business): Test core frameworks, mindset shifts, actionable rules, and key ideas.",
+		"Before generating questions, classify the text using the notebook title and provided content:",
 		"",
+		"- FACTUAL: Test specific facts, dates, names, formulas, definitions, and concrete data.",
+		"- CONCEPTUAL: Test core ideas, frameworks, reasoning, comparisons, principles, and cause-effect relationships.",
+		"- TECHNICAL: Prioritize definitions, terminology, algorithms, architectures, APIs, workflows, constraints, trade-offs, and practical application. Avoid theme- or opinion-based questions unless they describe a technical concept.",
 		"=== QUESTION RULES ===",
 		"Each question must have exactly 4 options.",
 		"correct_answer must match one option exactly.",
@@ -226,16 +221,12 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 		"Chunks:",
 		strings.Join(contextParts, "\n"),
 	}, "\n")
+}
 
-	raw, err := s.fastLLMProvider.GenerateAnswer(prompt)
-	if err != nil {
-		return models.QuizTaskPayload{}, fmt.Errorf("quiz generation failed: %w", err)
+func validateAndConvertQuestions(parsed *quizLLMResponse) []models.QuizTaskQuestion {
+	if parsed == nil {
+		return nil
 	}
-	parsed, err := parseQuizLLMResponse(raw)
-	if err != nil {
-		return models.QuizTaskPayload{}, fmt.Errorf("quiz parsing failed: %w", err)
-	}
-
 	questions := make([]models.QuizTaskQuestion, 0, len(parsed.Questions))
 	for _, q := range parsed.Questions {
 		if strings.TrimSpace(q.Prompt) == "" || len(q.Options) != 4 || strings.TrimSpace(q.CorrectAnswer) == "" {
@@ -253,6 +244,73 @@ func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunk
 			SourceChunkID: strings.TrimSpace(q.SourceChunkID),
 		})
 	}
+	return questions
+}
+
+func (s *StudyService) GenerateQuizSync(topicID string, chunkIDs []string, chunkTextByID map[string]string) (models.QuizTaskPayload, error) {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return models.QuizTaskPayload{}, fmt.Errorf("topic ID is required")
+	}
+	if s.fastLLMProvider == nil {
+		return models.QuizTaskPayload{}, fmt.Errorf("FAST_LLM provider not initialized")
+	}
+
+	notebookTitle := s.resolveNotebookTitle(topicID)
+
+	normalizedChunkIDs, err := normalizeChunkIDs(chunkIDs)
+	if err != nil {
+		return models.QuizTaskPayload{}, err
+	}
+
+	// ponytail: fall back to DB lookup if chunkTextByID is nil or empty
+	if len(chunkTextByID) == 0 {
+		chunkTextByID, err = s.loadChunkTextFallback(topicID)
+		if err != nil {
+			return models.QuizTaskPayload{}, err
+		}
+	}
+
+	// Get model-specific token limits
+	llm := s.fastLLMProvider
+	modelName := providerModelName(llm)
+	limits := llm.GetLimits()
+	maxInputTokens := limits.MaxInputTokens
+	maxOutputTokens := limits.MaxOutputTokens
+	utils.Warnf("[QUIZ_PIPELINE] model_limits model=%s max_input=%d max_output=%d", modelName, maxInputTokens, maxOutputTokens)
+
+	// Estimate token limits and budget
+	const baseOverheadTokens = 300
+	const safetyMarginTokens = 500
+	availableBudget := maxInputTokens - baseOverheadTokens - safetyMarginTokens
+	if availableBudget < 1000 {
+		availableBudget = 1000
+	}
+
+	ctxRes, err := buildQuizContext(normalizedChunkIDs, chunkTextByID, availableBudget)
+	if err != nil {
+		return models.QuizTaskPayload{}, err
+	}
+
+	if ctxRes.truncatedCount > 0 {
+		utils.Warnf("[QUIZ_PIPELINE] chunk_trimming total_chunks=%d included=%d truncated=%d budget_used=%d available=%d",
+			len(normalizedChunkIDs), len(ctxRes.contextParts), ctxRes.truncatedCount, ctxRes.currentTokens, availableBudget)
+	}
+
+	targetCount := scaledQuizQuestionCount(ctxRes.totalWordCount)
+
+	prompt := buildQuizPrompt(notebookTitle, targetCount, ctxRes.contextParts)
+
+	raw, err := s.fastLLMProvider.GenerateAnswer(prompt)
+	if err != nil {
+		return models.QuizTaskPayload{}, fmt.Errorf("quiz generation failed: %w", err)
+	}
+	parsed, err := parseQuizLLMResponse(raw)
+	if err != nil {
+		return models.QuizTaskPayload{}, fmt.Errorf("quiz parsing failed: %w", err)
+	}
+
+	questions := validateAndConvertQuestions(parsed)
 	if len(questions) == 0 {
 		return models.QuizTaskPayload{}, fmt.Errorf("no valid questions generated")
 	}
@@ -299,6 +357,85 @@ func (s *StudyService) triggerSocraticRescueHandoffTx(
 	return socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, nil
 }
 
+type quizScoringResult struct {
+	correctCount    int
+	totalCount      int
+	score           int
+	passed          bool
+	failedQuestions []models.FailedQuestionDetail
+}
+
+func calculateQuizScore(questions []models.QuizTaskQuestion, answers []models.QuizAnswer, passingScore int) quizScoringResult {
+	selectedByQuestionID := make(map[string]string, len(answers))
+	for _, answer := range answers {
+		questionID := strings.TrimSpace(answer.QuestionID)
+		if questionID == "" {
+			continue
+		}
+		selectedByQuestionID[questionID] = strings.TrimSpace(answer.Selected)
+	}
+
+	correctCount := 0
+	var failedQuestions []models.FailedQuestionDetail
+	for _, question := range questions {
+		selected := strings.TrimSpace(selectedByQuestionID[question.ID])
+		if strings.EqualFold(strings.TrimSpace(question.CorrectAnswer), selected) {
+			correctCount++
+		} else {
+			failedQuestions = append(failedQuestions, models.FailedQuestionDetail{
+				Prompt:        question.Prompt,
+				Options:       question.Options,
+				CorrectAnswer: question.CorrectAnswer,
+				UserAnswer:    selected,
+			})
+		}
+	}
+
+	totalCount := len(questions)
+	score := 0
+	if totalCount > 0 {
+		score = (correctCount * 100) / totalCount
+	}
+	passed := score >= passingScore
+
+	return quizScoringResult{
+		correctCount:    correctCount,
+		totalCount:      totalCount,
+		score:           score,
+		passed:          passed,
+		failedQuestions: failedQuestions,
+	}
+}
+
+func buildQuizResultPayload(
+	taskID string,
+	scoreRes quizScoringResult,
+	passingScore int,
+	feedback string,
+	manualReviewRecommended bool,
+	rereadAttemptCount int,
+	rereadTaskID string,
+	attemptID string,
+	flashcardsPending bool,
+) models.QuizResult {
+	return models.QuizResult{
+		TaskID:                  taskID,
+		Score:                   scoreRes.score,
+		Passed:                  scoreRes.passed,
+		CorrectCount:            scoreRes.correctCount,
+		TotalCount:              scoreRes.totalCount,
+		PassingScore:            passingScore,
+		Feedback:                feedback,
+		ManualReviewRecommended: manualReviewRecommended,
+		RereadAttemptCount:      rereadAttemptCount,
+		MaxRereadAttempts:       maxAutomaticRereadAttempts,
+		RereadTaskID:            rereadTaskID,
+		FlashcardTaskID:         "",
+		AttemptRecord:           attemptID,
+		FlashcardsPending:       flashcardsPending,
+	}
+}
+
 func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) (models.QuizResult, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -342,39 +479,9 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		return models.QuizResult{}, fmt.Errorf("quiz contains no questions")
 	}
 
-	selectedByQuestionID := make(map[string]string, len(answers))
-	for _, answer := range answers {
-		questionID := strings.TrimSpace(answer.QuestionID)
-		if questionID == "" {
-			continue
-		}
-		selectedByQuestionID[questionID] = strings.TrimSpace(answer.Selected)
-	}
-
-	correctCount := 0
-	var failedQuestions []models.FailedQuestionDetail
-	for _, question := range payload.Questions {
-		selected := strings.TrimSpace(selectedByQuestionID[question.ID])
-		if strings.EqualFold(strings.TrimSpace(question.CorrectAnswer), selected) {
-			correctCount++
-		} else {
-			failedQuestions = append(failedQuestions, models.FailedQuestionDetail{
-				Prompt:        question.Prompt,
-				Options:       question.Options,
-				CorrectAnswer: question.CorrectAnswer,
-				UserAnswer:    selected,
-			})
-		}
-	}
-
-	totalCount := len(payload.Questions)
-	score := 0
-	if totalCount > 0 {
-		score = (correctCount * 100) / totalCount
-	}
-	passed := score >= payload.PassingScore
+	scoreRes := calculateQuizScore(payload.Questions, answers, payload.PassingScore)
 	feedback := "Review the missed concepts and retry the material."
-	if passed {
+	if scoreRes.passed {
 		feedback = "Strong work. You can move forward."
 	}
 
@@ -413,13 +520,13 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	attempt := models.QuizAttemptRecord{
 		ID:          attemptID,
 		TaskID:      task.ID,
-		Score:       score,
-		Passed:      passed,
+		Score:       scoreRes.score,
+		Passed:      scoreRes.passed,
 		AnswersJSON: string(answersJSONBytes),
 		Feedback:    feedback,
 		CompletedAt: time.Now().Unix(),
 	}
-	if passed {
+	if scoreRes.passed {
 		if task.TopicID != "" {
 			if err := s.repo.ResetRereadAttemptCountTx(tx, task.TopicID); err != nil {
 				return models.QuizResult{}, fmt.Errorf("failed to reset reread attempts: %w", err)
@@ -441,7 +548,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 		} else {
 			if strategy == "FAST" {
 				var followUp models.StudyQueueTask
-				socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt, failedQuestions)
+				socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt, scoreRes.failedQuestions)
 				if err != nil {
 					return models.QuizResult{}, err
 				}
@@ -468,7 +575,7 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 				} else {
 					// Strike 3: SOCRATIC_REMEDIAL rescue
 					var followUp models.StudyQueueTask
-					socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt, failedQuestions)
+					socraticTaskID, feedback, completionStatus, manualReviewRecommended, followUp, err = s.triggerSocraticRescueHandoffTx(tx, task, &attempt, scoreRes.failedQuestions)
 					if err != nil {
 						return models.QuizResult{}, err
 					}
@@ -491,48 +598,44 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 	}
 	// Flashcards are generated AFTER user clicks Continue (not during quiz submission)
 	// This prevents blocking the UI on "Scoring..." during flashcard generation
-	flashcardsPending := passed && task.TopicID != ""
+	flashcardsPending := scoreRes.passed && task.TopicID != ""
 
 	if err := tx.Commit(); err != nil {
 		return models.QuizResult{}, fmt.Errorf("failed to commit quiz transaction: %w", err)
 	}
 
 	// Log quiz scoring completed immediately
-	utils.Warnf("[QUIZ] quiz_scoring_completed taskID=%s score=%d passed=%t rereadTaskID=%s flashcardsPending=%t", task.ID, score, passed, rereadTaskID, flashcardsPending)
+	utils.Warnf("[QUIZ] quiz_scoring_completed taskID=%s score=%d passed=%t rereadTaskID=%s flashcardsPending=%t", task.ID, scoreRes.score, scoreRes.passed, rereadTaskID, flashcardsPending)
 
 	// Log after successful commit to ensure consistency with persisted state
-	if passed {
-		utils.LogQuizResult(task.ID, score, true, "")
+	if scoreRes.passed {
+		utils.LogQuizResult(task.ID, scoreRes.score, true, "")
 	} else if task.TopicID != "" {
 		if isRescueRequiz {
-			utils.LogQuizResult(task.ID, score, false, "")
+			utils.LogQuizResult(task.ID, scoreRes.score, false, "")
 			utils.Warnf("[QUIZ] quiz_failed_requiz_failed notebookID=%s topicID=%s — external help marked", task.NotebookID, task.TopicID)
 		} else if socraticTaskID != "" {
-			utils.LogQuizResult(task.ID, score, false, "")
+			utils.LogQuizResult(task.ID, scoreRes.score, false, "")
 			utils.Warnf("[QUIZ] quiz_failed_socratic_rescue_created notebookID=%s topicID=%s socraticTaskID=%s", task.NotebookID, task.TopicID, socraticTaskID)
 		} else if rereadTaskID != "" {
 			utils.LogRereadInsertion(rereadTaskID, task.TopicID, strconv.Itoa(rereadAttemptCount), strconv.Itoa(maxAutomaticRereadAttempts))
-			utils.LogQuizResult(task.ID, score, false, rereadTaskID)
+			utils.LogQuizResult(task.ID, scoreRes.score, false, rereadTaskID)
 			utils.Warnf("[QUIZ] quiz_failed_reread_created notebookID=%s topicID=%s rereadTaskID=%s", task.NotebookID, task.TopicID, rereadTaskID)
 		} else {
-			utils.LogQuizResult(task.ID, score, false, "")
+			utils.LogQuizResult(task.ID, scoreRes.score, false, "")
 		}
 	}
 
-	return models.QuizResult{
-		TaskID:                  task.ID,
-		Score:                   score,
-		Passed:                  passed,
-		CorrectCount:            correctCount,
-		TotalCount:              totalCount,
-		PassingScore:            payload.PassingScore,
-		Feedback:                feedback,
-		ManualReviewRecommended: manualReviewRecommended,
-		RereadAttemptCount:      rereadAttemptCount,
-		MaxRereadAttempts:       maxAutomaticRereadAttempts,
-		RereadTaskID:            rereadTaskID,
-		FlashcardTaskID:         "", // Flashcards are generated AFTER user clicks Continue (via separate flow)
-		AttemptRecord:           attemptID,
-		FlashcardsPending:       flashcardsPending, // Flashcards will be generated after Continue click
-	}, nil
+	return buildQuizResultPayload(
+		task.ID,
+		scoreRes,
+		payload.PassingScore,
+		feedback,
+		manualReviewRecommended,
+		rereadAttemptCount,
+		rereadTaskID,
+		attemptID,
+		flashcardsPending,
+	), nil
 }
+

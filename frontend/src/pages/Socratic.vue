@@ -117,6 +117,7 @@
         <div v-for="(message, idx) in messages" :key="idx" :class="['bubble-row', message.role]">
           <article class="bubble">
             <p v-if="message.role === 'user'" class="message-text">{{ message.text }}</p>
+            <!-- eslint-disable-next-line vue/no-v-html -->
             <div v-else class="markdown-body" v-html="renderMarkdown(message.text)"></div>
 
             <div v-if="message.role === 'assistant' && message.error" class="message-error">
@@ -525,12 +526,9 @@ async function initiateSocraticSession() {
   isLoading.value = true
   globalError.value = ''
 
-  const startPrompt = isRescueMode.value
-    ? "Let's start the Concept Rescue session. Please ask me a guiding question about the topic to help me clear up my confusion."
-    : "Let's start our Socratic discussion. Please introduce yourself and ask me a starting question to check my understanding of this material."
-
   try {
     const topicID = effectiveTopicID.value
+    const startPrompt = '__START__'
     const result = await askSocratic(selectedNotebookID.value, topicID, startPrompt)
 
     if (result.error) {

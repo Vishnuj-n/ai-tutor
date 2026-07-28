@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"ai-tutor/internal/llm"
-	"ai-tutor/internal/models"
-	"ai-tutor/internal/study"
-	"ai-tutor/internal/utils"
 	"os"
 	"strings"
 	"time"
+
+	"ai-tutor/internal/llm"
+	"ai-tutor/internal/models"
+	"ai-tutor/internal/scheduler"
+	"ai-tutor/internal/study"
+	"ai-tutor/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -90,6 +92,12 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {
 		return map[string]interface{}{"error": err.Error()}
+	}
+
+	// Sync scheduled task with Windows Task Scheduler (purges old tasks first)
+	if err := scheduler.SyncStudyStartTask(s.StudyStartTime, s.RemindersEnabled); err != nil {
+		utils.Errorf("SyncStudyStartTask failed: %v", err)
+		return map[string]interface{}{"error": fmt.Sprintf("failed to sync scheduled task: %v", err)}
 	}
 
 	// Only mutate runtime after successful persistence.

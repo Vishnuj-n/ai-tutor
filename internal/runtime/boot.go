@@ -74,75 +74,10 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 
 	var embedder *embeddings.OnnxEmbedder
 	if ragEnabled {
-		// 2. Initialize AssetManager to verify RAG assets are ready
-		am, err := NewAssetManager(ctx)
-		if err != nil {
-			res.AiInitError = fmt.Sprintf("Asset manager init failed: %v", err)
-			utils.Warnf("%s", res.AiInitError)
-		} else {
-			if err := am.EnsureAssetsReady(); err != nil {
-				res.AiInitError = fmt.Sprintf("RAG assets not ready: %v", err)
-				utils.Warnf("%s", res.AiInitError)
-			} else {
-				// Stage DLLs and re-init DB with vector support
-				if _, err := am.StageDLLs(); err != nil {
-					res.AiInitError = fmt.Sprintf("failed to stage DLLs: %v", err)
-					utils.Warnf("%s", res.AiInitError)
-				} else {
-					// Re-initialize DB, this time with the staged vec0.dll
-					var loadErr error
-					if newRepo, err := db.Init(dbPath, am.Vec0DllPath()); err != nil {
-						loadErr = fmt.Errorf("failed to reload DB with vector extension: %w", err)
-					} else if !newRepo.IsVecExtensionLoaded() {
-						loadErr = fmt.Errorf("sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)")
-						_ = newRepo.Close()
-					} else {
-						// Success, close the old one and swap
-						_ = res.Repo.Close()
-						res.Repo = newRepo
-					}
-
-					if loadErr != nil {
-						res.AiInitError = loadErr.Error()
-						utils.Errorf("%s. Falling back to non-vector DB initialization.", res.AiInitError)
-						// Fallback: reload DB without extension so startup doesn't fail
-						fbRepo, fbErr := db.Init(dbPath, "")
-						if fbErr != nil {
-							return nil, fmt.Errorf("failed to reload DB even without vector extension: %w", fbErr)
-						}
-						_ = res.Repo.Close()
-						res.Repo = fbRepo
-					} else {
-						// Init ONNX embedder using paths from AssetManager
-						emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
-						if err != nil {
-							res.AiInitError = fmt.Sprintf("failed to load ONNX embedder: %v", err)
-							utils.Warnf("%s", res.AiInitError)
-						} else {
-							if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
-								res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
-								utils.Warnf("%s", res.AiInitError)
-								_ = emb.Close()
-							} else {
-								if err := res.Repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
-									res.AiInitError = fmt.Sprintf("could not initialize vector table: %v", err)
-									utils.Warnf("%s", res.AiInitError)
-									_ = emb.Close()
-								} else {
-									// Reset any stuck INDEXING status back to PENDING for background indexing queue to pick up
-									if err := res.Repo.ResetIndexingStatus(); err != nil {
-										utils.Warnf("failed to reset notebook indexing statuses: %v", err)
-									}
-									res.AiReady = true
-									res.AiInitError = ""
-									res.Embedder = emb
-									embedder = emb
-								}
-							}
-						}
-					}
-				}
-			}
+		var initErr error
+		embedder, initErr = initializeAI(ctx, res, dbPath)
+		if initErr != nil {
+			return nil, initErr
 		}
 	} else {
 		utils.Infof("RAG is disabled in user settings. Skipping asset validation and local AI initialization.")
@@ -216,6 +151,101 @@ func Bootstrap(ctx context.Context) (*BootResult, error) {
 	utils.Infof("App initialized successfully")
 
 	return res, nil
+}
+
+// initializeAI runs the RAG initialization sequence when RAG is enabled:
+// asset validation, DLL staging, DB reload with vector extension, and embedder
+// stack setup. It mutates res.Repo, res.AiReady, res.AiInitError, and
+// res.Embedder. It returns the live embedder on success, nil on a non-fatal
+// failure (which leaves the app running without RAG), or a non-nil error only
+// when the fallback non-vector DB reload also fails.
+func initializeAI(ctx context.Context, res *BootResult, dbPath string) (*embeddings.OnnxEmbedder, error) {
+	// 2. Initialize AssetManager to verify RAG assets are ready.
+	am, err := NewAssetManager(ctx)
+	if err != nil {
+		res.AiInitError = fmt.Sprintf("Asset manager init failed: %v", err)
+		utils.Warnf("%s", res.AiInitError)
+		return nil, nil
+	}
+
+	if err := am.EnsureAssetsReady(); err != nil {
+		res.AiInitError = fmt.Sprintf("RAG assets not ready: %v", err)
+		utils.Warnf("%s", res.AiInitError)
+		return nil, nil
+	}
+
+	// Stage DLLs and re-init DB with vector support.
+	if _, err := am.StageDLLs(); err != nil {
+		res.AiInitError = fmt.Sprintf("failed to stage DLLs: %v", err)
+		utils.Warnf("%s", res.AiInitError)
+		return nil, nil
+	}
+
+	// Close Phase 1 non-vector DB connection pool first to prevent SQLite file
+	// lock races on Windows before reopening with the staged vec0.dll.
+	if res.Repo != nil {
+		_ = res.Repo.Close()
+		res.Repo = nil
+	}
+
+	newRepo, err := db.Init(dbPath, am.Vec0DllPath())
+	if err != nil {
+		res.AiInitError = fmt.Sprintf("failed to reload DB with vector extension: %v", err)
+		utils.Errorf("%s. Falling back to non-vector DB initialization.", res.AiInitError)
+		fbRepo, fbErr := db.Init(dbPath, "")
+		if fbErr != nil {
+			return nil, fmt.Errorf("failed to reload DB even without vector extension: %w", fbErr)
+		}
+		res.Repo = fbRepo
+		return nil, nil
+	}
+
+	res.Repo = newRepo
+	if !newRepo.IsVecExtensionLoaded() {
+		res.AiInitError = "sqlite-vec extension is missing or failed to load (requires CGO and vec0 binary)"
+		utils.Warnf("%s", res.AiInitError)
+		return nil, nil
+	}
+
+	// Vector DB is live — bring up the embedder stack.
+	return initEmbedderStack(res, am)
+}
+
+// initEmbedderStack creates the ONNX embedder, initializes the prompt
+// tokenizer, and configures the vector schema. On any intermediate failure it
+// closes the embedder to prevent resource leaks and records the error in res.
+func initEmbedderStack(res *BootResult, am *AssetManager) (*embeddings.OnnxEmbedder, error) {
+	emb, err := embeddings.NewOnnxEmbedder(am.ModelPath(), am.TokenizerPath(), am.OnnxRuntimePath())
+	if err != nil {
+		res.AiInitError = fmt.Sprintf("failed to load ONNX embedder: %v", err)
+		utils.Warnf("%s", res.AiInitError)
+		return nil, nil
+	}
+
+	if err := embeddings.InitPromptTokenizer(am.TokenizerPath()); err != nil {
+		res.AiInitError = fmt.Sprintf("could not initialize prompt tokenizer: %v", err)
+		utils.Warnf("%s", res.AiInitError)
+		_ = emb.Close()
+		return nil, nil
+	}
+
+	if err := res.Repo.InitWithVectorDimension(emb.GetDimension()); err != nil {
+		res.AiInitError = fmt.Sprintf("could not initialize vector table: %v", err)
+		utils.Warnf("%s", res.AiInitError)
+		_ = emb.Close()
+		return nil, nil
+	}
+
+	// Reset any stuck INDEXING status back to PENDING for the background
+	// indexing queue to pick up.
+	if err := res.Repo.ResetIndexingStatus(); err != nil {
+		utils.Warnf("failed to reset notebook indexing statuses: %v", err)
+	}
+
+	res.AiReady = true
+	res.AiInitError = ""
+	res.Embedder = emb
+	return emb, nil
 }
 
 var loadEnvOnce sync.Once

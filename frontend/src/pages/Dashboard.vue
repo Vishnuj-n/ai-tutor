@@ -164,9 +164,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
-  getTodayPlan,
-  getProfiles,
-  getUserSettings,
+  getDashboardOverview,
   updateUserSettings,
   getProfileDailyPace,
   retryFlashcardGeneration,
@@ -175,7 +173,6 @@ import {
   devForceFlashcardGenerate,
   getNotebooks,
   getFlashcardDueTimeline,
-  getStreakState,
 } from '../services/appApi'
 import { buildCalendarDays, MONTH_NAMES } from '../utils/dateFormat'
 
@@ -300,44 +297,45 @@ async function loadAgenda() {
     error.value = ''
     actionError.value = ''
 
-    // 1. Fetch settings and profiles — abort on failure so dependent steps
-    //    don't run against stale/default data.
-    const settingsRes = await getUserSettings()
-    if (settingsRes.error) {
-      error.value = settingsRes.error
-      return
-    }
-    userSettings.value = settingsRes
-    lastPersistedProfile.value = settingsRes.active_profile_id || ''
+    const tzOffset = new Date().getTimezoneOffset()
+    const overview = await getDashboardOverview(tzOffset)
 
-    const profilesRes = await getProfiles()
-    if (profilesRes.error) {
-      error.value = profilesRes.error
-      return
-    }
-    profiles.value = profilesRes.profiles || []
-
-    // 2. Fetch today's plan
-    const response = await getTodayPlan()
-    if (response.error) {
-      error.value = response.error
+    if (overview.settings && !overview.settings.error) {
+      userSettings.value = overview.settings
+      lastPersistedProfile.value = overview.settings.active_profile_id || ''
+    } else if (overview.settings && overview.settings.error) {
+      error.value = overview.settings.error
       return
     }
 
-    tasks.value = response.tasks || []
-    dueReviewCards.value = response.due_review_cards || 0
-    totalDueReviewCards.value = response.total_due_review_cards || 0
+    if (overview.profiles && !overview.profiles.error) {
+      profiles.value = overview.profiles.profiles || []
+    } else if (overview.profiles && overview.profiles.error) {
+      error.value = overview.profiles.error
+      return
+    }
 
-    // 3. Determine if there is any active study content (drives the empty state)
-    // Uses active_notebook_count from backend so "Tasks Complete!" branch
-    // is reachable when users have active textbooks but zero remaining tasks.
-    const activeNotebookCount = response.active_notebook_count || 0
-    hasActiveStudyContent.value = response.tasks.length > 0 || activeNotebookCount > 0
+    if (overview.today_plan && !overview.today_plan.error) {
+      const response = overview.today_plan
+      tasks.value = response.tasks || []
+      dueReviewCards.value = response.due_review_cards || 0
+      totalDueReviewCards.value = response.total_due_review_cards || 0
 
-    // 4. Load pace for active profile
-    // Guard: only request pacing if the active_profile_id resolves to a known profile.
-    // An orphaned ID (deleted profile still persisted in settings) would hit the backend
-    // and return { error: "profile not found" }; we skip the call entirely instead.
+      const activeNotebookCount = response.active_notebook_count || 0
+      hasActiveStudyContent.value = tasks.value.length > 0 || activeNotebookCount > 0
+    } else if (overview.today_plan && overview.today_plan.error) {
+      error.value = overview.today_plan.error
+      return
+    }
+
+    if (overview.streak_state && !overview.streak_state.error) {
+      streakState.value = overview.streak_state
+      streakError.value = ''
+    } else if (overview.streak_state && overview.streak_state.error) {
+      streakError.value = overview.streak_state.error
+    }
+
+    // Load pace for active profile
     const knownProfile = profiles.value.find((pr) => pr.id === userSettings.value.active_profile_id)
     if (userSettings.value.active_profile_id && knownProfile) {
       try {
@@ -345,12 +343,9 @@ async function loadAgenda() {
         if (!pace.error) {
           activeProfilePace.value = pace
         } else {
-          // API returned a business-logic error; clear stale data so the widget
-          // shows nothing rather than outdated metrics from a previous request.
           activeProfilePace.value = null
         }
       } catch (err) {
-        // Network / runtime failure: clear stale data to avoid misleading display.
         console.error('Failed to get profile daily pace', err)
         activeProfilePace.value = null
       }
@@ -358,9 +353,8 @@ async function loadAgenda() {
       activeProfilePace.value = null
     }
 
-    // 5. Fetch flashcard review forecast timeline
+    // Fetch flashcard review forecast timeline
     try {
-      const tzOffset = new Date().getTimezoneOffset()
       const timelineRes = await getFlashcardDueTimeline(tzOffset)
       if (timelineRes && !timelineRes.error) {
         timelineData.value = timelineRes.timeline || []
@@ -370,22 +364,6 @@ async function loadAgenda() {
     } catch (err) {
       console.error('Failed to get flashcard due timeline', err)
       timelineData.value = []
-    }
-
-    // 6. Fetch streak state
-    try {
-      const tzOffset = new Date().getTimezoneOffset()
-      const streakRes = await getStreakState(tzOffset)
-      if (streakRes && !streakRes.error) {
-        streakState.value = streakRes
-        streakError.value = ''
-      } else {
-        streakError.value =
-          streakRes && streakRes.error ? streakRes.error : 'Failed to retrieve streak'
-      }
-    } catch (err) {
-      console.error('Failed to get streak state', err)
-      streakError.value = err.message || 'Failed to retrieve streak'
     }
   } catch (err) {
     error.value = err.message || 'Failed to load tasks'

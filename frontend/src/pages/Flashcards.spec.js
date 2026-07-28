@@ -14,6 +14,7 @@ vi.mock('../services/appApi', () => ({
   generateManualFlashcards: vi.fn(),
   getReviewSession: vi.fn(),
   recordCardReview: vi.fn(),
+  getUserSettings: vi.fn(),
 }))
 
 // Mock vue-router hooks
