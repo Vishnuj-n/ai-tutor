@@ -27,7 +27,7 @@ import (
 var AppVersion = "v0.0.0-dev"
 
 // BaseReleaseURL is the GitHub Releases download base URL for this repository.
-const BaseReleaseURL = "https://github.com/Vishnuj-n/ai-tutor/releases/download"
+const BaseReleaseURL = "https://github.com/Vishnuj-n/studyloop/releases/download"
 
 // AssetManifest represents the metadata schema of the asset bundle.
 type AssetManifest struct {

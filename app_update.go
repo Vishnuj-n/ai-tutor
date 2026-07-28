@@ -34,7 +34,7 @@ func (a *App) CheckForUpdates() map[string]interface{} {
 	client := http.Client{
 		Timeout: 5 * time.Second,
 	}
-	resp, err := client.Get("https://raw.githubusercontent.com/Vishnuj-n/ai-tutor/main/VERSION")
+	resp, err := client.Get("https://raw.githubusercontent.com/Vishnuj-n/studyloop/main/VERSION")
 	if err != nil {
 		return map[string]interface{}{
 			"update_available": false,
@@ -72,7 +72,7 @@ func (a *App) CheckForUpdates() map[string]interface{} {
 			"update_available": true,
 			"latest_version":   remoteVersionClean,
 			"current_version":  currentVersionClean,
-			"url":              "https://github.com/Vishnuj-n/ai-tutor/releases",
+			"url":              "https://github.com/Vishnuj-n/studyloop/releases",
 		}
 	}
 
@@ -86,5 +86,5 @@ func (a *App) CheckForUpdates() map[string]interface{} {
 // OpenRepoURL opens the GitHub repository releases page in the user's default system browser.
 func (a *App) OpenRepoURL() {
 	// ponytail: use native OS browser via Wails runtime wrapper
-	wailsruntime.BrowserOpenURL(a.ctx, "https://github.com/Vishnuj-n/ai-tutor/releases")
+	wailsruntime.BrowserOpenURL(a.ctx, "https://github.com/Vishnuj-n/studyloop/releases")
 }

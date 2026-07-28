@@ -84,7 +84,7 @@ if ($normalizedVersion -eq "1.0.0") {
 }
 
 $releaseTag = $appVersion
-$downloadUrl = "https://github.com/Vishnuj-n/ai-tutor/releases/download/$releaseTag/$zipFilename"
+$downloadUrl = "https://github.com/Vishnuj-n/studyloop/releases/download/$releaseTag/$zipFilename"
 Write-Host "Asset version: $appVersion  Archive: $zipFilename"
 
 $appDataDir = Join-Path $env:LOCALAPPDATA "ai-tutor\assets"

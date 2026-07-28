@@ -1,6 +1,6 @@
-# AI Tutor
+# StudyLoop
 
-AI Tutor is a local-first desktop app that guides learners through a structured study loop.
+StudyLoop is a local-first desktop app that guides learners through a structured study loop.
 
 It is not a chatbot, PDF viewer, or standalone flashcard app. It is a guided tutor system:
 

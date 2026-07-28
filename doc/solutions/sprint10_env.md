@@ -12,7 +12,7 @@ All tasks from the implementation plan have been completed and verified.
 //   wails build -ldflags "-X ai-tutor/internal/runtime.AppVersion=v1.0.0"
 var AppVersion = "v0.0.0-dev"
 
-const BaseReleaseURL = "https://github.com/Vishnuj-n/ai-tutor/releases/download"
+const BaseReleaseURL = "https://github.com/Vishnuj-n/studyloop/releases/download"
 ```
 
 #### Platform-aware helpers added
@@ -61,7 +61,7 @@ if ($normalizedVersion -eq "1.0.0") {
 } else {
     $zipFilename = "asset_windows.zip"
 }
-$downloadUrl = "https://github.com/Vishnuj-n/ai-tutor/releases/download/$releaseTag/$zipFilename"
+$downloadUrl = "https://github.com/Vishnuj-n/studyloop/releases/download/$releaseTag/$zipFilename"
 ```
 
 ---

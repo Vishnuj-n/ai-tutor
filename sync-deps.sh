@@ -72,7 +72,7 @@ else
     ZIP_FILENAME="asset_linux.zip"
 fi
 
-DOWNLOAD_URL="https://github.com/Vishnuj-n/ai-tutor/releases/download/${APP_VERSION}/${ZIP_FILENAME}"
+DOWNLOAD_URL="https://github.com/Vishnuj-n/studyloop/releases/download/${APP_VERSION}/${ZIP_FILENAME}"
 echo "Asset version: ${APP_VERSION}  Archive: ${ZIP_FILENAME}"
 
 ZIP_PATH="$TARGET_DIR/rag-assets.zip"

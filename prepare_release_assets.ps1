@@ -47,7 +47,7 @@ foreach ($file in $files) {
 # Generate manifest.json content
 $manifest = [ordered]@{
     assetVersion = $normalizedVersion
-    downloadUrl = "https://github.com/Vishnuj-n/ai-tutor/releases/download/$appVersion/rag-assets.zip"
+    downloadUrl = "https://github.com/Vishnuj-n/studyloop/releases/download/$appVersion/rag-assets.zip"
     requiredFiles = $files
     fileHashes = $hashes
 }

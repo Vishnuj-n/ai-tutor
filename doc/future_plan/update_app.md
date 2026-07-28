@@ -11,7 +11,7 @@ This model shifts the heavy lifting of distribution out of the application codeb
 This approach completely eliminates internal binary file manipulation, making it 100% safe and simple.
 
 1. **The Remote Indicator:** A single, raw static text asset (`latest_version.txt`) containing the newest version tag string (e.g., `1.1.0`) is hosted publicly at:
-   `https://raw.githubusercontent.com/Vishnuj-n/ai-tutor/main/latest_version.txt`
+   `https://raw.githubusercontent.com/Vishnuj-n/studyloop/main/latest_version.txt`
 2. **The Local Comparison:** A compile-time constant in `app_update.go`:
    ```go
    const AppVersion = "1.0.0"
@@ -25,7 +25,7 @@ This approach completely eliminates internal binary file manipulation, making it
    - Click a redirect button to visit the repository.
 5. **The Redirect:** Clicking the button calls:
    ```go
-   wailsruntime.BrowserOpenURL(ctx, "https://github.com/Vishnuj-n/ai-tutor")
+   wailsruntime.BrowserOpenURL(ctx, "https://github.com/Vishnuj-n/studyloop")
    ```
    to open the repository releases page in the user's default system browser.
 

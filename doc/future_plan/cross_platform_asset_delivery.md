@@ -54,7 +54,7 @@ URL = BaseReleaseURL + "/" + AppVersion + "/" + GetPlatformAssetFilename()
 
 | Constant | Value |
 |----------|-------|
-| `BaseReleaseURL` | `https://github.com/Vishnuj-n/ai-tutor/releases/download` |
+| `BaseReleaseURL` | `https://github.com/Vishnuj-n/studyloop/releases/download` |
 | `AppVersion` | `v0.0.0-dev` (overridden via ldflags in production) |
 
 Confirmed: account handle is **`Vishnuj-n`** (capital V). GitHub's router handles case mismatches via redirect, but uniform casing avoids issues with strict HTTP clients.
