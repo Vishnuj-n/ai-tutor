@@ -24,32 +24,13 @@ func TestHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestSyncStudyStartTaskInvalidTime(t *testing.T) {
+func TestSyncStudyStartTaskRemoved(t *testing.T) {
 	orig := execCommandContext
 	execCommandContext = fakeExecCommandContext
 	defer func() { execCommandContext = orig }()
 
-	err := SyncStudyStartTask("invalid", true)
-	if err == nil {
-		t.Fatal("expected error for invalid start time format")
-	}
-}
-
-func TestSyncStudyStartTaskDisabledWindows(t *testing.T) {
-	orig := execCommandContext
-	execCommandContext = fakeExecCommandContext
-	defer func() { execCommandContext = orig }()
-
-	err := SyncStudyStartTask("17:00", false)
+	err := SyncStudyStartTask("17:00", true)
 	if err != nil {
-		t.Fatalf("expected no error when sync disabled, got: %v", err)
-	}
-}
-
-func TestSyncStudyStartTaskTRLength(t *testing.T) {
-	trValue := `powershell -W Hidden -NoP -C "msg * /TIME:10 Study Time! Time to review your queue in AI Tutor."`
-	t.Logf("/TR value length: %d", len(trValue))
-	if len(trValue) > 261 {
-		t.Fatalf("/TR value length %d exceeds Windows schtasks limit of 261 chars", len(trValue))
+		t.Fatalf("expected no error when syncing disabled scheduled task, got: %v", err)
 	}
 }

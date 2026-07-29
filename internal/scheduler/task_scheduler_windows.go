@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -51,50 +53,9 @@ func RemoveStudyStartTask() error {
 	return nil
 }
 
-// SyncStudyStartTask creates or updates the Windows Task Scheduler task for the study start notification.
+// SyncStudyStartTask removes any scheduled task if it exists (feature removed).
 func SyncStudyStartTask(startTime string, enabled bool) error {
-	trimmedTime := strings.TrimSpace(startTime)
-	if !enabled || trimmedTime == "" {
-		return RemoveStudyStartTask()
-	}
-
-	// Validate HH:MM format
-	if _, err := time.Parse("15:04", trimmedTime); err != nil {
-		return fmt.Errorf("invalid start time format: %s: %w", startTime, err)
-	}
-
-	// Purge existing task first
-	if err := RemoveStudyStartTask(); err != nil {
-		return err
-	}
-
-	// PowerShell script to trigger Windows native toast notification.
-	// PowerShell script using simplified BurntToast / Windows notification payload.
-	// Kept ultra concise so Base64 UTF-16LE -EncodedCommand + command wrapper easily fits within schtasks 261 char limit.
-	trValue := `powershell -W Hidden -NoP -C "msg * /TIME:10 Study Time! Time to review your queue in AI Tutor."`
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cmd := execCommandContext(ctx, "schtasks", "/Create",
-		"/TN", TaskName,
-		"/TR", trValue,
-		"/SC", "DAILY",
-		"/ST", trimmedTime,
-		"/IT",
-		"/F",
-	)
-
-	out, err := cmd.CombinedOutput()
-	outStr := strings.TrimSpace(string(out))
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("schtasks create timed out: %w", ctx.Err())
-		}
-		utils.Errorf("schtasks create failed: %v, output: %s", err, outStr)
-		return fmt.Errorf("failed to create scheduled task: %w (output: %s)", err, outStr)
-	}
-
-	utils.Infof("Successfully scheduled Windows study reminder for %s: %s", trimmedTime, outStr)
-	return nil
+	vbsPath := filepath.Join(os.Getenv("APPDATA"), "Studyloop", "reminder.vbs")
+	_ = os.Remove(vbsPath)
+	return RemoveStudyStartTask()
 }
