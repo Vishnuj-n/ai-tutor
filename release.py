@@ -302,7 +302,7 @@ def main():
     # Validate worktree cleanliness
     # ----------------------------------------------------------
 
-    status_out = run_cmd(["git", "status", "--porcelain"], capture=True).strip()
+    status_out = run_cmd(["git", "status", "--porcelain"], capture=True).stdout.strip()
     if status_out:
         print("Error: Worktree is not clean. Commit or stash changes before releasing.")
         sys.exit(1)
@@ -311,12 +311,12 @@ def main():
     # Create / Push Tag (with retry/idempotency checks)
     # ----------------------------------------------------------
 
-    head_commit = run_cmd(["git", "rev-parse", "HEAD"], capture=True).strip()
+    head_commit = run_cmd(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
 
     # Check local tag
-    local_tags = run_cmd(["git", "tag", "-l", tag_name], capture=True).strip()
+    local_tags = run_cmd(["git", "tag", "-l", tag_name], capture=True).stdout.strip()
     if local_tags:
-        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).strip()
+        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).stdout.strip()
         if tag_commit != head_commit:
             print(f"Error: Tag {tag_name} exists locally but points to {tag_commit}, not HEAD ({head_commit}).")
             sys.exit(1)
@@ -326,10 +326,10 @@ def main():
         run_cmd(["git", "tag", "-a", tag_name, "-m", f"Release {tag_name}"])
 
     # Check remote tag
-    ls_remote = run_cmd(["git", "ls-remote", "origin", f"refs/tags/{tag_name}"], capture=True).strip()
+    ls_remote = run_cmd(["git", "ls-remote", "origin", f"refs/tags/{tag_name}"], capture=True).stdout.strip()
     if ls_remote:
         remote_commit = ls_remote.split()[0]
-        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).strip()
+        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).stdout.strip()
         if remote_commit != tag_commit:
             print(f"Error: Remote tag {tag_name} points to {remote_commit}, not {tag_commit}.")
             sys.exit(1)

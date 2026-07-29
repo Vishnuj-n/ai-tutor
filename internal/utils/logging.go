@@ -54,6 +54,11 @@ func InitMultiFileLogger(appDataDir string) error {
 		errLogFile = nil
 	}
 
+	// Install stdout/stderr fallback loggers immediately after closing existing file handles.
+	QueueLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	RagLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	var err error
 	queueLogFile, err = os.OpenFile(filepath.Join(logDir, "queue.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -74,10 +79,6 @@ func InitMultiFileLogger(appDataDir string) error {
 		_ = ragLogFile.Close()
 		queueLogFile = nil
 		ragLogFile = nil
-		errLogFile = nil
-		QueueLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-		RagLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 		return fmt.Errorf("failed to open app log file: %w", openErr)
 	}
 
