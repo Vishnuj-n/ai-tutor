@@ -4,13 +4,25 @@ package scheduler
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"ai-tutor/internal/utils"
 )
+
+func encodePowerShellCommand(cmd string) string {
+	encoded := utf16.Encode([]rune(cmd))
+	b := make([]byte, len(encoded)*2)
+	for i, u := range encoded {
+		b[i*2] = byte(u)
+		b[i*2+1] = byte(u >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
 
 const TaskName = "AiTutorStudyReminder"
 
@@ -56,15 +68,21 @@ func SyncStudyStartTask(startTime string, enabled bool) error {
 		return err
 	}
 
-	// PowerShell script to trigger Windows native toast notification
-	toastScript := `$Xml = '<toast><visual><binding template="ToastGeneric"><text>Study Time Started!</text><text>It is study time! Open AI Tutor to work on your queue.</text></binding></visual></toast>'; [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; $ToastXml = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]::new(); $ToastXml.LoadXml($Xml); $Notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AI Tutor'); $Notifier.Show([Windows.UI.Notifications.ToastNotification]::new($ToastXml))`
+	// PowerShell script to trigger Windows native toast notification.
+	// PowerShell script using simplified BurntToast / Windows notification payload.
+	// Kept ultra concise so Base64 UTF-16LE -EncodedCommand + command wrapper easily fits within schtasks 261 char limit.
+	toastScript := `[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null;$x=[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]::new();$x.LoadXml('<toast><visual><binding template="ToastGeneric"><text>Study Time Started!</text><text>Open AI Tutor to work on your queue.</text></binding></visual></toast>');[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AI Tutor').Show([Windows.UI.Notifications.ToastNotification]::new($x))`
+
+	// Encode toastScript as UTF-16LE base64 string
+	encodedScript := encodePowerShellCommand(toastScript)
+	trValue := fmt.Sprintf("powershell -W Hidden -NoP -Enc %s", encodedScript)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	cmd := execCommandContext(ctx, "schtasks", "/Create",
 		"/TN", TaskName,
-		"/TR", fmt.Sprintf("powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command %q", toastScript),
+		"/TR", trValue,
 		"/SC", "DAILY",
 		"/ST", trimmedTime,
 		"/IT",
