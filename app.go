@@ -119,6 +119,13 @@ func (a *App) startup(ctx context.Context) {
 			utils.Warnf("failed to retrieve pending notebooks for indexing queue: %v", err)
 		}
 	}
+
+	// Sync scheduled task with Windows Task Scheduler on startup
+	if settings, sErr := boot.Repo.GetUserSettings(); sErr == nil && settings != nil {
+		if syncErr := scheduler.SyncStudyStartTask(settings.StudyStartTime, settings.RemindersEnabled); syncErr != nil {
+			utils.Warnf("failed to sync study scheduled task on startup: %v", syncErr)
+		}
+	}
 }
 
 // shutdown is called when the Wails application is shutting down.

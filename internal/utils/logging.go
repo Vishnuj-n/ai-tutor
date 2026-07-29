@@ -68,14 +68,14 @@ func InitMultiFileLogger(appDataDir string) error {
 	}
 
 	var openErr error
-	errLogFile, openErr = os.OpenFile(filepath.Join(logDir, "system_errors.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	errLogFile, openErr = os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if openErr != nil {
 		_ = queueLogFile.Close()
 		_ = ragLogFile.Close()
 		queueLogFile = nil
 		ragLogFile = nil
 		errLogFile = nil
-		return fmt.Errorf("failed to open system errors log file: %w", openErr)
+		return fmt.Errorf("failed to open app log file: %w", openErr)
 	}
 
 	QueueLogger = slog.New(slog.NewJSONHandler(queueLogFile, nil))

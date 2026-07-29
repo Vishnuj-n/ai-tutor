@@ -47,10 +47,9 @@ func TestSyncStudyStartTaskDisabledWindows(t *testing.T) {
 }
 
 func TestSyncStudyStartTaskTRLength(t *testing.T) {
-	toastScript := `[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null;$x=[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]::new();$x.LoadXml('<toast><visual><binding template="ToastGeneric"><text>Study Time Started!</text></binding></visual></toast>');[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AI Tutor').Show([Windows.UI.Notifications.ToastNotification]::new($x))`
-	encodedScript := encodePowerShellCommand(toastScript)
-	trValue := "powershell -W Hidden -NoP -Enc " + encodedScript
+	trValue := `powershell -W Hidden -NoP -C "msg * /TIME:10 Study Time! Time to review your queue in AI Tutor."`
+	t.Logf("/TR value length: %d", len(trValue))
 	if len(trValue) > 261 {
-		t.Fatalf("/TR value length %d exceeds 261 character limit", len(trValue))
+		t.Fatalf("/TR value length %d exceeds Windows schtasks limit of 261 chars", len(trValue))
 	}
 }

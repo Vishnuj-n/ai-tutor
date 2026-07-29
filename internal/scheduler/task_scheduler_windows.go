@@ -71,9 +71,7 @@ func SyncStudyStartTask(startTime string, enabled bool) error {
 	// PowerShell script to trigger Windows native toast notification.
 	// PowerShell script using simplified BurntToast / Windows notification payload.
 	// Kept ultra concise so Base64 UTF-16LE -EncodedCommand + command wrapper easily fits within schtasks 261 char limit.
-	toastScript := `[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null;$x=[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]::new();$x.LoadXml('<toast><visual><binding template="ToastGeneric"><text>Study Time Started!</text></binding></visual></toast>');[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AI Tutor').Show([Windows.UI.Notifications.ToastNotification]::new($x))`
-	encodedScript := encodePowerShellCommand(toastScript)
-	trValue := fmt.Sprintf("powershell -W Hidden -NoP -Enc %s", encodedScript)
+	trValue := `powershell -W Hidden -NoP -C "msg * /TIME:10 Study Time! Time to review your queue in AI Tutor."`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
