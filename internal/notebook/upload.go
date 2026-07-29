@@ -193,7 +193,8 @@ func (s *Service) SaveUploadedFileFromPath(sourcePath string) (*UploadResult, er
 
 func (s *Service) buildUploadPath(fileName, ext string) (string, string) {
 	id := uuid.New().String()
-	uniqueFileName := fmt.Sprintf("%s_%s%s", id, sanitizeFileName(fileName), ext)
+	// Use pure UUID for compact, collision-free file naming on disk while preserving extension
+	uniqueFileName := fmt.Sprintf("%s%s", id, ext)
 	filePath := filepath.Join(s.config.UploadDir, uniqueFileName)
 	return id, filePath
 }
@@ -393,24 +394,6 @@ func (s *Service) ExtractDocumentSample(filePath string, fileType string, maxPag
 	}
 
 	return doc, nil
-}
-
-// sanitizeFileName removes potentially dangerous characters
-func sanitizeFileName(name string) string {
-	// Remove extension for processing
-	name = strings.TrimSuffix(name, filepath.Ext(name))
-	// Replace spaces and special chars
-	name = strings.Map(func(r rune) rune {
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
-			return r
-		case r == '-' || r == '_':
-			return r
-		default:
-			return '_'
-		}
-	}, name)
-	return name
 }
 
 // FileMetadata represents extracted metadata from file

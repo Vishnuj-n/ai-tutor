@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -742,15 +743,17 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 		}
 	}
 
-	// Delete database record
-	if err := repo.DeleteNotebook(notebookID); err != nil {
-		return map[string]interface{}{
-			"error": err.Error(),
+	// 1. Delete associated physical file from disk first
+	if nb.FilePath != "" {
+		if err := a.notebookService.DeleteFile(nb.FilePath); err != nil && !os.IsNotExist(err) {
+			return map[string]interface{}{
+				"error": fmt.Sprintf("failed to delete notebook file %s: %v", nb.FilePath, err),
+			}
 		}
 	}
 
-	// Delete file from disk
-	if err := a.notebookService.DeleteFile(nb.FilePath); err != nil {
+	// 2. Delete database record and all associated chunks/topics/tasks
+	if err := repo.DeleteNotebook(notebookID); err != nil {
 		return map[string]interface{}{
 			"error": err.Error(),
 		}

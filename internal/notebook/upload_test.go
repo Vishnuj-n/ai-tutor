@@ -178,6 +178,69 @@ func TestExtractDocumentPDFBranchViaSeam(t *testing.T) {
 	}
 }
 
+func TestSaveUploadedFileFromPathAndCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+	service := NewService(tmpDir)
+
+	srcFile := writeTempFile(t, tmpDir, "sample.txt", []byte("hello world upload test"))
+
+	res, err := service.SaveUploadedFileFromPath(srcFile)
+	if err != nil {
+		t.Fatalf("SaveUploadedFileFromPath failed: %v", err)
+	}
+
+	if res.ID == "" {
+		t.Fatalf("expected non-empty ID")
+	}
+	expectedFileName := fmt.Sprintf("%s.txt", res.ID)
+	if filepath.Base(res.FilePath) != expectedFileName {
+		t.Fatalf("expected file name %q, got %q", expectedFileName, filepath.Base(res.FilePath))
+	}
+
+	if _, err := os.Stat(res.FilePath); err != nil {
+		t.Fatalf("saved file does not exist on disk: %v", err)
+	}
+
+	if err := service.DeleteFile(res.FilePath); err != nil {
+		t.Fatalf("DeleteFile failed for newly uploaded file: %v", err)
+	}
+
+	if _, err := os.Stat(res.FilePath); !os.IsNotExist(err) {
+		t.Fatalf("expected file to be deleted from disk")
+	}
+}
+
+func TestDeleteNotebookFileCleanupPathFormats(t *testing.T) {
+	tmpDir := t.TempDir()
+	service := NewService(tmpDir)
+
+	// Format 1: uuid.ext (new format)
+	uuidFile := filepath.Join(tmpDir, "12345678-1234-1234-1234-123456789abc.txt")
+	if err := os.WriteFile(uuidFile, []byte("new format"), 0o644); err != nil {
+		t.Fatalf("failed to write uuid file: %v", err)
+	}
+
+	if err := service.DeleteFile(uuidFile); err != nil {
+		t.Fatalf("DeleteFile failed for uuid.ext path: %v", err)
+	}
+	if _, err := os.Stat(uuidFile); !os.IsNotExist(err) {
+		t.Fatalf("expected uuid file to be deleted")
+	}
+
+	// Format 2: legacy original filename path format
+	legacyFile := filepath.Join(tmpDir, "legacy_notebook_name.pdf")
+	if err := os.WriteFile(legacyFile, []byte("legacy format"), 0o644); err != nil {
+		t.Fatalf("failed to write legacy file: %v", err)
+	}
+
+	if err := service.DeleteFile(legacyFile); err != nil {
+		t.Fatalf("DeleteFile failed for legacy path: %v", err)
+	}
+	if _, err := os.Stat(legacyFile); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy file to be deleted")
+	}
+}
+
 func writeTempFile(t *testing.T, dir, fileName string, body []byte) string {
 	t.Helper()
 

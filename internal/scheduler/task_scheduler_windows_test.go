@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -24,24 +25,29 @@ func TestHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestSyncStudyStartTaskInvalidTime(t *testing.T) {
+func TestSyncStudyStartTaskRemoved(t *testing.T) {
 	orig := execCommandContext
 	execCommandContext = fakeExecCommandContext
 	defer func() { execCommandContext = orig }()
 
-	err := SyncStudyStartTask("invalid", true)
-	if err == nil {
-		t.Fatal("expected error for invalid start time format")
+	tmpDir := t.TempDir()
+	t.Setenv("APPDATA", tmpDir)
+
+	vbsDir := filepath.Join(tmpDir, "Studyloop")
+	if err := os.MkdirAll(vbsDir, 0o755); err != nil {
+		t.Fatalf("failed to create Studyloop dir: %v", err)
 	}
-}
+	vbsPath := filepath.Join(vbsDir, "reminder.vbs")
+	if err := os.WriteFile(vbsPath, []byte("WScript.Echo 1"), 0o644); err != nil {
+		t.Fatalf("failed to create fixture reminder.vbs: %v", err)
+	}
 
-func TestSyncStudyStartTaskDisabledWindows(t *testing.T) {
-	orig := execCommandContext
-	execCommandContext = fakeExecCommandContext
-	defer func() { execCommandContext = orig }()
-
-	err := SyncStudyStartTask("17:00", false)
+	err := SyncStudyStartTask("17:00", true)
 	if err != nil {
-		t.Fatalf("expected no error when sync disabled, got: %v", err)
+		t.Fatalf("expected no error when syncing disabled scheduled task, got: %v", err)
+	}
+
+	if _, err := os.Stat(vbsPath); !os.IsNotExist(err) {
+		t.Fatalf("expected reminder.vbs to be removed, but it still exists")
 	}
 }
