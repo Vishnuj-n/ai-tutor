@@ -32,10 +32,38 @@ import os
 import subprocess
 import sys
 
+# Ensure UTF-8 encoding for standard output/error streams on Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 from openai import OpenAI
 
 
+# ---------------------------------------------------------------------
+# Load .env file if present
+# ---------------------------------------------------------------------
+def load_env_file(filepath=".env"):
+    if not os.path.exists(filepath):
+        return
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = val
+
+
+load_env_file()
+
+
 MODEL = "openai/gpt-oss-120b"
+
 
 
 # ---------------------------------------------------------------------
@@ -103,14 +131,26 @@ def generate_release_notes(tag_name, commit_history):
     Generate release notes using GPT-OSS-120B.
     """
 
-    api_key = os.getenv("FAST_LLM_API_KEY")
-    base_url = os.getenv("FAST_LLM_BASE_URL")
+    api_key = os.getenv("FAST_LLM_API_KEY") or os.getenv("HEAVY_LLM_API_KEY")
+    base_url = (
+        os.getenv("FAST_LLM_BASE_URL")
+        or os.getenv("HEAVY_LLM_BASE_URL")
+        or "https://api.openai.com/v1"
+    )
+
+    if base_url:
+        base_url = base_url.rstrip("/")
+        if base_url.endswith("/openai"):
+            base_url = base_url[:-7] + "/openai/v1"
 
     if not api_key:
-        raise RuntimeError("FAST_LLM_API_KEY is not set.")
+        raise RuntimeError("Neither FAST_LLM_API_KEY nor HEAVY_LLM_API_KEY is set.")
 
-    if not base_url:
-        raise RuntimeError("FAST_LLM_BASE_URL is not set.")
+    model = (
+        os.getenv("FAST_LLM_MODEL")
+        or os.getenv("HEAVY_LLM_MODEL")
+        or MODEL
+    )
 
     client = OpenAI(
         api_key=api_key,
@@ -161,7 +201,7 @@ Keep it concise.
 """
 
     response = client.chat.completions.create(
-        model=MODEL,
+        model=model,
         temperature=0.3,
         messages=[
             {
@@ -299,54 +339,47 @@ def main():
         sys.exit(1)
 
     # ----------------------------------------------------------
-    # Validate worktree cleanliness
-    # ----------------------------------------------------------
-
-    status_out = run_cmd(["git", "status", "--porcelain"], capture=True).stdout.strip()
-    if status_out:
-        print("Error: Worktree is not clean. Commit or stash changes before releasing.")
-        sys.exit(1)
-
-    # ----------------------------------------------------------
-    # Create / Push Tag (with retry/idempotency checks)
+    # Create Local Tag (if missing)
     # ----------------------------------------------------------
 
     head_commit = run_cmd(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
-
-    # Check local tag
     local_tags = run_cmd(["git", "tag", "-l", tag_name], capture=True).stdout.strip()
-    if local_tags:
-        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).stdout.strip()
-        if tag_commit != head_commit:
-            print(f"Error: Tag {tag_name} exists locally but points to {tag_commit}, not HEAD ({head_commit}).")
-            sys.exit(1)
-        print(f"Tag {tag_name} already exists locally on HEAD. Skipping creation.")
-    else:
-        print("Creating tag...")
+    if not local_tags:
+        print(f"Creating local tag {tag_name}...")
         run_cmd(["git", "tag", "-a", tag_name, "-m", f"Release {tag_name}"])
-
-    # Check remote tag
-    ls_remote = run_cmd(["git", "ls-remote", "origin", f"refs/tags/{tag_name}"], capture=True).stdout.strip()
-    if ls_remote:
-        remote_commit = ls_remote.split()[0]
-        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).stdout.strip()
-        if remote_commit != tag_commit:
-            print(f"Error: Remote tag {tag_name} points to {remote_commit}, not {tag_commit}.")
-            sys.exit(1)
-        print(f"Tag {tag_name} already pushed to remote. Skipping push.")
     else:
-        print("Pushing tag...")
-        run_cmd(["git", "push", "origin", tag_name])
+        print(f"Tag {tag_name} already exists locally.")
+
+    print(f"Pushing tag {tag_name} to origin...")
+    run_cmd(["git", "push", "origin", tag_name], check=False)
 
     # ----------------------------------------------------------
-    # Create Release (with retry/idempotency check)
+    # Collect Release Assets
+    # ----------------------------------------------------------
+
+    bin_dir = os.path.join("build", "bin")
+    asset_candidates = [
+        "Studyloop.exe",
+        "Studyloop-amd64-installer.exe",
+        "rag-assets.zip",
+    ]
+    assets = []
+    if os.path.exists(bin_dir):
+        for candidate in asset_candidates:
+            asset_path = os.path.join(bin_dir, candidate)
+            if os.path.isfile(asset_path):
+                assets.append(asset_path)
+                print(f"Found release asset: {asset_path}")
+
+    # ----------------------------------------------------------
+    # Create GitHub Release (gh creates & pushes tag automatically)
     # ----------------------------------------------------------
 
     rel_check = run_cmd(["gh", "release", "view", tag_name], capture=True, check=False)
     if rel_check.returncode == 0:
         print(f"GitHub Release {tag_name} already exists. Skipping release creation.")
     else:
-        print("Creating GitHub Release...")
+        print("Creating GitHub Release via gh...")
         gh_cmd = [
             "gh",
             "release",
@@ -361,6 +394,9 @@ def main():
             gh_cmd.append("--draft")
         if args.prerelease:
             gh_cmd.append("--prerelease")
+        if assets:
+            gh_cmd.extend(assets)
+
         run_cmd(gh_cmd)
 
     print()
