@@ -4,27 +4,15 @@ package scheduler
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"ai-tutor/internal/utils"
 )
-
-func encodePowerShellCommand(cmd string) string {
-	encoded := utf16.Encode([]rune(cmd))
-	b := make([]byte, len(encoded)*2)
-	for i, u := range encoded {
-		b[i*2] = byte(u)
-		b[i*2+1] = byte(u >> 8)
-	}
-	return base64.StdEncoding.EncodeToString(b)
-}
 
 const TaskName = "AiTutorStudyReminder"
 
@@ -56,6 +44,13 @@ func RemoveStudyStartTask() error {
 // SyncStudyStartTask removes any scheduled task if it exists (feature removed).
 func SyncStudyStartTask(startTime string, enabled bool) error {
 	vbsPath := filepath.Join(os.Getenv("APPDATA"), "Studyloop", "reminder.vbs")
-	_ = os.Remove(vbsPath)
-	return RemoveStudyStartTask()
+	var vbsErr error
+	if err := os.Remove(vbsPath); err != nil && !os.IsNotExist(err) {
+		vbsErr = fmt.Errorf("failed to remove reminder.vbs: %w", err)
+	}
+	taskErr := RemoveStudyStartTask()
+	if vbsErr != nil {
+		return vbsErr
+	}
+	return taskErr
 }

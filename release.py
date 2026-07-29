@@ -299,60 +299,72 @@ def main():
         sys.exit(1)
 
     # ----------------------------------------------------------
-    # Create tag
+    # Validate worktree cleanliness
     # ----------------------------------------------------------
 
-    print("Creating tag...")
+    status_out = run_cmd(["git", "status", "--porcelain"], capture=True).strip()
+    if status_out:
+        print("Error: Worktree is not clean. Commit or stash changes before releasing.")
+        sys.exit(1)
 
-    run_cmd(
-        [
-            "git",
-            "tag",
-            "-a",
+    # ----------------------------------------------------------
+    # Create / Push Tag (with retry/idempotency checks)
+    # ----------------------------------------------------------
+
+    head_commit = run_cmd(["git", "rev-parse", "HEAD"], capture=True).strip()
+
+    # Check local tag
+    local_tags = run_cmd(["git", "tag", "-l", tag_name], capture=True).strip()
+    if local_tags:
+        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).strip()
+        if tag_commit != head_commit:
+            print(f"Error: Tag {tag_name} exists locally but points to {tag_commit}, not HEAD ({head_commit}).")
+            sys.exit(1)
+        print(f"Tag {tag_name} already exists locally on HEAD. Skipping creation.")
+    else:
+        print("Creating tag...")
+        run_cmd(["git", "tag", "-a", tag_name, "-m", f"Release {tag_name}"])
+
+    # Check remote tag
+    ls_remote = run_cmd(["git", "ls-remote", "origin", f"refs/tags/{tag_name}"], capture=True).strip()
+    if ls_remote:
+        remote_commit = ls_remote.split()[0]
+        tag_commit = run_cmd(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture=True).strip()
+        if remote_commit != tag_commit:
+            print(f"Error: Remote tag {tag_name} points to {remote_commit}, not {tag_commit}.")
+            sys.exit(1)
+        print(f"Tag {tag_name} already pushed to remote. Skipping push.")
+    else:
+        print("Pushing tag...")
+        run_cmd(["git", "push", "origin", tag_name])
+
+    # ----------------------------------------------------------
+    # Create Release (with retry/idempotency check)
+    # ----------------------------------------------------------
+
+    rel_check = run_cmd(["gh", "release", "view", tag_name], capture=True, check=False)
+    if rel_check.returncode == 0:
+        print(f"GitHub Release {tag_name} already exists. Skipping release creation.")
+    else:
+        print("Creating GitHub Release...")
+        gh_cmd = [
+            "gh",
+            "release",
+            "create",
             tag_name,
-            "-m",
+            "--title",
             f"Release {tag_name}",
+            "--notes",
+            release_notes,
         ]
-    )
-
-    print("Pushing tag...")
-
-    run_cmd(
-        [
-            "git",
-            "push",
-            "origin",
-            tag_name,
-        ]
-    )
-
-    # ----------------------------------------------------------
-    # Create Release
-    # ----------------------------------------------------------
-
-    print("Creating GitHub Release...")
-
-    gh_cmd = [
-        "gh",
-        "release",
-        "create",
-        tag_name,
-        "--title",
-        f"Release {tag_name}",
-        "--notes",
-        release_notes,
-    ]
-
-    if args.draft:
-        gh_cmd.append("--draft")
-
-    if args.prerelease:
-        gh_cmd.append("--prerelease")
-
-    run_cmd(gh_cmd)
+        if args.draft:
+            gh_cmd.append("--draft")
+        if args.prerelease:
+            gh_cmd.append("--prerelease")
+        run_cmd(gh_cmd)
 
     print()
-    print(f"Release {tag_name} created successfully.")
+    print(f"Release {tag_name} processed successfully.")
 
 
 if __name__ == "__main__":

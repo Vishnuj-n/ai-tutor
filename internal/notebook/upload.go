@@ -396,24 +396,6 @@ func (s *Service) ExtractDocumentSample(filePath string, fileType string, maxPag
 	return doc, nil
 }
 
-// sanitizeFileName removes potentially dangerous characters
-func sanitizeFileName(name string) string {
-	// Remove extension for processing
-	name = strings.TrimSuffix(name, filepath.Ext(name))
-	// Replace spaces and special chars
-	name = strings.Map(func(r rune) rune {
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
-			return r
-		case r == '-' || r == '_':
-			return r
-		default:
-			return '_'
-		}
-	}, name)
-	return name
-}
-
 // FileMetadata represents extracted metadata from file
 type FileMetadata struct {
 	PageCount int

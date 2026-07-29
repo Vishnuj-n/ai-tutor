@@ -746,7 +746,9 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 	// 1. Delete associated physical file from disk first
 	if nb.FilePath != "" {
 		if err := a.notebookService.DeleteFile(nb.FilePath); err != nil && !os.IsNotExist(err) {
-			utils.Warnf("Failed to delete notebook file %s: %v", nb.FilePath, err)
+			return map[string]interface{}{
+				"error": fmt.Sprintf("failed to delete notebook file %s: %v", nb.FilePath, err),
+			}
 		}
 	}
 

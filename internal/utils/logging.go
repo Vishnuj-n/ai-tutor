@@ -75,6 +75,9 @@ func InitMultiFileLogger(appDataDir string) error {
 		queueLogFile = nil
 		ragLogFile = nil
 		errLogFile = nil
+		QueueLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		RagLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 		return fmt.Errorf("failed to open app log file: %w", openErr)
 	}
 

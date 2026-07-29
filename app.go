@@ -68,6 +68,50 @@ func (a *App) getRepo() *db.Repository {
 	return a.repo
 }
 
+func initLogging() {
+	appDir, err := runtime.ResolveAppDir()
+	if err != nil {
+		log.Printf("Failed to resolve app directory: %v", err)
+		return
+	}
+	if logErr := utils.InitMultiFileLogger(appDir); logErr != nil {
+		log.Printf("Failed to initialize multi-file logger: %v", logErr)
+	}
+}
+
+func (a *App) initIndexQueue(ctx context.Context, repo *db.Repository) {
+	if !a.aiReady || a.embedder == nil {
+		return
+	}
+	a.indexQueue = retrieval.NewVectorIndexQueue(repo, a.embedder, ctx)
+	a.indexQueue.Start()
+
+	pendingIDs, err := repo.GetPendingNotebookIDs()
+	if err != nil {
+		utils.Warnf("failed to retrieve pending notebooks for indexing queue: %v", err)
+		return
+	}
+	for _, id := range pendingIDs {
+		a.indexQueue.Enqueue(id)
+	}
+}
+
+func syncSchedulerTask(repo *db.Repository) {
+	settings, sErr := repo.GetUserSettings()
+	if sErr != nil {
+		utils.Warnf("failed to retrieve user settings on startup: %v", sErr)
+	}
+	startTime := ""
+	remindersEnabled := false
+	if settings != nil {
+		startTime = settings.StudyStartTime
+		remindersEnabled = settings.RemindersEnabled
+	}
+	if syncErr := scheduler.SyncStudyStartTask(startTime, remindersEnabled); syncErr != nil {
+		utils.Warnf("failed to sync study scheduled task on startup: %v", syncErr)
+	}
+}
+
 func (a *App) startup(ctx context.Context) {
 	if a.readyChan != nil {
 		defer close(a.readyChan)
@@ -75,13 +119,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
 	// Initialize the structured logging pipeline first using the resolved app data directory
-	if appDir, err := runtime.ResolveAppDir(); err == nil {
-		if logErr := utils.InitMultiFileLogger(appDir); logErr != nil {
-			log.Printf("Failed to initialize multi-file logger: %v", logErr)
-		}
-	} else {
-		log.Printf("Failed to resolve app directory: %v", err)
-	}
+	initLogging()
 
 	boot, err := runtime.Bootstrap(ctx)
 	if err != nil {
@@ -106,26 +144,10 @@ func (a *App) startup(ctx context.Context) {
 	a.aiReady = boot.AiReady
 	a.aiInitError = boot.AiInitError
 
-	if a.aiReady && a.embedder != nil {
-		a.indexQueue = retrieval.NewVectorIndexQueue(boot.Repo, a.embedder, ctx)
-		a.indexQueue.Start()
-
-		pendingIDs, err := boot.Repo.GetPendingNotebookIDs()
-		if err == nil {
-			for _, id := range pendingIDs {
-				a.indexQueue.Enqueue(id)
-			}
-		} else {
-			utils.Warnf("failed to retrieve pending notebooks for indexing queue: %v", err)
-		}
-	}
+	a.initIndexQueue(ctx, boot.Repo)
 
 	// Sync scheduled task with Windows Task Scheduler on startup
-	if settings, sErr := boot.Repo.GetUserSettings(); sErr == nil && settings != nil {
-		if syncErr := scheduler.SyncStudyStartTask(settings.StudyStartTime, settings.RemindersEnabled); syncErr != nil {
-			utils.Warnf("failed to sync study scheduled task on startup: %v", syncErr)
-		}
-	}
+	syncSchedulerTask(boot.Repo)
 }
 
 // shutdown is called when the Wails application is shutting down.
