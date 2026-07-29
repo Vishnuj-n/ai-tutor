@@ -33,6 +33,14 @@
       <!-- Config panel: page range -->
       <div v-if="!reviewing" class="config-panel">
         <p class="config-panel__hint">Enter the page range to extract flashcards from.</p>
+        <div class="manual-notice">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <span>Note: Manually generated flashcards are for quick practice and are not added to your scheduled retention review queue.</span>
+        </div>
         <div class="config-panel__row">
           <div class="number-field">
             <label class="field-label" for="fc-start">Start Page</label>
@@ -72,7 +80,12 @@
       <div v-if="reviewing && currentCard" class="review-session">
         <!-- Progress row -->
         <div class="progress-row">
-          <p class="progress-label">Card {{ reviewIndex + 1 }} of {{ cards.length }}</p>
+          <p class="progress-label">
+            Card {{ reviewIndex + 1 }} of {{ cards.length }}
+            <span v-if="!queueMode" class="manual-badge" title="Manually generated session — not added to retention queue">
+              Practice Mode
+            </span>
+          </p>
           <div class="progress-track">
             <div
               class="progress-fill"
@@ -91,7 +104,7 @@
                 class="suspend-btn"
                 title="Suspend card (Shift+S)"
                 :disabled="isSubmittingReview"
-                @click="suspendCard"
+                @click.stop="suspendCard"
               >
                 <svg
                   width="18"
@@ -117,7 +130,7 @@
                 class="suspend-btn"
                 title="Suspend card (Shift+S)"
                 :disabled="isSubmittingReview"
-                @click="suspendCard"
+                @click.stop="suspendCard"
               >
                 <svg
                   width="18"
@@ -586,6 +599,38 @@ async function loadQueueSession(taskID, notebookID = '') {
   font-size: 14px;
   color: var(--muted-text);
   line-height: 1.5;
+}
+
+.manual-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-container-lowest));
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--on-surface);
+  line-height: 1.4;
+}
+
+.manual-notice svg {
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.manual-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .config-panel__row {
