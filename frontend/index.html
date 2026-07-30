@@ -4,6 +4,12 @@
     <meta charset="UTF-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Studyloop</title>
+    <script>
+      (function() {
+        var t = localStorage.getItem('app-theme');
+        if (t) document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
 </head>
 <body>
 <div id="app"></div>

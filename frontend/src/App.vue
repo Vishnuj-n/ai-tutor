@@ -133,6 +133,7 @@ async function syncScheduler() {
     // Apply theme
     if (settings.theme) {
       document.documentElement.setAttribute('data-theme', settings.theme)
+      localStorage.setItem('app-theme', settings.theme)
     }
 
     if (!settings.reminders_enabled) return
