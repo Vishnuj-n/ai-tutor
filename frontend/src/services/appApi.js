@@ -97,10 +97,6 @@ export function getDashboardOverview(timezoneOffsetMinutes) {
   return appBridge().GetDashboardOverview(timezoneOffsetMinutes)
 }
 
-export function getStreakState(timezoneOffsetMinutes) {
-  return appBridge().GetStreakState(timezoneOffsetMinutes)
-}
-
 // Comprehensive Mode endpoints (Phase 1)
 export function generateManualFlashcards(notebookID, startPage, endPage) {
   return appBridge().GenerateManualFlashcards(notebookID, startPage, endPage)

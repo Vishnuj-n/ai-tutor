@@ -23,7 +23,6 @@ vi.mock('../services/appApi', () => ({
   devForceSocraticRescue: vi.fn(),
   devForceFlashcardGenerate: vi.fn(),
   getNotebooks: vi.fn(),
-  getStreakState: vi.fn(),
   getFlashcardDueTimeline: vi.fn(),
 }))
 
