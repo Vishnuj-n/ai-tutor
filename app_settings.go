@@ -1,6 +1,10 @@
 package main
 
 import (
+	"ai-tutor/internal/llm"
+	"ai-tutor/internal/models"
+	"ai-tutor/internal/study"
+	"ai-tutor/internal/utils"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,15 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"ai-tutor/internal/llm"
-	"ai-tutor/internal/models"
-	"ai-tutor/internal/scheduler"
-	"ai-tutor/internal/study"
-	"ai-tutor/internal/utils"
-
 	"github.com/google/uuid"
 )
-
 
 func (a *App) GetUserSettings() map[string]interface{} {
 	repo := a.getRepo()
@@ -539,7 +536,6 @@ func (a *App) LoginStudent(username, password, classroomCode string) map[string]
 	if err := repo.UpdateUserSettings(*settings); err != nil {
 		return map[string]interface{}{"error": "failed to save settings: " + err.Error()}
 	}
-
 
 	return map[string]interface{}{
 		"ok":             true,
