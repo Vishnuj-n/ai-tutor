@@ -1,9 +1,12 @@
-# sync-deps.ps1
+# windows-sync-deps.ps1
 # AI Tutor - Windows dependency sync script
 # Usage:
-# powershell -ExecutionPolicy Bypass -File .\sync-deps.ps1
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows-sync-deps.ps1
 
 $ErrorActionPreference = "Stop"
+
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $projectRoot
 
 Write-Host "================================"
 Write-Host "AI Tutor: Syncing Dependencies"
@@ -219,7 +222,7 @@ if ($appDataNowCurrent -and ($localVersionNow -ne $appVersion)) {
         New-Item -ItemType Directory -Force -Path $localAssetDir | Out-Null
     }
     foreach ($file in $assets) {
-        Copy-Item -Path (Join-Path $appDataDir $file) -Destination (Join-Path $localAssetDir $file) -Force
+        Copy-Item -Path (Join-Path $appDataDir $file) -Destination (Join-Path $appDataDir $file) -Force
     }
     Set-InstalledAssetVersion $localAssetDir $appVersion
 }

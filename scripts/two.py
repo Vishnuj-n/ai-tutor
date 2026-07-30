@@ -5,7 +5,7 @@ from datetime import datetime
 # CONFIG
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = PROJECT_ROOT / "doc"
 
 OUTPUT_FILE = PROJECT_ROOT / "doc_god.md"

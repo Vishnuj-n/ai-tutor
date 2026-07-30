@@ -1,0 +1,26 @@
+{
+  "title": "StudyLoop",
+  "summary": "StudyLoop is a local-first desktop application built with Go, Wails, and Vue 3 that guides learners through a structured study workflow using a persistent SQLite study queue, FSRS spaced repetition, and local RAG capabilities.",
+  "category": "Educational Technology",
+  "date": "2026-07",
+  "tier": 1,
+  "priority": 100,
+  "techStack": [
+    "Go",
+    "Wails",
+    "Vue.js",
+    "JavaScript",
+    "SQLite",
+    "sqlite-vec",
+    "ONNX Runtime",
+    "FSRS",
+    "Vite"
+  ],
+  "highlights": [
+    "Implements a guided learning workflow driven by a persistent SQLite study queue with deterministic priority ordering.",
+    "Integrates FSRS (Free Spaced Repetition Scheduler) for long-term flashcard retention and review session management.",
+    "Uses ONNX Runtime and sqlite-vec (vec0) for local INT8 embedding generation and vector search in offline RAG pipelines.",
+    "Built with a Go backend desktop shell using Wails v2 and a Vue 3 multi-page frontend.",
+    "Supports dual-tier LLM configurations (Fast and Heavy models) with OS keyring API key storage for AI explanations and quiz generation."
+  ]
+}

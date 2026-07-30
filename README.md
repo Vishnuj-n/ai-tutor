@@ -119,10 +119,10 @@ Run dependency checks and asset download:
 
 ```bash
 # macOS / Linux
-./sync-deps.sh
+./scripts/sync-deps.sh
 
 # Windows
-./windows-sync-deps.ps1
+./scripts/windows-sync-deps.ps1
 ```
 
 ### Development
@@ -141,7 +141,7 @@ wails build -tags sqlite_extension
 ## Local RAG Troubleshooting
 
 - `Ask AI unavailable` on startup:
-	- Run `./sync-deps.sh` (or `./windows-sync-deps.ps1` on Windows)
+	- Run `./scripts/sync-deps.sh` (or `./scripts/windows-sync-deps.ps1` on Windows)
 	- Confirm all required files exist under `asset/`
 - `no such module: vec0`:
 	- Ensure build includes `-tags sqlite_extension`

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Sync Go dependencies and prepare for build with ONNX + sqlite-vec
-# Usage: ./sync-deps.sh
+# Usage: ./scripts/sync-deps.sh
 
 set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+cd "$PROJECT_ROOT"
 
 MISSING_ASSETS=0
 

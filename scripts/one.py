@@ -1,14 +1,14 @@
 import sys
 from pathlib import Path
 
-ROOT_DIR = Path(".")
+ROOT_DIR = Path(__file__).resolve().parent.parent
 LINE_LIMIT = 800
 
 VALID_EXTENSIONS = {
     ".py", ".go", ".js", ".ts", ".tsx", ".jsx",
     ".java", ".cpp", ".c", ".cs", ".rs",
     ".html", ".css", ".scss", ".sql",
-    ".yaml", ".yml", ".sh",".vue"
+    ".yaml", ".yml", ".sh", ".vue"
 }
 
 # folders to ignore anywhere in path
@@ -70,7 +70,7 @@ for file in ROOT_DIR.rglob("*"):
             lines = sum(1 for _ in f)
 
         if lines > LINE_LIMIT:
-            results.append((lines, str(file)))
+            results.append((lines, str(file.relative_to(ROOT_DIR))))
 
     except OSError as e:
         print(f"Error processing {file}: {e}", file=sys.stderr)

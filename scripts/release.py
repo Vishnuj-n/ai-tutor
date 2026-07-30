@@ -3,11 +3,11 @@
 AI-powered GitHub Release Script.
 
 Usage:
-    python release.py
-    python release.py v1.2.3
-    python release.py --draft
-    python release.py --prerelease
-    python release.py --dry-run
+    python scripts/release.py
+    python scripts/release.py v1.2.3
+    python scripts/release.py --draft
+    python scripts/release.py --prerelease
+    python scripts/release.py --dry-run
 
 Environment Variables:
     FAST_LLM_API_KEY
@@ -31,12 +31,16 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 # Ensure UTF-8 encoding for standard output/error streams on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+os.chdir(PROJECT_ROOT)
 
 from openai import OpenAI
 
@@ -63,7 +67,6 @@ load_env_file()
 
 
 MODEL = "openai/gpt-oss-120b"
-
 
 
 # ---------------------------------------------------------------------

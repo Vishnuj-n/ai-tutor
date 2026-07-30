@@ -4,6 +4,9 @@
 
 $ErrorActionPreference = "Stop"
 
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $projectRoot
+
 $appVersion = "v1.0.0"
 if (Test-Path ".\VERSION") {
     $appVersion = (Get-Content ".\VERSION" -Raw).Trim()
