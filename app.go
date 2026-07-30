@@ -96,22 +96,6 @@ func (a *App) initIndexQueue(ctx context.Context, repo *db.Repository) {
 	}
 }
 
-func syncSchedulerTask(repo *db.Repository) {
-	settings, sErr := repo.GetUserSettings()
-	if sErr != nil {
-		utils.Warnf("failed to retrieve user settings on startup: %v", sErr)
-	}
-	startTime := ""
-	remindersEnabled := false
-	if settings != nil {
-		startTime = settings.StudyStartTime
-		remindersEnabled = settings.RemindersEnabled
-	}
-	if syncErr := scheduler.SyncStudyStartTask(startTime, remindersEnabled); syncErr != nil {
-		utils.Warnf("failed to sync study scheduled task on startup: %v", syncErr)
-	}
-}
-
 func (a *App) startup(ctx context.Context) {
 	if a.readyChan != nil {
 		defer close(a.readyChan)
@@ -145,9 +129,6 @@ func (a *App) startup(ctx context.Context) {
 	a.aiInitError = boot.AiInitError
 
 	a.initIndexQueue(ctx, boot.Repo)
-
-	// Sync scheduled task with Windows Task Scheduler on startup
-	syncSchedulerTask(boot.Repo)
 }
 
 // shutdown is called when the Wails application is shutting down.
