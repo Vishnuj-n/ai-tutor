@@ -155,6 +155,9 @@ import {
 import NotebookUpload from '../components/NotebookUpload.vue'
 import NotebookCard from '../components/NotebookCard.vue'
 import NotebookSyllabusModal from '../components/NotebookSyllabusModal.vue'
+import { useDialog } from '../composables/useDialog'
+
+const { confirm: confirmDialog } = useDialog()
 
 const uploadProgress = ref(0)
 const uploadError = ref('')
@@ -672,7 +675,14 @@ async function confirmSyllabusDraft() {
 }
 
 async function deleteNotebook(notebookId) {
-  if (!confirm('Are you sure you want to delete this notebook?')) {
+  const ok = await confirmDialog({
+    title: 'Delete Notebook',
+    message: 'Are you sure you want to delete this notebook? This action cannot be undone.',
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    type: 'danger',
+  })
+  if (!ok) {
     return
   }
 
