@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,10 +23,10 @@ var (
 )
 
 func init() {
-	// Default loggers write to stdout/stderr until InitMultiFileLogger is called.
-	QueueLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	RagLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	// Default loggers write to io.Discard until InitMultiFileLogger is called to avoid leaking console lines on Windows.
+	QueueLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	RagLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(io.Discard, nil)))
 }
 
 // InitMultiFileLogger creates the logs subdirectory under appDataDir and
@@ -54,10 +55,10 @@ func InitMultiFileLogger(appDataDir string) error {
 		errLogFile = nil
 	}
 
-	// Install stdout/stderr fallback loggers immediately after closing existing file handles.
-	QueueLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	RagLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	// Install io.Discard fallback loggers immediately after closing existing file handles.
+	QueueLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	RagLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(io.Discard, nil)))
 
 	var err error
 	queueLogFile, err = os.OpenFile(filepath.Join(logDir, "queue.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -110,10 +111,10 @@ func CloseMultiFileLogger() {
 		errLogFile = nil
 	}
 
-	// Revert to stdout/stderr fallback loggers on close to avoid nil dereference.
-	QueueLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	RagLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	// Revert to io.Discard fallback loggers on close to avoid leaking console streams or nil dereference.
+	QueueLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	RagLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(io.Discard, nil)))
 }
 
 // ---------- Global Level Helpers ----------

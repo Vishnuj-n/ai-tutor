@@ -8,6 +8,15 @@
       (function() {
         var t = localStorage.getItem('app-theme');
         if (t) document.documentElement.setAttribute('data-theme', t);
+        var bgMap = {
+          'light-classic': '#f9f9fb',
+          'light-warm': '#fdfaf6',
+          'dark-indigo': '#0b0d16',
+          'dark-nord': '#2e3440',
+          'dark-emerald': '#0a120d'
+        };
+        var bg = (t && bgMap[t]) ? bgMap[t] : '#f9f9fb';
+        document.write('<style>html, body { background-color: ' + bg + ' !important; }</style>');
       })();
     </script>
 </head>

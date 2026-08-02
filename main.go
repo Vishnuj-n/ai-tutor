@@ -32,7 +32,7 @@ func main() {
 			Assets:  assets,
 			Handler: notebookHandler(app),
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		BackgroundColour: &options.RGBA{R: 249, G: 249, B: 251, A: 255},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
