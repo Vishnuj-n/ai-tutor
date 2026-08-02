@@ -47,9 +47,6 @@ func main() {
 
 func notebookHandler(app *App) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		utils.Warnf("[notebookHandler] Top of handler: path=%s, app_nil=%t, dir=%s", 
-			req.URL.Path, app == nil, func() string { if app != nil { return app.notebookUploadDir }; return "" }())
-
 		if app == nil || app.notebookUploadDir == "" {
 			http.Error(rw, "notebook directory unavailable", http.StatusServiceUnavailable)
 			return
@@ -59,6 +56,8 @@ func notebookHandler(app *App) http.Handler {
 		if !strings.HasPrefix(req.URL.Path, "/notebooks/") {
 			return
 		}
+
+		utils.Debugf("[notebookHandler] Top of handler: path=%s, dir=%s", req.URL.Path, app.notebookUploadDir)
 
 		// Serve only GET requests.
 		if req.Method != http.MethodGet {
@@ -74,7 +73,7 @@ func notebookHandler(app *App) http.Handler {
 			http.Error(rw, "invalid URL path encoding", http.StatusBadRequest)
 			return
 		}
-		utils.Warnf("[notebookHandler] Unescaped path: %s", unescapedPath)
+		utils.Debugf("[notebookHandler] Unescaped path: %s", unescapedPath)
 
 		// Clean the path and prevent directory traversal
 		relPath := strings.TrimPrefix(unescapedPath, "/notebooks/")
@@ -82,7 +81,7 @@ func notebookHandler(app *App) http.Handler {
 		
 		uploadDirClean := filepath.Clean(app.notebookUploadDir)
 		fullPath := filepath.Clean(filepath.Join(uploadDirClean, relPath))
-		utils.Warnf("[notebookHandler] uploadDirClean: %s, fullPath: %s", uploadDirClean, fullPath)
+		utils.Debugf("[notebookHandler] uploadDirClean: %s, fullPath: %s", uploadDirClean, fullPath)
 
 		if !strings.HasPrefix(fullPath, uploadDirClean) {
 			utils.Warnf("[notebookHandler] Access denied. Prefix check failed.")
@@ -98,7 +97,7 @@ func notebookHandler(app *App) http.Handler {
 			return
 		}
 
-		utils.Warnf("[notebookHandler] Serving file: %s", fullPath)
+		utils.Debugf("[notebookHandler] Serving file: %s", fullPath)
 		// Serve the file directly using http.ServeFile which handles HTTP Range headers correctly
 		http.ServeFile(rw, req, fullPath)
 	})
