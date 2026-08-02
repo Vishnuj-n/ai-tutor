@@ -43,11 +43,12 @@ PENDING → ACTIVE → COMPLETED
 
 Learning systems create tasks — they don't orchestrate:
 - Quizzes create QUIZ tasks (short-term comprehension)
-- FSRS creates FLASHCARD_REVIEW tasks (long-term retention)
-- Remediation creates REREAD tasks
-- Examiner creates ASSESSMENT tasks (long-term retention)
+- FSRS creates FLASHCARD_REVIEW tasks (long-term retention scheduling for flashcards)
+- Remediation creates REREAD and SOCRATIC_REMEDIAL tasks
+- Milestone Exam aggregates 10 passed quizzes into a MILESTONE_EXAM task
+- Examiner provides page-bounded written short-answer assessments (on-demand)
 
-Reading completion is only a task completion signal. It does not decide mastery or remediation quality; quiz outcome determines whether the queue inserts reread, retry, next task, or mastery progression. Quizzes validate immediate comprehension and progression readiness. Flashcards and Examiner sessions provide long-term retention signals and integrate with FSRS scheduling.
+Reading completion is only a task completion signal. It does not decide mastery or remediation quality; quiz outcome determines whether the queue inserts reread, retry, next task, or mastery progression. Quizzes validate immediate comprehension and progression readiness. Flashcards provide long-term retention signals integrated with FSRS scheduling.
 
 ### 3. SQLite is Source of Truth
 
@@ -56,7 +57,7 @@ No hidden state machines. No in-memory orchestration. All state in database.
 ### 4. Deterministic Ordering
 
 Priority hierarchy (in order):
-1. Task type: FLASHCARD_REVIEW > REREAD > QUIZ > READING > EXAMINER
+1. Task type: FLASHCARD_GENERATE > SOCRATIC_REMEDIAL > FLASHCARD_REVIEW > REREAD > QUIZ > MILESTONE_EXAM > READING > EXAMINER
 2. Notebook priority (higher = more frequent)
 3. Task priority (within same task type only)
 4. Creation time (FIFO)
