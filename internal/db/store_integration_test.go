@@ -969,27 +969,12 @@ func TestUpdateTopicPageBoundsShrinkDeletesOutOfRangeAssessmentData(t *testing.T
 	}); err != nil {
 		t.Fatalf("CreateWrittenQuestion out of range failed: %v", err)
 	}
-	if err := testRepo.InsertFSRSReviewLog(models.FSRSReviewLog{
-		ID:              "log-written-out-range",
-		TopicID:         topicID,
-		ActivityType:    "written_question",
-		ReferenceID:     "written-out-range",
-		ReviewedAt:      123,
-		Rating:          1,
-		ScheduledDays:   0,
-		StateBeforeJSON: `{}`,
-		StateAfterJSON:  `{}`,
-	}); err != nil {
-		t.Fatalf("InsertFSRSReviewLog failed: %v", err)
-	}
-
 	if err := testRepo.UpdateTopicPageBounds(topicID, 1, 5); err != nil {
 		t.Fatalf("shrink UpdateTopicPageBounds failed: %v", err)
 	}
 
 	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-in-range", 1)
 	assertCountEquals(t, `SELECT COUNT(*) FROM written_questions WHERE id = ?`, "written-out-range", 0)
-	assertCountEquals(t, `SELECT COUNT(*) FROM fsrs_review_log WHERE id = ?`, "log-written-out-range", 0)
 }
 
 func TestGetTotalChunkTokensFallsBackWhenTokenCountMissing(t *testing.T) {

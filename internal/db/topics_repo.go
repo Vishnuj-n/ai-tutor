@@ -252,20 +252,6 @@ func (r *Repository) UpdateTopicPageBoundsBatch(items []TopicPageBoundsBatchItem
 }
 
 func (r *Repository) deleteAssessmentDataOutsideBoundsTx(tx *sql.Tx, topicID string, startPage int, endPage int) error {
-
-	if _, err := tx.Exec(`
-		DELETE FROM fsrs_review_log
-		WHERE activity_type = 'written_question'
-		  AND reference_id IN (
-			SELECT id
-			FROM written_questions
-			WHERE topic_id = ?
-			  AND (source_page_start IS NOT NULL AND source_page_start < ? OR source_page_end IS NOT NULL AND source_page_end > ?)
-		)
-	`, topicID, startPage, endPage); err != nil {
-		return fmt.Errorf("delete out-of-range written review logs: %w", err)
-	}
-
 	if _, err := tx.Exec(`
 		DELETE FROM written_questions
 		WHERE topic_id = ?
