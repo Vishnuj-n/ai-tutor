@@ -45,7 +45,7 @@ Learning systems create tasks — they don't orchestrate:
 - Quizzes create QUIZ tasks (short-term comprehension)
 - FSRS creates FLASHCARD_REVIEW tasks (long-term retention scheduling for flashcards)
 - Remediation creates REREAD and SOCRATIC_REMEDIAL tasks
-- Milestone Exam aggregates 10 passed quizzes into a MILESTONE_EXAM task
+- Milestone Exam generation occurs after every tenth completed quiz and uses the most recent 10 attempts
 - Examiner provides page-bounded written short-answer assessments (on-demand)
 
 Reading completion is only a task completion signal. It does not decide mastery or remediation quality; quiz outcome determines whether the queue inserts reread, retry, next task, or mastery progression. Quizzes validate immediate comprehension and progression readiness. Flashcards provide long-term retention signals integrated with FSRS scheduling.

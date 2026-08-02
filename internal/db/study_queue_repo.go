@@ -1079,6 +1079,76 @@ func (r *Repository) InsertMilestoneExamTask(notebookID string, payload models.M
 	return r.InsertStudyTask(task)
 }
 
+// InsertMilestoneExamTaskIfMissing checks representativeAttemptID and inserts a milestone exam task atomically if missing.
+func (r *Repository) InsertMilestoneExamTaskIfMissing(notebookID, representativeAttemptID string, payload models.MilestoneExamPayload) (bool, error) {
+	notebookID = strings.TrimSpace(notebookID)
+	representativeAttemptID = strings.TrimSpace(representativeAttemptID)
+	if notebookID == "" {
+		return false, fmt.Errorf("notebook ID is required")
+	}
+	if representativeAttemptID == "" {
+		return false, fmt.Errorf("attempt ID is required")
+	}
+	if len(payload.Quizzes) == 0 {
+		return false, fmt.Errorf("milestone exam payload must include quizzes")
+	}
+
+	var inserted bool
+	err := r.withTx(func(tx *sql.Tx) error {
+		rows, err := tx.Query(`
+			SELECT COALESCE(payload_json, '')
+			FROM study_queue
+			WHERE notebook_id = ?
+			  AND task_type = 'MILESTONE_EXAM'
+		`, notebookID)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+
+		for rows.Next() {
+			var payloadJSON string
+			if err := rows.Scan(&payloadJSON); err != nil {
+				return err
+			}
+			if payloadJSON == "" {
+				continue
+			}
+			var existingPayload models.MilestoneExamPayload
+			if err := json.Unmarshal([]byte(payloadJSON), &existingPayload); err != nil {
+				return err
+			}
+			if _, ok := existingPayload.Quizzes[representativeAttemptID]; ok {
+				return nil
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		_ = rows.Close()
+
+		payloadJSON, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal milestone exam payload: %w", err)
+		}
+
+		task := models.StudyQueueTask{
+			ID:          uuid.NewString(),
+			NotebookID:  notebookID,
+			TaskType:    models.StudyTaskTypeMilestoneExam,
+			Status:      models.StudyTaskStatusPending,
+			Priority:    0,
+			PayloadJSON: string(payloadJSON),
+		}
+		if err := r.InsertStudyTaskTx(tx, task); err != nil {
+			return err
+		}
+		inserted = true
+		return nil
+	})
+	return inserted, err
+}
+
 // HasMilestoneExamForAttemptID reports whether a milestone exam already includes the given quiz attempt.
 func (r *Repository) HasMilestoneExamForAttemptID(notebookID, attemptID string) (bool, error) {
 	notebookID = strings.TrimSpace(notebookID)
@@ -1428,6 +1498,10 @@ func (r *Repository) EnsurePendingReadingTaskForNotebook(notebookID string) erro
 		}
 
 		taskID := fmt.Sprintf("task-read-%s-%s", notebookID, topicID)
+		var idExists int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM study_queue WHERE id = ?`, taskID).Scan(&idExists); err == nil && idExists > 0 {
+			taskID = fmt.Sprintf("task-read-%s-%s-%d", notebookID, topicID, time.Now().UnixNano())
+		}
 		task := models.StudyQueueTask{
 			ID:         taskID,
 			NotebookID: notebookID,

@@ -316,7 +316,6 @@ function logScroll(event, data = {}) {
     ...data,
   }
   console.log(`[SCROLL:${event}]`, payload)
-  logFrontendEvent('debug', 'ReaderScroll', event, payload)
 }
 
 function scrollToPage(page) {

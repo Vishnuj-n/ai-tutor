@@ -1,4 +1,4 @@
-import { ref, reactive } from 'vue'
+import { reactive } from 'vue'
 
 const dialogState = reactive({
   isOpen: false,
@@ -9,6 +9,30 @@ const dialogState = reactive({
   type: 'danger', // 'danger' | 'warning' | 'info'
   resolve: null,
 })
+
+const dialogQueue = []
+
+function processQueue() {
+  if (dialogState.isOpen || dialogQueue.length === 0) return
+  const nextReq = dialogQueue.shift()
+  dialogState.title = nextReq.title
+  dialogState.message = nextReq.message
+  dialogState.confirmText = nextReq.confirmText
+  dialogState.cancelText = nextReq.cancelText
+  dialogState.type = nextReq.type
+  dialogState.resolve = nextReq.resolve
+  dialogState.isOpen = true
+}
+
+function settle(value) {
+  dialogState.isOpen = false
+  const currentResolve = dialogState.resolve
+  dialogState.resolve = null
+  if (currentResolve) {
+    currentResolve(value)
+  }
+  processQueue()
+}
 
 export function useDialog() {
   /**
@@ -23,13 +47,8 @@ export function useDialog() {
    */
   function confirm({ title = 'Are you sure?', message = '', confirmText = 'Confirm', cancelText = 'Cancel', type = 'danger' }) {
     return new Promise((resolve) => {
-      dialogState.title = title
-      dialogState.message = message
-      dialogState.confirmText = confirmText
-      dialogState.cancelText = cancelText
-      dialogState.type = type
-      dialogState.resolve = resolve
-      dialogState.isOpen = true
+      dialogQueue.push({ title, message, confirmText, cancelText, type, resolve })
+      processQueue()
     })
   }
 
@@ -45,30 +64,24 @@ export function useDialog() {
     const type = typeof titleOrOptions === 'object' && titleOrOptions.type ? titleOrOptions.type : 'info'
 
     return new Promise((resolve) => {
-      dialogState.title = title
-      dialogState.message = msg
-      dialogState.confirmText = confirmText
-      dialogState.cancelText = null // hides cancel button for alert mode
-      dialogState.type = type
-      dialogState.resolve = () => resolve()
-      dialogState.isOpen = true
+      dialogQueue.push({
+        title,
+        message: msg,
+        confirmText,
+        cancelText: null,
+        type,
+        resolve: () => resolve(),
+      })
+      processQueue()
     })
   }
 
   function handleConfirm() {
-    dialogState.isOpen = false
-    if (dialogState.resolve) {
-      dialogState.resolve(true)
-      dialogState.resolve = null
-    }
+    settle(true)
   }
 
   function handleCancel() {
-    dialogState.isOpen = false
-    if (dialogState.resolve) {
-      dialogState.resolve(false)
-      dialogState.resolve = null
-    }
+    settle(false)
   }
 
   return {

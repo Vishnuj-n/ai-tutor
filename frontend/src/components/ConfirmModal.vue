@@ -1,14 +1,80 @@
 <script setup>
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useDialog } from '../composables/useDialog'
 
 const { dialogState, handleConfirm, handleCancel } = useDialog()
+const cardRef = ref(null)
+let previousActiveElement = null
+
+watch(
+  () => dialogState.isOpen,
+  async (isOpen) => {
+    if (isOpen) {
+      previousActiveElement = document.activeElement
+      await nextTick()
+      if (cardRef.value) {
+        const focusable = cardRef.value.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+        if (focusable.length > 0) {
+          focusable[0].focus()
+        } else {
+          cardRef.value.focus()
+        }
+      }
+    } else {
+      if (previousActiveElement && typeof previousActiveElement.focus === 'function') {
+        previousActiveElement.focus()
+      }
+      previousActiveElement = null
+    }
+  }
+)
+
+function handleKeydown(e) {
+  if (!dialogState.isOpen) return
+  if (e.key === 'Escape') {
+    if (dialogState.cancelText) {
+      e.preventDefault()
+      handleCancel()
+    }
+  } else if (e.key === 'Tab' && cardRef.value) {
+    const focusables = Array.from(
+      cardRef.value.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+    )
+    if (focusables.length === 0) return
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+})
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="dialog-fade">
       <div v-if="dialogState.isOpen" class="dialog-overlay" @click.self="handleCancel">
-        <div class="dialog-card" :class="`type-${dialogState.type}`">
+        <div
+          ref="cardRef"
+          class="dialog-card"
+          :class="`type-${dialogState.type}`"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dialog-title-heading"
+          tabindex="-1"
+        >
           <div class="dialog-header">
             <div class="dialog-icon-wrapper" :class="dialogState.type">
               <svg v-if="dialogState.type === 'danger'" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -29,7 +95,7 @@ const { dialogState, handleConfirm, handleCancel } = useDialog()
               </svg>
             </div>
             <div class="dialog-titles">
-              <h3 class="dialog-title">{{ dialogState.title }}</h3>
+              <h3 id="dialog-title-heading" class="dialog-title">{{ dialogState.title }}</h3>
             </div>
           </div>
 
@@ -88,6 +154,7 @@ const { dialogState, handleConfirm, handleCancel } = useDialog()
   flex-direction: column;
   gap: 16px;
   color: var(--on-surface, #f4f4f5);
+  outline: none;
 }
 
 .dialog-header {
@@ -107,21 +174,21 @@ const { dialogState, handleConfirm, handleCancel } = useDialog()
 }
 
 .dialog-icon-wrapper.danger {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
 }
 
 .dialog-icon-wrapper.warning {
-  background: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
-  border: 1px solid rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
 }
 
 .dialog-icon-wrapper.info {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
-  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.35);
 }
 
 .dialog-titles {
@@ -190,21 +257,21 @@ const { dialogState, handleConfirm, handleCancel } = useDialog()
 }
 
 .confirm-btn.warning {
-  background: #d97706;
+  background: #b45309;
   color: #ffffff;
 }
 
 .confirm-btn.warning:hover {
-  background: #b45309;
+  background: #92400e;
 }
 
 .confirm-btn.info {
-  background: var(--primary, #3b82f6);
+  background: #2563eb;
   color: #ffffff;
 }
 
 .confirm-btn.info:hover {
-  background: var(--primary-hover, #2563eb);
+  background: #1d4ed8;
 }
 
 /* Vue Transitions */
