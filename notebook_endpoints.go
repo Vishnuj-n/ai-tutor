@@ -596,6 +596,11 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		}
 	}
 
+	// Seed initial READING task into study_queue if active
+	if err := repo.EnsurePendingReadingTaskForNotebook(notebookID); err != nil {
+		utils.Warnf("[INGESTION] failed to ensure initial reading task for %s: %v", notebookID, err)
+	}
+
 	ragEnabled, err := repo.GetRAGEnabled()
 	if err == nil && ragEnabled && a.indexQueue != nil {
 		a.indexQueue.Enqueue(notebookID)

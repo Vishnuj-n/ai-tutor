@@ -1384,3 +1384,92 @@ func (r *Repository) GetQuestionsForQuizAttempts(attemptIDs []string) ([]models.
 	return allQuestions, nil
 }
 
+// EnsurePendingReadingTaskForNotebook ensures at least one PENDING/ACTIVE READING task exists in study_queue for an active notebook.
+func (r *Repository) EnsurePendingReadingTaskForNotebook(notebookID string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	if notebookID == "" {
+		return fmt.Errorf("notebook id is required")
+	}
+
+	return r.withTx(func(tx *sql.Tx) error {
+		var count int
+		err := tx.QueryRow(`
+			SELECT COUNT(*) FROM study_queue
+			WHERE notebook_id = ? AND status IN ('PENDING', 'ACTIVE')
+		`, notebookID).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil // Task already exists in queue
+		}
+
+		var topicID, topicTitle, notebookTitle string
+		var startPage, endPage int
+		err = tx.QueryRow(`
+			SELECT
+				t.id,
+				COALESCE(t.title, ''),
+				COALESCE(n.title, ''),
+				COALESCE(NULLIF(t.start_page, 0), 1),
+				COALESCE(NULLIF(t.end_page, 0), 1)
+			FROM topics t
+			JOIN notebook_topics nt ON t.id = nt.topic_id
+			JOIN notebooks n ON n.id = nt.notebook_id
+			WHERE nt.notebook_id = ? AND COALESCE(t.status, 'unseen') != 'completed'
+			ORDER BY t.start_page ASC, t.id ASC
+			LIMIT 1
+		`, notebookID).Scan(&topicID, &topicTitle, &notebookTitle, &startPage, &endPage)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // No uncompleted topics found
+		}
+		if err != nil {
+			return err
+		}
+
+		taskID := fmt.Sprintf("task-read-%s-%s", notebookID, topicID)
+		task := models.StudyQueueTask{
+			ID:         taskID,
+			NotebookID: notebookID,
+			TopicID:    topicID,
+			TaskType:   models.StudyTaskTypeReading,
+			Status:     models.StudyTaskStatusPending,
+			Priority:   1,
+			StartPage:  startPage,
+			EndPage:    endPage,
+		}
+		assignTaskTitle(&task, topicTitle, notebookTitle)
+		return r.InsertStudyTaskTx(tx, task)
+	})
+}
+
+// EnsurePendingReadingTasksForActiveNotebooks ensures all active notebooks for a profile have at least one PENDING/ACTIVE task.
+func (r *Repository) EnsurePendingReadingTasksForActiveNotebooks(activeProfileID string) error {
+	rows, err := r.db.Query(`
+		SELECT id FROM notebooks
+		WHERE study_status = 'active'
+		  AND status = 'chunked'
+		  AND (? = '' OR profile_id = ? OR profile_id IS NULL OR profile_id = '')
+	`, activeProfileID, activeProfileID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var notebookIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		notebookIDs = append(notebookIDs, id)
+	}
+
+	for _, nID := range notebookIDs {
+		if err := r.EnsurePendingReadingTaskForNotebook(nID); err != nil {
+			utils.Warnf("[QUEUE] failed to ensure reading task for active notebook %s: %v", nID, err)
+		}
+	}
+	return nil
+}
+

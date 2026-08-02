@@ -995,3 +995,46 @@ func TestInsertMilestoneExamTaskPersistsPayload(t *testing.T) {
 		t.Fatalf("expected milestone exam dedupe check to find attempt-1")
 	}
 }
+
+func TestEnsurePendingReadingTaskForNotebook(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-ensure-test"
+	topicID := "topic-ensure-1"
+	if err := testRepo.EnsureTopic(topicID, "Chapter 1"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.UpdateTopicPageBounds(topicID, 1, 10); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook(notebookID, "Ensure Test Book", "/tmp/test.pdf", "pdf", topicID, "", 10); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := testRepo.LinkNotebookTopics(notebookID, []string{topicID}); err != nil {
+		t.Fatalf("LinkNotebookTopics failed: %v", err)
+	}
+	if err := testRepo.UpdateNotebookStatus(notebookID, "chunked"); err != nil {
+		t.Fatalf("UpdateNotebookStatus failed: %v", err)
+	}
+	if err := testRepo.UpdateNotebookStudyStatus(notebookID, "active"); err != nil {
+		t.Fatalf("UpdateNotebookStudyStatus failed: %v", err)
+	}
+
+	// First call should create the READING task in study_queue
+	if err := testRepo.EnsurePendingReadingTaskForNotebook(notebookID); err != nil {
+		t.Fatalf("EnsurePendingReadingTaskForNotebook failed: %v", err)
+	}
+
+	task, err := testRepo.GetTaskByID("task-read-" + notebookID + "-" + topicID)
+	if err != nil {
+		t.Fatalf("expected created task, got err: %v", err)
+	}
+	if task.NotebookID != notebookID || task.TopicID != topicID || task.TaskType != models.StudyTaskTypeReading || task.Status != models.StudyTaskStatusPending {
+		t.Fatalf("unexpected task state: %+v", task)
+	}
+
+	// Second call should be idempotent and not create duplicate task
+	if err := testRepo.EnsurePendingReadingTaskForNotebook(notebookID); err != nil {
+		t.Fatalf("EnsurePendingReadingTaskForNotebook second call failed: %v", err)
+	}
+}

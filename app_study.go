@@ -194,6 +194,13 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 	now := time.Now()
 
+	activeProfileID, err := repo.GetActiveProfileID()
+	if err == nil {
+		if ensureErr := repo.EnsurePendingReadingTasksForActiveNotebooks(activeProfileID); ensureErr != nil {
+			utils.Warnf("[QUEUE] failed to ensure reading tasks for active notebooks: %v", ensureErr)
+		}
+	}
+
 	// Canonical queue recovery/materialization path for dashboard:
 	// if ACTIVE/PENDING queue tasks exist, surface those directly.
 	activeQueueTasks, err := repo.GetAllActiveTasks()
@@ -268,7 +275,7 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 
 	// Count active notebooks for the dashboard empty-state distinction.
-	activeProfileID, err := repo.GetActiveProfileID()
+	activeProfileID, err = repo.GetActiveProfileID()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
