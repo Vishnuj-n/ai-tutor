@@ -995,3 +995,120 @@ func TestInsertMilestoneExamTaskPersistsPayload(t *testing.T) {
 		t.Fatalf("expected milestone exam dedupe check to find attempt-1")
 	}
 }
+
+func TestEnsurePendingReadingTaskForNotebook(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	notebookID := "nb-ensure-test"
+	topicID := "topic-ensure-1"
+	if err := testRepo.EnsureTopic(topicID, "Chapter 1"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.UpdateTopicPageBounds(topicID, 1, 10); err != nil {
+		t.Fatalf("UpdateTopicPageBounds failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook(notebookID, "Ensure Test Book", "/tmp/test.pdf", "pdf", topicID, "", 10); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+	if err := testRepo.LinkNotebookTopics(notebookID, []string{topicID}); err != nil {
+		t.Fatalf("LinkNotebookTopics failed: %v", err)
+	}
+	if err := testRepo.UpdateNotebookStatus(notebookID, "chunked"); err != nil {
+		t.Fatalf("UpdateNotebookStatus failed: %v", err)
+	}
+	if err := testRepo.UpdateNotebookStudyStatus(notebookID, "active"); err != nil {
+		t.Fatalf("UpdateNotebookStudyStatus failed: %v", err)
+	}
+
+	// First call should create the READING task in study_queue
+	if err := testRepo.EnsurePendingReadingTaskForNotebook(notebookID); err != nil {
+		t.Fatalf("EnsurePendingReadingTaskForNotebook failed: %v", err)
+	}
+
+	taskID := "task-read-" + notebookID + "-" + topicID
+	task, err := testRepo.GetTaskByID(taskID)
+	if err != nil {
+		t.Fatalf("expected created task, got err: %v", err)
+	}
+	if task.NotebookID != notebookID || task.TopicID != topicID || task.TaskType != models.StudyTaskTypeReading || task.Status != models.StudyTaskStatusPending {
+		t.Fatalf("unexpected task state: %+v", task)
+	}
+
+	// Second call should be idempotent and not create duplicate task
+	if err := testRepo.EnsurePendingReadingTaskForNotebook(notebookID); err != nil {
+		t.Fatalf("EnsurePendingReadingTaskForNotebook second call failed: %v", err)
+	}
+
+	// Mark created task COMPLETED while leaving topic incomplete
+	if err := testRepo.ActivateTask(taskID); err != nil {
+		t.Fatalf("ActivateTask failed: %v", err)
+	}
+	if err := testRepo.CompleteTask(taskID, models.CompletionResult{Status: models.StudyTaskStatusCompleted}); err != nil {
+		t.Fatalf("CompleteTask failed: %v", err)
+	}
+
+	// Call EnsurePendingReadingTaskForNotebook again; should replenish without PK collision
+	if err := testRepo.EnsurePendingReadingTaskForNotebook(notebookID); err != nil {
+		t.Fatalf("EnsurePendingReadingTaskForNotebook after completion failed: %v", err)
+	}
+
+	pendingTasks, err := testRepo.GetAllPendingTasks()
+	if err != nil {
+		t.Fatalf("GetAllPendingTasks failed: %v", err)
+	}
+	if len(pendingTasks) == 0 {
+		t.Fatalf("expected pending task after replenishment, got none")
+	}
+}
+
+func TestEnsurePendingReadingTasksForActiveNotebooks(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	profileID := "prof-test-batch"
+
+	// Eligible notebook
+	nbActive := "nb-batch-active"
+	topicActive := "topic-batch-active"
+	_ = testRepo.EnsureTopic(topicActive, "Active Topic")
+	_ = testRepo.UpdateTopicPageBounds(topicActive, 1, 5)
+	_ = testRepo.CreateNotebook(nbActive, "Active Book", "/tmp/active.pdf", "pdf", topicActive, profileID, 5)
+	_ = testRepo.LinkNotebookTopics(nbActive, []string{topicActive})
+	_ = testRepo.UpdateNotebookStatus(nbActive, "chunked")
+	_ = testRepo.UpdateNotebookStudyStatus(nbActive, "active")
+
+	// Ineligible notebook (dormant)
+	nbDormant := "nb-batch-dormant"
+	topicDormant := "topic-batch-dormant"
+	_ = testRepo.EnsureTopic(topicDormant, "Dormant Topic")
+	_ = testRepo.UpdateTopicPageBounds(topicDormant, 1, 5)
+	_ = testRepo.CreateNotebook(nbDormant, "Dormant Book", "/tmp/dormant.pdf", "pdf", topicDormant, profileID, 5)
+	_ = testRepo.LinkNotebookTopics(nbDormant, []string{topicDormant})
+	_ = testRepo.UpdateNotebookStatus(nbDormant, "chunked")
+	_ = testRepo.UpdateNotebookStudyStatus(nbDormant, "dormant")
+
+	if err := testRepo.EnsurePendingReadingTasksForActiveNotebooks(profileID); err != nil {
+		t.Fatalf("EnsurePendingReadingTasksForActiveNotebooks failed: %v", err)
+	}
+
+	tasks, err := testRepo.GetAllPendingTasks()
+	if err != nil {
+		t.Fatalf("GetAllPendingTasks failed: %v", err)
+	}
+
+	var hasActive, hasDormant bool
+	for _, task := range tasks {
+		if task.NotebookID == nbActive {
+			hasActive = true
+		}
+		if task.NotebookID == nbDormant {
+			hasDormant = true
+		}
+	}
+
+	if !hasActive {
+		t.Fatalf("expected eligible active notebook to receive pending task")
+	}
+	if hasDormant {
+		t.Fatalf("expected ineligible dormant notebook not to receive pending task")
+	}
+}

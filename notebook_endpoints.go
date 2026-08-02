@@ -584,6 +584,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 
 	_ = repo.UpdateNotebookStatus(notebookID, status)
 
+	isActivated := nb.StudyStatus == "active"
 	// Auto-activate the notebook if the active profile currently has less than 4 active notebooks
 	if nb.StudyStatus == "dormant" || nb.StudyStatus == "" {
 		activeCount, err := repo.CountActiveNotebooksForActiveProfile(nb.ProfileID)
@@ -592,7 +593,16 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 		} else if activeCount < 4 {
 			if err := repo.UpdateNotebookStudyStatus(notebookID, "active"); err != nil {
 				utils.Warnf("[INGESTION] failed to auto-activate notebook %s: %v", notebookID, err)
+			} else {
+				isActivated = true
 			}
+		}
+	}
+
+	// Seed initial READING task into study_queue if active
+	if isActivated {
+		if err := repo.EnsurePendingReadingTaskForNotebook(notebookID); err != nil {
+			utils.Warnf("[INGESTION] failed to ensure initial reading task for %s: %v", notebookID, err)
 		}
 	}
 

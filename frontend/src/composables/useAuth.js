@@ -1,7 +1,9 @@
 import { ref } from 'vue'
 import { loginStudent, logoutStudent } from '../services/appApi'
+import { useDialog } from './useDialog'
 
 export function useAuth(reloadFn, errorRef, successRef) {
+  const { confirm } = useDialog()
   const loginUsername = ref('')
   const loginPassword = ref('')
   const loginClassroomCode = ref('')
@@ -43,7 +45,14 @@ export function useAuth(reloadFn, errorRef, successRef) {
   }
 
   async function handleLogout() {
-    if (!confirm('Are you sure you want to sign out? This will disable cloud sync.')) return
+    const ok = await confirm({
+      title: 'Sign Out',
+      message: 'Are you sure you want to sign out? This will disable cloud sync.',
+      confirmText: 'Sign Out',
+      cancelText: 'Cancel',
+      type: 'warning',
+    })
+    if (!ok) return
     errorRef.value = ''
     successRef.value = ''
     try {

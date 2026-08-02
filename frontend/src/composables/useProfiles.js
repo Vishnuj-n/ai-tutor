@@ -7,8 +7,10 @@ import {
   getNotebooks,
   assignNotebookToProfile,
 } from '../services/appApi'
+import { useDialog } from './useDialog'
 
 export function useProfiles(errorRef) {
+  const { confirm, alert } = useDialog()
   const profiles = ref([])
   const notebooks = ref([])
 
@@ -38,14 +40,14 @@ export function useProfiles(errorRef) {
     try {
       const res = await createProfile(name, deadline)
       if (res.error) {
-        alert(res.error)
+        await alert('Profile Error', res.error)
         return
       }
       showAddModal.value = false
       await loadProfiles()
       return true
     } catch (err) {
-      alert(err.message || 'Failed to create profile')
+      await alert('Error', err.message || 'Failed to create profile')
       return false
     }
   }
@@ -54,35 +56,38 @@ export function useProfiles(errorRef) {
     try {
       const res = await updateProfile(editProfileId.value, name, deadline)
       if (res.error) {
-        alert(res.error)
+        await alert('Profile Error', res.error)
         return
       }
       closeEditModal()
       await loadProfiles()
       return true
     } catch (err) {
-      alert(err.message || 'Failed to update profile')
+      await alert('Error', err.message || 'Failed to update profile')
       return false
     }
   }
 
   async function handleDeleteProfile(id) {
-    if (
-      !confirm(
-        'Are you sure you want to delete this profile? Associated books will become unassigned.'
-      )
-    )
-      return false
+    const ok = await confirm({
+      title: 'Delete Profile',
+      message: 'Are you sure you want to delete this profile? Associated books will become unassigned.',
+      confirmText: 'Delete Profile',
+      cancelText: 'Cancel',
+      type: 'danger',
+    })
+    if (!ok) return false
+
     try {
       const res = await deleteProfile(id)
       if (res.error) {
-        alert(res.error)
+        await alert('Delete Failed', res.error)
         return false
       }
       await loadProfiles()
       return true
     } catch (err) {
-      alert(err.message || 'Failed to delete profile')
+      await alert('Error', err.message || 'Failed to delete profile')
       return false
     }
   }
@@ -91,13 +96,13 @@ export function useProfiles(errorRef) {
     try {
       const res = await assignNotebookToProfile(notebookID, profileID)
       if (res.error) {
-        alert(res.error)
+        await alert('Assignment Error', res.error)
         return false
       }
       await loadNotebooks()
       return true
     } catch (err) {
-      alert(err.message || 'Failed to assign profile')
+      await alert('Error', err.message || 'Failed to assign profile')
       return false
     }
   }

@@ -6,8 +6,10 @@ import {
   deleteLLMAPIKey,
   getLLMProviderPreset,
 } from '../services/appApi'
+import { useDialog } from './useDialog'
 
 export function useLLM(loading, errorRef, successRef) {
+  const { confirm } = useDialog()
   const savingLLM = ref(false)
   const presetLoading = ref(false)
 
@@ -112,7 +114,14 @@ export function useLLM(loading, errorRef, successRef) {
   }
 
   async function removeLLMKeys() {
-    if (!confirm('Remove stored LLM API keys from the OS credential manager?')) return
+    const ok = await confirm({
+      title: 'Remove API Keys',
+      message: 'Remove stored LLM API keys from the OS credential manager?',
+      confirmText: 'Remove',
+      cancelText: 'Cancel',
+      type: 'danger',
+    })
+    if (!ok) return
     errorRef.value = ''
     successRef.value = ''
     try {

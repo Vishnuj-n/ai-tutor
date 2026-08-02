@@ -2,6 +2,7 @@
 import Sidebar from './components/Sidebar.vue'
 import { useRoute } from 'vue-router'
 import { onMounted, onUnmounted, ref } from 'vue'
+import ConfirmModal from './components/ConfirmModal.vue'
 import {
   getUserSettings,
   updateUserSettings,
@@ -295,6 +296,7 @@ onUnmounted(() => {
       </div>
 
       <RouterView />
+      <ConfirmModal />
     </main>
   </div>
 </template>

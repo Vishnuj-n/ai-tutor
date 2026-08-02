@@ -194,6 +194,14 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	}
 	now := time.Now()
 
+	activeProfileID, err := repo.GetActiveProfileID()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if ensureErr := repo.EnsurePendingReadingTasksForActiveNotebooks(activeProfileID); ensureErr != nil {
+		utils.Warnf("[QUEUE] failed to ensure reading tasks for active notebooks: %v", ensureErr)
+	}
+
 	// Canonical queue recovery/materialization path for dashboard:
 	// if ACTIVE/PENDING queue tasks exist, surface those directly.
 	activeQueueTasks, err := repo.GetAllActiveTasks()
@@ -261,25 +269,21 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 		IsEstimate:          false,
 	}
 
-	utils.Warnf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
-	utils.Warnf("[TODAY_PLAN] planner aggregation dueReviewCards=%d reviewMinutes=%d queueActionCounts=%v", plan.DueReviewCards, plan.ReviewMinutes, actionCounts)
+	utils.Debugf("[TODAY_PLAN] queue materialization active=%d pending=%d merged=%d", len(activeQueueTasks), len(pendingQueueTasks), len(queueTasks))
+	utils.Debugf("[TODAY_PLAN] planner aggregation dueReviewCards=%d reviewMinutes=%d queueActionCounts=%v", plan.DueReviewCards, plan.ReviewMinutes, actionCounts)
 	if actionCounts["flashcard_review"] > 0 {
-		utils.Warnf("[FLASHCARD_PIPELINE] today_plan_review_detected flashcard_review_count=%d", actionCounts["flashcard_review"])
+		utils.Debugf("[FLASHCARD_PIPELINE] today_plan_review_detected flashcard_review_count=%d", actionCounts["flashcard_review"])
 	}
 
 	// Count active notebooks for the dashboard empty-state distinction.
-	activeProfileID, err := repo.GetActiveProfileID()
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
-	}
 	activeNotebookCount, err := repo.CountActiveNotebooksForActiveProfile(activeProfileID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
-	utils.Warnf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
+	utils.Debugf("[TODAY_PLAN] GetTodayPlan response tasks=%d isEstimate=%t reviewMinutes=%d learningMinutes=%d", len(plan.Tasks), plan.IsEstimate, plan.ReviewMinutes, plan.LearningMinutes)
 	for idx, task := range plan.Tasks {
-		utils.Warnf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
+		utils.Debugf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
 	}
 
 	return map[string]interface{}{
@@ -935,41 +939,26 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE tasks: %v", resolveErr)
 	}
 
-	attempts, attemptsErr := repo.GetPassedQuizAttempts(task.NotebookID)
-	if attemptsErr != nil {
-		utils.Warnf("[MILESTONE_EXAM] passed_quizzes_fetch_failed notebookID=%s err=%v", task.NotebookID, attemptsErr)
-	} else {
-		numAttempts := len(attempts)
-		decades := numAttempts / 10
-		for d := 1; d <= decades; d++ {
-			endIdx := d * 10
-			startIdx := endIdx - 10
-			decadeAttempts := attempts[startIdx:endIdx]
-
-			representativeAttemptID := decadeAttempts[9].ID
-			exists, existsErr := repo.HasMilestoneExamForAttemptID(task.NotebookID, representativeAttemptID)
-			if existsErr != nil {
-				utils.Warnf("[MILESTONE_EXAM] dedupe_check_failed notebookID=%s attemptID=%s err=%v", task.NotebookID, representativeAttemptID, existsErr)
-				continue
-			}
-			if exists {
-				continue
-			}
-
+	count, countErr := repo.CountCompletedQuizzesByNotebook(task.NotebookID)
+	if countErr != nil {
+		utils.Warnf("[MILESTONE_EXAM] quiz_count_failed notebookID=%s err=%v", task.NotebookID, countErr)
+	} else if count > 0 && count%10 == 0 {
+		decadeAttempts, attemptsErr := repo.GetLastNQuizAttemptsWithCorrectness(task.NotebookID, 10)
+		if attemptsErr != nil {
+			utils.Warnf("[MILESTONE_EXAM] passed_quizzes_fetch_failed notebookID=%s err=%v", task.NotebookID, attemptsErr)
+		} else if len(decadeAttempts) == 10 {
+			// Representative attempt is the latest attempt in the 10-attempt block (ordered DESC)
+			representativeAttemptID := decadeAttempts[0].ID
 			quizzes := make(map[string][]int, len(decadeAttempts))
 			passingScore := 70
 			for i, attempt := range decadeAttempts {
 				flags, flagErr := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
-				if flagErr != nil {
+				if flagErr != nil || flags == nil {
 					utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s err=%v", task.NotebookID, attempt.ID, flagErr)
 					continue
 				}
-				if flags == nil {
-					utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s", task.NotebookID, attempt.ID)
-					continue
-				}
 				quizzes[attempt.ID] = flags
-				if i == 9 && attempt.PassingScore > 0 {
+				if i == 0 && attempt.PassingScore > 0 {
 					passingScore = attempt.PassingScore
 				}
 			}
@@ -977,12 +966,13 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 			payload := models.MilestoneExamPayload{
 				Quizzes:      quizzes,
 				PassingScore: passingScore,
-				QuizCount:    len(decadeAttempts),
+				QuizCount:    len(quizzes),
 			}
-			if insertErr := repo.InsertMilestoneExamTask(task.NotebookID, payload); insertErr != nil {
+			inserted, insertErr := repo.InsertMilestoneExamTaskIfMissing(task.NotebookID, representativeAttemptID, payload)
+			if insertErr != nil {
 				utils.Warnf("[MILESTONE_EXAM] insertion_failed notebookID=%s err=%v", task.NotebookID, insertErr)
-			} else {
-				utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", task.NotebookID, len(decadeAttempts))
+			} else if inserted {
+				utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", task.NotebookID, len(quizzes))
 			}
 		}
 	}

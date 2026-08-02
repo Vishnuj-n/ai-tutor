@@ -119,6 +119,10 @@ func CloseMultiFileLogger() {
 
 // ---------- Global Level Helpers ----------
 
+func Debugf(format string, args ...any) {
+	slog.Debug(fmt.Sprintf(format, args...))
+}
+
 func Infof(format string, args ...any) {
 	slog.Info(fmt.Sprintf(format, args...))
 }
