@@ -19,7 +19,7 @@ import (
 func (a *App) GetUserSettings() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	s, err := repo.GetUserSettings()
 	if err != nil {
@@ -50,7 +50,7 @@ func (a *App) GetUserSettings() map[string]interface{} {
 func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string, analyticsEnabled bool, anonymousUserID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if maxFlashcards < 5 || maxFlashcards > 200 {
 		return map[string]interface{}{"error": "max flashcards per session must be between 5 and 200"}
@@ -114,7 +114,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 func (a *App) TrackAnalyticsEvent(eventType, fileHash string, pageNumber int, metadata string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if err := repo.TrackAnalyticsEvent(eventType, fileHash, pageNumber, metadata); err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -125,7 +125,7 @@ func (a *App) TrackAnalyticsEvent(eventType, fileHash string, pageNumber int, me
 func (a *App) GetLLMSettings() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	settings, err := repo.GetLLMSettings()
 	if err != nil {
@@ -170,7 +170,7 @@ func (a *App) GetLLMProviderPreset(provider string) map[string]interface{} {
 func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	current, err := repo.GetLLMSettings()
 	if err != nil {
@@ -206,7 +206,7 @@ func (a *App) UpdateLLMSettings(settings models.LLMSettings) map[string]interfac
 func (a *App) SaveLLMAPIKey(tier string, key string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	tier = normalizeLLMTierForApp(tier)
 	if tier == "" {
@@ -227,7 +227,7 @@ func (a *App) SaveLLMAPIKey(tier string, key string) map[string]interface{} {
 func (a *App) DeleteLLMAPIKey(tier string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	tier = normalizeLLMTierForApp(tier)
 	if tier == "" {
@@ -312,7 +312,7 @@ func sameLLMSettingsForUI(a, b models.LLMTierSettings) bool {
 func (a *App) GetProfiles() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	profiles, err := repo.GetProfiles()
 	if err != nil {
@@ -324,13 +324,13 @@ func (a *App) GetProfiles() map[string]interface{} {
 func (a *App) CreateProfile(name string, deadlineStr string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return map[string]interface{}{"error": "profile name is required"}
 	}
-	deadlineTime, err := time.Parse("2006-01-02", deadlineStr)
+	deadlineTime, err := time.Parse(dateFormatYYYYMMDD, deadlineStr)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to parse deadline: " + err.Error()}
 	}
@@ -359,14 +359,14 @@ func (a *App) CreateProfile(name string, deadlineStr string) map[string]interfac
 func (a *App) UpdateProfile(id string, name string, deadlineStr string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
 	if id == "" || name == "" {
 		return map[string]interface{}{"error": "id and name are required"}
 	}
-	deadlineTime, err := time.Parse("2006-01-02", deadlineStr)
+	deadlineTime, err := time.Parse(dateFormatYYYYMMDD, deadlineStr)
 	if err != nil {
 		return map[string]interface{}{"error": "failed to parse deadline: " + err.Error()}
 	}
@@ -384,7 +384,7 @@ func (a *App) UpdateProfile(id string, name string, deadlineStr string) map[stri
 func (a *App) DeleteProfile(id string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -399,7 +399,7 @@ func (a *App) DeleteProfile(id string) map[string]interface{} {
 func (a *App) AssignNotebookToProfile(notebookID, profileID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if err := repo.AssignNotebookToProfile(notebookID, profileID); err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -410,7 +410,7 @@ func (a *App) AssignNotebookToProfile(notebookID, profileID string) map[string]i
 func (a *App) UpdateNotebookStudyStatus(notebookID, studyStatus string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if err := repo.UpdateNotebookStudyStatus(notebookID, studyStatus); err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -421,7 +421,7 @@ func (a *App) UpdateNotebookStudyStatus(notebookID, studyStatus string) map[stri
 func (a *App) IsOnboarded() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized", "onboarded": false}
+		return map[string]interface{}{"error": errDatabaseNotInitialized, "onboarded": false}
 	}
 	profiles, err := repo.GetProfiles()
 	if err != nil {
@@ -434,7 +434,7 @@ func (a *App) IsOnboarded() map[string]interface{} {
 func (a *App) TriggerCloudSync() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if err := study.TriggerCloudSync(repo); err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -448,7 +448,7 @@ func (a *App) TriggerCloudSync() map[string]interface{} {
 func (a *App) LoginStudent(username, password, classroomCode string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	settings, err := repo.GetUserSettings()
 	if err != nil {
@@ -549,7 +549,7 @@ func (a *App) LoginStudent(username, password, classroomCode string) map[string]
 func (a *App) LogoutStudent() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	settings, err := repo.GetUserSettings()
 	if err != nil {

@@ -160,7 +160,7 @@ func (a *App) LogFrontendEvent(level string, component string, event string, det
 func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	bundle, err := repo.GetReaderTopicBundle(topicID, notebookID)
 	if err != nil {
@@ -191,7 +191,7 @@ func (a *App) GetReaderTopicBundle(topicID string, notebookID string) map[string
 func (a *App) GetTopicSectionsContent(topicID string, notebookID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	bundle, err := repo.GetReaderTopicBundle(topicID, notebookID)
 	if err != nil {
@@ -264,7 +264,7 @@ func (a *App) checkNotebookIndexingStatus(notebookID, topicID string) (map[strin
 func (a *App) AskSocratic(notebookID string, topicID string, question string, conversationHistory []map[string]string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if payload, isIndexing := a.checkNotebookIndexingStatus(notebookID, topicID); isIndexing {
 		return payload
@@ -274,13 +274,13 @@ func (a *App) AskSocratic(notebookID string, topicID string, question string, co
 		reason := a.aiInitError
 		a.aiMutex.Unlock()
 		if reason == "" {
-			reason = "local AI runtime is not ready"
+			reason = errLocalAIRuntimeNotReady
 		}
 		return map[string]interface{}{"error": "Socratic Tutor unavailable: " + reason}
 	}
 	if a.studyService == nil {
 		a.aiMutex.Unlock()
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	svc := a.studyService
 	a.aiMutex.Unlock()
@@ -294,7 +294,7 @@ func (a *App) AskSocratic(notebookID string, topicID string, question string, co
 func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPage, chapterStartPage, chapterEndPage int) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if payload, isIndexing := a.checkNotebookIndexingStatus(notebookID, topicID); isIndexing {
 		return payload
@@ -304,13 +304,13 @@ func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPa
 		reason := a.aiInitError
 		a.aiMutex.Unlock()
 		if reason == "" {
-			reason = "local AI runtime is not ready"
+			reason = errLocalAIRuntimeNotReady
 		}
 		return map[string]interface{}{"error": "Reader AI unavailable: " + reason}
 	}
 	if a.studyService == nil {
 		a.aiMutex.Unlock()
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	svc := a.studyService
 	a.aiMutex.Unlock()
@@ -328,14 +328,14 @@ func (a *App) AskReaderAI(topicID, notebookID, question, scope string, currentPa
 func (a *App) GetEmbeddingDiagnostics(text string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	a.aiMutex.Lock()
 	if !a.aiReady || a.embedder == nil {
 		reason := a.aiInitError
 		a.aiMutex.Unlock()
 		if reason == "" {
-			reason = "local AI runtime is not ready"
+			reason = errLocalAIRuntimeNotReady
 		}
 		return map[string]interface{}{"error": "Embedding diagnostics unavailable: " + reason}
 	}
@@ -375,7 +375,7 @@ var isRagSettingUp bool
 func (a *App) InitializeRAG() map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	ragSetupMutex.Lock()
 	if isRagSettingUp {
@@ -385,97 +385,95 @@ func (a *App) InitializeRAG() map[string]interface{} {
 	isRagSettingUp = true
 	ragSetupMutex.Unlock()
 
-	go func() {
-		defer func() {
-			ragSetupMutex.Lock()
-			isRagSettingUp = false
-			ragSetupMutex.Unlock()
-		}()
+	go a.performAsyncRAGSetup()
+	return map[string]interface{}{"status": "RAG initialization started"}
+}
 
-		am, err := runtime.NewAssetManager(a.ctx)
-		if err != nil {
-			emitRagSetupFailed(a, fmt.Sprintf("failed to create asset manager: %v", err))
-			return
-		}
-
-		if err := a.acquireAndStageAssets(am); err != nil {
-			emitRagSetupFailed(a, err.Error())
-			return
-		}
-
-		dbPath, err := runtime.ResolveDBPath()
-		if err != nil {
-			emitRagSetupFailed(a, fmt.Sprintf("failed to resolve database path: %v", err))
-			return
-		}
-
-		newRepo, err := a.loadVectorDBWithFallback(dbPath, am.Vec0DllPath())
-		if err != nil {
-			emitRagSetupFailed(a, err.Error())
-			return
-		}
-
-		emb, err := a.initEmbedder(am)
-		if err != nil {
-			_ = newRepo.Close()
-			emitRagSetupFailed(a, err.Error())
-			return
-		}
-
-		if err := a.applyVectorDBAndEmbedder(newRepo, emb); err != nil {
-			_ = newRepo.Close()
-			a.aiMutex.Lock()
-			a.aiReady = false
-			a.aiInitError = fmt.Sprintf("failed to apply vector DB: %v", err)
-			a.aiMutex.Unlock()
-			emitRagSetupFailed(a, a.aiInitError)
-			return
-		}
-
-		if err := a.reloadRetrievalEngine(); err != nil {
-			a.aiMutex.Lock()
-			a.aiReady = false
-			a.aiInitError = fmt.Sprintf("failed to reload retrieval engine: %v", err)
-			a.aiMutex.Unlock()
-			emitRagSetupFailed(a, a.aiInitError)
-			return
-		}
-
-		if err := a.buildVectorIndex(emb); err != nil {
-			utils.Errorf("vector indexing failed after RAG enable: %v", err)
-			a.aiMutex.Lock()
-			a.aiReady = false
-			a.aiInitError = fmt.Sprintf("vector indexing failed: %v", err)
-			a.aiMutex.Unlock()
-			emitRagSetupFailed(a, a.aiInitError)
-			return
-		}
-
-		settings, err := a.getRepo().GetUserSettings()
-		if err != nil {
-			a.aiMutex.Lock()
-			a.aiReady = false
-			a.aiInitError = fmt.Sprintf("failed to read user settings: %v", err)
-			a.aiMutex.Unlock()
-			emitRagSetupFailed(a, a.aiInitError)
-			return
-		}
-
-		settings.RAGEnabled = true
-		if err := a.getRepo().UpdateUserSettings(*settings); err != nil {
-			a.aiMutex.Lock()
-			a.aiReady = false
-			a.aiInitError = fmt.Sprintf("failed to update user settings: %v", err)
-			a.aiMutex.Unlock()
-			emitRagSetupFailed(a, a.aiInitError)
-			return
-		}
-
-		a.finalizeRAGSetup()
+func (a *App) performAsyncRAGSetup() {
+	defer func() {
+		ragSetupMutex.Lock()
+		isRagSettingUp = false
+		ragSetupMutex.Unlock()
 	}()
 
-	return map[string]interface{}{"ok": true}
+	am, err := runtime.NewAssetManager(a.ctx)
+	if err != nil {
+		emitRagSetupFailed(a, fmt.Sprintf("failed to create asset manager: %v", err))
+		return
+	}
+
+	if err := a.acquireAndStageAssets(am); err != nil {
+		emitRagSetupFailed(a, err.Error())
+		return
+	}
+
+	dbPath, err := runtime.ResolveDBPath()
+	if err != nil {
+		emitRagSetupFailed(a, fmt.Sprintf("failed to resolve database path: %v", err))
+		return
+	}
+
+	newRepo, err := a.loadVectorDBWithFallback(dbPath, am.Vec0DllPath())
+	if err != nil {
+		emitRagSetupFailed(a, err.Error())
+		return
+	}
+
+	emb, err := a.initEmbedder(am)
+	if err != nil {
+		_ = newRepo.Close()
+		emitRagSetupFailed(a, err.Error())
+		return
+	}
+
+	if err := a.applyVectorDBAndEmbedder(newRepo, emb); err != nil {
+		_ = newRepo.Close()
+		a.setAIInitError(fmt.Sprintf("failed to apply vector DB: %v", err))
+		emitRagSetupFailed(a, a.aiInitError)
+		return
+	}
+
+	if err := a.reloadRetrievalEngine(); err != nil {
+		a.setAIInitError(fmt.Sprintf("failed to reload retrieval engine: %v", err))
+		emitRagSetupFailed(a, a.aiInitError)
+		return
+	}
+
+	if err := a.buildVectorIndex(emb); err != nil {
+		utils.Errorf("vector indexing failed after RAG enable: %v", err)
+		a.setAIInitError(fmt.Sprintf("vector indexing failed: %v", err))
+		emitRagSetupFailed(a, a.aiInitError)
+		return
+	}
+
+	if err := a.enableRAGUserSettings(); err != nil {
+		a.setAIInitError(err.Error())
+		emitRagSetupFailed(a, a.aiInitError)
+		return
+	}
+
+	a.finalizeRAGSetup()
 }
+
+func (a *App) setAIInitError(errMsg string) {
+	a.aiMutex.Lock()
+	a.aiReady = false
+	a.aiInitError = errMsg
+	a.aiMutex.Unlock()
+}
+
+func (a *App) enableRAGUserSettings() error {
+	settings, err := a.getRepo().GetUserSettings()
+	if err != nil {
+		return fmt.Errorf("failed to read user settings: %v", err)
+	}
+	settings.RAGEnabled = true
+	if err := a.getRepo().UpdateUserSettings(*settings); err != nil {
+		return fmt.Errorf("failed to update user settings: %v", err)
+	}
+	return nil
+}
+
 
 // -----------------------------------------------------------------------------
 // RAG Setup Sub-Routines (Helpers for InitializeRAG)
@@ -483,7 +481,7 @@ func (a *App) InitializeRAG() map[string]interface{} {
 
 func (a *App) acquireAndStageAssets(am *runtime.AssetManager) error {
 	err := am.AcquireAssets(func(status string, percent int, msg, detail string) {
-		wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+		wailsruntime.EventsEmit(a.ctx, eventRAGSetupProgress, map[string]interface{}{
 			"status":  status,
 			"percent": percent,
 			"message": msg,
@@ -585,7 +583,7 @@ func (a *App) applyVectorDBAndEmbedder(newRepo *db.Repository, emb *embeddings.O
 }
 
 func (a *App) buildVectorIndex(emb *embeddings.OnnxEmbedder) error {
-	wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+	wailsruntime.EventsEmit(a.ctx, eventRAGSetupProgress, map[string]interface{}{
 		"status":  "indexing",
 		"percent": 98,
 		"message": "Indexing topics for AI retrieval...",
@@ -610,7 +608,7 @@ func (a *App) finalizeRAGSetup() {
 	a.indexQueue.Start()
 	a.aiMutex.Unlock()
 
-	wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+	wailsruntime.EventsEmit(a.ctx, eventRAGSetupProgress, map[string]interface{}{
 		"status":  "ready",
 		"percent": 100,
 		"message": "Local AI retrieval is fully ready!",
@@ -663,7 +661,7 @@ func (a *App) reloadRetrievalEngine() error {
 
 func emitRagSetupFailed(a *App, reason string) {
 	utils.Errorf("RAG setup failed: %s", reason)
-	wailsruntime.EventsEmit(a.ctx, "rag-setup-progress", map[string]interface{}{
+	wailsruntime.EventsEmit(a.ctx, eventRAGSetupProgress, map[string]interface{}{
 		"status":      "failed",
 		"percent":     100,
 		"message":     "RAG initialization failed",

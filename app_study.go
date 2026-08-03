@@ -89,12 +89,10 @@ func aggregateQueueTasks(active, pending []models.StudyQueueTask) ([]models.Sche
 func calculateStreak(times []time.Time, timezoneOffsetMinutes int) (currentStreak, longestStreak int, activeDates []string) {
 	loc := time.FixedZone("ClientZone", -timezoneOffsetMinutes*60)
 	nowClient := time.Now().In(loc)
-	todayStr := nowClient.Format("2006-01-02")
-	yesterdayStr := nowClient.AddDate(0, 0, -1).Format("2006-01-02")
 
 	dateSet := make(map[string]bool)
 	for _, t := range times {
-		dateSet[t.In(loc).Format("2006-01-02")] = true
+		dateSet[t.In(loc).Format(dateFormatYYYYMMDD)] = true
 	}
 
 	sortedDates := make([]string, 0, len(dateSet))
@@ -102,18 +100,24 @@ func calculateStreak(times []time.Time, timezoneOffsetMinutes int) (currentStrea
 		sortedDates = append(sortedDates, d)
 	}
 	sort.Strings(sortedDates)
-
 	activeDates = sortedDates
 
 	if len(sortedDates) == 0 {
 		return 0, 0, activeDates
 	}
 
-	// Longest streak
+	longestStreak = computeLongestStreak(sortedDates, loc)
+	currentStreak = computeCurrentStreak(nowClient, dateSet)
+
+	return currentStreak, longestStreak, activeDates
+}
+
+func computeLongestStreak(sortedDates []string, loc *time.Location) int {
+	longestStreak := 0
 	streakTemp := 0
 	var prevDate time.Time
 	for _, dateStr := range sortedDates {
-		d, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		d, err := time.ParseInLocation(dateFormatYYYYMMDD, dateStr, loc)
 		if err != nil {
 			continue
 		}
@@ -135,24 +139,29 @@ func calculateStreak(times []time.Time, timezoneOffsetMinutes int) (currentStrea
 	if streakTemp > longestStreak {
 		longestStreak = streakTemp
 	}
+	return longestStreak
+}
 
-	// Current streak
+func computeCurrentStreak(nowClient time.Time, dateSet map[string]bool) int {
+	todayStr := nowClient.Format(dateFormatYYYYMMDD)
+	yesterdayStr := nowClient.AddDate(0, 0, -1).Format(dateFormatYYYYMMDD)
+
 	anchorDate := nowClient
 	if !dateSet[todayStr] && dateSet[yesterdayStr] {
 		anchorDate = nowClient.AddDate(0, 0, -1)
 	}
-	if dateSet[anchorDate.Format("2006-01-02")] {
+	currentStreak := 0
+	if dateSet[anchorDate.Format(dateFormatYYYYMMDD)] {
 		currentStreak = 1
 		for {
-			prevDayStr := anchorDate.AddDate(0, 0, -currentStreak).Format("2006-01-02")
+			prevDayStr := anchorDate.AddDate(0, 0, -currentStreak).Format(dateFormatYYYYMMDD)
 			if !dateSet[prevDayStr] {
 				break
 			}
 			currentStreak++
 		}
 	}
-
-	return currentStreak, longestStreak, activeDates
+	return currentStreak
 }
 
 // mapTaskError translates repository errors into API response maps.
@@ -177,7 +186,7 @@ func mapTaskError(err error) map[string]interface{} {
 func requireRepo(a *App) (*db.Repository, map[string]interface{}) {
 	repo := a.getRepo()
 	if repo == nil {
-		return nil, map[string]interface{}{"error": "database repository not initialized"}
+		return nil, map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	return repo, nil
 }
@@ -231,33 +240,14 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	materializedCards, deferredCards, safeReviewBudget := calculateFlashcardBudgets(dueCards, maxFlashcards)
 	queueTasks, activeTopics, learningMinutes, actionCounts := aggregateQueueTasks(activeQueueTasks, pendingQueueTasks)
 
-	if materializedCards > 0 {
-		bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
-		if err != nil {
-			utils.Warnf("failed to get next due review notebook: %v", err)
-		} else if bestNotebookID != "" {
-			reviewCardsForTask := materializedCards
-			if selectedDueCards < reviewCardsForTask {
-				reviewCardsForTask = selectedDueCards
-			}
-
-			reviewTask := models.ScheduledTask{
-				ID:              models.ReviewTaskDailyID,
-				ActionType:      "flashcard_review",
-				Title:           fmt.Sprintf("Flashcard Review: %d cards", reviewCardsForTask),
-				EstimateMinutes: safeReviewBudget,
-				Priority:        1,
-				NotebookID:      bestNotebookID,
-				Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", reviewCardsForTask),
-			}
-			queueTasks = append([]models.ScheduledTask{reviewTask}, queueTasks...)
-			actionCounts["flashcard_review"]++
-		}
+	if reviewTask, ok := buildReviewTaskForPlan(repo, now, materializedCards, safeReviewBudget); ok {
+		queueTasks = append([]models.ScheduledTask{reviewTask}, queueTasks...)
+		actionCounts["flashcard_review"]++
 	}
 
 	planSource := "queue-materialized"
 	plan := &models.TodayPlan{
-		Date:                now.Format("2006-01-02"),
+		Date:                now.Format(dateFormatYYYYMMDD),
 		TotalMinutes:        dailyStudyMinutes,
 		ReviewMinutes:       safeReviewBudget,
 		LearningMinutes:     learningMinutes,
@@ -285,17 +275,40 @@ func (a *App) GetTodayPlan() map[string]interface{} {
 	for idx, task := range plan.Tasks {
 		utils.Debugf("[TODAY_PLAN] GetTodayPlan task[%d] taskID=%s actionType=%s topicID=%s notebookID=%s startPage=%d endPage=%d priority=%d", idx, task.ID, task.ActionType, task.TopicID, task.NotebookID, task.StartPage, task.EndPage, task.Priority)
 	}
-
 	return map[string]interface{}{
 		"date": plan.Date, "total_minutes": plan.TotalMinutes,
 		"review_minutes": plan.ReviewMinutes, "learning_minutes": plan.LearningMinutes,
 		"due_review_cards": plan.DueReviewCards, "total_due_review_cards": plan.TotalDueReviewCards,
 		"deferred_review_cards": plan.DeferredReviewCards, "active_topics": plan.ActiveTopics,
-		"tasks": plan.Tasks, "generated_at_unix": now.Unix(),
-		"data_fresh": true, "is_estimate": plan.IsEstimate,
-		"insights_available": false, "plan_source": planSource,
+		"tasks": plan.Tasks, "is_estimate": plan.IsEstimate, "plan_source": planSource,
 		"active_notebook_count": activeNotebookCount,
 	}
+}
+
+func buildReviewTaskForPlan(repo *db.Repository, now time.Time, materializedCards, safeReviewBudget int) (models.ScheduledTask, bool) {
+	if materializedCards <= 0 {
+		return models.ScheduledTask{}, false
+	}
+	bestNotebookID, selectedDueCards, err := repo.GetNextDueReviewNotebook(now.Unix())
+	if err != nil || bestNotebookID == "" {
+		if err != nil {
+			utils.Warnf("failed to get next due review notebook: %v", err)
+		}
+		return models.ScheduledTask{}, false
+	}
+	reviewCardsForTask := materializedCards
+	if selectedDueCards < reviewCardsForTask {
+		reviewCardsForTask = selectedDueCards
+	}
+	return models.ScheduledTask{
+		ID:              models.ReviewTaskDailyID,
+		ActionType:      "flashcard_review",
+		Title:           fmt.Sprintf("Flashcard Review: %d cards", reviewCardsForTask),
+		EstimateMinutes: safeReviewBudget,
+		Priority:        1,
+		NotebookID:      bestNotebookID,
+		Meta:            fmt.Sprintf("Spaced repetition review (%d cards)", reviewCardsForTask),
+	}, true
 }
 
 func queueTaskToScheduledTask(task models.StudyQueueTask) models.ScheduledTask {
@@ -499,31 +512,12 @@ func (a *App) resolveReadingTaskIdentity(taskID, notebookID, topicID string, sta
 	seedTaskID := taskID
 	existingTask, existingErr := repo.GetTaskByID(seedTaskID)
 
-	// If task doesn't exist yet, insert it as a real READING task.
 	if existingErr == db.ErrTaskNotFound {
-		utils.Warnf("[READER_INIT] InitializeReadingSession task missing, creating pending reading task taskID=%s notebookID=%s topicID=%s", taskID, notebookID, topicID)
-		if notebookID == "" || topicID == "" {
-			return "", map[string]interface{}{"error": "task not found and notebookID/topicID required to create it", "code": 400}
-		}
-		insertErr := repo.InsertStudyTask(models.StudyQueueTask{
-			ID:         seedTaskID,
-			NotebookID: notebookID,
-			TopicID:    topicID,
-			TaskType:   models.StudyTaskTypeReading,
-			Status:     models.StudyTaskStatusPending,
-			Priority:   1,
-			StartPage:  startPage,
-			EndPage:    endPage,
-		})
-		if insertErr != nil {
-			return "", map[string]interface{}{"error": "failed to create reading task: " + insertErr.Error()}
-		}
-		return seedTaskID, nil
+		return a.createPendingReadingTask(seedTaskID, notebookID, topicID, startPage, endPage, "InitializeReadingSession task missing, creating pending reading task")
 	} else if existingErr != nil {
 		return "", map[string]interface{}{"error": existingErr.Error()}
 	}
 
-	// Never reopen terminal queue rows.
 	if existingTask != nil && existingTask.Status != models.StudyTaskStatusPending && existingTask.Status != models.StudyTaskStatusActive {
 		if notebookID == "" {
 			notebookID = existingTask.NotebookID
@@ -535,23 +529,31 @@ func (a *App) resolveReadingTaskIdentity(taskID, notebookID, topicID string, sta
 			return "", map[string]interface{}{"error": "terminal task cannot be reused and notebookID/topicID were not available", "code": 409}
 		}
 		newTaskID := uuid.NewString()
-		utils.Warnf("[READER_INIT] InitializeReadingSession task terminal, creating new queue row taskID=%s oldStatus=%s notebookID=%s topicID=%s", newTaskID, existingTask.Status, notebookID, topicID)
-		insertErr := repo.InsertStudyTask(models.StudyQueueTask{
-			ID:         newTaskID,
-			NotebookID: notebookID,
-			TopicID:    topicID,
-			TaskType:   models.StudyTaskTypeReading,
-			Status:     models.StudyTaskStatusPending,
-			Priority:   1,
-			StartPage:  startPage,
-			EndPage:    endPage,
-		})
-		if insertErr != nil {
-			return "", map[string]interface{}{"error": "failed to create replacement reading task: " + insertErr.Error()}
-		}
-		return newTaskID, nil
+		return a.createPendingReadingTask(newTaskID, notebookID, topicID, startPage, endPage, fmt.Sprintf("InitializeReadingSession task terminal, creating new queue row oldStatus=%s", existingTask.Status))
 	}
 
+	return taskID, nil
+}
+
+func (a *App) createPendingReadingTask(taskID, notebookID, topicID string, startPage, endPage int, logMsg string) (string, map[string]interface{}) {
+	repo := a.getRepo()
+	utils.Warnf("[READER_INIT] %s taskID=%s notebookID=%s topicID=%s", logMsg, taskID, notebookID, topicID)
+	if notebookID == "" || topicID == "" {
+		return "", map[string]interface{}{"error": "task not found and notebookID/topicID required to create it", "code": 400}
+	}
+	insertErr := repo.InsertStudyTask(models.StudyQueueTask{
+		ID:         taskID,
+		NotebookID: notebookID,
+		TopicID:    topicID,
+		TaskType:   models.StudyTaskTypeReading,
+		Status:     models.StudyTaskStatusPending,
+		Priority:   1,
+		StartPage:  startPage,
+		EndPage:    endPage,
+	})
+	if insertErr != nil {
+		return "", map[string]interface{}{"error": "failed to create reading task: " + insertErr.Error()}
+	}
 	return taskID, nil
 }
 
@@ -711,7 +713,7 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 
 	if a.studyService == nil {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading error: study service not initialized taskID=%s", taskID)
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 
 	// Generate quiz from all topic chunks.
@@ -806,7 +808,7 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 	}
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
-		return map[string]interface{}{"error": "task ID is required", "code": 400}
+		return map[string]interface{}{"error": errTaskIDRequired, "code": 400}
 	}
 	task, err := repo.GetTaskByID(taskID)
 	if err != nil {
@@ -814,59 +816,7 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 	}
 	externalPrompt := ""
 	if task.TaskType == models.StudyTaskTypeSocraticRemedial {
-		bundle, err := repo.GetReaderTopicBundle(task.TopicID, task.NotebookID)
-		if err != nil {
-			utils.Warnf("failed to get reader topic bundle for task %s: %v", task.ID, err)
-		} else {
-			var sectionsContent []string
-			for _, s := range bundle.Sections {
-				if s.Content != "" {
-					sectionsContent = append(sectionsContent, s.Content)
-				}
-			}
-			sourceText := strings.Join(sectionsContent, "\n\n")
-
-			bookContext := ""
-			notebookTitle := bundle.NotebookTitle
-			if notebookTitle != "" {
-				bookContext = fmt.Sprintf("Book: %s\n", notebookTitle)
-			}
-
-			promptText := fmt.Sprintf("I'm studying the following text from %s for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.\n\n", func() string {
-				if notebookTitle != "" {
-					return notebookTitle
-				}
-				return "my material"
-			}())
-
-			var payload struct {
-				FailedQuestions []models.FailedQuestionDetail `json:"failed_questions"`
-			}
-			if task.PayloadJSON != "" {
-				if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
-					utils.Warnf("failed to unmarshal failed questions for task %s: %v", task.ID, err)
-				}
-			}
-
-			if len(payload.FailedQuestions) > 0 {
-				promptText += "During my quiz, I failed the following questions:\n"
-				for idx, q := range payload.FailedQuestions {
-					promptText += fmt.Sprintf("%d. Question: %s\n", idx+1, q.Prompt)
-					if len(q.Options) > 0 {
-						promptText += fmt.Sprintf("   Options: %s\n", strings.Join(q.Options, ", "))
-					}
-					userAns := q.UserAnswer
-					if userAns == "" {
-						userAns = "(No answer)"
-					}
-					promptText += fmt.Sprintf("   My Answer: %s\n", userAns)
-					promptText += fmt.Sprintf("   Correct Answer: %s\n\n", q.CorrectAnswer)
-				}
-				promptText += "Please focus on guiding me through the concepts behind these failed questions.\n\n"
-			}
-
-			externalPrompt = promptText + bookContext + "---\n" + sourceText + "\n---"
-		}
+		externalPrompt = buildSocraticRemedialPrompt(repo, task)
 	}
 
 	return map[string]interface{}{
@@ -881,12 +831,69 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 	}
 }
 
+func buildSocraticRemedialPrompt(repo *db.Repository, task *models.StudyQueueTask) string {
+	bundle, err := repo.GetReaderTopicBundle(task.TopicID, task.NotebookID)
+	if err != nil {
+		utils.Warnf("failed to get reader topic bundle for task %s: %v", task.ID, err)
+		return ""
+	}
+
+	var sectionsContent []string
+	for _, s := range bundle.Sections {
+		if s.Content != "" {
+			sectionsContent = append(sectionsContent, s.Content)
+		}
+	}
+	sourceText := strings.Join(sectionsContent, "\n\n")
+
+	bookContext := ""
+	notebookTitle := bundle.NotebookTitle
+	if notebookTitle != "" {
+		bookContext = fmt.Sprintf("Book: %s\n", notebookTitle)
+	}
+
+	materialName := "my material"
+	if notebookTitle != "" {
+		materialName = notebookTitle
+	}
+
+	promptText := fmt.Sprintf("I'm studying the following text from %s for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.\n\n", materialName)
+
+	var payload struct {
+		FailedQuestions []models.FailedQuestionDetail `json:"failed_questions"`
+	}
+	if task.PayloadJSON != "" {
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+			utils.Warnf("failed to unmarshal failed questions for task %s: %v", task.ID, err)
+		}
+	}
+
+	if len(payload.FailedQuestions) > 0 {
+		promptText += "During my quiz, I failed the following questions:\n"
+		for idx, q := range payload.FailedQuestions {
+			promptText += fmt.Sprintf("%d. Question: %s\n", idx+1, q.Prompt)
+			if len(q.Options) > 0 {
+				promptText += fmt.Sprintf("   Options: %s\n", strings.Join(q.Options, ", "))
+			}
+			userAns := q.UserAnswer
+			if userAns == "" {
+				userAns = "(No answer)"
+			}
+			promptText += fmt.Sprintf("   My Answer: %s\n", userAns)
+			promptText += fmt.Sprintf("   Correct Answer: %s\n\n", q.CorrectAnswer)
+		}
+		promptText += "Please focus on guiding me through the concepts behind these failed questions.\n\n"
+	}
+
+	return promptText + bookContext + "---\n" + sourceText + "\n---"
+}
+
 func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
 	if _, errMap := requireRepo(a); errMap != nil {
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	return a.studyService.GenerateQuizForPageRange(notebookID, startPage, endPage)
 }
@@ -896,7 +903,7 @@ func (a *App) SubmitQuizAttempt(taskID string, answers []models.QuizAnswer) map[
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	result, err := a.studyService.SubmitQuizAttempt(taskID, answers)
 	if err != nil {
@@ -913,7 +920,7 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 
 	task, err := repo.GetTaskByID(taskID)
@@ -939,43 +946,7 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 		utils.Warnf("[FLASHCARD_PIPELINE] failed to resolve FLASHCARD_GENERATE tasks: %v", resolveErr)
 	}
 
-	count, countErr := repo.CountCompletedQuizzesByNotebook(task.NotebookID)
-	if countErr != nil {
-		utils.Warnf("[MILESTONE_EXAM] quiz_count_failed notebookID=%s err=%v", task.NotebookID, countErr)
-	} else if count > 0 && count%10 == 0 {
-		decadeAttempts, attemptsErr := repo.GetLastNQuizAttemptsWithCorrectness(task.NotebookID, 10)
-		if attemptsErr != nil {
-			utils.Warnf("[MILESTONE_EXAM] passed_quizzes_fetch_failed notebookID=%s err=%v", task.NotebookID, attemptsErr)
-		} else if len(decadeAttempts) == 10 {
-			// Representative attempt is the latest attempt in the 10-attempt block (ordered DESC)
-			representativeAttemptID := decadeAttempts[0].ID
-			quizzes := make(map[string][]int, len(decadeAttempts))
-			passingScore := 70
-			for i, attempt := range decadeAttempts {
-				flags, flagErr := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
-				if flagErr != nil || flags == nil {
-					utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s err=%v", task.NotebookID, attempt.ID, flagErr)
-					continue
-				}
-				quizzes[attempt.ID] = flags
-				if i == 0 && attempt.PassingScore > 0 {
-					passingScore = attempt.PassingScore
-				}
-			}
-
-			payload := models.MilestoneExamPayload{
-				Quizzes:      quizzes,
-				PassingScore: passingScore,
-				QuizCount:    len(quizzes),
-			}
-			inserted, insertErr := repo.InsertMilestoneExamTaskIfMissing(task.NotebookID, representativeAttemptID, payload)
-			if insertErr != nil {
-				utils.Warnf("[MILESTONE_EXAM] insertion_failed notebookID=%s err=%v", task.NotebookID, insertErr)
-			} else if inserted {
-				utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", task.NotebookID, len(quizzes))
-			}
-		}
-	}
+	checkAndInsertMilestoneExam(repo, task.NotebookID)
 
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_generation_completed taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
 	utils.Warnf("[DASHBOARD] dashboard_redirect_after_generation taskID=%s reviewTaskID=%s cardsScheduled=%d", taskID, "", cardCount)
@@ -987,6 +958,53 @@ func (a *App) GenerateFlashcardsForQuizTask(taskID string) map[string]interface{
 	}
 }
 
+func checkAndInsertMilestoneExam(repo *db.Repository, notebookID string) {
+	count, countErr := repo.CountCompletedQuizzesByNotebook(notebookID)
+	if countErr != nil {
+		utils.Warnf("[MILESTONE_EXAM] quiz_count_failed notebookID=%s err=%v", notebookID, countErr)
+		return
+	}
+	if count <= 0 || count%10 != 0 {
+		return
+	}
+
+	decadeAttempts, attemptsErr := repo.GetLastNQuizAttemptsWithCorrectness(notebookID, 10)
+	if attemptsErr != nil {
+		utils.Warnf("[MILESTONE_EXAM] passed_quizzes_fetch_failed notebookID=%s err=%v", notebookID, attemptsErr)
+		return
+	}
+	if len(decadeAttempts) != 10 {
+		return
+	}
+
+	representativeAttemptID := decadeAttempts[0].ID
+	quizzes := make(map[string][]int, len(decadeAttempts))
+	passingScore := 70
+	for i, attempt := range decadeAttempts {
+		flags, flagErr := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
+		if flagErr != nil || flags == nil {
+			utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s err=%v", notebookID, attempt.ID, flagErr)
+			continue
+		}
+		quizzes[attempt.ID] = flags
+		if i == 0 && attempt.PassingScore > 0 {
+			passingScore = attempt.PassingScore
+		}
+	}
+
+	payload := models.MilestoneExamPayload{
+		Quizzes:      quizzes,
+		PassingScore: passingScore,
+		QuizCount:    len(quizzes),
+	}
+	inserted, insertErr := repo.InsertMilestoneExamTaskIfMissing(notebookID, representativeAttemptID, payload)
+	if insertErr != nil {
+		utils.Warnf("[MILESTONE_EXAM] insertion_failed notebookID=%s err=%v", notebookID, insertErr)
+	} else if inserted {
+		utils.Warnf("[MILESTONE_EXAM] inserted notebookID=%s quizCount=%d", notebookID, len(quizzes))
+	}
+}
+
 // ---------- Manual Mode endpoints ----------
 
 func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int) map[string]interface{} {
@@ -994,7 +1012,7 @@ func (a *App) GenerateManualFlashcards(notebookID string, startPage, endPage int
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	return a.studyService.GenerateManualFlashcards(notebookID, startPage, endPage)
 }
@@ -1004,7 +1022,7 @@ func (a *App) GenerateComprehensiveExam(notebookID string, startPage, endPage in
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	return a.studyService.GenerateComprehensiveExam(notebookID, startPage, endPage)
 }
@@ -1015,7 +1033,7 @@ func (a *App) GenerateFlashcards(topicID string) map[string]interface{} {
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 
 	notebooks, err := repo.GetNotebooks(topicID, "")
@@ -1070,37 +1088,15 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 
 	if taskID == models.ReviewTaskDailyID {
-		requestedNotebookID := notebookID
-		utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materializing synthetic task notebookID=%s", notebookID)
-		if notebookID == "" {
-			resolvedNotebookID, dueCount, err := repo.GetNextDueReviewNotebook(time.Now().Unix())
-			if err != nil {
-				return map[string]interface{}{"error": "Failed to resolve notebook for review materialization: " + err.Error()}
-			}
-			notebookID = resolvedNotebookID
-			if notebookID != "" {
-				utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d source=review_materialization", notebookID, dueCount)
-			}
-		}
-		utils.Warnf("[FLASHCARD_PIPELINE] review_materialization_notebook_resolution taskID=%s requestedNotebookID=%s resolvedNotebookID=%s", taskID, requestedNotebookID, notebookID)
-
-		if notebookID == "" {
-			return map[string]interface{}{"error": "No due cards found for review materialization"}
-		}
-
-		task, reused, err := repo.CreateReviewSession(notebookID)
+		resolvedTaskID, err := materializeSyntheticReviewSession(repo, notebookID)
 		if err != nil {
-			return map[string]interface{}{"error": "Failed to materialize review session: " + err.Error()}
+			return map[string]interface{}{"error": err.Error()}
 		}
-		if task == nil {
-			return map[string]interface{}{"error": "No due cards found for review materialization"}
-		}
-		utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materialized notebookID=%s taskID=%s reused=%t", notebookID, task.ID, reused)
-		taskID = task.ID
+		taskID = resolvedTaskID
 	}
 
 	session, err := a.studyService.GetReviewSession(taskID)
@@ -1110,12 +1106,42 @@ func (a *App) GetReviewSession(taskID string, notebookID string) map[string]inte
 	return map[string]interface{}{"session": session}
 }
 
+func materializeSyntheticReviewSession(repo *db.Repository, notebookID string) (string, error) {
+	requestedNotebookID := notebookID
+	utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materializing synthetic task notebookID=%s", notebookID)
+	if notebookID == "" {
+		resolvedNotebookID, dueCount, err := repo.GetNextDueReviewNotebook(time.Now().Unix())
+		if err != nil {
+			return "", fmt.Errorf("Failed to resolve notebook for review materialization: %w", err)
+		}
+		notebookID = resolvedNotebookID
+		if notebookID != "" {
+			utils.Warnf("[FLASHCARD_PIPELINE] synthetic_review_notebook_selected notebookID=%s dueCards=%d source=review_materialization", notebookID, dueCount)
+		}
+	}
+	utils.Warnf("[FLASHCARD_PIPELINE] review_materialization_notebook_resolution taskID=%s requestedNotebookID=%s resolvedNotebookID=%s", models.ReviewTaskDailyID, requestedNotebookID, notebookID)
+
+	if notebookID == "" {
+		return "", fmt.Errorf("No due cards found for review materialization")
+	}
+
+	task, reused, err := repo.CreateReviewSession(notebookID)
+	if err != nil {
+		return "", fmt.Errorf("Failed to materialize review session: %w", err)
+	}
+	if task == nil {
+		return "", fmt.Errorf("No due cards found for review materialization")
+	}
+	utils.Warnf("[FLASHCARD_PIPELINE] GetReviewSession materialized notebookID=%s taskID=%s reused=%t", notebookID, task.ID, reused)
+	return task.ID, nil
+}
+
 func (a *App) RecordCardReview(taskID, cardID string, rating int) map[string]interface{} {
 	if _, errMap := requireRepo(a); errMap != nil {
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	remaining, err := a.studyService.RecordCardReview(taskID, cardID, rating)
 	if err != nil {
@@ -1129,7 +1155,7 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	if err := a.studyService.CompleteReviewSession(taskID); err != nil {
 		return mapTaskError(err)
@@ -1142,7 +1168,7 @@ func (a *App) SuspendFlashcard(taskID, cardID string) map[string]interface{} {
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	remaining, err := a.studyService.SuspendFlashcard(taskID, cardID)
 	if err != nil {
@@ -1156,7 +1182,7 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	return a.studyService.ScoreShortAnswer(questionID, userAnswer)
 }
@@ -1164,7 +1190,7 @@ func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interfa
 // CompleteSocraticRescue completes the socratic rescue session and inserts a re-quiz.
 func (a *App) CompleteSocraticRescue(taskID string) map[string]interface{} {
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 	quizTaskID, err := a.studyService.CompleteSocraticRescue(taskID)
 	if err != nil {
@@ -1273,7 +1299,7 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 		return errMap
 	}
 	if a.studyService == nil {
-		return map[string]interface{}{"error": "study service not initialized"}
+		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 
 	task, err := repo.GetTaskByID(taskID)
@@ -1284,30 +1310,10 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 		return map[string]interface{}{"error": "task is not a flashcard generation retry task"}
 	}
 
-	// If task has missing topicID or invalid page range, look up from notebook
-	topicID := task.TopicID
-	startPage := task.StartPage
-	endPage := task.EndPage
-	if topicID == "" || startPage <= 0 || endPage <= 0 || endPage < startPage {
-		topics, topicsErr := repo.GetNotebookTopicsWithBounds(task.NotebookID)
-		if topicsErr != nil || len(topics) == 0 {
-			utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_failed taskID=%s reason=no_topics_for_notebook notebookID=%s", taskID, task.NotebookID)
-			return map[string]interface{}{"error": "no topics found for notebook, cannot generate flashcards"}
-		}
-		firstTopic := topics[0]
-		if topicID == "" {
-			topicID = firstTopic.TopicID
-		}
-		if startPage <= 0 || endPage <= 0 || endPage < startPage {
-			startPage = firstTopic.StartPage
-			if startPage <= 0 {
-				startPage = 1
-			}
-			endPage = firstTopic.EndPage
-			if endPage <= startPage {
-				endPage = startPage + 10
-			}
-		}
+	topicID, startPage, endPage, resolveErr := resolveRetryTopicAndBounds(repo, task)
+	if resolveErr != nil {
+		utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_failed taskID=%s reason=no_topics_for_notebook notebookID=%s", taskID, task.NotebookID)
+		return map[string]interface{}{"error": resolveErr.Error()}
 	}
 
 	utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_started taskID=%s topicID=%s notebookID=%s", taskID, topicID, task.NotebookID)
@@ -1341,6 +1347,35 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 	}
 }
 
+func resolveRetryTopicAndBounds(repo *db.Repository, task *models.StudyQueueTask) (string, int, int, error) {
+	topicID := task.TopicID
+	startPage := task.StartPage
+	endPage := task.EndPage
+	if topicID != "" && startPage > 0 && endPage > 0 && endPage >= startPage {
+		return topicID, startPage, endPage, nil
+	}
+
+	topics, topicsErr := repo.GetNotebookTopicsWithBounds(task.NotebookID)
+	if topicsErr != nil || len(topics) == 0 {
+		return "", 0, 0, fmt.Errorf("no topics found for notebook, cannot generate flashcards")
+	}
+	firstTopic := topics[0]
+	if topicID == "" {
+		topicID = firstTopic.TopicID
+	}
+	if startPage <= 0 || endPage <= 0 || endPage < startPage {
+		startPage = firstTopic.StartPage
+		if startPage <= 0 {
+			startPage = 1
+		}
+		endPage = firstTopic.EndPage
+		if endPage <= startPage {
+			endPage = startPage + 10
+		}
+	}
+	return topicID, startPage, endPage, nil
+}
+
 type FlashcardDuePoint struct {
 	Date      string `json:"date"`
 	DayLabel  string `json:"day_label"`
@@ -1368,7 +1403,7 @@ func (a *App) GetFlashcardDueTimeline(timezoneOffsetMinutes int) map[string]inte
 		return map[string]interface{}{"error": err.Error()}
 	}
 	timeline[0] = FlashcardDuePoint{
-		Date:      midnight.Format("2006-01-02"),
+		Date:      midnight.Format(dateFormatYYYYMMDD),
 		DayLabel:  "Today",
 		CardCount: count,
 	}
@@ -1393,7 +1428,7 @@ func (a *App) GetFlashcardDueTimeline(timezoneOffsetMinutes int) map[string]inte
 		}
 
 		timeline[i] = FlashcardDuePoint{
-			Date:      targetDay.Format("2006-01-02"),
+			Date:      targetDay.Format(dateFormatYYYYMMDD),
 			DayLabel:  dayLabel,
 			CardCount: count,
 		}
