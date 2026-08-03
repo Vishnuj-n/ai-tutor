@@ -47,11 +47,17 @@ func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *Extracte
 	sample := buildPageSample(doc, 30)
 
 	if llmProvider != nil {
-		// Pass the raw nested pdfcpu bookmark JSON so the LLM sees the full hierarchy.
-		// Fall back to marshalling the flat draft if raw extraction failed.
+		// Pass compact JSON of extracted full bookmark hierarchy to LLM so it sees all nodes cleanly without raw JSON payload bloat.
 		var bookmarkContext string
 		if len(rawBookmarkJSON) > 0 {
-			bookmarkContext = string(rawBookmarkJSON)
+			fullNodes := ExtractFullPDFCPUBookmarkNodes(rawBookmarkJSON)
+			if len(fullNodes) > 0 {
+				if b, err := json.Marshal(fullNodes); err == nil {
+					bookmarkContext = string(b)
+				}
+			} else {
+				bookmarkContext = string(rawBookmarkJSON)
+			}
 		} else if len(bookmarkLikeDraft) > 0 {
 			if b, err := json.Marshal(bookmarkLikeDraft); err == nil {
 				bookmarkContext = string(b)

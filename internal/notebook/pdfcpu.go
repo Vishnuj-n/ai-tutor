@@ -14,7 +14,7 @@ import (
 	"ai-tutor/internal/models"
 )
 
-// extractPDFCPUBookmarkDraft extracts chapter drafts from PDF bookmarks using pdfcpu.
+// extractPDFCPUBookmarkDraft extracts level-1 chapter drafts from PDF bookmarks using pdfcpu.
 func extractPDFCPUBookmarkDraft(filePath string, pageCount int, uploadDir string) []models.SyllabusChapterDraft {
 	jsonOutput, err := runPDFCPUBookmarksExport(filePath, uploadDir)
 	if err != nil || strings.TrimSpace(string(jsonOutput)) == "" {
@@ -22,6 +22,106 @@ func extractPDFCPUBookmarkDraft(filePath string, pageCount int, uploadDir string
 	}
 
 	return ParsePDFCPUBookmarkDraftFromJSON(jsonOutput, pageCount)
+}
+
+type bookmarkNode struct {
+	title string
+	page  int
+}
+
+// parseBookmarkNode attempts to extract a title and page number from a map representation of a bookmark.
+func parseBookmarkNode(m map[string]interface{}) (bookmarkNode, bool) {
+	title := strings.TrimSpace(firstString(m, "title", "Title", "name", "Name"))
+	page := firstInt(m, "page", "Page", "pageNr", "PageNr", "p", "PageFrom", "from")
+	if title != "" && page > 0 {
+		return bookmarkNode{title: title, page: page}, true
+	}
+	return bookmarkNode{}, false
+}
+
+// bookmarkNodesToDraft converts a slice of bookmarkNode structs into SyllabusChapterDraft structs.
+func bookmarkNodesToDraft(nodes []bookmarkNode) []models.SyllabusChapterDraft {
+	if len(nodes) == 0 {
+		return nil
+	}
+	draft := make([]models.SyllabusChapterDraft, 0, len(nodes))
+	for _, item := range nodes {
+		draft = append(draft, models.SyllabusChapterDraft{Title: item.title, StartPage: item.page, EndPage: item.page})
+	}
+	return draft
+}
+
+// ExtractFullPDFCPUBookmarkNodes extracts all bookmark nodes across all hierarchy levels as clean SyllabusChapterDraft slices.
+func ExtractFullPDFCPUBookmarkNodes(raw []byte) []models.SyllabusChapterDraft {
+	var payload interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+
+	collected := make([]bookmarkNode, 0)
+	var walk func(node interface{})
+	walk = func(node interface{}) {
+		switch typed := node.(type) {
+		case map[string]interface{}:
+			if bm, ok := parseBookmarkNode(typed); ok {
+				collected = append(collected, bm)
+			}
+			for _, key := range []string{"kids", "Kids", "children", "Children", "bookmarks", "Bookmarks", "items", "Items", "nodes", "Nodes", "sub", "Sub"} {
+				if child, ok := typed[key]; ok {
+					walk(child)
+				}
+			}
+		case []interface{}:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+
+	walk(payload)
+	return bookmarkNodesToDraft(collected)
+}
+
+// ParsePDFCPUBookmarkDraftFromJSON parses top-level (level-1) pdfcpu bookmark JSON output into chapter drafts.
+func ParsePDFCPUBookmarkDraftFromJSON(raw []byte, pageCount int) []models.SyllabusChapterDraft {
+	var payload interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+
+	collected := make([]bookmarkNode, 0)
+
+	// Collect top-level items only (level-1 hierarchy)
+	var collectTopLevel func(node interface{})
+	collectTopLevel = func(node interface{}) {
+		switch typed := node.(type) {
+		case map[string]interface{}:
+			// Check if root payload containing "bookmarks" array
+			if bms, ok := typed["bookmarks"]; ok {
+				collectTopLevel(bms)
+				return
+			}
+			if bm, ok := parseBookmarkNode(typed); ok {
+				collected = append(collected, bm)
+			}
+		case []interface{}:
+			for _, child := range typed {
+				if m, ok := child.(map[string]interface{}); ok {
+					if bm, ok := parseBookmarkNode(m); ok {
+						collected = append(collected, bm)
+					}
+				}
+			}
+		}
+	}
+
+	collectTopLevel(payload)
+	draft := bookmarkNodesToDraft(collected)
+	if len(draft) == 0 {
+		return nil
+	}
+
+	return NormalizeSyllabusChapters(draft, pageCount)
 }
 
 // runPDFCPUBookmarksExport exports PDF bookmarks to JSON using pdfcpu.
@@ -171,52 +271,7 @@ func findPDFCPUExecutable() (string, error) {
 	return "", fmt.Errorf("pdfcpu binary not found; install pdfcpu and ensure it is available on PATH, GOBIN, or GOPATH/bin")
 }
 
-// ParsePDFCPUBookmarkDraftFromJSON parses pdfcpu bookmark JSON output into chapter drafts.
-func ParsePDFCPUBookmarkDraftFromJSON(raw []byte, pageCount int) []models.SyllabusChapterDraft {
-	var payload interface{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil
-	}
 
-	type bookmarkNode struct {
-		title string
-		page  int
-	}
-
-	collected := make([]bookmarkNode, 0)
-	var walk func(node interface{})
-	walk = func(node interface{}) {
-		switch typed := node.(type) {
-		case map[string]interface{}:
-			title := strings.TrimSpace(firstString(typed, "title", "Title", "name", "Name"))
-			page := firstInt(typed, "page", "Page", "pageNr", "PageNr", "p", "PageFrom", "from")
-			if title != "" && page > 0 {
-				collected = append(collected, bookmarkNode{title: title, page: page})
-			}
-			for _, key := range []string{"children", "Children", "bookmarks", "Bookmarks", "items", "Items", "nodes", "Nodes", "sub", "Sub"} {
-				if child, ok := typed[key]; ok {
-					walk(child)
-				}
-			}
-		case []interface{}:
-			for _, child := range typed {
-				walk(child)
-			}
-		}
-	}
-
-	walk(payload)
-	if len(collected) == 0 {
-		return nil
-	}
-
-	draft := make([]models.SyllabusChapterDraft, 0, len(collected))
-	for _, item := range collected {
-		draft = append(draft, models.SyllabusChapterDraft{Title: item.title, StartPage: item.page, EndPage: item.page})
-	}
-
-	return NormalizeSyllabusChapters(draft, pageCount)
-}
 
 // firstString returns the first non-empty string value for the given keys.
 func firstString(node map[string]interface{}, keys ...string) string {
