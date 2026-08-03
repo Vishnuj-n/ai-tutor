@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -28,6 +29,16 @@ func main() {
 		Width:            1024,
 		Height:           768,
 		WindowStartState: options.Maximised,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "studyloop-desktop-app-lock",
+			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
+				// ponytail: focus existing window if user opens executable again
+				if app.ctx != nil {
+					wailsruntime.WindowUnminimise(app.ctx)
+					wailsruntime.WindowShow(app.ctx)
+				}
+			},
+		},
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: notebookHandler(app),
