@@ -816,7 +816,7 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 	}
 	externalPrompt := ""
 	if task.TaskType == models.StudyTaskTypeSocraticRemedial {
-		externalPrompt = buildSocraticRemedialPrompt(repo, task)
+		externalPrompt = buildSocraticRemedialPrompt(repo, *task)
 	}
 
 	return map[string]interface{}{
@@ -831,7 +831,7 @@ func (a *App) GetTaskContext(taskID string) map[string]interface{} {
 	}
 }
 
-func buildSocraticRemedialPrompt(repo *db.Repository, task *models.StudyQueueTask) string {
+func buildSocraticRemedialPrompt(repo *db.Repository, task models.StudyQueueTask) string {
 	bundle, err := repo.GetReaderTopicBundle(task.TopicID, task.NotebookID)
 	if err != nil {
 		utils.Warnf("failed to get reader topic bundle for task %s: %v", task.ID, err)
@@ -859,6 +859,12 @@ func buildSocraticRemedialPrompt(repo *db.Repository, task *models.StudyQueueTas
 
 	promptText := fmt.Sprintf("I'm studying the following text from %s for preparation. I've failed to understand it twice. Please act as a Socratic tutor — don't give me summaries or answers. Instead, ask me leading questions that guide me to discover the key concepts myself. Start with the most fundamental question.\n\n", materialName)
 
+	promptText = appendFailedQuestionsSection(promptText, task)
+
+	return promptText + bookContext + "---\n" + sourceText + "\n---"
+}
+
+func appendFailedQuestionsSection(promptText string, task models.StudyQueueTask) string {
 	var payload struct {
 		FailedQuestions []models.FailedQuestionDetail `json:"failed_questions"`
 	}
@@ -884,8 +890,7 @@ func buildSocraticRemedialPrompt(repo *db.Repository, task *models.StudyQueueTas
 		}
 		promptText += "Please focus on guiding me through the concepts behind these failed questions.\n\n"
 	}
-
-	return promptText + bookContext + "---\n" + sourceText + "\n---"
+	return promptText
 }
 
 func (a *App) GenerateQuizForPageRange(notebookID string, startPage, endPage int) map[string]interface{} {
@@ -977,18 +982,21 @@ func checkAndInsertMilestoneExam(repo *db.Repository, notebookID string) {
 		return
 	}
 
-	representativeAttemptID := decadeAttempts[0].ID
+	var representativeAttemptID string
 	quizzes := make(map[string][]int, len(decadeAttempts))
 	passingScore := 70
-	for i, attempt := range decadeAttempts {
+	for _, attempt := range decadeAttempts {
 		flags, flagErr := studypkg.ComputeCorrectnessFlags(attempt.QuizPayload, attempt.AnswersJSON)
 		if flagErr != nil || flags == nil {
 			utils.Warnf("[MILESTONE_EXAM] skipped_corrupt_attempt notebookID=%s attemptID=%s err=%v", notebookID, attempt.ID, flagErr)
 			continue
 		}
 		quizzes[attempt.ID] = flags
-		if i == 0 && attempt.PassingScore > 0 {
-			passingScore = attempt.PassingScore
+		if representativeAttemptID == "" {
+			representativeAttemptID = attempt.ID
+			if attempt.PassingScore > 0 {
+				passingScore = attempt.PassingScore
+			}
 		}
 	}
 
@@ -1310,7 +1318,7 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 		return map[string]interface{}{"error": "task is not a flashcard generation retry task"}
 	}
 
-	topicID, startPage, endPage, resolveErr := resolveRetryTopicAndBounds(repo, task)
+	topicID, startPage, endPage, resolveErr := resolveRetryTopicAndBounds(repo, *task)
 	if resolveErr != nil {
 		utils.Warnf("[FLASHCARD_PIPELINE] retry_flashcard_generation_failed taskID=%s reason=no_topics_for_notebook notebookID=%s", taskID, task.NotebookID)
 		return map[string]interface{}{"error": resolveErr.Error()}
@@ -1347,7 +1355,7 @@ func (a *App) RetryFlashcardGeneration(taskID string) map[string]interface{} {
 	}
 }
 
-func resolveRetryTopicAndBounds(repo *db.Repository, task *models.StudyQueueTask) (string, int, int, error) {
+func resolveRetryTopicAndBounds(repo *db.Repository, task models.StudyQueueTask) (string, int, int, error) {
 	topicID := task.TopicID
 	startPage := task.StartPage
 	endPage := task.EndPage

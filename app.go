@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -391,6 +392,12 @@ func (a *App) InitializeRAG() map[string]interface{} {
 
 func (a *App) performAsyncRAGSetup() {
 	defer func() {
+		if r := recover(); r != nil {
+			errStr := fmt.Sprintf("panic during RAG setup: %v", r)
+			utils.Errorf("%s", errStr)
+			a.setAIInitError(errStr)
+			emitRagSetupFailed(a, errStr)
+		}
 		ragSetupMutex.Lock()
 		isRagSettingUp = false
 		ragSetupMutex.Unlock()
@@ -428,27 +435,31 @@ func (a *App) performAsyncRAGSetup() {
 
 	if err := a.applyVectorDBAndEmbedder(newRepo, emb); err != nil {
 		_ = newRepo.Close()
-		a.setAIInitError(fmt.Sprintf("failed to apply vector DB: %v", err))
-		emitRagSetupFailed(a, a.aiInitError)
+		errMsg := fmt.Sprintf("failed to apply vector DB: %v", err)
+		a.setAIInitError(errMsg)
+		emitRagSetupFailed(a, errMsg)
 		return
 	}
 
 	if err := a.reloadRetrievalEngine(); err != nil {
-		a.setAIInitError(fmt.Sprintf("failed to reload retrieval engine: %v", err))
-		emitRagSetupFailed(a, a.aiInitError)
+		errMsg := fmt.Sprintf("failed to reload retrieval engine: %v", err)
+		a.setAIInitError(errMsg)
+		emitRagSetupFailed(a, errMsg)
 		return
 	}
 
 	if err := a.buildVectorIndex(emb); err != nil {
 		utils.Errorf("vector indexing failed after RAG enable: %v", err)
-		a.setAIInitError(fmt.Sprintf("vector indexing failed: %v", err))
-		emitRagSetupFailed(a, a.aiInitError)
+		errMsg := fmt.Sprintf("vector indexing failed: %v", err)
+		a.setAIInitError(errMsg)
+		emitRagSetupFailed(a, errMsg)
 		return
 	}
 
 	if err := a.enableRAGUserSettings(); err != nil {
-		a.setAIInitError(err.Error())
-		emitRagSetupFailed(a, a.aiInitError)
+		errMsg := err.Error()
+		a.setAIInitError(errMsg)
+		emitRagSetupFailed(a, errMsg)
 		return
 	}
 
@@ -463,12 +474,16 @@ func (a *App) setAIInitError(errMsg string) {
 }
 
 func (a *App) enableRAGUserSettings() error {
-	settings, err := a.getRepo().GetUserSettings()
+	repo := a.getRepo()
+	if repo == nil {
+		return errors.New(errDatabaseNotInitialized)
+	}
+	settings, err := repo.GetUserSettings()
 	if err != nil {
 		return fmt.Errorf("failed to read user settings: %v", err)
 	}
 	settings.RAGEnabled = true
-	if err := a.getRepo().UpdateUserSettings(*settings); err != nil {
+	if err := repo.UpdateUserSettings(*settings); err != nil {
 		return fmt.Errorf("failed to update user settings: %v", err)
 	}
 	return nil

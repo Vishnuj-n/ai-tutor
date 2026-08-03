@@ -847,7 +847,7 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 
 	return map[string]interface{}{
 		"has_deadline":     true,
-		"deadline":         deadlineTime.Format("2006-01-02"),
+		"deadline":         deadlineTime.Format(dateFormatYYYYMMDD),
 		"daily_pace":       dailyPace,
 		"remaining_words":  remainingWords,
 		"days_remaining":   daysRemaining,
