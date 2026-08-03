@@ -126,10 +126,16 @@ Rules:
 - Do not emit duplicates or wrapper nodes that are just groupings of sub-chapters.`,
 			bookName, strings.ToLower(fileType), doc.PageCount, bookmarkContext, sample)
 
-		// Final token check
+		// Final token check & auto-truncation to prevent prompt context errors
 		promptTokens, err := embeddings.CountTokens(prompt)
 		if err == nil && promptTokens > maxInputTokens {
-			return nil, fmt.Errorf("prompt exceeds model context limit: %d > %d tokens", promptTokens, maxInputTokens)
+			targetTokens := maxInputTokens - 200
+			if targetTokens < 1000 {
+				targetTokens = 1000
+			}
+			if truncated, err := embeddings.TruncateToTokens(prompt, targetTokens); err == nil && len(truncated) > 0 {
+				prompt = truncated
+			}
 		}
 
 		raw, err := llmProvider.GenerateAnswer(prompt)
