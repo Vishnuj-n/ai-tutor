@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -662,7 +663,7 @@ func (a *App) GetNotebooks(topicID, profileID string) []map[string]interface{} {
 func (a *App) GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
 	repo := a.getRepo()
 	if repo == nil {
-		return nil, fmt.Errorf(errDatabaseNotInitialized)
+		return nil, errors.New(errDatabaseNotInitialized)
 	}
 	profileID := a.resolveExplicitActiveProfileID()
 	tree, err := repo.GetNotebookTopicTree(profileID)
