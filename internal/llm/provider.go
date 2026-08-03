@@ -143,29 +143,24 @@ func getModelLimits(model string) ModelLimits {
 	switch {
 	case strings.Contains(model, "llama-3.1-8b"):
 		return ModelLimits{
-			MaxInputTokens:  40000, // ~60% of 128k context
-			MaxOutputTokens: 3000,
+			MaxInputTokens:  5500, // Safe fit for 6K TPM free tier
+			MaxOutputTokens: 1500,
 		}
 	case strings.Contains(model, "llama-3.3-70b"):
 		return ModelLimits{
-			MaxInputTokens:  50000, // ~60% of 128k context
-			MaxOutputTokens: 4000,
-		}
-	case strings.Contains(model, "gpt-oss-120b"):
-		return ModelLimits{
-			MaxInputTokens:  6000, // Safe default for standard on_demand tier (Limit 8000 TPM)
-			MaxOutputTokens: 1500,
-		}
-	case strings.Contains(model, "gpt-oss-20b"):
-		return ModelLimits{
-			MaxInputTokens:  35000, // ~60% of 128k context
+			MaxInputTokens:  11000, // Safe fit for 12K TPM free tier
 			MaxOutputTokens: 2500,
+		}
+	case strings.Contains(model, "gpt-oss-120b"), strings.Contains(model, "gpt-oss-20b"):
+		return ModelLimits{
+			MaxInputTokens:  7500, // Safe fit for 8K TPM free tier
+			MaxOutputTokens: 1500,
 		}
 	default:
 		// Conservative defaults for unknown models
 		return ModelLimits{
-			MaxInputTokens:  30000,
-			MaxOutputTokens: 3000,
+			MaxInputTokens:  7500,
+			MaxOutputTokens: 1500,
 		}
 	}
 }

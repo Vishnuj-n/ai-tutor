@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -35,7 +36,7 @@ type ingestionProgressPayload struct {
 func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if a.notebookService == nil {
 		return map[string]interface{}{
@@ -57,7 +58,7 @@ func (a *App) UploadNotebook(fileData []byte, fileName string) map[string]interf
 func (a *App) UploadNotebookFromPath(filePath string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if a.notebookService == nil {
 		return map[string]interface{}{
@@ -78,7 +79,7 @@ func (a *App) UploadNotebookFromPath(filePath string) map[string]interface{} {
 func (a *App) finalizeNotebookUpload(uploadResult *notebook.UploadResult) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if uploadResult == nil {
 		return map[string]interface{}{
@@ -163,7 +164,7 @@ func (a *App) resolveExplicitActiveProfileID() string {
 func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
@@ -313,7 +314,7 @@ func (a *App) AICleanupNotebookSyllabus(notebookID string) map[string]interface{
 func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.SyllabusChapterDraft) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
@@ -627,7 +628,7 @@ func (a *App) ConfirmNotebookSyllabus(notebookID string, chapters []models.Sylla
 func (a *App) GetNotebooks(topicID, profileID string) []map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return []map[string]interface{}{{"error": "database repository not initialized"}}
+		return []map[string]interface{}{{"error": errDatabaseNotInitialized}}
 	}
 	notebooks, err := repo.GetNotebooks(topicID, profileID)
 	if err != nil {
@@ -662,7 +663,7 @@ func (a *App) GetNotebooks(topicID, profileID string) []map[string]interface{} {
 func (a *App) GetNotebookTopicTree() ([]models.NotebookTopicTreeNode, error) {
 	repo := a.getRepo()
 	if repo == nil {
-		return nil, fmt.Errorf("database repository not initialized")
+		return nil, errors.New(errDatabaseNotInitialized)
 	}
 	profileID := a.resolveExplicitActiveProfileID()
 	tree, err := repo.GetNotebookTopicTree(profileID)
@@ -684,7 +685,7 @@ func emitIngestionProgress(a *App, payload ingestionProgressPayload) {
 func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	notebookID = strings.TrimSpace(notebookID)
 	title = strings.TrimSpace(title)
@@ -706,7 +707,7 @@ func (a *App) UpdateNotebookTitle(notebookID string, title string) map[string]in
 func (a *App) UpdateNotebookPriority(notebookID string, priority int) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	notebookID = strings.TrimSpace(notebookID)
 	if notebookID == "" {
@@ -731,7 +732,7 @@ func (a *App) UpdateNotebookPriority(notebookID string, priority int) map[string
 func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if a.notebookService == nil {
 		return map[string]interface{}{
@@ -778,7 +779,7 @@ func (a *App) DeleteNotebook(notebookID string) map[string]interface{} {
 func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
-		return map[string]interface{}{"error": "database repository not initialized"}
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	profileID = strings.TrimSpace(profileID)
 	if profileID == "" {

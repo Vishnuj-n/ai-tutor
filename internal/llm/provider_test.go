@@ -47,9 +47,19 @@ func TestLoadConfigFromEnvForPrefixFallsBackToLegacyVars(t *testing.T) {
 }
 
 func TestGetModelLimitsDefault(t *testing.T) {
+	limits := getModelLimits("unknown/custom-model")
+	if limits.MaxInputTokens != 7500 {
+		t.Errorf("expected default MaxInputTokens for unknown model to be 7500, got %d", limits.MaxInputTokens)
+	}
+	if limits.MaxOutputTokens != 1500 {
+		t.Errorf("expected default MaxOutputTokens for unknown model to be 1500, got %d", limits.MaxOutputTokens)
+	}
+}
+
+func TestGetModelLimitsGPTOss(t *testing.T) {
 	limits := getModelLimits("openai/gpt-oss-120b")
-	if limits.MaxInputTokens != 6000 {
-		t.Errorf("expected MaxInputTokens for gpt-oss-120b to be 6000, got %d", limits.MaxInputTokens)
+	if limits.MaxInputTokens != 7500 {
+		t.Errorf("expected MaxInputTokens for gpt-oss-120b to be 7500, got %d", limits.MaxInputTokens)
 	}
 	if limits.MaxOutputTokens != 1500 {
 		t.Errorf("expected MaxOutputTokens for gpt-oss-120b to be 1500, got %d", limits.MaxOutputTokens)

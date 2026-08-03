@@ -10,7 +10,6 @@ import (
 	"ai-tutor/internal/embeddings"
 	"ai-tutor/internal/llm"
 	"ai-tutor/internal/models"
-	"ai-tutor/internal/utils"
 )
 
 // LLMProvider interface for LLM operations.
@@ -47,64 +46,68 @@ func (s *Service) DraftSyllabusChapters(fileType, filePath string, doc *Extracte
 	sample := buildPageSample(doc, 30)
 
 	if llmProvider != nil {
-		// Pass the raw nested pdfcpu bookmark JSON so the LLM sees the full hierarchy.
-		// Fall back to marshalling the flat draft if raw extraction failed.
-		var bookmarkContext string
-		if len(rawBookmarkJSON) > 0 {
-			bookmarkContext = string(rawBookmarkJSON)
-		} else if len(bookmarkLikeDraft) > 0 {
-			if b, err := json.Marshal(bookmarkLikeDraft); err == nil {
-				bookmarkContext = string(b)
-			}
-		}
-		if bookmarkContext == "" {
-			bookmarkContext = "(none)"
-		}
-
 		bookName := strings.TrimSuffix(filepath.Base(strings.TrimSpace(filePath)), filepath.Ext(filePath))
 		if bookName == "" {
 			bookName = "(unknown)"
 		}
 
-		// Token budgeting: cap prompt to fit within model's input limit.
-		limits := llmProvider.GetLimits()
-		maxInputTokens := limits.MaxInputTokens
-		const baseOverheadTokens = 500
-		const safetyMarginTokens = 500
-		availableBudget := maxInputTokens - baseOverheadTokens - safetyMarginTokens
-		if availableBudget < 1000 {
-			availableBudget = 1000
-		}
-		utils.Warnf("[SYLLABUS_PIPELINE] model_limits model=%s max_input=%d budget=%d", "syllabus", maxInputTokens, availableBudget)
-
-		// Truncate bookmark context and sample to fit budget.
-		// Estimate tokens ~ 4 chars per token.
-		bookmarkChars := len(bookmarkContext)
-		sampleChars := len(sample)
-		totalChars := bookmarkChars + sampleChars
-		maxChars := availableBudget * 4
-		if totalChars > maxChars && totalChars > 0 {
-			// Proportionally truncate both
-			bookmarkRatio := float64(bookmarkChars) / float64(totalChars)
-			sampleRatio := float64(sampleChars) / float64(totalChars)
-			bookmarkMaxChars := int(float64(maxChars) * bookmarkRatio)
-			sampleMaxChars := int(float64(maxChars) * sampleRatio)
-			if len(bookmarkContext) > bookmarkMaxChars {
-				bookmarkContext = truncateToCharBoundary(bookmarkContext, bookmarkMaxChars)
+		var prompt string
+		if len(rawBookmarkJSON) > 0 || len(bookmarkLikeDraft) > 0 {
+			var bookmarkContext string
+			if len(rawBookmarkJSON) > 0 {
+				fullNodes := ExtractFullPDFCPUBookmarkNodes(rawBookmarkJSON)
+				if len(fullNodes) > 0 {
+					if b, err := json.Marshal(fullNodes); err == nil {
+						bookmarkContext = string(b)
+					}
+				} else {
+					bookmarkContext = string(rawBookmarkJSON)
+				}
+			} else if len(bookmarkLikeDraft) > 0 {
+				if b, err := json.Marshal(bookmarkLikeDraft); err == nil {
+					bookmarkContext = string(b)
+				}
 			}
-			if len(sample) > sampleMaxChars {
-				sample = truncateToCharBoundary(sample, sampleMaxChars)
+			if bookmarkContext == "" {
+				bookmarkContext = "(none)"
 			}
-		}
 
-		prompt := fmt.Sprintf(`You are extracting a study syllabus from a document.
+			prompt = fmt.Sprintf(`You are extracting main study chapters for a book syllabus.
+
+Document: %s
+Total pages: %d
+
+Normalized Bookmark Tree:
+%s
+
+Task: Identify only the main chapters (excluding sub-chapters, sections, sub-topics, or minor headings).
+Rules:
+- Output strict JSON only: {"chapters":[{"title":"...","start_page":1,"end_page":10}]}
+- Select only top-level main chapters. Exclude sub-chapters, sections, and sub-topics.
+- Clean up chapter titles (e.g. remove "Chapter 1." prefix or noise).
+- Preserve accurate page numbers from the provided bookmarks. No gaps. No overlaps.`,
+				bookName, doc.PageCount, bookmarkContext)
+		} else {
+			limits := llmProvider.GetLimits()
+			maxInputTokens := limits.MaxInputTokens
+			const baseOverheadTokens = 500
+			const safetyMarginTokens = 500
+			availableBudget := maxInputTokens - baseOverheadTokens - safetyMarginTokens
+			if availableBudget < 1000 {
+				availableBudget = 1000
+			}
+
+			sampleChars := len(sample)
+			maxChars := availableBudget * 4
+			if sampleChars > maxChars && maxChars > 0 {
+				sample = truncateToCharBoundary(sample, maxChars)
+			}
+
+			prompt = fmt.Sprintf(`You are extracting a study syllabus from a document.
 
 Document: %s
 File type: %s
 Total pages: %d
-
-Bookmark tree (nested JSON from pdfcpu — use this to understand the document hierarchy):
-%s
 
 Text sample with absolute page markers (first 30 sections):
 %s
@@ -113,17 +116,22 @@ Task: Return a flat list of study-ready chapters with accurate page ranges.
 Rules:
 - Output strict JSON only: {"chapters":[{"title":"...","start_page":1,"end_page":10}]}
 - Use absolute page numbers. Preserve order. No gaps. No overlaps.
-- Prefer the most granular meaningful units (e.g. individual chapters, not parts or volumes).
-- If the bookmark tree shows a hierarchy (e.g. Part > Chapter > Section), emit only the
-  leaf chapters — skip container entries whose range fully contains multiple sub-entries.
-- Derive title and page range from both the bookmark tree and the text sample.
-- Do not emit duplicates or wrapper nodes that are just groupings of sub-chapters.`,
-			bookName, strings.ToLower(fileType), doc.PageCount, bookmarkContext, sample)
+- Prefer main chapters.`,
+				bookName, strings.ToLower(fileType), doc.PageCount, sample)
+		}
 
-		// Final token check
+		// Token budgeting check
+		limits := llmProvider.GetLimits()
+		maxInputTokens := limits.MaxInputTokens
 		promptTokens, err := embeddings.CountTokens(prompt)
 		if err == nil && promptTokens > maxInputTokens {
-			return nil, fmt.Errorf("prompt exceeds model context limit: %d > %d tokens", promptTokens, maxInputTokens)
+			targetTokens := maxInputTokens - 200
+			if targetTokens < 1000 {
+				targetTokens = 1000
+			}
+			if truncated, err := embeddings.TruncateToTokens(prompt, targetTokens); err == nil && len(truncated) > 0 {
+				prompt = truncated
+			}
 		}
 
 		raw, err := llmProvider.GenerateAnswer(prompt)
