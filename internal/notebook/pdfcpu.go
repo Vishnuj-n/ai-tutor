@@ -51,6 +51,24 @@ func bookmarkNodesToDraft(nodes []bookmarkNode) []models.SyllabusChapterDraft {
 	return draft
 }
 
+func walkBookmarkNode(node interface{}, collected *[]bookmarkNode) {
+	switch typed := node.(type) {
+	case map[string]interface{}:
+		if bm, ok := parseBookmarkNode(typed); ok {
+			*collected = append(*collected, bm)
+		}
+		for _, key := range []string{"kids", "Kids", "children", "Children", "bookmarks", "Bookmarks", "items", "Items", "nodes", "Nodes", "sub", "Sub"} {
+			if child, ok := typed[key]; ok {
+				walkBookmarkNode(child, collected)
+			}
+		}
+	case []interface{}:
+		for _, child := range typed {
+			walkBookmarkNode(child, collected)
+		}
+	}
+}
+
 // ExtractFullPDFCPUBookmarkNodes extracts all bookmark nodes across all hierarchy levels as clean SyllabusChapterDraft slices.
 func ExtractFullPDFCPUBookmarkNodes(raw []byte) []models.SyllabusChapterDraft {
 	var payload interface{}
@@ -59,26 +77,7 @@ func ExtractFullPDFCPUBookmarkNodes(raw []byte) []models.SyllabusChapterDraft {
 	}
 
 	collected := make([]bookmarkNode, 0)
-	var walk func(node interface{})
-	walk = func(node interface{}) {
-		switch typed := node.(type) {
-		case map[string]interface{}:
-			if bm, ok := parseBookmarkNode(typed); ok {
-				collected = append(collected, bm)
-			}
-			for _, key := range []string{"kids", "Kids", "children", "Children", "bookmarks", "Bookmarks", "items", "Items", "nodes", "Nodes", "sub", "Sub"} {
-				if child, ok := typed[key]; ok {
-					walk(child)
-				}
-			}
-		case []interface{}:
-			for _, child := range typed {
-				walk(child)
-			}
-		}
-	}
-
-	walk(payload)
+	walkBookmarkNode(payload, &collected)
 	return bookmarkNodesToDraft(collected)
 }
 

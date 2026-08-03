@@ -30,12 +30,12 @@ func main() {
 		Height:           768,
 		WindowStartState: options.Maximised,
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "studyloop-desktop-app-lock",
+			UniqueId: "8f4e2a1b-9c3d-4e5f-b6a7-1c2d3e4f5a6b",
 			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
 				// ponytail: focus existing window if user opens executable again
 				if app.ctx != nil {
 					wailsruntime.WindowUnminimise(app.ctx)
-					wailsruntime.WindowShow(app.ctx)
+					wailsruntime.Show(app.ctx)
 				}
 			},
 		},
