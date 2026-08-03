@@ -300,75 +300,84 @@ async function loadAgenda() {
     const tzOffset = new Date().getTimezoneOffset()
     const overview = await getDashboardOverview(tzOffset)
 
-    if (overview.settings && !overview.settings.error) {
-      userSettings.value = overview.settings
-      lastPersistedProfile.value = overview.settings.active_profile_id || ''
-    } else if (overview.settings && overview.settings.error) {
-      error.value = overview.settings.error
+    if (!applyDashboardOverview(overview)) {
       return
     }
 
-    if (overview.profiles && !overview.profiles.error) {
-      profiles.value = overview.profiles.profiles || []
-    } else if (overview.profiles && overview.profiles.error) {
-      error.value = overview.profiles.error
-      return
-    }
-
-    if (overview.today_plan && !overview.today_plan.error) {
-      const response = overview.today_plan
-      tasks.value = response.tasks || []
-      dueReviewCards.value = response.due_review_cards || 0
-      totalDueReviewCards.value = response.total_due_review_cards || 0
-
-      const activeNotebookCount = response.active_notebook_count || 0
-      hasActiveStudyContent.value = tasks.value.length > 0 || activeNotebookCount > 0
-    } else if (overview.today_plan && overview.today_plan.error) {
-      error.value = overview.today_plan.error
-      return
-    }
-
-    if (overview.streak_state && !overview.streak_state.error) {
-      streakState.value = overview.streak_state
-      streakError.value = ''
-    } else if (overview.streak_state && overview.streak_state.error) {
-      streakError.value = overview.streak_state.error
-    }
-
-    // Load pace for active profile
-    const knownProfile = profiles.value.find((pr) => pr.id === userSettings.value.active_profile_id)
-    if (userSettings.value.active_profile_id && knownProfile) {
-      try {
-        const pace = await getProfileDailyPace(userSettings.value.active_profile_id)
-        if (!pace.error) {
-          activeProfilePace.value = pace
-        } else {
-          activeProfilePace.value = null
-        }
-      } catch (err) {
-        console.error('Failed to get profile daily pace', err)
-        activeProfilePace.value = null
-      }
-    } else {
-      activeProfilePace.value = null
-    }
-
-    // Fetch flashcard review forecast timeline
-    try {
-      const timelineRes = await getFlashcardDueTimeline(tzOffset)
-      if (timelineRes && !timelineRes.error) {
-        timelineData.value = timelineRes.timeline || []
-      } else {
-        timelineData.value = []
-      }
-    } catch (err) {
-      console.error('Failed to get flashcard due timeline', err)
-      timelineData.value = []
-    }
+    await loadActiveProfilePace()
+    await loadFlashcardTimeline(tzOffset)
   } catch (err) {
     error.value = err.message || 'Failed to load tasks'
   } finally {
     loading.value = false
+  }
+}
+
+function applyDashboardOverview(overview) {
+  if (overview.settings?.error) {
+    error.value = overview.settings.error
+    return false
+  }
+  if (overview.settings) {
+    userSettings.value = overview.settings
+    lastPersistedProfile.value = overview.settings.active_profile_id || ''
+  }
+
+  if (overview.profiles?.error) {
+    error.value = overview.profiles.error
+    return false
+  }
+  if (overview.profiles) {
+    profiles.value = overview.profiles.profiles || []
+  }
+
+  if (overview.today_plan?.error) {
+    error.value = overview.today_plan.error
+    return false
+  }
+  if (overview.today_plan) {
+    const response = overview.today_plan
+    tasks.value = response.tasks || []
+    dueReviewCards.value = response.due_review_cards || 0
+    totalDueReviewCards.value = response.total_due_review_cards || 0
+    const activeNotebookCount = response.active_notebook_count || 0
+    hasActiveStudyContent.value = tasks.value.length > 0 || activeNotebookCount > 0
+  }
+
+  if (overview.streak_state?.error) {
+    streakError.value = overview.streak_state.error
+  } else if (overview.streak_state) {
+    streakState.value = overview.streak_state
+    streakError.value = ''
+  }
+
+  return true
+}
+
+async function loadActiveProfilePace() {
+  const profileId = userSettings.value.active_profile_id
+  const knownProfile = profiles.value.find((pr) => pr.id === profileId)
+  if (!profileId || !knownProfile) {
+    activeProfilePace.value = null
+    return
+  }
+
+  try {
+    const pace = await getProfileDailyPace(profileId)
+    activeProfilePace.value = pace.error ? null : pace
+  } catch (err) {
+    console.error('Failed to get profile daily pace', err)
+    activeProfilePace.value = null
+  }
+}
+
+async function loadFlashcardTimeline(tzOffset) {
+  try {
+    const timelineRes = await getFlashcardDueTimeline(tzOffset)
+    timelineData.value = timelineRes && !timelineRes.error ? (timelineRes.timeline || []) : []
+  } catch (err) {
+    console.error('Failed to get flashcard due timeline', err)
+    timelineData.value = []
   }
 }
 
