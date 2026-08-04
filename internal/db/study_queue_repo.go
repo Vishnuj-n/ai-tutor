@@ -242,6 +242,7 @@ func (r *Repository) getPendingTasksWithProfile(activeProfileID string, skipVal 
 		) ranked_tasks
 		WHERE rn = 1
 		ORDER BY COALESCE(notebook_priority, 5) DESC, notebook_title ASC, id ASC
+		LIMIT 1
 	`
 	rows, err := r.db.Query(query, skipVal, activeProfileID, activeProfileID, activeProfileID)
 	if err != nil {
