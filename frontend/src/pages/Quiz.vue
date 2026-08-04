@@ -164,6 +164,55 @@
         </p>
       </div>
 
+      <!-- Questions Breakdown (Correct / Incorrect review) -->
+      <section v-if="questions.length > 0" class="result-breakdown">
+        <h3 class="breakdown-title">Question Breakdown</h3>
+        <article
+          v-for="(q, index) in questions"
+          :key="q.id"
+          class="breakdown-card"
+          :class="
+            (answers[q.id] || '').trim().toLowerCase() === (q.correct_answer || '').trim().toLowerCase()
+              ? 'breakdown-card--correct'
+              : 'breakdown-card--incorrect'
+          "
+        >
+          <div class="breakdown-header">
+            <span class="question-num">{{ index + 1 }}</span>
+            <span class="breakdown-status">
+              {{
+                (answers[q.id] || '').trim().toLowerCase() === (q.correct_answer || '').trim().toLowerCase()
+                  ? '✓ Correct'
+                  : '✗ Incorrect'
+              }}
+            </span>
+          </div>
+          <p class="question-prompt">{{ q.prompt }}</p>
+          <div class="breakdown-answers">
+            <p class="answer-item">
+              <span class="answer-label">Your Answer:</span>
+              <span
+                class="answer-val"
+                :class="
+                  (answers[q.id] || '').trim().toLowerCase() === (q.correct_answer || '').trim().toLowerCase()
+                    ? 'val--correct'
+                    : 'val--incorrect'
+                "
+              >
+                {{ answers[q.id] || 'None' }}
+              </span>
+            </p>
+            <p
+              v-if="(answers[q.id] || '').trim().toLowerCase() !== (q.correct_answer || '').trim().toLowerCase()"
+              class="answer-item"
+            >
+              <span class="answer-label">Correct Answer:</span>
+              <span class="answer-val val--correct">{{ q.correct_answer }}</span>
+            </p>
+          </div>
+        </article>
+      </section>
+
       <div class="result-panel__actions">
         <!-- Retry Sync Button -->
         <button
@@ -1073,5 +1122,88 @@ async function handleContinue() {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+/* ── Result Breakdown ─────────────────────────── */
+.result-breakdown {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+  border-top: 1px solid var(--outline-variant);
+  padding-top: 20px;
+  text-align: left;
+}
+
+.breakdown-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.breakdown-card {
+  background: var(--surface-container-high);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--outline-variant);
+  display: grid;
+  gap: 10px;
+}
+
+.breakdown-card--correct {
+  border-left: 4px solid #2ecc71;
+}
+
+.breakdown-card--incorrect {
+  border-left: 4px solid #e74c3c;
+}
+
+.breakdown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.breakdown-status {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.breakdown-card--correct .breakdown-status {
+  color: #2ecc71;
+}
+
+.breakdown-card--incorrect .breakdown-status {
+  color: #e74c3c;
+}
+
+.breakdown-answers {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.answer-item {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.answer-label {
+  font-weight: 600;
+  color: var(--muted-text);
+}
+
+.answer-val {
+  font-weight: 500;
+}
+
+.val--correct {
+  color: #2ecc71;
+}
+
+.val--incorrect {
+  color: #e74c3c;
 }
 </style>
