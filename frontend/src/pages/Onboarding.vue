@@ -778,25 +778,25 @@ async function completeOnboarding() {
     const newProfile = profileRes.profile
 
     // 2. Set settings with this profile as active
-    const settingsRes = await updateUserSettings(
-      maxFlashcards.value,
-      studyStartTime.value,
-      studyEndTime.value,
-      remindersEnabled.value,
-      newProfile.id,
-      false, // skip to reading off by default
-      cloudSyncURL.value.trim(),
-      apiToken.value.trim(),
-      selectedTheme.value,
-      wantRag.value && ragSetupCompleted.value,
-      true, // default for ragNotebookChapter
-      true, // default for ragEntireNotebook
-      true, // default for ragQueueStudy
-      'CLASSIC', // default defaultRemedialStrategy
-      '', // classroom_code — set later from Settings
-      analyticsEnabled.value,
-      '' // anonymous_user_id (will auto-generate on backend settings load)
-    )
+    const settingsRes = await updateUserSettings({
+      max_flashcards_per_session: maxFlashcards.value,
+      study_start_time: studyStartTime.value,
+      study_end_time: studyEndTime.value,
+      reminders_enabled: remindersEnabled.value,
+      active_profile_id: newProfile.id,
+      skip_to_reading_active: false,
+      cloud_sync_url: cloudSyncURL.value.trim(),
+      cloud_api_token: apiToken.value.trim(),
+      theme: selectedTheme.value,
+      rag_enabled: wantRag.value && ragSetupCompleted.value,
+      rag_notebook_chapter: true,
+      rag_entire_notebook: true,
+      rag_queue_study: true,
+      default_remedial_strategy: 'CLASSIC',
+      classroom_code: '',
+      analytics_enabled: analyticsEnabled.value,
+      target_session_words: 5000,
+    })
 
     if (settingsRes.error) {
       error.value = settingsRes.error

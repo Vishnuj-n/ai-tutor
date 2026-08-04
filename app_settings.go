@@ -48,48 +48,32 @@ func (a *App) GetUserSettings() map[string]interface{} {
 	}
 }
 
-func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string, analyticsEnabled bool, anonymousUserID string, targetSessionWords int) map[string]interface{} {
+func (a *App) UpdateUserSettings(s models.UserSettings) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
-	if maxFlashcards < 5 || maxFlashcards > 200 {
+	if s.MaxFlashcardsPerSession < 5 || s.MaxFlashcardsPerSession > 200 {
 		return map[string]interface{}{"error": "max flashcards per session must be between 5 and 200"}
 	}
-	if targetSessionWords <= 0 {
-		targetSessionWords = 5000
+	if s.TargetSessionWords <= 0 {
+		s.TargetSessionWords = 5000
 	}
-	if _, err := time.Parse("15:04", startTime); err != nil {
-		return map[string]interface{}{"error": "invalid study start time: must match format HH:MM"}
+	if s.StudyStartTime != "" {
+		if _, err := time.Parse("15:04", s.StudyStartTime); err != nil {
+			return map[string]interface{}{"error": "invalid study start time: must match format HH:MM"}
+		}
 	}
-	if _, err := time.Parse("15:04", endTime); err != nil {
-		return map[string]interface{}{"error": "invalid study end time: must match format HH:MM"}
+	if s.StudyEndTime != "" {
+		if _, err := time.Parse("15:04", s.StudyEndTime); err != nil {
+			return map[string]interface{}{"error": "invalid study end time: must match format HH:MM"}
+		}
 	}
-	if defaultRemedialStrategy == "" {
-		defaultRemedialStrategy = "CLASSIC"
+	if s.DefaultRemedialStrategy == "" {
+		s.DefaultRemedialStrategy = "CLASSIC"
 	}
-	if defaultRemedialStrategy != "FAST" && defaultRemedialStrategy != "CLASSIC" {
+	if s.DefaultRemedialStrategy != "FAST" && s.DefaultRemedialStrategy != "CLASSIC" {
 		return map[string]interface{}{"error": "default remedial strategy must be CLASSIC or FAST"}
-	}
-	s := models.UserSettings{
-		MaxFlashcardsPerSession: maxFlashcards,
-		StudyStartTime:          startTime,
-		StudyEndTime:            endTime,
-		RemindersEnabled:        remindersEnabled,
-		ActiveProfileID:         activeProfileID,
-		SkipToReadingActive:     skipToReading,
-		CloudSyncURL:            syncURL,
-		CloudAPIToken:           apiToken,
-		Theme:                   theme,
-		RAGEnabled:              ragEnabled,
-		RAGNotebookChapter:      ragNotebookChapter,
-		RAGEntireNotebook:       ragEntireNotebook,
-		RAGQueueStudy:           ragQueueStudy,
-		DefaultRemedialStrategy: defaultRemedialStrategy,
-		ClassroomCode:           classroomCode,
-		AnalyticsEnabled:        analyticsEnabled,
-		AnonymousUserID:         anonymousUserID,
-		TargetSessionWords:      targetSessionWords,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {
@@ -98,7 +82,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 
 	// Only mutate runtime after successful persistence.
 	a.aiMutex.Lock()
-	if !ragEnabled && a.embedder != nil {
+	if !s.RAGEnabled && a.embedder != nil {
 		utils.Infof("RAG disabled dynamically in settings. Closing ONNX embedder.")
 		_ = a.embedder.Close()
 		a.embedder = nil
@@ -106,7 +90,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	}
 	a.aiMutex.Unlock()
 
-	if !ragEnabled {
+	if !s.RAGEnabled {
 		if err := a.reloadRetrievalEngine(); err != nil {
 			utils.Errorf("reloadRetrievalEngine after RAG disable: %v", err)
 			return map[string]interface{}{"error": "failed to reload retrieval engine: " + err.Error()}

@@ -175,22 +175,8 @@ async function extendStudyWindow(minutes) {
     const newM = (newMins % 60).toString().padStart(2, '0')
     const newEndTimeStr = `${newH}:${newM}`
 
-    const res = await updateUserSettings(
-      settings.max_flashcards_per_session,
-      settings.study_start_time,
-      newEndTimeStr,
-      settings.reminders_enabled,
-      settings.active_profile_id,
-      settings.skip_to_reading_active,
-      settings.cloud_sync_url,
-      settings.cloud_api_token,
-      settings.theme,
-      settings.rag_enabled,
-      settings.rag_notebook_chapter,
-      settings.rag_entire_notebook,
-      settings.rag_queue_study,
-      settings.default_remedial_strategy
-    )
+    const updated = { ...settings, study_end_time: newEndTimeStr }
+    const res = await updateUserSettings(updated)
 
     if (res.error) {
       console.error('Failed to extend study window:', res.error)

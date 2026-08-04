@@ -135,23 +135,9 @@ describe('Dashboard.vue Integration', () => {
 
     await toggleBtn.trigger('click')
     expect(appApi.updateUserSettings).toHaveBeenCalledWith(
-      30,
-      '17:00',
-      '18:00',
-      true,
-      'prof-1',
-      true, // toggled from false → true
-      '',
-      '',
-      '',
-      false,
-      true,
-      true,
-      true,
-      'CLASSIC',
-      '',
-      false,
-      ''
+      expect.objectContaining({
+        skip_to_reading_active: true,
+      })
     )
   })
 

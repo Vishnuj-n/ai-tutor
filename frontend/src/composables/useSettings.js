@@ -91,26 +91,7 @@ export function useSettings(errorRef, successRef) {
           return
         }
       }
-      const res = await updateUserSettings(
-        s.max_flashcards_per_session,
-        s.study_start_time,
-        s.study_end_time,
-        s.reminders_enabled,
-        s.active_profile_id,
-        s.skip_to_reading_active,
-        s.cloud_sync_url,
-        s.cloud_api_token,
-        s.theme,
-        s.rag_enabled,
-        s.rag_notebook_chapter,
-        s.rag_entire_notebook,
-        s.rag_queue_study,
-        s.default_remedial_strategy,
-        s.classroom_code || '',
-        s.analytics_enabled,
-        s.anonymous_user_id || '',
-        s.target_session_words || 5000
-      )
+      const res = await updateUserSettings(s)
       if (res.error) {
         errorRef.value = res.error
         return

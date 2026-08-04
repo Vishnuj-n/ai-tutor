@@ -170,46 +170,8 @@ export function getUserSettings() {
   return appBridge().GetUserSettings()
 }
 
-export function updateUserSettings(
-  maxFlashcards,
-  startTime,
-  endTime,
-  remindersEnabled,
-  activeProfileID,
-  skipToReading,
-  syncURL,
-  apiToken,
-  theme,
-  ragEnabled,
-  ragNotebookChapter,
-  ragEntireNotebook,
-  ragQueueStudy,
-  defaultRemedialStrategy,
-  classroomCode,
-  analyticsEnabled,
-  anonymousUserID,
-  targetSessionWords
-) {
-  return appBridge().UpdateUserSettings(
-    maxFlashcards,
-    startTime,
-    endTime,
-    remindersEnabled,
-    activeProfileID,
-    skipToReading,
-    syncURL,
-    apiToken,
-    theme,
-    ragEnabled,
-    ragNotebookChapter,
-    ragEntireNotebook,
-    ragQueueStudy,
-    defaultRemedialStrategy,
-    classroomCode,
-    analyticsEnabled,
-    anonymousUserID,
-    targetSessionWords || 5000
-  )
+export function updateUserSettings(settings) {
+  return appBridge().UpdateUserSettings(settings)
 }
 
 export function trackAnalyticsEvent(eventType, fileHash, pageNumber, metadata) {
