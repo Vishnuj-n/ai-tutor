@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-LINE_LIMIT = 800
+LINE_LIMIT = 1
 
 VALID_EXTENSIONS = {
     ".py", ".go", ".js", ".ts", ".tsx", ".jsx",

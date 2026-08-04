@@ -1539,6 +1539,9 @@ func (r *Repository) EnsurePendingReadingTasksForActiveNotebooks(activeProfileID
 		}
 		notebookIDs = append(notebookIDs, id)
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	for _, nID := range notebookIDs {
 		if err := r.EnsurePendingReadingTaskForNotebook(nID); err != nil {
