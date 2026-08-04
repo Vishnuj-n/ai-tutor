@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -97,6 +97,11 @@ func (a *App) initIndexQueue(ctx context.Context, repo *db.Repository) {
 	}
 }
 
+// Startup is called when Wails initializes the application.
+func (a *App) Startup(ctx context.Context) {
+	a.startup(ctx)
+}
+
 func (a *App) startup(ctx context.Context) {
 	if a.readyChan != nil {
 		defer close(a.readyChan)
@@ -132,12 +137,26 @@ func (a *App) startup(ctx context.Context) {
 	a.initIndexQueue(ctx, boot.Repo)
 }
 
-// shutdown is called when the Wails application is shutting down.
+// Shutdown is called when the Wails application is shutting down.
+func (a *App) Shutdown(ctx context.Context) {
+	a.shutdown(ctx)
+}
+
 func (a *App) shutdown(ctx context.Context) {
 	if a.indexQueue != nil {
 		a.indexQueue.Stop()
 	}
 	utils.CloseMultiFileLogger()
+}
+
+// GetCtx returns the application context.
+func (a *App) GetCtx() context.Context {
+	return a.ctx
+}
+
+// GetNotebookUploadDir returns the uploaded notebook files directory path.
+func (a *App) GetNotebookUploadDir() string {
+	return a.notebookUploadDir
 }
 
 func (a *App) Greet(name string) string {

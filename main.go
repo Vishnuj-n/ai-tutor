@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ai-tutor/internal/app"
 	"ai-tutor/internal/utils"
 
 	"github.com/wailsapp/wails/v2"
@@ -21,7 +22,7 @@ var assets embed.FS
 
 func main() {
 	// Create an instance of the app structure
-	app := NewApp()
+	a := app.NewApp()
 
 	// Create application with options
 	err := wails.Run(&options.App{
@@ -33,21 +34,21 @@ func main() {
 			UniqueId: "8f4e2a1b-9c3d-4e5f-b6a7-1c2d3e4f5a6b",
 			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
 				// ponytail: focus existing window if user opens executable again
-				if app.ctx != nil {
-					wailsruntime.WindowUnminimise(app.ctx)
-					wailsruntime.Show(app.ctx)
+				if ctx := a.GetCtx(); ctx != nil {
+					wailsruntime.WindowUnminimise(ctx)
+					wailsruntime.Show(ctx)
 				}
 			},
 		},
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
-			Handler: notebookHandler(app),
+			Handler: notebookHandler(a),
 		},
 		BackgroundColour: &options.RGBA{R: 249, G: 249, B: 251, A: 255},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		OnStartup:        a.Startup,
+		OnShutdown:       a.Shutdown,
 		Bind: []interface{}{
-			app,
+			a,
 		},
 	})
 
@@ -56,9 +57,10 @@ func main() {
 	}
 }
 
-func notebookHandler(app *App) http.Handler {
+func notebookHandler(a *app.App) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		if app == nil || app.notebookUploadDir == "" {
+		uploadDir := a.GetNotebookUploadDir()
+		if a == nil || uploadDir == "" {
 			utils.Warnf("[notebookHandler] Service unavailable: app is nil or upload dir empty")
 			http.Error(rw, "notebook directory unavailable", http.StatusServiceUnavailable)
 			return
@@ -69,7 +71,7 @@ func notebookHandler(app *App) http.Handler {
 			return
 		}
 
-		utils.Debugf("[notebookHandler] Top of handler: path=%s, dir=%s", req.URL.Path, app.notebookUploadDir)
+		utils.Debugf("[notebookHandler] Top of handler: path=%s, dir=%s", req.URL.Path, uploadDir)
 
 		// Serve only GET requests.
 		if req.Method != http.MethodGet {
@@ -91,7 +93,7 @@ func notebookHandler(app *App) http.Handler {
 		relPath := strings.TrimPrefix(unescapedPath, "/notebooks/")
 		relPath = filepath.Clean("/" + relPath)
 		
-		uploadDirClean := filepath.Clean(app.notebookUploadDir)
+		uploadDirClean := filepath.Clean(uploadDir)
 		fullPath := filepath.Clean(filepath.Join(uploadDirClean, relPath))
 		utils.Debugf("[notebookHandler] uploadDirClean: %s, fullPath: %s", uploadDirClean, fullPath)
 

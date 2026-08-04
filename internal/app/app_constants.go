@@ -1,4 +1,4 @@
-package main
+package app
 
 const (
 	errDatabaseNotInitialized     = "database repository not initialized"
