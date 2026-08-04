@@ -187,7 +187,8 @@ export function updateUserSettings(
   defaultRemedialStrategy,
   classroomCode,
   analyticsEnabled,
-  anonymousUserID
+  anonymousUserID,
+  targetSessionWords
 ) {
   return appBridge().UpdateUserSettings(
     maxFlashcards,
@@ -206,7 +207,8 @@ export function updateUserSettings(
     defaultRemedialStrategy,
     classroomCode,
     analyticsEnabled,
-    anonymousUserID
+    anonymousUserID,
+    targetSessionWords || 5000
   )
 }
 

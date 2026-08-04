@@ -20,8 +20,9 @@ const (
 	ClampWindowPages = 4
 
 	// Reading assumptions
-	WordsPerMinute     = 200
-	TargetSessionWords = 2500
+	WordsPerMinute            = 200
+	DefaultTargetSessionWords = 5000
+	TargetSessionWords        = 5000
 
 	// Fallback assumptions
 	FallbackWordsPerPage = 500
@@ -144,11 +145,10 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 		remainingReadingMinutes = 0
 	}
 
-	// Adjust reading token budget based on remaining time
-	tokenBudget := TargetSessionWords
-	maxReadingWords := remainingReadingMinutes * WordsPerMinute
-	if tokenBudget > maxReadingWords {
-		tokenBudget = maxReadingWords
+	// Reading token budget from user settings
+	tokenBudget := settings.TargetSessionWords
+	if tokenBudget <= 0 {
+		tokenBudget = DefaultTargetSessionWords
 	}
 	if tokenBudget < 0 {
 		tokenBudget = 0

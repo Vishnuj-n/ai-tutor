@@ -22,6 +22,7 @@ export function useSettings(errorRef, successRef) {
     default_remedial_strategy: 'CLASSIC',
     classroom_code: '',
     analytics_enabled: false,
+    target_session_words: 5000,
   })
 
   const studyDuration = ref('')
@@ -107,7 +108,8 @@ export function useSettings(errorRef, successRef) {
         s.default_remedial_strategy,
         s.classroom_code || '',
         s.analytics_enabled,
-        s.anonymous_user_id || ''
+        s.anonymous_user_id || '',
+        s.target_session_words || 5000
       )
       if (res.error) {
         errorRef.value = res.error

@@ -44,16 +44,20 @@ func (a *App) GetUserSettings() map[string]interface{} {
 		"student_username":           s.StudentUsername,
 		"analytics_enabled":          s.AnalyticsEnabled,
 		"anonymous_user_id":          s.AnonymousUserID,
+		"target_session_words":       s.TargetSessionWords,
 	}
 }
 
-func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string, analyticsEnabled bool, anonymousUserID string) map[string]interface{} {
+func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime string, remindersEnabled bool, activeProfileID string, skipToReading bool, syncURL, apiToken string, theme string, ragEnabled bool, ragNotebookChapter bool, ragEntireNotebook bool, ragQueueStudy bool, defaultRemedialStrategy string, classroomCode string, analyticsEnabled bool, anonymousUserID string, targetSessionWords int) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": errDatabaseNotInitialized}
 	}
 	if maxFlashcards < 5 || maxFlashcards > 200 {
 		return map[string]interface{}{"error": "max flashcards per session must be between 5 and 200"}
+	}
+	if targetSessionWords <= 0 {
+		targetSessionWords = 5000
 	}
 	if _, err := time.Parse("15:04", startTime); err != nil {
 		return map[string]interface{}{"error": "invalid study start time: must match format HH:MM"}
@@ -64,7 +68,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 	if defaultRemedialStrategy == "" {
 		defaultRemedialStrategy = "CLASSIC"
 	}
-	if defaultRemedialStrategy != "CLASSIC" && defaultRemedialStrategy != "FAST" {
+	if defaultRemedialStrategy != "FAST" && defaultRemedialStrategy != "CLASSIC" {
 		return map[string]interface{}{"error": "default remedial strategy must be CLASSIC or FAST"}
 	}
 	s := models.UserSettings{
@@ -85,6 +89,7 @@ func (a *App) UpdateUserSettings(maxFlashcards int, startTime string, endTime st
 		ClassroomCode:           classroomCode,
 		AnalyticsEnabled:        analyticsEnabled,
 		AnonymousUserID:         anonymousUserID,
+		TargetSessionWords:      targetSessionWords,
 	}
 	// Persist settings first so SQLite is never stale if runtime mutation fails.
 	if err := repo.UpdateUserSettings(s); err != nil {

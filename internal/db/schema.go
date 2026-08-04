@@ -122,6 +122,7 @@ func InitSchema(tx *sql.Tx) error {
 			classroom_code TEXT DEFAULT '',
 			student_username TEXT DEFAULT '',
 			last_synced_at INTEGER DEFAULT 0,
+			target_session_words INTEGER NOT NULL DEFAULT 5000,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (active_profile_id) REFERENCES study_profiles(id) ON DELETE SET NULL
 		)`,
@@ -395,6 +396,7 @@ var alterStatements = []struct {
 	{"notebooks", "file_hash", "ALTER TABLE notebooks ADD COLUMN file_hash TEXT DEFAULT ''"},
 	{"user_settings", "analytics_enabled", "ALTER TABLE user_settings ADD COLUMN analytics_enabled BOOLEAN DEFAULT 0"},
 	{"user_settings", "anonymous_user_id", "ALTER TABLE user_settings ADD COLUMN anonymous_user_id TEXT DEFAULT ''"},
+	{"user_settings", "target_session_words", "ALTER TABLE user_settings ADD COLUMN target_session_words INTEGER NOT NULL DEFAULT 5000"},
 }
 
 func columnExists(tx *sql.Tx, table, column string) (bool, error) {

@@ -535,6 +535,7 @@ type UserSettings struct {
 	ClassroomCode           string `json:"classroom_code"`
 	StudentUsername         string `json:"student_username"`
 	LastSyncedAt            int64  `json:"last_synced_at"`
+	TargetSessionWords      int    `json:"target_session_words"`
 	AnalyticsEnabled        bool   `json:"analytics_enabled"`
 	AnonymousUserID         string `json:"anonymous_user_id"`
 }
