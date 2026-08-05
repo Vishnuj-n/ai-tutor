@@ -63,23 +63,6 @@
             <div class="time-input-group">
               <label for="study-start-time" class="time-label">Start</label>
               <div class="time-input-wrapper">
-                <svg
-                  class="time-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="6.5" x2="12" y2="7" />
-                  <line x1="12" y1="17" x2="12" y2="17.5" />
-                  <line x1="6.5" y1="12" x2="7" y2="12" />
-                  <line x1="17" y1="12" x2="17.5" y2="12" />
-                  <polyline points="12,8 12,12 14.5,13.5" />
-                  <circle cx="12" cy="12" r="0.75" fill="currentColor" />
-                </svg>
                 <input
                   id="study-start-time"
                   v-model="studyStartTime"
@@ -99,23 +82,6 @@
             <div class="time-input-group">
               <label for="study-end-time" class="time-label">End</label>
               <div class="time-input-wrapper">
-                <svg
-                  class="time-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="6.5" x2="12" y2="7" />
-                  <line x1="12" y1="17" x2="12" y2="17.5" />
-                  <line x1="6.5" y1="12" x2="7" y2="12" />
-                  <line x1="17" y1="12" x2="17.5" y2="12" />
-                  <polyline points="12,8 12,12 14.5,13.5" />
-                  <circle cx="12" cy="12" r="0.75" fill="currentColor" />
-                </svg>
                 <input
                   id="study-end-time"
                   v-model="studyEndTime"
@@ -141,46 +107,34 @@
           </div>
         </div>
 
-        <div
-          class="form-group check-group"
-          style="margin-bottom: 8px; display: flex; align-items: flex-start; gap: 8px"
-        >
-          <label
-            class="checkbox-container"
-            style="display: flex; align-items: center; gap: 10px; cursor: pointer"
-          >
+        <div class="form-group check-group">
+          <label class="checkbox-container" for="reminders-enabled">
             <input
               id="reminders-enabled"
               v-model="remindersEnabled"
               type="checkbox"
-              style="width: 18px; height: 18px; cursor: pointer"
+              class="checkbox-input"
             />
             <div class="check-label">
               <strong>Enable Study Reminders</strong>
-              <p class="hint" style="margin: 0; font-size: 0.75rem; opacity: 0.7; line-height: 1.2">
+              <p class="hint">
                 Notify when daily study time starts and ends.
               </p>
             </div>
           </label>
         </div>
 
-        <div
-          class="form-group check-group"
-          style="margin-bottom: 8px; display: flex; align-items: flex-start; gap: 8px"
-        >
-          <label
-            class="checkbox-container"
-            style="display: flex; align-items: center; gap: 10px; cursor: pointer"
-          >
+        <div class="form-group check-group">
+          <label class="checkbox-container" for="analytics-enabled">
             <input
               id="analytics-enabled"
               v-model="analyticsEnabled"
               type="checkbox"
-              style="width: 18px; height: 18px; cursor: pointer"
+              class="checkbox-input"
             />
             <div class="check-label">
               <strong>Help improve the app by sharing anonymous usage data</strong>
-              <p class="hint" style="margin: 0; font-size: 0.75rem; opacity: 0.7; line-height: 1.2">
+              <p class="hint">
                 Telemetry events are anonymized. No personal information is ever collected.
               </p>
             </div>
@@ -242,9 +196,15 @@
           />
         </div>
 
-        <label class="inline-check">
-          <input v-model="useSameLLMForHeavy" type="checkbox" />
-          <span>Use same provider and model for heavy AI tasks</span>
+        <label class="checkbox-container inline-check">
+          <input
+            v-model="useSameLLMForHeavy"
+            type="checkbox"
+            class="checkbox-input"
+          />
+          <div class="check-label">
+            <strong>Use same provider and model for heavy AI tasks</strong>
+          </div>
         </label>
 
         <div v-if="!useSameLLMForHeavy" class="advanced-box">
@@ -946,7 +906,7 @@ label {
   transition: color 0.2s ease;
 }
 
-input,
+input:not([type='checkbox']):not([type='radio']),
 select {
   background: var(--surface-container-low);
   border: 1px solid color-mix(in srgb, var(--outline-variant) 20%, transparent); /* Spec ghost border */
@@ -962,15 +922,6 @@ select {
   width: 100%;
 }
 
-.time-input {
-  padding-left: 36px;
-}
-
-.time-icon {
-  left: 12px !important;
-  width: 16px !important;
-  height: 16px !important;
-}
 
 .quick-durations {
   margin-top: 8px !important;
@@ -988,24 +939,58 @@ select option {
   background: var(--surface-container-lowest);
 }
 
-input:focus,
+input:not([type='checkbox']):not([type='radio']):focus,
 select:focus {
   outline: none;
   border-color: var(--primary);
   background: var(--surface-container);
 }
 
-.inline-check {
+.checkbox-input {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+  margin-top: 2px; /* Top align with first line of text */
+}
+
+.checkbox-container {
   display: flex;
-  align-items: center;
-  gap: 8px; /* 8px grid */
-  text-transform: none;
-  letter-spacing: 0;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.check-group {
+  margin-bottom: 12px;
+}
+
+.check-label strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--on-surface);
 }
 
-.inline-check input {
-  width: auto;
+.check-label .hint {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  opacity: 0.7;
+  line-height: 1.2;
+}
+
+.inline-check {
+  margin-bottom: 12px;
+}
+
+.inline-check .check-label strong {
+  text-transform: none;
+  font-weight: 600;
 }
 
 .advanced-box {
