@@ -316,6 +316,9 @@ func (r *Repository) GetUserSettings() (*models.UserSettings, error) {
 	}
 	if s.TargetSessionWords <= 0 {
 		s.TargetSessionWords = 5000
+		if _, updateErr := r.db.Exec(`UPDATE user_settings SET target_session_words = 5000 WHERE id = 1`); updateErr != nil {
+			utils.Warnf("failed to persist default target_session_words: %v", updateErr)
+		}
 	}
 
 	// Auto-generate anonymous_user_id if not set yet
@@ -406,9 +409,9 @@ func (r *Repository) UpdateUserSettings(s models.UserSettings) error {
 			rag_queue_study = excluded.rag_queue_study,
 			default_remedial_strategy = excluded.default_remedial_strategy,
 			classroom_code = excluded.classroom_code,
-			student_username = excluded.student_username,
+			student_username = CASE WHEN excluded.student_username != '' THEN excluded.student_username ELSE user_settings.student_username END,
 			analytics_enabled = excluded.analytics_enabled,
-			anonymous_user_id = excluded.anonymous_user_id,
+			anonymous_user_id = CASE WHEN excluded.anonymous_user_id != '' THEN excluded.anonymous_user_id ELSE user_settings.anonymous_user_id END,
 			target_session_words = excluded.target_session_words,
 			updated_at = CURRENT_TIMESTAMP
 	`, s.MaxFlashcardsPerSession, s.StudyStartTime, s.StudyEndTime, s.RemindersEnabled, activeProfileID, s.SkipToReadingActive, s.CloudSyncURL, s.CloudAPIToken, theme, s.RAGEnabled, s.RAGNotebookChapter, s.RAGEntireNotebook, s.RAGQueueStudy, strategy, s.ClassroomCode, s.StudentUsername, s.AnalyticsEnabled, s.AnonymousUserID, targetWords)

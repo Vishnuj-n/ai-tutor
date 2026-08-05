@@ -56,7 +56,11 @@ func (a *App) UpdateUserSettings(s models.UserSettings) map[string]interface{} {
 	if s.MaxFlashcardsPerSession < 5 || s.MaxFlashcardsPerSession > 200 {
 		return map[string]interface{}{"error": "max flashcards per session must be between 5 and 200"}
 	}
-	if s.TargetSessionWords <= 0 {
+	if s.TargetSessionWords > 0 {
+		if s.TargetSessionWords < 1000 || s.TargetSessionWords > 20000 || s.TargetSessionWords%500 != 0 {
+			return map[string]interface{}{"error": "target session words must be between 1000 and 20000 and a multiple of 500"}
+		}
+	} else {
 		s.TargetSessionWords = 5000
 	}
 	if s.StudyStartTime != "" {
@@ -84,7 +88,10 @@ func (a *App) UpdateUserSettings(s models.UserSettings) map[string]interface{} {
 	a.aiMutex.Lock()
 	if !s.RAGEnabled && a.embedder != nil {
 		utils.Infof("RAG disabled dynamically in settings. Closing ONNX embedder.")
-		_ = a.embedder.Close()
+		if err := a.embedder.Close(); err != nil {
+			a.aiMutex.Unlock()
+			return map[string]interface{}{"error": fmt.Sprintf("failed to close embedder: %v", err)}
+		}
 		a.embedder = nil
 		a.aiReady = false
 	}

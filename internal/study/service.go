@@ -595,11 +595,8 @@ func (s *StudyService) buildPageBoundedContext(notebookID string, startPage, end
 
 	// Filter out front matter chunks if substantive chunks are present
 	substantive := make([]models.ChunkWithContext, 0, len(chunks))
-	frontMatter := make([]models.ChunkWithContext, 0, len(chunks))
 	for _, c := range chunks {
-		if isFrontMatterChunk(c.Text) {
-			frontMatter = append(frontMatter, c)
-		} else {
+		if !isFrontMatterChunk(c.Text) {
 			substantive = append(substantive, c)
 		}
 	}

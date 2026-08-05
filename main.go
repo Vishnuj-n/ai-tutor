@@ -59,9 +59,14 @@ func main() {
 
 func notebookHandler(a *app.App) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if a == nil {
+			utils.Warnf("[notebookHandler] Service unavailable: app is nil")
+			http.Error(rw, "notebook directory unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		uploadDir := a.GetNotebookUploadDir()
-		if a == nil || uploadDir == "" {
-			utils.Warnf("[notebookHandler] Service unavailable: app is nil or upload dir empty")
+		if uploadDir == "" {
+			utils.Warnf("[notebookHandler] Service unavailable: upload dir empty")
 			http.Error(rw, "notebook directory unavailable", http.StatusServiceUnavailable)
 			return
 		}

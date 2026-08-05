@@ -30,28 +30,6 @@ type QuizAttemptWithPayload struct {
 	PassingScore int
 }
 
-// userSettings holds the subset of user_settings needed by queue queries.
-type userSettings struct {
-	activeProfileID    string
-	skipToReadingActive bool
-}
-
-// readUserSettings fetches active_profile_id and skip_to_reading_active from user_settings.
-func (r *Repository) readUserSettings() (userSettings, error) {
-	var s userSettings
-	var activeProfileID sql.NullString
-	var skipToReading bool
-	if err := r.db.QueryRow(`
-		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
-	`).Scan(&activeProfileID, &skipToReading); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return s, fmt.Errorf("reading user_settings: %w", err)
-	}
-	if activeProfileID.Valid {
-		s.activeProfileID = activeProfileID.String
-	}
-	s.skipToReadingActive = skipToReading
-	return s, nil
-}
 
 // readActiveProfileID fetches only the active_profile_id from user_settings.
 func (r *Repository) readActiveProfileID() (string, error) {
@@ -391,7 +369,8 @@ func (r *Repository) getNextTaskWithProfile(notebookID, activeProfileID string) 
 				WHEN 'QUIZ' THEN 3 WHEN 'MILESTONE_EXAM' THEN 2
 				WHEN 'READING' THEN 1 WHEN 'EXAMINER' THEN 0 ELSE 0
 			END DESC,
-			COALESCE(n.priority, 5) DESC, sq.priority ASC, n.title ASC, sq.id ASC
+			COALESCE(n.priority, 5) DESC, sq.priority ASC, n.title ASC,
+			COALESCE(sq.created_at, '') ASC, sq.id ASC
 		LIMIT 1
 	`
 	return r.scanNextPendingTask(query, args...)

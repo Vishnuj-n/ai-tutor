@@ -827,7 +827,11 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 	}
 
 	targetWords := 5000
-	if settings, err := repo.GetUserSettings(); err == nil && settings != nil && settings.TargetSessionWords > 0 {
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if settings != nil && settings.TargetSessionWords > 0 {
 		targetWords = settings.TargetSessionWords
 	}
 

@@ -139,11 +139,6 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	utils.Warnf("[SCHEDULER] workload_audit total_due_cards=%d review_cards_materialized=%d estimated_review_minutes=%d deferred_review_cards=%d max_flashcards=%d daily_mins=%d",
 		totalDueCards, materializedCards, finalReviewMinutes, deferredCards, maxFlashcards, dailyStudyMinutes)
 
-	// Calculate remaining reading minutes
-	remainingReadingMinutes := dailyStudyMinutes - finalReviewMinutes
-	if remainingReadingMinutes < 0 {
-		remainingReadingMinutes = 0
-	}
 
 	// Reading token budget from user settings
 	tokenBudget := settings.TargetSessionWords
