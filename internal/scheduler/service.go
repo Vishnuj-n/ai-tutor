@@ -20,8 +20,9 @@ const (
 	ClampWindowPages = 4
 
 	// Reading assumptions
-	WordsPerMinute     = 200
-	TargetSessionWords = 2500
+	WordsPerMinute            = 200
+	DefaultTargetSessionWords = 5000
+	TargetSessionWords        = 5000
 
 	// Fallback assumptions
 	FallbackWordsPerPage = 500
@@ -138,17 +139,11 @@ func (s *service) BuildTodayPlan(now time.Time) (*models.TodayPlan, error) {
 	utils.Warnf("[SCHEDULER] workload_audit total_due_cards=%d review_cards_materialized=%d estimated_review_minutes=%d deferred_review_cards=%d max_flashcards=%d daily_mins=%d",
 		totalDueCards, materializedCards, finalReviewMinutes, deferredCards, maxFlashcards, dailyStudyMinutes)
 
-	// Calculate remaining reading minutes
-	remainingReadingMinutes := dailyStudyMinutes - finalReviewMinutes
-	if remainingReadingMinutes < 0 {
-		remainingReadingMinutes = 0
-	}
 
-	// Adjust reading token budget based on remaining time
-	tokenBudget := TargetSessionWords
-	maxReadingWords := remainingReadingMinutes * WordsPerMinute
-	if tokenBudget > maxReadingWords {
-		tokenBudget = maxReadingWords
+	// Reading token budget from user settings
+	tokenBudget := settings.TargetSessionWords
+	if tokenBudget <= 0 {
+		tokenBudget = DefaultTargetSessionWords
 	}
 	if tokenBudget < 0 {
 		tokenBudget = 0

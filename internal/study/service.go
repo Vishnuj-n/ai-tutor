@@ -593,6 +593,17 @@ func (s *StudyService) buildPageBoundedContext(notebookID string, startPage, end
 		return []models.ChunkWithContext{}, 0, nil
 	}
 
+	// Filter out front matter chunks if substantive chunks are present
+	substantive := make([]models.ChunkWithContext, 0, len(chunks))
+	for _, c := range chunks {
+		if !isFrontMatterChunk(c.Text) {
+			substantive = append(substantive, c)
+		}
+	}
+	if len(substantive) > 0 {
+		chunks = substantive
+	}
+
 	const maxContextChunks = 120
 	if len(chunks) > maxContextChunks {
 		chunks = chunks[:maxContextChunks]

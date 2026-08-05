@@ -156,6 +156,22 @@ type quizContextResult struct {
 	truncatedCount int
 }
 
+// isFrontMatterChunk returns true if text consists predominantly of front matter or metadata
+// such as copyright notices, ISBN numbers, publisher information, or table of contents listings.
+func isFrontMatterChunk(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "licensed to ") || strings.Contains(lower, "manning publications") || strings.Contains(lower, "all rights reserved") {
+		return true
+	}
+	if strings.Contains(lower, "isbn:") || strings.Contains(lower, "development editor:") || strings.Contains(lower, "production editor:") {
+		return true
+	}
+	if strings.Contains(lower, "contents") && strings.Count(lower, "chapter ") >= 2 {
+		return true
+	}
+	return false
+}
+
 func buildQuizContext(
 	normalizedChunkIDs []string,
 	chunkTextByID map[string]string,
@@ -166,7 +182,28 @@ func buildQuizContext(
 	contextParts := make([]string, 0, len(normalizedChunkIDs))
 	truncatedCount := 0
 
+	// Separate substantive chunks from front matter chunks
+	substantiveIDs := make([]string, 0, len(normalizedChunkIDs))
+	frontMatterIDs := make([]string, 0, len(normalizedChunkIDs))
+
 	for _, chunkID := range normalizedChunkIDs {
+		text := strings.TrimSpace(chunkTextByID[chunkID])
+		if text == "" {
+			continue
+		}
+		if isFrontMatterChunk(text) {
+			frontMatterIDs = append(frontMatterIDs, chunkID)
+		} else {
+			substantiveIDs = append(substantiveIDs, chunkID)
+		}
+	}
+
+	targetIDs := substantiveIDs
+	if len(targetIDs) == 0 {
+		targetIDs = frontMatterIDs
+	}
+
+	for _, chunkID := range targetIDs {
 		text := strings.TrimSpace(chunkTextByID[chunkID])
 		if text == "" {
 			continue
@@ -204,7 +241,12 @@ func buildQuizPrompt(notebookTitle string, targetCount int, contextParts []strin
 		"You are an expert academic tutor and quiz generator creating a quiz for spaced repetition study.",
 		"Return STRICT JSON only.",
 		fmt.Sprintf("Notebook: \"%s\"", notebookTitle),
-		fmt.Sprintf("Generate exactly %d multiple-choice questions from the provided chunks.", targetCount),
+		fmt.Sprintf("Generate exactly %d multiple-choice questions grounded strictly and exclusively in the provided text chunks.", targetCount),
+		"",
+		"=== GROUNDING & NO-HALLUCINATION RULES ===",
+		"1. EVERY question must be answerable purely from the explicit facts and concepts present in the provided Chunks.",
+		"2. NEVER ask meta-questions about the book, author, preface, target audience, difficulty level, prerequisites, table of contents, or overall structure (e.g. 'Which chapter covers X?', 'What is the lowest barrier to entry according to the author?', 'What does chapter N introduce?').",
+		"3. Focus solely on testing the subject matter concept, theory, technique, or formula described in the text.",
 		"",
 		"=== ADAPTIVE CONTENT RULES ===",
 		"Before generating questions, classify the text using the notebook title and provided content:",
@@ -212,6 +254,7 @@ func buildQuizPrompt(notebookTitle string, targetCount int, contextParts []strin
 		"- FACTUAL: Test specific facts, dates, names, formulas, definitions, and concrete data.",
 		"- CONCEPTUAL: Test core ideas, frameworks, reasoning, comparisons, principles, and cause-effect relationships.",
 		"- TECHNICAL: Prioritize definitions, terminology, algorithms, architectures, APIs, workflows, constraints, trade-offs, and practical application. Avoid theme- or opinion-based questions unless they describe a technical concept.",
+		"",
 		"=== QUESTION RULES ===",
 		"Each question must have exactly 4 options.",
 		"correct_answer must match one option exactly.",

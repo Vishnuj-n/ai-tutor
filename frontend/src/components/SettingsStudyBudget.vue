@@ -17,6 +17,21 @@
       <p class="hint">Caps the number of FSRS reviews active in any single study session.</p>
     </div>
 
+    <div class="form-group">
+      <label for="target-session-words">Target Reading Session Words</label>
+      <input
+        id="target-session-words"
+        v-model.number="settings.target_session_words"
+        type="number"
+        min="1000"
+        max="20000"
+        step="500"
+        :disabled="disabled"
+        required
+      />
+      <p class="hint">Target word count per reading session (5,000 words ≈ 25 minutes of standard reading).</p>
+    </div>
+
     <TimeRangeInput
       :start-value="settings.study_start_time"
       :end-value="settings.study_end_time"

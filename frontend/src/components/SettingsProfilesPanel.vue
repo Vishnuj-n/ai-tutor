@@ -30,7 +30,14 @@
           >
             Select Active
           </button>
-          <span v-else class="active-badge">Active</span>
+          <button
+            v-else
+            class="deselect-btn"
+            title="Click to deselect active profile"
+            @click="$emit('select', '')"
+          >
+            Active ✓ (Deselect)
+          </button>
 
           <button class="edit-btn" @click="$emit('edit', profile)">Edit</button>
           <button class="delete-btn" @click="$emit('delete', profile.id)">Delete</button>
@@ -132,15 +139,20 @@ defineEmits(['add', 'select', 'edit', 'delete'])
   cursor: pointer;
 }
 
-.active-badge {
+.deselect-btn {
   background: var(--primary);
   color: var(--on-primary);
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 11px;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.deselect-btn:hover {
+  opacity: 0.85;
 }
 
 .edit-btn,

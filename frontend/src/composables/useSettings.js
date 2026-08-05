@@ -22,6 +22,7 @@ export function useSettings(errorRef, successRef) {
     default_remedial_strategy: 'CLASSIC',
     classroom_code: '',
     analytics_enabled: false,
+    target_session_words: 5000,
   })
 
   const studyDuration = ref('')
@@ -83,6 +84,11 @@ export function useSettings(errorRef, successRef) {
           errorRef.value = 'Max flashcards per session must be between 5 and 200.'
           return
         }
+        const words = s.target_session_words
+        if (typeof words === 'number' && words > 0 && (words < 1000 || words > 20000 || words % 500 !== 0)) {
+          errorRef.value = 'Target session words must be between 1000 and 20000 and a multiple of 500.'
+          return
+        }
         const start = s.study_start_time
         const end = s.study_end_time
         if (!start || !end || start >= end) {
@@ -90,25 +96,7 @@ export function useSettings(errorRef, successRef) {
           return
         }
       }
-      const res = await updateUserSettings(
-        s.max_flashcards_per_session,
-        s.study_start_time,
-        s.study_end_time,
-        s.reminders_enabled,
-        s.active_profile_id,
-        s.skip_to_reading_active,
-        s.cloud_sync_url,
-        s.cloud_api_token,
-        s.theme,
-        s.rag_enabled,
-        s.rag_notebook_chapter,
-        s.rag_entire_notebook,
-        s.rag_queue_study,
-        s.default_remedial_strategy,
-        s.classroom_code || '',
-        s.analytics_enabled,
-        s.anonymous_user_id || ''
-      )
+      const res = await updateUserSettings(s)
       if (res.error) {
         errorRef.value = res.error
         return

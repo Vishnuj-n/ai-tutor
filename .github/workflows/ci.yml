@@ -30,8 +30,10 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-      - name: Create dummy frontend dist for Go embed
-        run: mkdir -p frontend/dist && touch frontend/dist/index.html
+      - name: Create dummy embedded files for Go embed
+        run: |
+          mkdir -p frontend/dist && touch frontend/dist/index.html
+          mkdir -p internal/app && touch internal/app/VERSION
 
       - name: Generate Wails bindings
         run: wails generate module

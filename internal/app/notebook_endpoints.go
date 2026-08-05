@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"encoding/json"
@@ -826,9 +826,18 @@ func (a *App) GetProfileDailyPace(profileID string) map[string]interface{} {
 		dailyPace = remainingWords
 	}
 
+	targetWords := 5000
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if settings != nil && settings.TargetSessionWords > 0 {
+		targetWords = settings.TargetSessionWords
+	}
+
 	sessionsPerDay := 0.0
 	if dailyPace > 0 {
-		sessionsPerDay = float64(dailyPace) / 2500.0
+		sessionsPerDay = float64(dailyPace) / float64(targetWords)
 	}
 
 	n := int(math.Ceil(sessionsPerDay))

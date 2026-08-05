@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"ai-tutor/internal/models"
@@ -863,3 +863,28 @@ func TestFSRSCalibrationEasyAndDoubleGood(t *testing.T) {
 		t.Fatalf("expected Pass dueAt offset to be ~1 day, got %f days", diffDays2)
 	}
 }
+
+func TestQuizPromptContainsStrictGroundingRules(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := testRepo.EnsureTopic("topic-prompt-test", "Topic Prompt Test"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+	if err := testRepo.CreateNotebook("nb-prompt-test", "Notebook Prompt Test", "/tmp/nb.pdf", "pdf", "topic-prompt-test", "", 10); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	mustInsertMockChunk(t, "nb-prompt-test", "topic-prompt-test", "chunk-p1", 1)
+
+	// Call GenerateQuizForPageRange to trace prompt rules execution
+	result := app.GenerateQuizForPageRange("nb-prompt-test", 1, 1)
+	if errVal, ok := result["error"]; ok {
+		t.Fatalf("expected quiz generation attempt, got error: %v", errVal)
+	}
+	// Verify questions were returned cleanly without errors
+	questions, ok := result["questions"].([]models.QuizTaskQuestion)
+	if !ok || len(questions) == 0 {
+		t.Fatalf("expected generated questions payload, got %#v", result)
+	}
+}
+

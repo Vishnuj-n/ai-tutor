@@ -54,14 +54,14 @@ func TestBuildTodayPlanGeneratesContextLockedReadTask(t *testing.T) {
 	if task.StartPage != 1 {
 		t.Errorf("expected StartPage=1, got %d", task.StartPage)
 	}
-	// Reading budget allows 17,000 words, but TargetSessionWords caps it at 2500.
-	// 2500 words / 500 words-per-page = 5 pages. Start 1 -> End 5.
-	if task.EndPage != 5 {
-		t.Errorf("expected EndPage=5 based on token cap, got %d", task.EndPage)
+	// TargetSessionWords defaults to 5000 words.
+	// 5000 words / 500 words-per-page = 10 pages. Start 1 -> End 10.
+	if task.EndPage != 10 {
+		t.Errorf("expected EndPage=10 based on token cap, got %d", task.EndPage)
 	}
-	// Estimate minutes: 2500 words / 200 wpm = 12.5 -> ceil -> 13 mins
-	if task.EstimateMinutes != 13 {
-		t.Errorf("expected EstimateMinutes=13, got %d", task.EstimateMinutes)
+	// Estimate minutes: 5000 words / 200 wpm = 25 mins
+	if task.EstimateMinutes != 25 {
+		t.Errorf("expected EstimateMinutes=25, got %d", task.EstimateMinutes)
 	}
 }
 
@@ -101,13 +101,13 @@ func TestBuildTodayPlanWithTokenQueryFailureFallback(t *testing.T) {
 
 	task := plan.Tasks[0]
 	// With token query failure, uses FallbackWordsPerPage (500)
-	// Budget 2500 words / 500 = 5 pages -> EndPage = 5
-	if task.EndPage != 5 {
-		t.Errorf("expected fallback end page 5, got %d", task.EndPage)
+	// Budget 5000 words / 500 = 10 pages -> EndPage = 10
+	if task.EndPage != 10 {
+		t.Errorf("expected fallback end page 10, got %d", task.EndPage)
 	}
-	// Estimate minutes fallback: 5 pages * 2.5 mins/page (MinutesPerPage) = 12.5 -> ceil -> 13
-	if task.EstimateMinutes != 13 {
-		t.Errorf("expected fallback EstimateMinutes=13, got %d", task.EstimateMinutes)
+	// Estimate minutes fallback: 10 pages * 2.5 mins/page (MinutesPerPage) = 25
+	if task.EstimateMinutes != 25 {
+		t.Errorf("expected fallback EstimateMinutes=25, got %d", task.EstimateMinutes)
 	}
 }
 

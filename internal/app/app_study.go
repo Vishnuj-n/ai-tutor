@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"encoding/json"
@@ -716,16 +716,25 @@ func (a *App) CompleteReading(taskID string) map[string]interface{} {
 		return map[string]interface{}{"error": errStudyServiceNotInitialized}
 	}
 
-	// Generate quiz from all topic chunks.
-	// Chunks can have page_num values outside the task's page bounds due to
-	// gap-filling logic in chapterIndexForPage (pages between/after chapters
-	// get assigned to the nearest chapter). The page range is for reading
-	// navigation, not quiz content.
-	utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup topicID=%q", task.TopicID)
-	chunks, err := repo.GetChunksForTopic(task.TopicID)
+	// Generate quiz from topic chunks bounded by reading task page range when available.
+	utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup topicID=%q startPage=%d endPage=%d", task.TopicID, task.StartPage, task.EndPage)
+	var chunks []models.Chunk
+	if task.StartPage > 0 && task.EndPage >= task.StartPage {
+		chunks, err = repo.GetChunksForTopicPageRange(task.TopicID, task.StartPage, task.EndPage)
+	} else {
+		chunks, err = repo.GetChunksForTopic(task.TopicID)
+	}
 	if err != nil {
 		utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup error taskID=%s err=%v", taskID, err)
 		return map[string]interface{}{"error": err.Error()}
+	}
+	if len(chunks) == 0 && (task.StartPage > 0 && task.EndPage >= task.StartPage) {
+		utils.Warnf("[COMPLETE_SESSION] CompleteReading 0 chunks in page range [%d-%d], falling back to topic chunks topicID=%q", task.StartPage, task.EndPage, task.TopicID)
+		chunks, err = repo.GetChunksForTopic(task.TopicID)
+		if err != nil {
+			utils.Warnf("[COMPLETE_SESSION] CompleteReading fallback chunk lookup error taskID=%s err=%v", taskID, err)
+			return map[string]interface{}{"error": err.Error()}
+		}
 	}
 	utils.Warnf("[COMPLETE_SESSION] CompleteReading chunk lookup result: got %d chunks for topicID=%q", len(chunks), task.TopicID)
 

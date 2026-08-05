@@ -387,25 +387,10 @@ async function changeActiveProfile(event) {
   const oldProfileID = lastPersistedProfile.value
   try {
     loading.value = true
-    const res = await updateUserSettings(
-      userSettings.value.max_flashcards_per_session,
-      userSettings.value.study_start_time,
-      userSettings.value.study_end_time,
-      userSettings.value.reminders_enabled,
-      newProfileID,
-      userSettings.value.skip_to_reading_active,
-      userSettings.value.cloud_sync_url,
-      userSettings.value.cloud_api_token,
-      userSettings.value.theme || '',
-      userSettings.value.rag_enabled || false,
-      userSettings.value.rag_notebook_chapter,
-      userSettings.value.rag_entire_notebook,
-      userSettings.value.rag_queue_study,
-      userSettings.value.default_remedial_strategy,
-      userSettings.value.classroom_code || '',
-      userSettings.value.analytics_enabled || false,
-      userSettings.value.anonymous_user_id || ''
-    )
+    const res = await updateUserSettings({
+      ...userSettings.value,
+      active_profile_id: newProfileID,
+    })
     if (res && res.error) {
       userSettings.value.active_profile_id = oldProfileID
       actionError.value = res.error
@@ -427,25 +412,7 @@ async function toggleEscapeHatch() {
   try {
     loading.value = true
     userSettings.value.skip_to_reading_active = !userSettings.value.skip_to_reading_active
-    const res = await updateUserSettings(
-      userSettings.value.max_flashcards_per_session,
-      userSettings.value.study_start_time,
-      userSettings.value.study_end_time,
-      userSettings.value.reminders_enabled,
-      userSettings.value.active_profile_id,
-      userSettings.value.skip_to_reading_active,
-      userSettings.value.cloud_sync_url,
-      userSettings.value.cloud_api_token,
-      userSettings.value.theme || '',
-      userSettings.value.rag_enabled || false,
-      userSettings.value.rag_notebook_chapter,
-      userSettings.value.rag_entire_notebook,
-      userSettings.value.rag_queue_study,
-      userSettings.value.default_remedial_strategy,
-      userSettings.value.classroom_code || '',
-      userSettings.value.analytics_enabled || false,
-      userSettings.value.anonymous_user_id || ''
-    )
+    const res = await updateUserSettings(userSettings.value)
     if (res && res.error) {
       userSettings.value.skip_to_reading_active = previousSkipToReading
       actionError.value = res.error

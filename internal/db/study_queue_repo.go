@@ -30,28 +30,6 @@ type QuizAttemptWithPayload struct {
 	PassingScore int
 }
 
-// userSettings holds the subset of user_settings needed by queue queries.
-type userSettings struct {
-	activeProfileID    string
-	skipToReadingActive bool
-}
-
-// readUserSettings fetches active_profile_id and skip_to_reading_active from user_settings.
-func (r *Repository) readUserSettings() (userSettings, error) {
-	var s userSettings
-	var activeProfileID sql.NullString
-	var skipToReading bool
-	if err := r.db.QueryRow(`
-		SELECT COALESCE(active_profile_id, ''), skip_to_reading_active FROM user_settings WHERE id = 1
-	`).Scan(&activeProfileID, &skipToReading); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return s, fmt.Errorf("reading user_settings: %w", err)
-	}
-	if activeProfileID.Valid {
-		s.activeProfileID = activeProfileID.String
-	}
-	s.skipToReadingActive = skipToReading
-	return s, nil
-}
 
 // readActiveProfileID fetches only the active_profile_id from user_settings.
 func (r *Repository) readActiveProfileID() (string, error) {
@@ -146,20 +124,15 @@ func (r *Repository) GetTaskByID(taskID string) (*models.StudyQueueTask, error) 
 
 // GetAllPendingTasks returns all pending tasks ordered by deterministic queue rules.
 func (r *Repository) GetAllPendingTasks() ([]models.StudyQueueTask, error) {
-	settings, err := r.readUserSettings()
+	activeProfileID, err := r.readActiveProfileID()
 	if err != nil {
 		return nil, fmt.Errorf("GetAllPendingTasks: %w", err)
 	}
 
-	skipVal := 0
-	if settings.skipToReadingActive {
-		skipVal = 1
-	}
-
-	if settings.activeProfileID == "" {
+	if activeProfileID == "" {
 		return r.getPendingTasksNoProfile()
 	}
-	return r.getPendingTasksWithProfile(settings.activeProfileID, skipVal)
+	return r.getPendingTasksWithProfile(activeProfileID)
 }
 
 // getPendingTasksNoProfile returns pending tasks without profile filtering.
@@ -197,7 +170,7 @@ func (r *Repository) getPendingTasksNoProfile() ([]models.StudyQueueTask, error)
 }
 
 // getPendingTasksWithProfile returns pending tasks filtered by active profile.
-func (r *Repository) getPendingTasksWithProfile(activeProfileID string, skipVal int) ([]models.StudyQueueTask, error) {
+func (r *Repository) getPendingTasksWithProfile(activeProfileID string) ([]models.StudyQueueTask, error) {
 	query := `
 		SELECT
 			id, notebook_id, COALESCE(topic_id, ''), task_type, status, priority,
@@ -216,20 +189,11 @@ func (r *Repository) getPendingTasksWithProfile(activeProfileID string, skipVal 
 				ROW_NUMBER() OVER (
 					PARTITION BY sq.notebook_id
 					ORDER BY
-						CASE WHEN ? = 1 THEN
-							CASE sq.task_type
-								WHEN 'FLASHCARD_GENERATE' THEN 7 WHEN 'SOCRATIC_REMEDIAL' THEN 6
-								WHEN 'REREAD' THEN 5 WHEN 'QUIZ' THEN 4
-								WHEN 'MILESTONE_EXAM' THEN 3 WHEN 'READING' THEN 2
-								WHEN 'EXAMINER' THEN 1 WHEN 'FLASHCARD_REVIEW' THEN 1 ELSE 0
-							END
-						ELSE
-							CASE sq.task_type
-								WHEN 'FLASHCARD_GENERATE' THEN 7 WHEN 'SOCRATIC_REMEDIAL' THEN 6
-								WHEN 'FLASHCARD_REVIEW' THEN 5 WHEN 'REREAD' THEN 4
-								WHEN 'QUIZ' THEN 3 WHEN 'MILESTONE_EXAM' THEN 2
-								WHEN 'READING' THEN 1 WHEN 'EXAMINER' THEN 0 ELSE 0
-							END
+						CASE sq.task_type
+							WHEN 'FLASHCARD_GENERATE' THEN 7 WHEN 'SOCRATIC_REMEDIAL' THEN 6
+							WHEN 'FLASHCARD_REVIEW' THEN 5 WHEN 'REREAD' THEN 4
+							WHEN 'QUIZ' THEN 3 WHEN 'MILESTONE_EXAM' THEN 2
+							WHEN 'READING' THEN 1 WHEN 'EXAMINER' THEN 0 ELSE 0
 						END DESC,
 						sq.priority ASC, sq.created_at ASC
 				) as rn
@@ -242,8 +206,9 @@ func (r *Repository) getPendingTasksWithProfile(activeProfileID string, skipVal 
 		) ranked_tasks
 		WHERE rn = 1
 		ORDER BY COALESCE(notebook_priority, 5) DESC, notebook_title ASC, id ASC
+		LIMIT 1
 	`
-	rows, err := r.db.Query(query, skipVal, activeProfileID, activeProfileID, activeProfileID)
+	rows, err := r.db.Query(query, activeProfileID, activeProfileID, activeProfileID)
 	if err != nil {
 		return nil, err
 	}
@@ -323,20 +288,15 @@ func (r *Repository) GetNextTask(notebookID string) (*models.StudyQueueTask, err
 	notebookID = strings.TrimSpace(notebookID)
 	utils.Warnf("[QUEUE] GetNextTask filter status=PENDING notebookID=%q", notebookID)
 
-	settings, err := r.readUserSettings()
+	activeProfileID, err := r.readActiveProfileID()
 	if err != nil {
 		return nil, fmt.Errorf("GetNextTask: %w", err)
 	}
 
-	skipVal := 0
-	if settings.skipToReadingActive {
-		skipVal = 1
-	}
-
-	if settings.activeProfileID == "" {
+	if activeProfileID == "" {
 		return r.getNextTaskNoProfile(notebookID)
 	}
-	return r.getNextTaskWithProfile(notebookID, settings.activeProfileID, skipVal)
+	return r.getNextTaskWithProfile(notebookID, activeProfileID)
 }
 
 // getNextTaskNoProfile returns the next pending task without profile filtering.
@@ -375,7 +335,7 @@ func (r *Repository) getNextTaskNoProfile(notebookID string) (*models.StudyQueue
 }
 
 // getNextTaskWithProfile returns the next pending task filtered by active profile.
-func (r *Repository) getNextTaskWithProfile(notebookID, activeProfileID string, skipVal int) (*models.StudyQueueTask, error) {
+func (r *Repository) getNextTaskWithProfile(notebookID, activeProfileID string) (*models.StudyQueueTask, error) {
 	query := `
 		SELECT
 			sq.id, sq.notebook_id, COALESCE(sq.topic_id, ''), sq.task_type, sq.status, sq.priority,
@@ -403,25 +363,16 @@ func (r *Repository) getNextTaskWithProfile(notebookID, activeProfileID string, 
 
 	query += `
 		ORDER BY
-			CASE WHEN ? = 1 THEN
-				CASE sq.task_type
-					WHEN 'FLASHCARD_GENERATE' THEN 7 WHEN 'SOCRATIC_REMEDIAL' THEN 6
-					WHEN 'REREAD' THEN 5 WHEN 'QUIZ' THEN 4
-					WHEN 'MILESTONE_EXAM' THEN 3 WHEN 'READING' THEN 2
-					WHEN 'EXAMINER' THEN 1 WHEN 'FLASHCARD_REVIEW' THEN 1 ELSE 0
-				END
-			ELSE
-				CASE sq.task_type
-					WHEN 'FLASHCARD_GENERATE' THEN 7 WHEN 'SOCRATIC_REMEDIAL' THEN 6
-					WHEN 'FLASHCARD_REVIEW' THEN 5 WHEN 'REREAD' THEN 4
-					WHEN 'QUIZ' THEN 3 WHEN 'MILESTONE_EXAM' THEN 2
-					WHEN 'READING' THEN 1 WHEN 'EXAMINER' THEN 0 ELSE 0
-				END
+			CASE sq.task_type
+				WHEN 'FLASHCARD_GENERATE' THEN 7 WHEN 'SOCRATIC_REMEDIAL' THEN 6
+				WHEN 'FLASHCARD_REVIEW' THEN 5 WHEN 'REREAD' THEN 4
+				WHEN 'QUIZ' THEN 3 WHEN 'MILESTONE_EXAM' THEN 2
+				WHEN 'READING' THEN 1 WHEN 'EXAMINER' THEN 0 ELSE 0
 			END DESC,
-			COALESCE(n.priority, 5) DESC, sq.priority ASC, n.title ASC, sq.id ASC
+			COALESCE(n.priority, 5) DESC, sq.priority ASC, n.title ASC,
+			COALESCE(sq.created_at, '') ASC, sq.id ASC
 		LIMIT 1
 	`
-	args = append(args, skipVal)
 	return r.scanNextPendingTask(query, args...)
 }
 
@@ -1537,6 +1488,9 @@ func (r *Repository) EnsurePendingReadingTasksForActiveNotebooks(activeProfileID
 			return err
 		}
 		notebookIDs = append(notebookIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 
 	for _, nID := range notebookIDs {
