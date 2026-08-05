@@ -139,10 +139,10 @@ func (a *App) startup(ctx context.Context) {
 
 // Shutdown is called when the Wails application is shutting down.
 func (a *App) Shutdown(ctx context.Context) {
-	a.shutdown(ctx)
+	a.shutdown()
 }
 
-func (a *App) shutdown(ctx context.Context) {
+func (a *App) shutdown() {
 	if a.indexQueue != nil {
 		a.indexQueue.Stop()
 	}
