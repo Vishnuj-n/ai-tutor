@@ -52,6 +52,18 @@
             />
           </div>
 
+          <div v-if="!isSignUp" class="form-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+            <input
+              id="remember-me"
+              v-model="rememberMe"
+              type="checkbox"
+              style="width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary);"
+            />
+            <label for="remember-me" style="margin-bottom: 0; font-size: 0.85rem; cursor: pointer; color: var(--muted-text);">
+              Remember me on this device
+            </label>
+          </div>
+
           <button class="btn" style="width: 100%; margin-top: 1.25rem;" :disabled="connecting">
             <span v-if="connecting" class="loading-spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
             {{ connecting ? (isSignUp ? 'Creating Account...' : 'Signing In...') : (isSignUp ? '✨ Sign Up' : '🔑 Sign In') }}
@@ -79,9 +91,11 @@
 
       <div style="display: flex; align-items: center; gap: 1.25rem;">
         <!-- Live status ping dot -->
-        <div v-if="!showSetup" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.15); padding: 0.3rem 0.6rem; border-radius: 6px;">
+        <div v-if="!showSetup" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.15); padding: 0.3rem 0.6rem; border-radius: 6px;" :title="'Last auto-polled: ' + syncTimeAgo">
           <span class="pulsing-dot" style="background-color: var(--success); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);"></span>
-          <span style="font-size: 0.7rem; color: var(--success); font-weight: 600; font-family: var(--font-mono); letter-spacing: 0.02em;">LIVE SYNCED</span>
+          <span style="font-size: 0.7rem; color: var(--success); font-weight: 600; font-family: var(--font-mono); letter-spacing: 0.02em;">
+            LIVE SYNCED • {{ syncTimeAgo }}
+          </span>
         </div>
 
         <span v-if="classroomCode" class="classroom-badge">
@@ -94,8 +108,14 @@
       </div>
     </header>
 
-    <!-- Dashboard Content -->
+    <!-- Main Header Toast Bar -->
     <main v-if="!showSetup" class="main-content">
+      <!-- Toast Notification -->
+      <div v-if="toastMessage" class="animate-fade-in" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+        <span>✨</span>
+        <div style="flex: 1;">{{ toastMessage }}</div>
+      </div>
+
       <!-- Error Bar -->
       <div v-if="error" class="error-message">
         <span style="font-size: 1.1rem;">⚠️</span>
@@ -211,7 +231,17 @@
                 🚨 Alerts Only
               </button>
 
-              <button class="btn" @click="fetchData" style="padding: 0.45rem 0.85rem; font-size: 0.8rem;" :disabled="loading">
+              <button 
+                class="btn btn-secondary" 
+                @click="exportClassroomCSV"
+                :disabled="students.length === 0"
+                style="padding: 0.45rem 0.85rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem;"
+                title="Export classroom stats to CSV"
+              >
+                📥 Export CSV
+              </button>
+
+              <button class="btn" @click="() => fetchData(false)" style="padding: 0.45rem 0.85rem; font-size: 0.8rem;" :disabled="loading">
                 <span v-if="loading" class="loading-spinner" style="width: 12px; height: 12px; border-width: 2px;"></span>
                 {{ loading ? 'Syncing...' : '🔄 Refresh' }}
               </button>
@@ -223,11 +253,21 @@
             <div class="loading-spinner"></div>
             <p class="muted" style="margin-top: 1rem; font-size: 0.9rem;">Fetching classroom database...</p>
           </div>
-          <div v-else-if="filteredStudents.length === 0" class="text-center" style="padding: 4rem 2rem; border: 1px dashed var(--border); border-radius: 12px; background: rgba(255,255,255,0.01);">
-            <span style="font-size: 2rem;">📭</span>
-            <p class="muted" style="margin-top: 1rem; margin-bottom: 0; font-size: 0.9rem;">
-              No students synced for classroom "{{ classroomCode }}" matching the filters.
+          <div v-else-if="filteredStudents.length === 0" class="text-center" style="padding: 3rem 2rem; border: 1px dashed var(--border); border-radius: 12px; background: rgba(255,255,255,0.01);">
+            <span style="font-size: 2.5rem;">🏫</span>
+            <h3 style="margin-top: 0.75rem; margin-bottom: 0.35rem; color: #fff;">No students synced yet for "{{ classroomCode }}"</h3>
+            <p class="muted" style="margin-bottom: 1.25rem; font-size: 0.85rem; max-width: 460px; margin-left: auto; margin-right: auto;">
+              Students connect to your analytical workspace using your classroom code. Once connected, their flashcard review logs and study progress will stream here live.
             </p>
+            <div style="background: var(--surface-low); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: left; max-width: 480px; margin: 0 auto; font-size: 0.8rem; line-height: 1.5;">
+              <strong style="color: var(--primary);">📲 Student Setup Instructions:</strong>
+              <ol style="margin-top: 0.4rem; margin-bottom: 0; padding-left: 1.25rem; color: var(--muted-text);">
+                <li>Open the <strong>AI Tutor Desktop App</strong></li>
+                <li>Navigate to <strong>Settings</strong> &rarr; <strong>Account & Cloud</strong></li>
+                <li>Enter Classroom Code: <code style="color: #fff; background: rgba(255,255,255,0.1); padding: 0.1rem 0.35rem; border-radius: 4px;">{{ classroomCode }}</code></li>
+                <li>Click <strong>Sync with Cloud Now</strong></li>
+              </ol>
+            </div>
           </div>
 
           <!-- Student Accordion list -->
@@ -508,6 +548,7 @@ const loginUsername = ref('');
 const loginPassword = ref('');
 const isSignUp = ref(false);
 const loginClassroom = ref('');
+const rememberMe = ref(true);
 
 function toggleAuthMode() {
   isSignUp.value = !isSignUp.value;
@@ -526,6 +567,56 @@ const loadingAssignments = ref(false);
 const students = ref([]);
 const assignments = ref([]);
 const expandedStudents = reactive({});
+
+// Toast Notification & Auto-Sync State
+const toastMessage = ref('');
+const lastSyncedAt = ref(null);
+const syncTimeAgo = ref('just now');
+const pollInterval = ref(null);
+const timeAgoInterval = ref(null);
+
+function showToast(msg) {
+  toastMessage.value = msg;
+  setTimeout(() => {
+    if (toastMessage.value === msg) {
+      toastMessage.value = '';
+    }
+  }, 3500);
+}
+
+function updateSyncTimeAgo() {
+  if (!lastSyncedAt.value) {
+    syncTimeAgo.value = 'just now';
+    return;
+  }
+  const sec = Math.floor((Date.now() - lastSyncedAt.value) / 1000);
+  if (sec < 10) syncTimeAgo.value = 'just now';
+  else if (sec < 60) syncTimeAgo.value = `${sec}s ago`;
+  else syncTimeAgo.value = `${Math.floor(sec / 60)}m ago`;
+}
+
+function startPolling() {
+  stopPolling();
+  // Poll classroom data silently every 30 seconds
+  pollInterval.value = setInterval(() => {
+    fetchData(true);
+  }, 30000);
+  // Update time-ago display every 5 seconds
+  timeAgoInterval.value = setInterval(() => {
+    updateSyncTimeAgo();
+  }, 5000);
+}
+
+function stopPolling() {
+  if (pollInterval.value) {
+    clearInterval(pollInterval.value);
+    pollInterval.value = null;
+  }
+  if (timeAgoInterval.value) {
+    clearInterval(timeAgoInterval.value);
+    timeAgoInterval.value = null;
+  }
+}
 
 // Search/Filter State
 const searchQuery = ref('');
@@ -550,8 +641,8 @@ const handleGlobalKeydown = (e) => {
 
 // Check session on mount
 onMounted(() => {
-  const token = sessionStorage.getItem('session_token');
-  const cls = sessionStorage.getItem('classroom_code');
+  const token = localStorage.getItem('session_token') || sessionStorage.getItem('session_token');
+  const cls = localStorage.getItem('classroom_code') || sessionStorage.getItem('classroom_code');
 
   if (!supabaseUrl.value || !supabaseKey.value) {
     setupError.value = 'Configuration error: Supabase URL or Anon Key is missing.';
@@ -565,6 +656,7 @@ onMounted(() => {
     classroomCode.value = cls;
     showSetup.value = false;
     fetchData();
+    startPolling();
   } else {
     showSetup.value = true;
   }
@@ -574,6 +666,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
+  stopPolling();
 });
 
 // handleAuth switches behavior depending on whether user is registering or logging in
@@ -628,6 +721,7 @@ async function signupTeacher() {
     }
 
     // Sign up succeeded, log in automatically
+    showToast('Teacher account created successfully! Logging in...');
     isSignUp.value = false;
     await loginTeacher();
   } catch (err) {
@@ -687,11 +781,22 @@ async function loginTeacher() {
     sessionToken.value = loginData.session_token;
     classroomCode.value = loginData.classroom_code;
     
-    sessionStorage.setItem('session_token', loginData.session_token);
-    sessionStorage.setItem('classroom_code', loginData.classroom_code);
+    if (rememberMe.value) {
+      localStorage.setItem('session_token', loginData.session_token);
+      localStorage.setItem('classroom_code', loginData.classroom_code);
+      sessionStorage.removeItem('session_token');
+      sessionStorage.removeItem('classroom_code');
+    } else {
+      sessionStorage.setItem('session_token', loginData.session_token);
+      sessionStorage.setItem('classroom_code', loginData.classroom_code);
+      localStorage.removeItem('session_token');
+      localStorage.removeItem('classroom_code');
+    }
 
     showSetup.value = false;
+    showToast(`Welcome back, ${loginData.username || 'Teacher'}!`);
     fetchData();
+    startPolling();
   } catch (err) {
     console.error('Login failure:', err);
     setupError.value = err.message || 'Failed to login. Please verify credentials.';
@@ -702,18 +807,21 @@ async function loginTeacher() {
 
 // logoutTeacher signs the teacher out by clearing session variables and redirecting to the login screen
 function logoutTeacher() {
+  stopPolling();
   sessionToken.value = '';
   classroomCode.value = '';
   sessionStorage.removeItem('session_token');
   sessionStorage.removeItem('classroom_code');
+  localStorage.removeItem('session_token');
+  localStorage.removeItem('classroom_code');
   showSetup.value = true;
 }
 
-// Unified data fetching
-async function fetchData() {
+// Unified data fetching (silent = true bypasses full loading spinner)
+async function fetchData(silent = false) {
   if (!supabaseUrl.value || !supabaseKey.value || !classroomCode.value) return;
 
-  loading.value = true;
+  if (!silent) loading.value = true;
   error.value = '';
 
   try {
@@ -729,15 +837,49 @@ async function fetchData() {
     });
     if (!res.ok) throw new Error(`Dashboard fetch error: ${res.statusText}`);
     students.value = await res.json();
+    lastSyncedAt.value = Date.now();
+    updateSyncTimeAgo();
 
     // Fetch assignments
     fetchAssignments();
   } catch (err) {
     console.error('Data refresh error:', err);
-    error.value = `Failed to fetch classroom data: ${err.message}`;
+    if (!silent) error.value = `Failed to fetch classroom data: ${err.message}`;
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
   }
+}
+
+// Export classroom summary metrics to CSV file
+function exportClassroomCSV() {
+  if (students.value.length === 0) return;
+
+  const headers = ['Student Token', 'Notebooks Count', 'FSRS Reviews', 'Recall Pass Rate', 'Red Alert Status', 'Last Synced'];
+  const rows = students.value.map(s => {
+    let passCount = 0;
+    s.logs.forEach(l => { if (l.rating > 1) passCount++; });
+    const passRate = s.logs.length > 0 ? Math.round((passCount / s.logs.length) * 100) : 0;
+    return [
+      `"${s.token}"`,
+      s.notebooks.length,
+      s.logs.length,
+      `"${passRate}%"`,
+      s.alertsCount > 0 ? 'ALERT_ACTIVE' : 'NORMAL',
+      `"${s.lastUpdate ? new Date(s.lastUpdate).toLocaleString() : 'Never'}"`
+    ].join(',');
+  });
+
+  const csvString = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `classroom-${classroomCode.value}-report.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  showToast('Classroom analytics exported to CSV file.');
 }
 
 // Fetch active assignments list
@@ -809,6 +951,7 @@ async function publishAssignment() {
     newTitle.value = '';
     newUrl.value = '';
     
+    showToast('Assignment published successfully!');
     // Refresh assignments list
     fetchAssignments();
   } catch (err) {
@@ -835,6 +978,7 @@ async function deleteAssignment(id) {
 
     if (!res.ok) throw new Error(`Delete failed with status ${res.status}`);
     
+    showToast('Assignment removed.');
     // Refresh assignments
     fetchAssignments();
   } catch (err) {

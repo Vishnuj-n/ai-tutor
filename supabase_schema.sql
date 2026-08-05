@@ -185,22 +185,29 @@ BEGIN
     RAISE EXCEPTION 'Invalid role specified. Must be student or teacher';
   END IF;
 
-  -- Verify classroom code against allowed invite or membership record
+  -- Check if username is already registered
+  IF EXISTS (
+    SELECT 1 FROM public.user_accounts
+    WHERE LOWER(username) = LOWER(p_username)
+  ) THEN
+    RAISE EXCEPTION 'Username is already registered';
+  END IF;
+
+  -- Verify classroom code against allowed invite or allow self-serve teacher registration
   IF p_role = 'teacher' THEN
-    IF NOT EXISTS (
+    -- If a matching invite exists, mark it as used
+    IF EXISTS (
       SELECT 1 FROM public.teacher_signup_invites
       WHERE classroom_code = UPPER(p_classroom_code)
         AND LOWER(invite_email_or_username) = LOWER(p_username)
         AND is_used = FALSE
     ) THEN
-      RAISE EXCEPTION 'No pending teacher invite found for this username and classroom';
+      UPDATE public.teacher_signup_invites
+      SET is_used = TRUE
+      WHERE classroom_code = UPPER(p_classroom_code)
+        AND LOWER(invite_email_or_username) = LOWER(p_username);
     END IF;
-
-    -- Mark invite as used
-    UPDATE public.teacher_signup_invites
-    SET is_used = TRUE
-    WHERE classroom_code = UPPER(p_classroom_code)
-      AND LOWER(invite_email_or_username) = LOWER(p_username);
+    -- Note: If no invite exists, self-serve registration proceeds automatically for the teacher.
   ELSIF p_role = 'student' THEN
     -- Student must sign up to an active classroom with a registered teacher
     IF NOT EXISTS (
