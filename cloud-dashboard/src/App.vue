@@ -477,7 +477,21 @@
             </div>
 
             <div class="form-group">
-              <label for="assign-url">Direct PDF URL</label>
+              <label for="assign-file">Upload Local PDF File (Max 50MB)</label>
+              <input
+                id="assign-file"
+                type="file"
+                accept="application/pdf,.pdf"
+                :disabled="uploadingPdf || publishing"
+                @change="handleFileUpload"
+              />
+              <span v-if="uploadingPdf" class="muted" style="font-size: 0.8rem; margin-top: 0.25rem; display: block;">
+                ⏳ Uploading PDF to Supabase Storage...
+              </span>
+            </div>
+
+            <div class="form-group">
+              <label for="assign-url">Or Direct PDF URL</label>
               <input
                 id="assign-url"
                 v-model="newUrl"
@@ -627,6 +641,7 @@ const searchInputRef = ref(null);
 const newTitle = ref('');
 const newUrl = ref('');
 const publishing = ref(false);
+const uploadingPdf = ref(false);
 
 // Global keyboard listeners for focus
 const handleGlobalKeydown = (e) => {
@@ -903,6 +918,72 @@ async function fetchAssignments() {
     error.value = `Assignments warning: ${err.message}`;
   } finally {
     loadingAssignments.value = false;
+  }
+}
+
+// Safe file upload handler for teacher PDF assignments
+async function handleFileUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  // 1. Enforce 50MB file size limit
+  if (file.size > 50 * 1024 * 1024) {
+    error.value = 'PDF upload failed: File size exceeds 50MB limit.';
+    event.target.value = '';
+    return;
+  }
+
+  // 2. Validate magic bytes (%PDF- header)
+  try {
+    const headerBuf = await file.slice(0, 4).arrayBuffer();
+    const header = new Uint8Array(headerBuf);
+    if (header[0] !== 0x25 || header[1] !== 0x50 || header[2] !== 0x44 || header[3] !== 0x46) {
+      error.value = 'PDF upload failed: Selected file is not a valid PDF.';
+      event.target.value = '';
+      return;
+    }
+  } catch (err) {
+    error.value = 'Failed to read PDF file header.';
+    event.target.value = '';
+    return;
+  }
+
+  // 3. Auto-populate title if empty
+  if (!newTitle.value.trim()) {
+    newTitle.value = file.name.replace(/\.pdf$/i, '');
+  }
+
+  uploadingPdf.value = true;
+  error.value = '';
+
+  try {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${classroomCode.value}/${Date.now()}_${safeName}`;
+
+    const res = await fetch(`${supabaseUrl.value}/storage/v1/object/assignments/${storagePath}`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`,
+        'x-session-token': sessionToken.value,
+        'Content-Type': 'application/pdf'
+      },
+      body: file
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(errText || `Upload returned status ${res.status}`);
+    }
+
+    newUrl.value = `${supabaseUrl.value}/storage/v1/object/public/assignments/${storagePath}`;
+    showToast('PDF uploaded to Supabase Storage!');
+  } catch (err) {
+    console.error('PDF upload error:', err);
+    error.value = `Failed to upload PDF: ${err.message}`;
+    event.target.value = '';
+  } finally {
+    uploadingPdf.value = false;
   }
 }
 

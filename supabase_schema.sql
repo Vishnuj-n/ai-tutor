@@ -502,3 +502,39 @@ GRANT EXECUTE ON FUNCTION login_user(TEXT, TEXT, BOOLEAN) TO authenticated;
 GRANT EXECUTE ON FUNCTION signup_user(TEXT, TEXT, TEXT, TEXT) TO anon;
 GRANT EXECUTE ON FUNCTION signup_user(TEXT, TEXT, TEXT, TEXT) TO authenticated;
 
+
+-- 9. Storage Bucket & Security Policies for Teacher Assignments
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'assignments',
+  'assignments',
+  true,
+  52428800, -- 50MB max file size
+  ARRAY['application/pdf']
+)
+ON CONFLICT (id) DO UPDATE SET
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+-- Storage Policy: Allow verified teachers to upload PDFs
+CREATE POLICY "Teacher PDF Upload Policy"
+ON storage.objects FOR INSERT
+TO public
+WITH CHECK (
+  bucket_id = 'assignments' AND
+  (storage.extension(name) = 'pdf') AND
+  EXISTS (
+    SELECT 1 FROM public.active_sessions s
+    WHERE s.session_token = get_current_session_token()
+      AND s.role = 'teacher'
+      AND s.expires_at > now()
+  )
+);
+
+-- Storage Policy: Public read for downloading assigned PDFs
+CREATE POLICY "Public Read Assignments Policy"
+ON storage.objects FOR SELECT
+TO public
+USING (bucket_id = 'assignments');
+
+
