@@ -574,6 +574,9 @@ func (s *StudyService) SubmitQuizAttempt(taskID string, answers []models.QuizAns
 			if err := s.repo.ResetRereadAttemptCountTx(tx, task.TopicID); err != nil {
 				return models.QuizResult{}, fmt.Errorf("failed to reset reread attempts: %w", err)
 			}
+			if err := s.repo.MarkTopicCompletedTx(tx, task.TopicID); err != nil {
+				return models.QuizResult{}, fmt.Errorf("failed to mark topic completed: %w", err)
+			}
 		}
 	} else if task.TopicID != "" {
 		if isRescueRequiz {

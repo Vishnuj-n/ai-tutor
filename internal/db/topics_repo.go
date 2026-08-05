@@ -554,3 +554,28 @@ func (r *Repository) MarkTopicExternalHelpRequiredTx(tx *sql.Tx, topicID string)
 	return nil
 }
 
+// MarkTopicCompletedTx marks a topic's status as 'completed' within a transaction.
+func (r *Repository) MarkTopicCompletedTx(tx *sql.Tx, topicID string) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return fmt.Errorf("topic id is required")
+	}
+	res, err := tx.Exec(`
+		UPDATE topics
+		SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, topicID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("topic %s not found", topicID)
+	}
+	return nil
+}
+
+

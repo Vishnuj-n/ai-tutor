@@ -1112,3 +1112,29 @@ func TestEnsurePendingReadingTasksForActiveNotebooks(t *testing.T) {
 		t.Fatalf("expected ineligible dormant notebook not to receive pending task")
 	}
 }
+
+func TestMarkTopicCompletedTx(t *testing.T) {
+	initDBForTest(t, false, 0)
+	topicID := "topic-test-mark-completed"
+	_ = testRepo.EnsureTopic(topicID, "Topic To Complete")
+
+	tx, err := testRepo.Begin()
+	if err != nil {
+		t.Fatalf("Begin tx failed: %v", err)
+	}
+	if err := testRepo.MarkTopicCompletedTx(tx, topicID); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("MarkTopicCompletedTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit tx failed: %v", err)
+	}
+
+	var status string
+	if err := testRepo.db.QueryRow("SELECT COALESCE(status, 'unseen') FROM topics WHERE id = ?", topicID).Scan(&status); err != nil {
+		t.Fatalf("Querying topic status failed: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("expected topic status to be 'completed', got %q", status)
+	}
+}
