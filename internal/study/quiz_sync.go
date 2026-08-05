@@ -156,6 +156,22 @@ type quizContextResult struct {
 	truncatedCount int
 }
 
+// isFrontMatterChunk returns true if text consists predominantly of front matter or metadata
+// such as copyright notices, ISBN numbers, publisher information, or table of contents listings.
+func isFrontMatterChunk(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "licensed to ") || strings.Contains(lower, "manning publications") || strings.Contains(lower, "all rights reserved") {
+		return true
+	}
+	if strings.Contains(lower, "isbn:") || strings.Contains(lower, "development editor:") || strings.Contains(lower, "production editor:") {
+		return true
+	}
+	if strings.Contains(lower, "contents") && strings.Count(lower, "chapter ") >= 2 {
+		return true
+	}
+	return false
+}
+
 func buildQuizContext(
 	normalizedChunkIDs []string,
 	chunkTextByID map[string]string,
@@ -166,7 +182,28 @@ func buildQuizContext(
 	contextParts := make([]string, 0, len(normalizedChunkIDs))
 	truncatedCount := 0
 
+	// Separate substantive chunks from front matter chunks
+	substantiveIDs := make([]string, 0, len(normalizedChunkIDs))
+	frontMatterIDs := make([]string, 0, len(normalizedChunkIDs))
+
 	for _, chunkID := range normalizedChunkIDs {
+		text := strings.TrimSpace(chunkTextByID[chunkID])
+		if text == "" {
+			continue
+		}
+		if isFrontMatterChunk(text) {
+			frontMatterIDs = append(frontMatterIDs, chunkID)
+		} else {
+			substantiveIDs = append(substantiveIDs, chunkID)
+		}
+	}
+
+	targetIDs := substantiveIDs
+	if len(targetIDs) == 0 {
+		targetIDs = frontMatterIDs
+	}
+
+	for _, chunkID := range targetIDs {
 		text := strings.TrimSpace(chunkTextByID[chunkID])
 		if text == "" {
 			continue

@@ -83,7 +83,7 @@ func chapterIndexForPage(page int, chapters []models.SyllabusChapterDraft) int {
 		return -1
 	}
 	if page < chapters[0].StartPage {
-		return 0
+		return -1
 	}
 	// If it falls in a gap, find the preceding chapter
 	for i := 0; i < len(chapters)-1; i++ {

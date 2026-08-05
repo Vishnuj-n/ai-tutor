@@ -178,3 +178,65 @@ func TestValidateAndConvertQuestions(t *testing.T) {
 		t.Errorf("expected prompt 'Valid prompt?', got '%s'", questions[0].Prompt)
 	}
 }
+
+func TestIsFrontMatterChunk(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{
+			name: "license notice",
+			text: "grokking Deep Learning\nLicensed to Pat McDonald <patmcdonald@me.com>",
+			want: true,
+		},
+		{
+			name: "copyright and ISBN",
+			text: "Copyright 2019 Manning Publications Co. ISBN: 9781617293702",
+			want: true,
+		},
+		{
+			name: "table of contents",
+			text: "Contents\nChapter 1 Introducing deep learning\nChapter 2 Fundamental concepts",
+			want: true,
+		},
+		{
+			name: "substantive chapter content",
+			text: "Deep learning is a subset of machine learning based on artificial neural networks.",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isFrontMatterChunk(tt.text)
+			if got != tt.want {
+				t.Errorf("isFrontMatterChunk(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFrontMatterFilteringInQuizContext(t *testing.T) {
+	chunkText := map[string]string{
+		"c_license":   "Licensed to Pat McDonald <patmcdonald@me.com>",
+		"c_toc":       "Contents\nChapter 1 Intro\nChapter 2 Deep learning",
+		"c_content1":  "Neural networks learn representations through layers of linear transforms and non-linear activations.",
+		"c_content2":  "Gradient descent optimizes network parameters by computing partial derivatives.",
+	}
+
+	res, err := buildQuizContext([]string{"c_license", "c_toc", "c_content1", "c_content2"}, chunkText, 1000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(res.contextParts) != 2 {
+		t.Fatalf("expected 2 substantive context parts, got %d", len(res.contextParts))
+	}
+
+	for _, part := range res.contextParts {
+		if isFrontMatterChunk(part) {
+			t.Errorf("expected context part to exclude front matter, got: %s", part)
+		}
+	}
+}
