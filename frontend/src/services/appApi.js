@@ -1,6 +1,6 @@
 // Centralized Wails bridge helpers make page-level code easier to debug.
 function appBridge() {
-  const bridge = window?.go?.main?.App
+  const bridge = window?.go?.app?.App || window?.go?.main?.App
   if (!bridge) {
     throw new Error('Wails backend bridge unavailable')
   }
