@@ -47,18 +47,6 @@
         />
       </div>
 
-      <div class="form-group">
-        <label for="student-classroom">Classroom Code</label>
-        <input
-          id="student-classroom"
-          :value="loginClassroomCode"
-          type="text"
-          placeholder="e.g. BIO101"
-          :disabled="loggingIn"
-          @input="$emit('update:loginClassroomCode', $event.target.value)"
-        />
-      </div>
-
       <button type="button" class="sync-btn" :disabled="loggingIn" @click="$emit('login')">
         {{ loggingIn ? 'Signing In...' : 'Sign In & Sync' }}
       </button>
@@ -87,7 +75,6 @@ defineProps({
   disabled: { type: Boolean, default: false },
   loginUsername: { type: String, required: true },
   loginPassword: { type: String, required: true },
-  loginClassroomCode: { type: String, required: true },
   loginError: { type: String, default: '' },
   loggingIn: { type: Boolean, default: false },
 })
@@ -97,7 +84,6 @@ defineEmits([
   'logout',
   'update:loginUsername',
   'update:loginPassword',
-  'update:loginClassroomCode',
 ])
 </script>
 

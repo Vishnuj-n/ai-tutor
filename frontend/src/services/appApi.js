@@ -255,8 +255,8 @@ export function getAppEnv() {
   return appBridge().GetAppEnv()
 }
 
-export function loginStudent(username, password, classroomCode) {
-  return appBridge().LoginStudent(username, password, classroomCode)
+export function loginStudent(username, password) {
+  return appBridge().LoginStudent(username, password)
 }
 
 export function logoutStudent() {

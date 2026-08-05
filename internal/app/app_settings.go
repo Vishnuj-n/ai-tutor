@@ -441,7 +441,7 @@ func (a *App) TriggerCloudSync() map[string]interface{} {
 // app_settings.go end
 
 // LoginStudent handles student login using the Supabase login_user RPC.
-func (a *App) LoginStudent(username, password, classroomCode string) map[string]interface{} {
+func (a *App) LoginStudent(username, password string) map[string]interface{} {
 	repo := a.getRepo()
 	if repo == nil {
 		return map[string]interface{}{"error": errDatabaseNotInitialized}

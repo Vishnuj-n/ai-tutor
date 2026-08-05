@@ -6,17 +6,12 @@ export function useAuth(reloadFn, errorRef, successRef) {
   const { confirm } = useDialog()
   const loginUsername = ref('')
   const loginPassword = ref('')
-  const loginClassroomCode = ref('')
   const loginError = ref('')
   const loggingIn = ref(false)
 
   async function handleLogin() {
-    if (
-      !loginUsername.value.trim() ||
-      !loginPassword.value.trim() ||
-      !loginClassroomCode.value.trim()
-    ) {
-      loginError.value = 'All fields are required.'
+    if (!loginUsername.value.trim() || !loginPassword.value.trim()) {
+      loginError.value = 'Username and password are required.'
       return
     }
     loginError.value = ''
@@ -24,15 +19,13 @@ export function useAuth(reloadFn, errorRef, successRef) {
     try {
       const res = await loginStudent(
         loginUsername.value.trim(),
-        loginPassword.value.trim(),
-        loginClassroomCode.value.trim().toUpperCase()
+        loginPassword.value.trim()
       )
       if (res.error) {
         loginError.value = res.error
       } else {
         loginUsername.value = ''
         loginPassword.value = ''
-        loginClassroomCode.value = ''
         await reloadFn()
         successRef.value = 'Successfully signed in and cloud sync enabled!'
         setTimeout(() => (successRef.value = ''), 4000)
@@ -72,7 +65,6 @@ export function useAuth(reloadFn, errorRef, successRef) {
   return {
     loginUsername,
     loginPassword,
-    loginClassroomCode,
     loginError,
     loggingIn,
     handleLogin,

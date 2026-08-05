@@ -57,14 +57,12 @@
           :disabled="loading || saving"
           :login-username="loginUsername"
           :login-password="loginPassword"
-          :login-classroom-code="loginClassroomCode"
           :login-error="loginError"
           :logging-in="loggingIn"
           @login="handleLogin"
           @logout="handleLogout"
           @update:login-username="loginUsername = $event"
           @update:login-password="loginPassword = $event"
-          @update:login-classroom-code="loginClassroomCode = $event"
         />
       </div>
 
@@ -228,7 +226,6 @@ const {
 const {
   loginUsername,
   loginPassword,
-  loginClassroomCode,
   loginError,
   loggingIn,
   handleLogin,
