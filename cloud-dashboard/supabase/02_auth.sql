@@ -65,6 +65,13 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.user_accounts WHERE classroom_code = UPPER(p_classroom_code) AND role = 'teacher') THEN
       RAISE EXCEPTION 'Classroom code must belong to an existing registered teacher';
     END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM public.user_accounts
+      WHERE classroom_code = UPPER(p_classroom_code) AND role = 'teacher' AND is_locked = TRUE
+    ) THEN
+      RAISE EXCEPTION 'Classroom is currently locked by the teacher. New student joins are disabled.';
+    END IF;
   END IF;
 
   INSERT INTO public.user_accounts (username, password_hash, role, classroom_code)
@@ -74,5 +81,69 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions;
 
+CREATE OR REPLACE FUNCTION toggle_classroom_lock(
+  p_classroom_code TEXT,
+  p_is_locked BOOLEAN
+) RETURNS JSONB AS $$
+DECLARE
+  v_teacher_username TEXT;
+  v_teacher_class_code TEXT;
+  v_session_token UUID;
+BEGIN
+  v_session_token := get_current_session_token();
+  IF v_session_token IS NULL THEN RAISE EXCEPTION 'Missing session token'; END IF;
+
+  SELECT entity_id, public.user_accounts.classroom_code INTO v_teacher_username, v_teacher_class_code
+  FROM public.active_sessions
+  JOIN public.user_accounts ON LOWER(public.user_accounts.username) = LOWER(public.active_sessions.entity_id)
+  WHERE public.active_sessions.session_token = v_session_token
+    AND public.active_sessions.role = 'teacher'
+    AND public.active_sessions.expires_at > now();
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invalid or expired teacher session'; END IF;
+  IF LOWER(v_teacher_class_code) <> LOWER(p_classroom_code) THEN RAISE EXCEPTION 'Classroom code mismatch'; END IF;
+
+  UPDATE public.user_accounts
+  SET is_locked = p_is_locked
+  WHERE LOWER(username) = LOWER(v_teacher_username) AND role = 'teacher';
+
+  RETURN jsonb_build_object('success', true, 'is_locked', p_is_locked);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION remove_student_from_classroom(
+  p_student_username TEXT,
+  p_classroom_code TEXT
+) RETURNS JSONB AS $$
+DECLARE
+  v_teacher_username TEXT;
+  v_teacher_class_code TEXT;
+  v_session_token UUID;
+BEGIN
+  v_session_token := get_current_session_token();
+  IF v_session_token IS NULL THEN RAISE EXCEPTION 'Missing session token'; END IF;
+
+  SELECT entity_id, public.user_accounts.classroom_code INTO v_teacher_username, v_teacher_class_code
+  FROM public.active_sessions
+  JOIN public.user_accounts ON LOWER(public.user_accounts.username) = LOWER(public.active_sessions.entity_id)
+  WHERE public.active_sessions.session_token = v_session_token
+    AND public.active_sessions.role = 'teacher'
+    AND public.active_sessions.expires_at > now();
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invalid or expired teacher session'; END IF;
+  IF LOWER(v_teacher_class_code) <> LOWER(p_classroom_code) THEN RAISE EXCEPTION 'Classroom code mismatch'; END IF;
+
+  DELETE FROM public.student_notebooks WHERE LOWER(student_token) = LOWER(p_student_username) AND classroom_code = p_classroom_code;
+  DELETE FROM public.student_review_logs WHERE LOWER(student_token) = LOWER(p_student_username) AND classroom_code = p_classroom_code;
+  
+  -- Unlink classroom code from student user account
+  UPDATE public.user_accounts SET classroom_code = '' WHERE LOWER(username) = LOWER(p_student_username) AND role = 'student';
+
+  RETURN jsonb_build_object('success', true, 'removed_student', LOWER(p_student_username));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
 GRANT EXECUTE ON FUNCTION login_user(TEXT, TEXT, BOOLEAN) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION signup_user(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION toggle_classroom_lock(TEXT, BOOLEAN) TO authenticated;
+GRANT EXECUTE ON FUNCTION remove_student_from_classroom(TEXT, TEXT) TO authenticated;

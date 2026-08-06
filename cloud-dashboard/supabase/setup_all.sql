@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS public.user_accounts (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL,
     classroom_code TEXT NOT NULL,
+    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -151,6 +152,13 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.user_accounts WHERE classroom_code = UPPER(p_classroom_code) AND role = 'teacher') THEN
       RAISE EXCEPTION 'Classroom code must belong to an existing registered teacher';
     END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM public.user_accounts
+      WHERE classroom_code = UPPER(p_classroom_code) AND role = 'teacher' AND is_locked = TRUE
+    ) THEN
+      RAISE EXCEPTION 'Classroom is currently locked by the teacher. New student joins are disabled.';
+    END IF;
   END IF;
 
   INSERT INTO public.user_accounts (username, password_hash, role, classroom_code)
@@ -159,6 +167,67 @@ BEGIN
   RETURN jsonb_build_object('success', true, 'username', LOWER(p_username));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions;
+
+CREATE OR REPLACE FUNCTION toggle_classroom_lock(
+  p_classroom_code TEXT,
+  p_is_locked BOOLEAN
+) RETURNS JSONB AS $$
+DECLARE
+  v_teacher_username TEXT;
+  v_teacher_class_code TEXT;
+  v_session_token UUID;
+BEGIN
+  v_session_token := get_current_session_token();
+  IF v_session_token IS NULL THEN RAISE EXCEPTION 'Missing session token'; END IF;
+
+  SELECT entity_id, public.user_accounts.classroom_code INTO v_teacher_username, v_teacher_class_code
+  FROM public.active_sessions
+  JOIN public.user_accounts ON LOWER(public.user_accounts.username) = LOWER(public.active_sessions.entity_id)
+  WHERE public.active_sessions.session_token = v_session_token
+    AND public.active_sessions.role = 'teacher'
+    AND public.active_sessions.expires_at > now();
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invalid or expired teacher session'; END IF;
+  IF LOWER(v_teacher_class_code) <> LOWER(p_classroom_code) THEN RAISE EXCEPTION 'Classroom code mismatch'; END IF;
+
+  UPDATE public.user_accounts
+  SET is_locked = p_is_locked
+  WHERE LOWER(username) = LOWER(v_teacher_username) AND role = 'teacher';
+
+  RETURN jsonb_build_object('success', true, 'is_locked', p_is_locked);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION remove_student_from_classroom(
+  p_student_username TEXT,
+  p_classroom_code TEXT
+) RETURNS JSONB AS $$
+DECLARE
+  v_teacher_username TEXT;
+  v_teacher_class_code TEXT;
+  v_session_token UUID;
+BEGIN
+  v_session_token := get_current_session_token();
+  IF v_session_token IS NULL THEN RAISE EXCEPTION 'Missing session token'; END IF;
+
+  SELECT entity_id, public.user_accounts.classroom_code INTO v_teacher_username, v_teacher_class_code
+  FROM public.active_sessions
+  JOIN public.user_accounts ON LOWER(public.user_accounts.username) = LOWER(public.active_sessions.entity_id)
+  WHERE public.active_sessions.session_token = v_session_token
+    AND public.active_sessions.role = 'teacher'
+    AND public.active_sessions.expires_at > now();
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invalid or expired teacher session'; END IF;
+  IF LOWER(v_teacher_class_code) <> LOWER(p_classroom_code) THEN RAISE EXCEPTION 'Classroom code mismatch'; END IF;
+
+  DELETE FROM public.student_notebooks WHERE LOWER(student_token) = LOWER(p_student_username) AND classroom_code = p_classroom_code;
+  DELETE FROM public.student_review_logs WHERE LOWER(student_token) = LOWER(p_student_username) AND classroom_code = p_classroom_code;
+  
+  UPDATE public.user_accounts SET classroom_code = '' WHERE LOWER(username) = LOWER(p_student_username) AND role = 'student';
+
+  RETURN jsonb_build_object('success', true, 'removed_student', LOWER(p_student_username));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- 3. Data Sync & Dashboard RPC Functions
 CREATE OR REPLACE FUNCTION handle_cloud_sync(
@@ -261,8 +330,11 @@ begin
         left join student_logs l on l.student_token = a.student_token
         order by "lastUpdate" desc
     )
-    select json_agg(r) into v_result from rolled_up r;
-    return coalesce(v_result, '[]'::json);
+    select json_build_object(
+        'is_locked', coalesce((select is_locked from public.user_accounts where lower(username) = lower(v_teacher_username) and role = 'teacher'), false),
+        'students', coalesce(json_agg(r), '[]'::json)
+    ) into v_result from rolled_up r;
+    return v_result;
 end;
 $$;
 
@@ -337,6 +409,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, aut
 
 GRANT EXECUTE ON FUNCTION login_user(TEXT, TEXT, BOOLEAN) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION signup_user(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION toggle_classroom_lock(TEXT, BOOLEAN) TO authenticated;
+GRANT EXECUTE ON FUNCTION remove_student_from_classroom(TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION get_classroom_dashboard(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION handle_cloud_sync(TEXT, TEXT, JSONB, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_current_session_token() TO anon, authenticated;

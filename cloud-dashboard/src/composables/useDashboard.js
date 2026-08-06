@@ -279,7 +279,12 @@ async function fetchData(silent = false) {
     }
 
     if (success && fetchedData) {
-      students.value = fetchedData;
+      if (typeof fetchedData === 'object' && !Array.isArray(fetchedData) && fetchedData.students) {
+        students.value = fetchedData.students || [];
+        isLocked.value = !!fetchedData.is_locked;
+      } else if (Array.isArray(fetchedData)) {
+        students.value = fetchedData;
+      }
       lastSyncedAt.value = Date.now();
       updateSyncTimeAgo();
       fetchAssignments();
@@ -291,6 +296,57 @@ async function fetchData(silent = false) {
     if (!silent) error.value = `Failed to fetch classroom data: ${err.message}`;
   } finally {
     if (!silent) loading.value = false;
+  }
+}
+
+async function toggleClassroomLock() {
+  const targetState = !isLocked.value;
+  try {
+    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/toggle_classroom_lock`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`,
+        'x-session-token': sessionToken.value
+      },
+      body: JSON.stringify({ p_classroom_code: classroomCode.value, p_is_locked: targetState })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(errText || `Server returned status ${res.status}`);
+    }
+    isLocked.value = targetState;
+    showToast(targetState ? 'Classroom LOCKED. New student joins disabled.' : 'Classroom UNLOCKED. New students can join.');
+  } catch (err) {
+    console.error('Failed to toggle classroom lock:', err);
+    showToast(`Error: ${err.message}`);
+  }
+}
+
+async function removeStudent(studentToken) {
+  if (!confirm(`Are you sure you want to remove student "${studentToken}" from classroom ${classroomCode.value}?`)) return;
+
+  try {
+    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/remove_student_from_classroom`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`,
+        'x-session-token': sessionToken.value
+      },
+      body: JSON.stringify({ p_student_username: studentToken, p_classroom_code: classroomCode.value })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(errText || `Server returned status ${res.status}`);
+    }
+    showToast(`Student ${studentToken} removed from classroom.`);
+    fetchData();
+  } catch (err) {
+    console.error('Failed to remove student:', err);
+    showToast(`Error: ${err.message}`);
   }
 }
 
@@ -612,6 +668,8 @@ function initSession() {
   }
 }
 
+const isLocked = ref(false);
+
 export function useDashboard() {
   return {
     supabaseUrl,
@@ -626,6 +684,7 @@ export function useDashboard() {
     isSignUp,
     loginClassroom,
     rememberMe,
+    isLocked,
     error,
     loading,
     loadingAssignments,
@@ -650,6 +709,8 @@ export function useDashboard() {
     signupTeacher,
     logoutTeacher,
     fetchData,
+    toggleClassroomLock,
+    removeStudent,
     exportClassroomCSV,
     fetchAssignments,
     handleFileUpload,

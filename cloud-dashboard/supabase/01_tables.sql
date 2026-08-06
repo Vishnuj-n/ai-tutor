@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS public.user_accounts (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL,
     classroom_code TEXT NOT NULL,
+    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 

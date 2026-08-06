@@ -98,8 +98,11 @@ begin
         left join student_logs l on l.student_token = a.student_token
         order by "lastUpdate" desc
     )
-    select json_agg(r) into v_result from rolled_up r;
-    return coalesce(v_result, '[]'::json);
+    select json_build_object(
+        'is_locked', coalesce((select is_locked from public.user_accounts where lower(username) = lower(v_teacher_username) and role = 'teacher'), false),
+        'students', coalesce(json_agg(r), '[]'::json)
+    ) into v_result from rolled_up r;
+    return v_result;
 end;
 $$;
 

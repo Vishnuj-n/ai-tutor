@@ -22,6 +22,16 @@
 
           <button
             class="btn btn-secondary"
+            @click="toggleClassroomLock"
+            style="padding: 0.45rem 0.85rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem;"
+            :style="isLocked ? 'border-color: var(--danger); color: var(--danger); background: var(--danger-glow);' : 'border-color: var(--success); color: var(--success);'"
+            :title="isLocked ? 'Classroom is LOCKED. Click to allow new student joins.' : 'Classroom is OPEN. Click to block new student joins.'"
+          >
+            <span>{{ isLocked ? '🔒 Locked' : '🔓 Open' }}</span>
+          </button>
+
+          <button
+            class="btn btn-secondary"
             :class="{ active: filterAlerts }"
             @click="filterAlerts = !filterAlerts"
             style="padding: 0.45rem 0.85rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem;"
@@ -97,10 +107,18 @@
               </div>
             </div>
 
-            <div class="student-metrics">
+            <div class="student-metrics" style="display: flex; align-items: center; gap: 0.75rem;">
               <div v-if="student.alertsCount > 0" class="alert-indicator" style="animation: hazard-pulse 2s infinite ease-in-out;">
                 {{ student.alertsCount }} Alert{{ student.alertsCount > 1 ? 's' : '' }}
               </div>
+              <button
+                class="btn btn-secondary"
+                @click.stop="removeStudent(student.token)"
+                style="padding: 0.25rem 0.55rem; font-size: 0.75rem; border-color: rgba(239, 68, 68, 0.4); color: var(--danger);"
+                title="Remove student from classroom"
+              >
+                Remove
+              </button>
               <svg
                 width="12"
                 height="12"
@@ -248,11 +266,14 @@ const {
   filteredStudents,
   expandedStudents,
   classroomCode,
+  isLocked,
   loading,
   searchQuery,
   filterAlerts,
   searchInputRef,
   fetchData,
+  toggleClassroomLock,
+  removeStudent,
   exportClassroomCSV,
   toggleStudent,
   formatRatingLabel,
