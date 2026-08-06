@@ -29,3 +29,4 @@ doc/NOTES/
 .scannerwork/
 doc/ORIGINAL_NOTES/
 __pycache__/
+bin/

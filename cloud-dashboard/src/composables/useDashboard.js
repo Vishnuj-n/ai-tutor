@@ -2,6 +2,7 @@ import { ref, reactive, computed } from 'vue';
 
 const supabaseUrl = ref(import.meta.env.VITE_SUPABASE_URL || '');
 const supabaseKey = ref(import.meta.env.VITE_SUPABASE_ANON_KEY || '');
+const apiBaseUrl = ref(import.meta.env.VITE_API_URL || 'http://localhost:8080');
 const sessionToken = ref('');
 const classroomCode = ref('');
 const showSetup = ref(true);
@@ -233,28 +234,58 @@ function logoutTeacher(router) {
 }
 
 async function fetchData(silent = false) {
-  if (!supabaseUrl.value || !supabaseKey.value || !classroomCode.value) return;
+  if (!classroomCode.value) return;
 
   if (!silent) loading.value = true;
   error.value = '';
 
   try {
-    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/get_classroom_dashboard`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': supabaseKey.value,
-        'Authorization': `Bearer ${supabaseKey.value}`,
-        'x-session-token': sessionToken.value
-      },
-      body: JSON.stringify({ p_classroom_code: classroomCode.value })
-    });
-    if (!res.ok) throw new Error(`Dashboard fetch error: ${res.statusText}`);
-    students.value = await res.json();
-    lastSyncedAt.value = Date.now();
-    updateSyncTimeAgo();
+    let fetchedData = null;
+    let success = false;
 
-    fetchAssignments();
+    // 1. Try Go Backend API
+    if (apiBaseUrl.value) {
+      try {
+        const res = await fetch(`${apiBaseUrl.value}/api/dashboard?classroom_code=${classroomCode.value}`, {
+          headers: {
+            'x-session-token': sessionToken.value,
+            'Authorization': `Bearer ${sessionToken.value}`
+          }
+        });
+        if (res.ok) {
+          fetchedData = await res.json();
+          success = true;
+        }
+      } catch (e) {
+        console.warn('Go API server unavailable, falling back to Supabase direct REST:', e);
+      }
+    }
+
+    // 2. Fallback to Supabase direct RPC if Go server is not running
+    if (!success && supabaseUrl.value && supabaseKey.value) {
+      const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/get_classroom_dashboard`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': supabaseKey.value,
+          'Authorization': `Bearer ${supabaseKey.value}`,
+          'x-session-token': sessionToken.value
+        },
+        body: JSON.stringify({ p_classroom_code: classroomCode.value })
+      });
+      if (!res.ok) throw new Error(`Dashboard fetch error: ${res.statusText}`);
+      fetchedData = await res.json();
+      success = true;
+    }
+
+    if (success && fetchedData) {
+      students.value = fetchedData;
+      lastSyncedAt.value = Date.now();
+      updateSyncTimeAgo();
+      fetchAssignments();
+    } else {
+      throw new Error('Failed to fetch data from API server or database.');
+    }
   } catch (err) {
     console.error('Data refresh error:', err);
     if (!silent) error.value = `Failed to fetch classroom data: ${err.message}`;
@@ -297,21 +328,35 @@ function exportClassroomCSV() {
 async function fetchAssignments() {
   loadingAssignments.value = true;
   try {
-    const res = await fetch(
-      `${supabaseUrl.value}/rest/v1/teacher_assignments?classroom_code=eq.${classroomCode.value}&order=created_at.desc`,
-      {
-        headers: {
-          'apikey': supabaseKey.value,
-          'Authorization': `Bearer ${supabaseKey.value}`,
-          'x-session-token': sessionToken.value
+    let list = null;
+    if (apiBaseUrl.value) {
+      try {
+        const res = await fetch(`${apiBaseUrl.value}/api/assignments?classroom_code=${classroomCode.value}`);
+        if (res.ok) {
+          list = await res.json();
         }
-      }
-    );
-    if (!res.ok) throw new Error(`Assignments fetch error: ${res.statusText}`);
-    assignments.value = await res.json();
+      } catch (_) {}
+    }
+
+    if (!list && supabaseUrl.value && supabaseKey.value) {
+      const res = await fetch(
+        `${supabaseUrl.value}/rest/v1/teacher_assignments?classroom_code=eq.${classroomCode.value}&order=created_at.desc`,
+        {
+          headers: {
+            'apikey': supabaseKey.value,
+            'Authorization': `Bearer ${supabaseKey.value}`,
+            'x-session-token': sessionToken.value
+          }
+        }
+      );
+      if (res.ok) list = await res.json();
+    }
+
+    if (list) {
+      assignments.value = list;
+    }
   } catch (err) {
-    console.error('Failed to load assignments:', err);
-    error.value = `Assignments warning: ${err.message}`;
+    console.warn('Failed to load assignments:', err);
   } finally {
     loadingAssignments.value = false;
   }

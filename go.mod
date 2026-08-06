@@ -6,6 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
+	github.com/lib/pq v1.12.3
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0-20260508143813-8a8cfc36f1a8
 	github.com/sugarme/tokenizer v0.3.0
