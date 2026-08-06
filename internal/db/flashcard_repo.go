@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"ai-tutor/internal/models"
 )
@@ -470,7 +471,7 @@ func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
 	if cardID == "" {
 		return fmt.Errorf("flashcard id is required")
 	}
-	var suspended int
+	var suspended bool
 	err := tx.QueryRow(`SELECT suspended FROM fsrs_cards WHERE id = ?`, cardID).Scan(&suspended)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -478,7 +479,7 @@ func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
 		}
 		return err
 	}
-	if suspended == 1 {
+	if suspended {
 		return nil // already suspended, success
 	}
 	result, err := tx.Exec(`
@@ -497,6 +498,14 @@ func (r *Repository) SuspendFlashcardTx(tx *sql.Tx, cardID string) error {
 		return fmt.Errorf("flashcard %s was not updated, potentially due to a concurrent update or missing row", cardID)
 	}
 	return nil
+}
+
+func (r *Repository) MakeAllFlashcardsDueNow() (int64, error) {
+	res, err := r.db.Exec(`UPDATE fsrs_cards SET due_at = ? WHERE suspended = 0`, time.Now().Unix()-3600)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func boolToInt(b bool) int {

@@ -317,3 +317,31 @@ func TestQueryDueReviewCardsForRange(t *testing.T) {
 	}
 }
 
+func TestSuspendFlashcardTxIdempotentAndTypeScan(t *testing.T) {
+	initDBForTest(t, false, 0)
+
+	topicID := "topic-suspend"
+	if err := testRepo.EnsureTopic(topicID, "Suspend Topic"); err != nil {
+		t.Fatalf("EnsureTopic failed: %v", err)
+	}
+
+	err := testRepo.CreateFlashcards(topicID, []models.Flashcard{
+		{ID: "card-suspend-1", TopicID: topicID, Prompt: "Q1", Answer: "A1", DueAt: 100, Suspended: false},
+	}, map[string]models.FlashcardState{
+		"card-suspend-1": {},
+	})
+	if err != nil {
+		t.Fatalf("CreateFlashcards failed: %v", err)
+	}
+
+	// First suspend should succeed cleanly
+	if err := testRepo.SuspendFlashcard("card-suspend-1"); err != nil {
+		t.Fatalf("First SuspendFlashcard failed: %v", err)
+	}
+
+	// Second suspend should be idempotent and not error
+	if err := testRepo.SuspendFlashcard("card-suspend-1"); err != nil {
+		t.Fatalf("Second SuspendFlashcard failed: %v", err)
+	}
+}
+

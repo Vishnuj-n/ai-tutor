@@ -6,6 +6,7 @@ import (
 	"ai-tutor/internal/scheduler"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -157,7 +158,7 @@ func (s *StudyService) SuspendFlashcard(taskID, cardID string) (int, error) {
 		if err := s.repo.SuspendFlashcardTx(tx, cardID); err != nil {
 			return err
 		}
-		if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil {
+		if err := s.repo.MarkReviewTaskCardReviewedTx(tx, taskID, cardID); err != nil && !errors.Is(err, db.ErrReviewLinkNotPending) {
 			return err
 		}
 		return nil

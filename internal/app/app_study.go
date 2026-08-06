@@ -1154,11 +1154,19 @@ func materializeSyntheticReviewSession(repo *db.Repository, notebookID string) (
 }
 
 func (a *App) RecordCardReview(taskID, cardID string, rating int) map[string]interface{} {
-	if _, errMap := requireRepo(a); errMap != nil {
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
 		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": errStudyServiceNotInitialized}
+	}
+	if taskID == models.ReviewTaskDailyID {
+		resolvedTaskID, err := materializeSyntheticReviewSession(repo, "")
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		taskID = resolvedTaskID
 	}
 	remaining, err := a.studyService.RecordCardReview(taskID, cardID, rating)
 	if err != nil {
@@ -1168,11 +1176,19 @@ func (a *App) RecordCardReview(taskID, cardID string, rating int) map[string]int
 }
 
 func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
-	if _, errMap := requireRepo(a); errMap != nil {
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
 		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": errStudyServiceNotInitialized}
+	}
+	if taskID == models.ReviewTaskDailyID {
+		resolvedTaskID, err := materializeSyntheticReviewSession(repo, "")
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		taskID = resolvedTaskID
 	}
 	if err := a.studyService.CompleteReviewSession(taskID); err != nil {
 		return mapTaskError(err)
@@ -1181,17 +1197,37 @@ func (a *App) CompleteReviewSession(taskID string) map[string]interface{} {
 }
 
 func (a *App) SuspendFlashcard(taskID, cardID string) map[string]interface{} {
-	if _, errMap := requireRepo(a); errMap != nil {
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
 		return errMap
 	}
 	if a.studyService == nil {
 		return map[string]interface{}{"error": errStudyServiceNotInitialized}
+	}
+	if taskID == models.ReviewTaskDailyID {
+		resolvedTaskID, err := materializeSyntheticReviewSession(repo, "")
+		if err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+		taskID = resolvedTaskID
 	}
 	remaining, err := a.studyService.SuspendFlashcard(taskID, cardID)
 	if err != nil {
 		return mapTaskError(err)
 	}
 	return map[string]interface{}{"ok": true, "remaining": remaining}
+}
+
+func (a *App) ForceDueFlashcardsNow() map[string]interface{} {
+	repo, errMap := requireRepo(a)
+	if errMap != nil {
+		return errMap
+	}
+	updated, err := repo.MakeAllFlashcardsDueNow()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"ok": true, "updated_cards": updated}
 }
 
 func (a *App) ScoreShortAnswer(questionID, userAnswer string) map[string]interface{} {

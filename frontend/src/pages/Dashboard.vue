@@ -154,6 +154,9 @@
         <button type="button" class="dev-btn" :disabled="forcingSync" @click="forceSyncTask">
           {{ forcingSync ? 'Forcing...' : 'Force Flashcard Generate' }}
         </button>
+        <button type="button" class="dev-btn" :disabled="forcingDue" @click="forceDueFlashcards">
+          {{ forcingDue ? 'Forcing...' : 'Force Flashcards Due Now' }}
+        </button>
       </div>
       <p v-if="devMessage" class="dev-message">{{ devMessage }}</p>
     </div>
@@ -171,6 +174,7 @@ import {
   getAppEnv,
   devForceSocraticRescue,
   devForceFlashcardGenerate,
+  forceDueFlashcardsNow,
   getNotebooks,
   getFlashcardDueTimeline,
 } from '../services/appApi'
@@ -538,6 +542,25 @@ async function forceSyncTask() {
     devMessage.value = 'Error: ' + err.message
   } finally {
     forcingSync.value = false
+  }
+}
+
+const forcingDue = ref(false)
+async function forceDueFlashcards() {
+  forcingDue.value = true
+  devMessage.value = ''
+  try {
+    const res = await forceDueFlashcardsNow()
+    if (res && res.error) {
+      devMessage.value = 'Error: ' + res.error
+    } else {
+      devMessage.value = `Successfully forced ${res.updated_cards ?? 0} flashcard(s) DUE NOW!`
+      await loadAgenda()
+    }
+  } catch (err) {
+    devMessage.value = 'Error: ' + err.message
+  } finally {
+    forcingDue.value = false
   }
 }
 </script>

@@ -240,6 +240,7 @@ import {
   getReviewSession,
   recordCardReview,
   suspendFlashcard,
+  forceDueFlashcardsNow,
   getUserSettings,
 } from '../services/appApi.js'
 import BaseButton from '../components/BaseButton.vue'
@@ -333,6 +334,24 @@ async function generate() {
   }
 }
 
+async function makeCardsDueNow() {
+  error.value = ''
+  loading.value = true
+  try {
+    const res = await forceDueFlashcardsNow()
+    if (res?.error) {
+      error.value = res.error
+      return
+    }
+    showToast(`Success! ${res.updated_cards ?? 0} flashcards set to DUE NOW.`, 'success')
+    await loadQueueSession('task-review-daily', selectedNotebookID.value)
+  } catch (e) {
+    error.value = e?.message ?? 'Failed to set cards due now'
+  } finally {
+    loading.value = false
+  }
+}
+
 async function handleQueueCompletion() {
   const completeRes = await completeReviewSession(reviewTaskID.value)
   if (completeRes?.error) {
@@ -348,6 +367,12 @@ async function rate(ratingKey) {
   const card = currentCard.value
   if (!card || isSubmittingReview.value) return
 
+  const targetCardID = card.card_id || card.id
+  if (!targetCardID) {
+    error.value = 'Invalid card identifier.'
+    return
+  }
+
   // Validate ratingKey against available ratings
   const validRating = ratings.find((r) => r.key === ratingKey)
   if (!validRating) {
@@ -359,24 +384,27 @@ async function rate(ratingKey) {
   console.warn('[FLASHCARD_PIPELINE] frontend_review_rating_submit', {
     queueMode: queueMode.value,
     reviewTaskID: reviewTaskID.value,
-    cardID: queueMode.value ? card.card_id : card.id,
+    cardID: targetCardID,
     rating: ratingKey,
   })
   try {
     if (queueMode.value) {
-      const res = await recordCardReview(reviewTaskID.value, card.card_id, validRating.value)
+      const res = await recordCardReview(reviewTaskID.value, targetCardID, validRating.value)
       if (res.error) {
         error.value = `Failed to save review: ${res.error}`
         return
       }
 
       flipped.value = false
-      sessionRemaining.value = Number(res.remaining ?? 0)
-      if (sessionRemaining.value <= 0) {
+      cards.value = cards.value.filter((c) => (c.card_id || c.id) !== targetCardID)
+      sessionRemaining.value = Number(res.remaining ?? cards.value.length)
+      if (sessionRemaining.value <= 0 || cards.value.length === 0) {
         await handleQueueCompletion()
         return
       }
-      await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
+      if (reviewIndex.value >= cards.value.length) {
+        reviewIndex.value = 0
+      }
       return
     }
     flipped.value = false
@@ -410,21 +438,31 @@ async function suspendCard() {
   const card = currentCard.value
   if (!card || !queueMode.value || isSubmittingReview.value) return
 
+  const targetCardID = card.card_id || card.id
+  if (!targetCardID) {
+    error.value = 'Invalid card identifier.'
+    return
+  }
+
   isSubmittingReview.value = true
   try {
-    const res = await suspendFlashcard(reviewTaskID.value, card.card_id)
-    if (res.error) {
+    const res = await suspendFlashcard(reviewTaskID.value, targetCardID)
+    if (res?.error) {
       error.value = `Failed to suspend card: ${res.error}`
       return
     }
     showToast('Card Suspended', 'success')
     flipped.value = false
-    sessionRemaining.value = Number(res.remaining ?? 0)
-    if (sessionRemaining.value <= 0) {
+    cards.value = cards.value.filter((c) => (c.card_id || c.id) !== targetCardID)
+    sessionRemaining.value = Number(res.remaining ?? cards.value.length)
+
+    if (sessionRemaining.value <= 0 || cards.value.length === 0) {
       await handleQueueCompletion()
       return
     }
-    await loadQueueSession(reviewTaskID.value, selectedNotebookID.value)
+    if (reviewIndex.value >= cards.value.length) {
+      reviewIndex.value = 0
+    }
   } catch (e) {
     error.value = `Failed to suspend card: ${e?.message ?? 'Unknown error'}`
   } finally {
@@ -498,6 +536,9 @@ async function loadQueueSession(taskID, notebookID = '') {
       return
     }
     const session = res.session
+    if (session?.task?.id) {
+      reviewTaskID.value = session.task.id
+    }
     cards.value = Array.isArray(session?.cards) ? session.cards : []
     reviewIndex.value = Number(session?.next_pending_idx ?? -1)
     sessionRemaining.value = Number(session?.remaining ?? 0)

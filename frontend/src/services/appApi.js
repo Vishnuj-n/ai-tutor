@@ -126,6 +126,10 @@ export function suspendFlashcard(taskID, cardID) {
   return appBridge().SuspendFlashcard(taskID, cardID)
 }
 
+export function forceDueFlashcardsNow() {
+  return appBridge().ForceDueFlashcardsNow()
+}
+
 export function getNotebooks(topicID = '', profileID = '') {
   return appBridge().GetNotebooks(topicID, profileID)
 }
