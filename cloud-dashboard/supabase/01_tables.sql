@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS public.user_accounts (
     is_locked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+ALTER TABLE public.user_accounts ADD COLUMN IF NOT EXISTS is_locked BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS public.active_sessions (
     session_token UUID PRIMARY KEY DEFAULT gen_random_uuid(),
