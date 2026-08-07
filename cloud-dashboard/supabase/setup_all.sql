@@ -231,10 +231,10 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- 3. Data Sync & Dashboard RPC Functions
 CREATE OR REPLACE FUNCTION handle_cloud_sync(
-  user_token TEXT,
-  classroom_code TEXT,
-  notebooks JSONB,
-  logs JSONB
+  p_user_token TEXT,
+  p_classroom_code TEXT,
+  p_notebooks JSONB,
+  p_logs JSONB
 ) RETURNS JSONB AS $$
 DECLARE
   nb_record RECORD;
@@ -246,34 +246,34 @@ BEGIN
   SELECT entity_id, public.user_accounts.classroom_code INTO v_student_username, v_classroom_code
   FROM public.active_sessions
   JOIN public.user_accounts ON LOWER(public.user_accounts.username) = LOWER(public.active_sessions.entity_id)
-  WHERE public.active_sessions.session_token = user_token::uuid
+  WHERE public.active_sessions.session_token = p_user_token::uuid
     AND public.active_sessions.role = 'student'
     AND public.active_sessions.expires_at > now();
 
   IF NOT FOUND THEN RAISE EXCEPTION 'Invalid or expired student session'; END IF;
-  IF LOWER(v_classroom_code) <> LOWER(handle_cloud_sync.classroom_code) THEN RAISE EXCEPTION 'Classroom code mismatch'; END IF;
+  IF LOWER(v_classroom_code) <> LOWER(p_classroom_code) THEN RAISE EXCEPTION 'Classroom code mismatch'; END IF;
 
-  IF notebooks IS NOT NULL AND jsonb_array_length(notebooks) > 0 THEN
-    FOR nb_record IN SELECT * FROM jsonb_to_recordset(notebooks) AS x(
+  IF p_notebooks IS NOT NULL AND jsonb_array_length(p_notebooks) > 0 THEN
+    FOR nb_record IN SELECT * FROM jsonb_to_recordset(p_notebooks) AS x(
       file_hash TEXT, filename TEXT, title TEXT, study_status TEXT, external_help_required BOOLEAN
     ) LOOP
       INSERT INTO student_notebooks (
         student_token, classroom_code, file_hash, filename, title, study_status, external_help_required, updated_at
       ) VALUES (
-        v_student_username, classroom_code, nb_record.file_hash, nb_record.filename, nb_record.title, nb_record.study_status, COALESCE(nb_record.external_help_required, FALSE), now()
+        v_student_username, p_classroom_code, nb_record.file_hash, nb_record.filename, nb_record.title, nb_record.study_status, COALESCE(nb_record.external_help_required, FALSE), now()
       ) ON CONFLICT (student_token, file_hash) DO UPDATE SET
         classroom_code = EXCLUDED.classroom_code, filename = EXCLUDED.filename, title = EXCLUDED.title, study_status = EXCLUDED.study_status, external_help_required = EXCLUDED.external_help_required, updated_at = now();
     END LOOP;
   END IF;
 
-  IF logs IS NOT NULL AND jsonb_array_length(logs) > 0 THEN
-    FOR log_record IN SELECT * FROM jsonb_to_recordset(logs) AS x(
+  IF p_logs IS NOT NULL AND jsonb_array_length(p_logs) > 0 THEN
+    FOR log_record IN SELECT * FROM jsonb_to_recordset(p_logs) AS x(
       id TEXT, file_hash TEXT, page_number INTEGER, activity_type TEXT, reference_id TEXT, reviewed_at BIGINT, rating INTEGER, scheduled_days INTEGER, state_before_json TEXT, state_after_json TEXT
     ) LOOP
       INSERT INTO student_review_logs (
         id, student_token, classroom_code, file_hash, page_number, activity_type, reference_id, reviewed_at, rating, scheduled_days, state_before_json, state_after_json
       ) VALUES (
-        log_record.id, v_student_username, classroom_code, log_record.file_hash, log_record.page_number, log_record.activity_type, log_record.reference_id, log_record.reviewed_at, log_record.rating, log_record.scheduled_days, log_record.state_before_json, log_record.state_after_json
+        log_record.id, v_student_username, p_classroom_code, log_record.file_hash, log_record.page_number, log_record.activity_type, log_record.reference_id, log_record.reviewed_at, log_record.rating, log_record.scheduled_days, log_record.state_before_json, log_record.state_after_json
       ) ON CONFLICT (id) DO NOTHING;
     END LOOP;
   END IF;
@@ -281,7 +281,7 @@ BEGIN
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
     'id', id, 'title', title, 'download_url', download_url
   )), '[]'::jsonb) INTO ret_notebooks
-  FROM teacher_assignments WHERE classroom_code = handle_cloud_sync.classroom_code;
+  FROM teacher_assignments WHERE classroom_code = p_classroom_code;
 
   RETURN jsonb_build_object('new_notebooks', ret_notebooks);
 END;

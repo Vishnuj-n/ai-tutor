@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ai-tutor/internal/db"
@@ -20,7 +21,7 @@ const DefaultProductionSyncURL = "https://your-supabase-project.supabase.co/rest
 const DefaultProductionAnonKey = "your-supabase-anon-key"
 
 // ResolveCloudSyncURL returns the effective sync URL.
-// Resolution order: stored SQLite value → CLOUD_SYNC_URL env var → DefaultProductionSyncURL.
+// Resolution order: stored SQLite value → CLOUD_SYNC_URL / SUPABASE_URL / VITE_SUPABASE_URL env var → DefaultProductionSyncURL.
 func ResolveCloudSyncURL(storedURL string) string {
 	if storedURL != "" {
 		return storedURL
@@ -28,22 +29,34 @@ func ResolveCloudSyncURL(storedURL string) string {
 	if env := os.Getenv("CLOUD_SYNC_URL"); env != "" {
 		return env
 	}
+	for _, envKey := range []string{"SUPABASE_URL", "VITE_SUPABASE_URL"} {
+		if env := os.Getenv(envKey); env != "" {
+			if !strings.Contains(env, "/rest/v1/rpc/") {
+				return fmt.Sprintf("%s/rest/v1/rpc/handle_cloud_sync", strings.TrimSuffix(env, "/"))
+			}
+			return env
+		}
+	}
 	return DefaultProductionSyncURL
 }
 
-// ResolveCloudAPIToken returns the effective API token.
-// Resolution order: stored SQLite value → CLOUD_API_TOKEN / SUPABASE_ANON_KEY env var → DefaultProductionAnonKey.
+// ResolveAnonKey returns the project Supabase anon/publishable API key from environment variables.
+func ResolveAnonKey() string {
+	for _, envKey := range []string{"CLOUD_API_TOKEN", "SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY", "VITE_SUPABASE_ANON_KEY"} {
+		if env := os.Getenv(envKey); env != "" {
+			return env
+		}
+	}
+	return DefaultProductionAnonKey
+}
+
+// ResolveCloudAPIToken returns the effective user session token / API token.
+// Resolution order: stored SQLite value → ResolveAnonKey().
 func ResolveCloudAPIToken(storedToken string) string {
 	if storedToken != "" {
 		return storedToken
 	}
-	if env := os.Getenv("CLOUD_API_TOKEN"); env != "" {
-		return env
-	}
-	if env := os.Getenv("SUPABASE_ANON_KEY"); env != "" {
-		return env
-	}
-	return DefaultProductionAnonKey
+	return ResolveAnonKey()
 }
 
 // NotebookSyncRecord is the minimal notebook identity the server needs.
@@ -57,11 +70,10 @@ type NotebookSyncRecord struct {
 }
 
 type SyncPayload struct {
-	UserToken     string                      `json:"user_token"`
-	ClassroomCode string                      `json:"classroom_code"`
-	Notebooks     []NotebookSyncRecord        `json:"notebooks"`
-	Logs          []models.SyncLogEntry       `json:"logs"`
-	Analytics     []models.AnalyticsEventSync `json:"analytics,omitempty"`
+	UserToken     string                `json:"p_user_token"`
+	ClassroomCode string                `json:"p_classroom_code"`
+	Notebooks     []NotebookSyncRecord  `json:"p_notebooks"`
+	Logs          []models.SyncLogEntry `json:"p_logs"`
 }
 
 type SyncResponse struct {
@@ -93,7 +105,8 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 
 	syncURL := ResolveCloudSyncURL(settings.CloudSyncURL)
-	apiToken := ResolveCloudAPIToken(settings.CloudAPIToken)
+	userToken := ResolveCloudAPIToken(settings.CloudAPIToken)
+	anonKey := ResolveAnonKey()
 
 	if syncURL == "" {
 		if syncErr := repo.ResolveFlashcardGenerateTasksForTopic(""); syncErr != nil {
@@ -137,23 +150,11 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 	utils.Warnf("[SYNC] delta logs to send: %d (since %d)", len(logs), settings.LastSyncedAt)
 
-	// Fetch unsynced local analytics events if consent is enabled
-	var unsyncedEvents []models.AnalyticsEventSync
-	var eventIDs []int64
-	if settings.AnalyticsEnabled {
-		var aErr error
-		unsyncedEvents, eventIDs, aErr = repo.GetUnsyncedAnalyticsEvents()
-		if aErr != nil {
-			utils.Warnf("[SYNC] failed to fetch unsynced analytics: %v", aErr)
-		}
-	}
-
 	payload := SyncPayload{
-		UserToken:     apiToken,
+		UserToken:     userToken,
 		ClassroomCode: settings.ClassroomCode,
 		Notebooks:     notebookRecords,
 		Logs:          logs,
-		Analytics:     unsyncedEvents,
 	}
 
 	jsonBytes, err := json.Marshal(payload)
@@ -162,12 +163,12 @@ func TriggerCloudSync(repo *db.Repository) error {
 	}
 
 	headers := make(map[string]string)
-	anonKey := os.Getenv("CLOUD_API_TOKEN")
-	if anonKey == "" {
-		anonKey = os.Getenv("SUPABASE_ANON_KEY")
-	}
 	if anonKey != "" {
 		headers["apikey"] = anonKey
+	}
+	if userToken != "" && strings.Count(userToken, ".") == 2 {
+		headers["Authorization"] = "Bearer " + userToken
+	} else if anonKey != "" && strings.Count(anonKey, ".") == 2 {
 		headers["Authorization"] = "Bearer " + anonKey
 	}
 
@@ -197,12 +198,7 @@ func TriggerCloudSync(repo *db.Repository) error {
 			utils.Warnf("[SYNC] failed to persist last_synced_at: %v", setErr)
 		}
 
-		// Mark sent analytics events as synced in local SQLite
-		if len(eventIDs) > 0 {
-			if markErr := repo.MarkAnalyticsSynced(eventIDs); markErr != nil {
-				utils.Warnf("[SYNC] failed to mark analytics synced: %v", markErr)
-			}
-		}
+
 
 		// Sync completed successfully. Clear any pending FLASHCARD_GENERATE tasks.
 		if syncErr := repo.ResolveFlashcardGenerateTasksForTopic(""); syncErr != nil {

@@ -457,7 +457,7 @@ func (a *App) LoginStudent(username, password string) map[string]interface{} {
 		return map[string]interface{}{"error": "Supabase Sync URL is not configured in the environment"}
 	}
 
-	anonKey := study.ResolveCloudAPIToken(settings.CloudAPIToken)
+	anonKey := study.ResolveAnonKey()
 	if anonKey == "" {
 		return map[string]interface{}{"error": "Supabase Anon Key is not configured in the environment"}
 	}
@@ -490,7 +490,9 @@ func (a *App) LoginStudent(username, password string) map[string]interface{} {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("apikey", anonKey)
-	req.Header.Set("Authorization", "Bearer "+anonKey)
+	if strings.Count(anonKey, ".") == 2 {
+		req.Header.Set("Authorization", "Bearer "+anonKey)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -555,7 +557,7 @@ func (a *App) SignUpStudent(username, password, classroomCode string) map[string
 		return map[string]interface{}{"error": "Supabase Sync URL is not configured in the environment"}
 	}
 
-	anonKey := study.ResolveCloudAPIToken(settings.CloudAPIToken)
+	anonKey := study.ResolveAnonKey()
 	if anonKey == "" {
 		return map[string]interface{}{"error": "Supabase Anon Key is not configured in the environment"}
 	}
@@ -590,7 +592,9 @@ func (a *App) SignUpStudent(username, password, classroomCode string) map[string
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("apikey", anonKey)
-	req.Header.Set("Authorization", "Bearer "+anonKey)
+	if strings.Count(anonKey, ".") == 2 {
+		req.Header.Set("Authorization", "Bearer "+anonKey)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
