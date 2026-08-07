@@ -95,12 +95,6 @@ async function signupTeacher(router) {
   connecting.value = true;
   setupError.value = '';
 
-  if (!supabaseUrl.value || !supabaseKey.value) {
-    setupError.value = 'Configuration error: Supabase URL or Anon Key is missing.';
-    connecting.value = false;
-    return;
-  }
-
   if (!loginUsername.value.trim() || !loginPassword.value.trim() || !loginClassroom.value.trim()) {
     setupError.value = 'All fields are required for sign up.';
     connecting.value = false;
@@ -108,28 +102,69 @@ async function signupTeacher(router) {
   }
 
   try {
-    const payload = {
-      p_username: loginUsername.value.trim(),
-      p_password: loginPassword.value.trim(),
-      p_role: 'teacher',
-      p_classroom_code: loginClassroom.value.trim().toUpperCase()
-    };
+    let success = false;
+    if (apiBaseUrl.value) {
+      try {
+        const res = await fetch(`${apiBaseUrl.value}/api/auth/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: loginUsername.value.trim(),
+            password: loginPassword.value.trim(),
+            role: 'teacher',
+            classroom_code: loginClassroom.value.trim().toUpperCase()
+          })
+        });
+        if (res.ok) {
+          success = true;
+        } else {
+          const errText = await res.text();
+          let parsed; try { parsed = JSON.parse(errText); } catch(_) {}
+          throw new Error(parsed?.error || parsed?.message || errText);
+        }
+      } catch (e) {
+        if (e.message.includes('already exists') || e.message.includes('Signup error')) throw e;
+        console.warn('Go API server signup unavailable, falling back to direct Supabase REST insert:', e);
+      }
+    }
 
-    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/signup_user`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': supabaseKey.value,
-        'Authorization': `Bearer ${supabaseKey.value}`
-      },
-      body: JSON.stringify(payload)
-    });
+    if (!success && supabaseUrl.value && supabaseKey.value) {
+      const checkUrl = `${supabaseUrl.value}/rest/v1/user_accounts?username=eq.${encodeURIComponent(loginUsername.value.trim())}&select=id`;
+      const cRes = await fetch(checkUrl, {
+        headers: {
+          'apikey': supabaseKey.value,
+          'Authorization': `Bearer ${supabaseKey.value}`
+        }
+      });
+      if (cRes.ok) {
+        const existing = await cRes.json();
+        if (existing && existing.length > 0) {
+          throw new Error('Username already exists');
+        }
+      }
 
-    if (!res.ok) {
-      const errText = await res.text();
-      let parsedErr;
-      try { parsedErr = JSON.parse(errText); } catch (_) {}
-      throw new Error(parsedErr?.message || errText || `Server returned status ${res.status}`);
+      const res = await fetch(`${supabaseUrl.value}/rest/v1/user_accounts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': supabaseKey.value,
+          'Authorization': `Bearer ${supabaseKey.value}`,
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify({
+          username: loginUsername.value.trim(),
+          password_hash: loginPassword.value.trim(),
+          role: 'teacher',
+          classroom_code: loginClassroom.value.trim().toUpperCase()
+        })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        let parsedErr; try { parsedErr = JSON.parse(errText); } catch (_) {}
+        throw new Error(parsedErr?.message || errText || `Server returned status ${res.status}`);
+      }
+      success = true;
     }
 
     showToast('Teacher account created successfully! Logging in...');
@@ -138,6 +173,7 @@ async function signupTeacher(router) {
   } catch (err) {
     console.error('Sign up failure:', err);
     setupError.value = err.message || 'Failed to sign up.';
+  } finally {
     connecting.value = false;
   }
 }
@@ -146,12 +182,6 @@ async function loginTeacher(router) {
   connecting.value = true;
   setupError.value = '';
 
-  if (!supabaseUrl.value || !supabaseKey.value) {
-    setupError.value = 'Configuration error: Supabase URL or Anon Key is missing.';
-    connecting.value = false;
-    return;
-  }
-
   if (!loginUsername.value.trim() || !loginPassword.value.trim()) {
     setupError.value = 'Username/Email and Password are required.';
     connecting.value = false;
@@ -159,52 +189,85 @@ async function loginTeacher(router) {
   }
 
   try {
-    const payload = {
-      p_username: loginUsername.value.trim(),
-      p_password: loginPassword.value.trim(),
-      p_is_desktop: false
-    };
-
-    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/login_user`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': supabaseKey.value,
-        'Authorization': `Bearer ${supabaseKey.value}`
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      let parsedErr;
-      try { parsedErr = JSON.parse(errText); } catch (_) {}
-      throw new Error(parsedErr?.message || errText || `Server returned status ${res.status}`);
+    let loginData = null;
+    if (apiBaseUrl.value) {
+      try {
+        const res = await fetch(`${apiBaseUrl.value}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: loginUsername.value.trim(),
+            password: loginPassword.value.trim(),
+            is_desktop: false
+          })
+        });
+        if (res.ok) {
+          loginData = await res.json();
+        }
+      } catch (e) {
+        console.warn('Go API server login unavailable, falling back to direct Supabase REST table query:', e);
+      }
     }
 
-    const loginData = await res.json();
+    if (!loginData && supabaseUrl.value && supabaseKey.value) {
+      const targetUrl = `${supabaseUrl.value}/rest/v1/user_accounts?username=eq.${encodeURIComponent(loginUsername.value.trim())}&select=*`;
+      const res = await fetch(targetUrl, {
+        headers: {
+          'apikey': supabaseKey.value,
+          'Authorization': `Bearer ${supabaseKey.value}`
+        }
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `Server returned status ${res.status}`);
+      }
+      const users = await res.json();
+      if (!users || users.length === 0) {
+        throw new Error('Invalid username or password');
+      }
+      const user = users[0];
+      const pwd = user.password_hash || user.password;
+      if (pwd !== loginPassword.value.trim()) {
+        throw new Error('Invalid username or password');
+      }
+      loginData = {
+        role: user.role,
+        session_token: user.id || user.username,
+        classroom_code: user.classroom_code,
+        username: user.username
+      };
+    }
 
-    if (loginData.role !== 'teacher') {
+    if (!loginData) {
+      throw new Error('Failed to connect to authentication service.');
+    }
+
+    const userRole = loginData.role || (loginData.user && loginData.user.role);
+    if (userRole !== 'teacher') {
       throw new Error('Access denied. Only teachers can access this portal.');
     }
 
-    sessionToken.value = loginData.session_token;
-    classroomCode.value = loginData.classroom_code;
+    const tokenVal = loginData.session_token || loginData.token || (loginData.user && loginData.user.id);
+    const classCodeVal = loginData.classroom_code || (loginData.user && loginData.user.classroom_code);
+    const unameVal = loginData.username || (loginData.user && loginData.user.username);
+
+    sessionToken.value = tokenVal;
+    classroomCode.value = classCodeVal;
 
     if (rememberMe.value) {
-      localStorage.setItem('session_token', loginData.session_token);
-      localStorage.setItem('classroom_code', loginData.classroom_code);
+      localStorage.setItem('session_token', tokenVal);
+      localStorage.setItem('classroom_code', classCodeVal);
       sessionStorage.removeItem('session_token');
       sessionStorage.removeItem('classroom_code');
     } else {
-      sessionStorage.setItem('session_token', loginData.session_token);
-      sessionStorage.setItem('classroom_code', loginData.classroom_code);
+      sessionStorage.setItem('session_token', tokenVal);
+      sessionStorage.setItem('classroom_code', classCodeVal);
       localStorage.removeItem('session_token');
       localStorage.removeItem('classroom_code');
     }
 
     showSetup.value = false;
-    showToast(`Welcome back, ${loginData.username || 'Teacher'}!`);
+    showToast(`Welcome back, ${unameVal || 'Teacher'}!`);
     fetchData();
     startPolling();
 
@@ -261,20 +324,70 @@ async function fetchData(silent = false) {
       }
     }
 
-    // 2. Fallback to Supabase direct RPC if Go server is not running
+    // 2. Fallback to Supabase direct REST table queries if Go server is not running
     if (!success && supabaseUrl.value && supabaseKey.value) {
-      const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/get_classroom_dashboard`, {
-        method: 'POST',
+      const nbRes = await fetch(`${supabaseUrl.value}/rest/v1/student_notebooks?classroom_code=eq.${encodeURIComponent(classroomCode.value)}&select=*`, {
         headers: {
-          'Content-Type': 'application/json',
           'apikey': supabaseKey.value,
-          'Authorization': `Bearer ${supabaseKey.value}`,
-          'x-session-token': sessionToken.value
-        },
-        body: JSON.stringify({ p_classroom_code: classroomCode.value })
+          'Authorization': `Bearer ${supabaseKey.value}`
+        }
       });
-      if (!res.ok) throw new Error(`Dashboard fetch error: ${res.statusText}`);
-      fetchedData = await res.json();
+      if (!nbRes.ok) throw new Error(`Dashboard fetch error: ${nbRes.statusText}`);
+      const rawNbs = await nbRes.json();
+
+      const userRes = await fetch(`${supabaseUrl.value}/rest/v1/user_accounts?classroom_code=eq.${encodeURIComponent(classroomCode.value)}&role=eq.student&select=username`, {
+        headers: {
+          'apikey': supabaseKey.value,
+          'Authorization': `Bearer ${supabaseKey.value}`
+        }
+      });
+      const studentMap = {};
+      const alertMap = {};
+      if (userRes.ok) {
+        const rawUsers = await userRes.json();
+        for (const u of rawUsers) {
+          if (u.username) studentMap[u.username] = [];
+        }
+      }
+
+      for (const nb of rawNbs) {
+        const st = nb.student_token;
+        if (st) {
+          if (!studentMap[st]) studentMap[st] = [];
+          studentMap[st].push(nb);
+          if (nb.external_help_required) alertMap[st] = (alertMap[st] || 0) + 1;
+        }
+      }
+
+      const logRes = await fetch(`${supabaseUrl.value}/rest/v1/student_review_logs?select=*`, {
+        headers: {
+          'apikey': supabaseKey.value,
+          'Authorization': `Bearer ${supabaseKey.value}`
+        }
+      });
+      const logMap = {};
+      if (logRes.ok) {
+        const rawLogs = await logRes.json();
+        for (const lg of rawLogs) {
+          if (lg.student_token) {
+            if (!logMap[lg.student_token]) logMap[lg.student_token] = [];
+            logMap[lg.student_token].push(lg);
+          }
+        }
+      }
+
+      const assembledStudents = [];
+      for (const token in studentMap) {
+        assembledStudents.push({
+          token,
+          notebooks: studentMap[token] || [],
+          logs: logMap[token] || [],
+          alertsCount: alertMap[token] || 0,
+          lastUpdate: Date.now()
+        });
+      }
+
+      fetchedData = { is_locked: false, students: assembledStudents };
       success = true;
     }
 
@@ -302,15 +415,14 @@ async function fetchData(silent = false) {
 async function toggleClassroomLock() {
   const targetState = !isLocked.value;
   try {
-    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/toggle_classroom_lock`, {
-      method: 'POST',
+    const res = await fetch(`${supabaseUrl.value}/rest/v1/user_accounts?classroom_code=eq.${encodeURIComponent(classroomCode.value)}&role=eq.teacher`, {
+      method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
         'apikey': supabaseKey.value,
-        'Authorization': `Bearer ${supabaseKey.value}`,
-        'x-session-token': sessionToken.value
+        'Authorization': `Bearer ${supabaseKey.value}`
       },
-      body: JSON.stringify({ p_classroom_code: classroomCode.value, p_is_locked: targetState })
+      body: JSON.stringify({ is_locked: targetState })
     });
     if (!res.ok) {
       const errText = await res.text();
@@ -328,20 +440,29 @@ async function removeStudent(studentToken) {
   if (!confirm(`Are you sure you want to remove student "${studentToken}" from classroom ${classroomCode.value}?`)) return;
 
   try {
-    const res = await fetch(`${supabaseUrl.value}/rest/v1/rpc/remove_student_from_classroom`, {
-      method: 'POST',
+    await fetch(`${supabaseUrl.value}/rest/v1/student_notebooks?student_token=eq.${encodeURIComponent(studentToken)}&classroom_code=eq.${encodeURIComponent(classroomCode.value)}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`
+      }
+    });
+    await fetch(`${supabaseUrl.value}/rest/v1/student_review_logs?student_token=eq.${encodeURIComponent(studentToken)}&classroom_code=eq.${encodeURIComponent(classroomCode.value)}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': supabaseKey.value,
+        'Authorization': `Bearer ${supabaseKey.value}`
+      }
+    });
+    await fetch(`${supabaseUrl.value}/rest/v1/user_accounts?username=eq.${encodeURIComponent(studentToken)}&role=eq.student`, {
+      method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
         'apikey': supabaseKey.value,
-        'Authorization': `Bearer ${supabaseKey.value}`,
-        'x-session-token': sessionToken.value
+        'Authorization': `Bearer ${supabaseKey.value}`
       },
-      body: JSON.stringify({ p_student_username: studentToken, p_classroom_code: classroomCode.value })
+      body: JSON.stringify({ classroom_code: '' })
     });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server returned status ${res.status}`);
-    }
     showToast(`Student ${studentToken} removed from classroom.`);
     fetchData();
   } catch (err) {

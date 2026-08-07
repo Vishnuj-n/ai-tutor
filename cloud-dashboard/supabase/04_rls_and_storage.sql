@@ -53,7 +53,14 @@ CREATE POLICY "Allow teachers to delete assignments in their classroom" ON publi
 DROP POLICY IF EXISTS "No direct client access to active_sessions" ON public.active_sessions;
 CREATE POLICY "No direct client access to active_sessions" ON public.active_sessions FOR ALL USING (false);
 DROP POLICY IF EXISTS "No direct client access to user_accounts" ON public.user_accounts;
-CREATE POLICY "No direct client access to user_accounts" ON public.user_accounts FOR ALL USING (false);
+DROP POLICY IF EXISTS "Allow REST access user_accounts" ON public.user_accounts;
+CREATE POLICY "Allow REST access user_accounts" ON public.user_accounts FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow REST access student_notebooks" ON public.student_notebooks;
+CREATE POLICY "Allow REST access student_notebooks" ON public.student_notebooks FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow REST access student_review_logs" ON public.student_review_logs;
+CREATE POLICY "Allow REST access student_review_logs" ON public.student_review_logs FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow REST access teacher_assignments" ON public.teacher_assignments;
+CREATE POLICY "Allow REST access teacher_assignments" ON public.teacher_assignments FOR ALL USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "No direct client access to teacher_signup_invites" ON public.teacher_signup_invites;
 CREATE POLICY "No direct client access to teacher_signup_invites" ON public.teacher_signup_invites FOR ALL USING (false);
 

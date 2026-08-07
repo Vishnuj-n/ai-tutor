@@ -1,18 +1,26 @@
 package main
 
 import (
-	"database/sql"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
-var db *sql.DB
+var (
+	supabaseURL string
+	supabaseKey string
+	httpClient  = &http.Client{Timeout: 10 * time.Second}
+)
 
 type Response struct {
 	Error string      `json:"error,omitempty"`
@@ -22,10 +30,10 @@ type Response struct {
 func main() {
 	_ = godotenv.Load()
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		// Fallback default for local or Supabase postgres
-		dbURL = os.Getenv("SUPABASE_DB_URL")
+	supabaseURL = os.Getenv("SUPABASE_URL")
+	supabaseKey = os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
+	if supabaseKey == "" {
+		supabaseKey = os.Getenv("SUPABASE_PUBLISHABLE_KEY")
 	}
 
 	port := os.Getenv("PORT")
@@ -33,43 +41,34 @@ func main() {
 		port = "8080"
 	}
 
-	if dbURL != "" {
-		var err error
-		db, err = sql.Open("postgres", dbURL)
-		if err != nil {
-			log.Printf("[WARN] Failed to connect to Postgres DB: %v", err)
-		} else {
-			if err := db.Ping(); err != nil {
-				log.Printf("[WARN] Postgres ping failed: %v", err)
-			} else {
-				log.Println("[INFO] Successfully connected to PostgreSQL Database")
-			}
-		}
+	if supabaseURL != "" && supabaseKey != "" {
+		log.Printf("[INFO] Cloud Server initialized with Supabase REST API at: %s", supabaseURL)
 	} else {
-		log.Println("[WARN] DATABASE_URL is not set. API endpoints will require DB connection string.")
+		log.Println("[WARN] SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY is not set in environment.")
 	}
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/api/auth/login", handleLogin)
 	mux.HandleFunc("/api/auth/signup", handleSignup)
 	mux.HandleFunc("/api/dashboard", handleDashboard)
 	mux.HandleFunc("/api/assignments", handleAssignments)
+	mux.HandleFunc("/api/sync", handleSync)
 
-	handler := enableCORS(mux)
+	handler := corsMiddleware(mux)
 
 	log.Printf("[INFO] Cloud Server running on http://localhost:%s", port)
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
-		log.Fatalf("Server stopped: %v", err)
+		log.Fatalf("[FATAL] Server failed: %v", err)
 	}
 }
 
-func enableCORS(next http.Handler) http.Handler {
+func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-session-token")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, apikey, x-session-token, X-Session-Token")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -82,23 +81,34 @@ func enableCORS(next http.Handler) http.Handler {
 func jsonResponse(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(payload)
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func jsonError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+func jsonError(w http.ResponseWriter, status int, message string) {
+	jsonResponse(w, status, map[string]interface{}{
+		"error":   message,
+		"success": false,
+	})
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "service": "ai-tutor-cloud-server"})
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "service": "ai-tutor-cloud-server", "mode": "supabase-rest"})
 }
 
 type LoginRequest struct {
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	IsDesktop bool   `json:"is_desktop"`
+}
+
+func checkPassword(storedPassword, providedPassword string) bool {
+	if storedPassword == providedPassword {
+		return true
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(storedPassword), []byte(providedPassword)); err == nil {
+		return true
+	}
+	return false
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -113,22 +123,74 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if db == nil {
-		jsonError(w, http.StatusServiceUnavailable, "Database not connected")
+	if supabaseURL == "" || supabaseKey == "" {
+		jsonError(w, http.StatusServiceUnavailable, "Supabase API credentials not configured")
 		return
 	}
 
-	var resJSON string
-	err := db.QueryRow("SELECT login_user($1, $2, $3)::text", req.Username, req.Password, req.IsDesktop).Scan(&resJSON)
+	cleanUsername := strings.TrimSpace(req.Username)
+	cleanPassword := strings.TrimSpace(req.Password)
+
+	// Query user_accounts table directly via REST (case-insensitive username query)
+	targetURL := fmt.Sprintf("%s/rest/v1/user_accounts?username=ilike.%s&select=*", supabaseURL, url.QueryEscape(cleanUsername))
+	httpReq, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
-		log.Printf("[ERROR] Login failed for %s: %v", req.Username, err)
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpReq.Header.Set("apikey", supabaseKey)
+	httpReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+
+	res, err := httpClient.Do(httpReq)
+	if err != nil {
+		log.Printf("[ERROR] Login REST query HTTP failed: %v", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to connect to authentication backend")
+		return
+	}
+	defer res.Body.Close()
+
+	respBody, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		log.Printf("[ERROR] Login REST error (%d): %s", res.StatusCode, string(respBody))
 		jsonError(w, http.StatusUnauthorized, "Invalid username or password")
 		return
 	}
 
-	var result map[string]interface{}
-	_ = json.Unmarshal([]byte(resJSON), &result)
-	jsonResponse(w, http.StatusOK, result)
+	var users []map[string]interface{}
+	if err := json.Unmarshal(respBody, &users); err != nil || len(users) == 0 {
+		jsonError(w, http.StatusUnauthorized, "Invalid username or password")
+		return
+	}
+
+	user := users[0]
+	// Verify password (supports bcrypt hash and plaintext)
+	pwd, _ := user["password_hash"].(string)
+	if pwd == "" {
+		pwd, _ = user["password"].(string)
+	}
+
+	if !checkPassword(pwd, cleanPassword) {
+		jsonError(w, http.StatusUnauthorized, "Invalid username or password")
+		return
+	}
+
+	role, _ := user["role"].(string)
+	classCode, _ := user["classroom_code"].(string)
+	uname, _ := user["username"].(string)
+	sessionToken := fmt.Sprintf("%v", user["id"])
+	if sessionToken == "" || sessionToken == "<nil>" {
+		sessionToken = uname
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success":        true,
+		"user":           user,
+		"token":          sessionToken,
+		"session_token":  sessionToken,
+		"role":           role,
+		"classroom_code": classCode,
+		"username":       uname,
+	})
 }
 
 type SignupRequest struct {
@@ -150,26 +212,102 @@ func handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if db == nil {
-		jsonError(w, http.StatusServiceUnavailable, "Database not connected")
+	if supabaseURL == "" || supabaseKey == "" {
+		jsonError(w, http.StatusServiceUnavailable, "Supabase API credentials not configured")
 		return
 	}
 
-	var resJSON string
-	err := db.QueryRow("SELECT signup_user($1, $2, $3, $4)::text", req.Username, req.Password, req.Role, req.ClassroomCode).Scan(&resJSON)
+	// Check if username already exists
+	checkURL := fmt.Sprintf("%s/rest/v1/user_accounts?username=eq.%s&select=id", supabaseURL, req.Username)
+	cReq, _ := http.NewRequest(http.MethodGet, checkURL, nil)
+	cReq.Header.Set("apikey", supabaseKey)
+	cReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+	cRes, cErr := httpClient.Do(cReq)
+	if cErr == nil {
+		defer cRes.Body.Close()
+		cBody, _ := io.ReadAll(cRes.Body)
+		var existing []map[string]interface{}
+		if json.Unmarshal(cBody, &existing) == nil && len(existing) > 0 {
+			jsonError(w, http.StatusBadRequest, "Username already exists")
+			return
+		}
+	}
+
+	// Insert into user_accounts table directly via REST
+	newUser := map[string]interface{}{
+		"username":       req.Username,
+		"password_hash":  req.Password,
+		"role":           req.Role,
+		"classroom_code": req.ClassroomCode,
+	}
+
+	payload, _ := json.Marshal(newUser)
+	httpReq, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/rest/v1/user_accounts", supabaseURL), bytes.NewBuffer(payload))
 	if err != nil {
-		log.Printf("[ERROR] Signup failed for %s: %v", req.Username, err)
-		jsonError(w, http.StatusBadRequest, fmt.Sprintf("Signup error: %v", err))
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("apikey", supabaseKey)
+	httpReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+	httpReq.Header.Set("Prefer", "return=representation")
+
+	res, err := httpClient.Do(httpReq)
+	if err != nil {
+		log.Printf("[ERROR] Signup REST insert HTTP failed: %v", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to connect to authentication backend")
+		return
+	}
+	defer res.Body.Close()
+
+	respBody, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 400 {
+		log.Printf("[ERROR] Signup REST insert error (%d): %s", res.StatusCode, string(respBody))
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("Signup error: %s", string(respBody)))
 		return
 	}
 
-	var result map[string]interface{}
-	_ = json.Unmarshal([]byte(resJSON), &result)
-	jsonResponse(w, http.StatusOK, result)
+	var created []map[string]interface{}
+	_ = json.Unmarshal(respBody, &created)
+	var user map[string]interface{}
+	if len(created) > 0 {
+		user = created[0]
+		delete(user, "password_hash")
+		delete(user, "password")
+	} else {
+		user = map[string]interface{}{
+			"username":       req.Username,
+			"role":           req.Role,
+			"classroom_code": req.ClassroomCode,
+		}
+	}
+
+	role, _ := user["role"].(string)
+	classCode, _ := user["classroom_code"].(string)
+	uname, _ := user["username"].(string)
+	if role == "" { role = req.Role }
+	if classCode == "" { classCode = req.ClassroomCode }
+	if uname == "" { uname = req.Username }
+	sessionToken := fmt.Sprintf("%v", user["id"])
+	if sessionToken == "" || sessionToken == "<nil>" {
+		sessionToken = uname
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success":        true,
+		"user":           user,
+		"token":          sessionToken,
+		"session_token":  sessionToken,
+		"role":           role,
+		"classroom_code": classCode,
+		"username":       uname,
+	})
 }
 
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[INFO] %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		log.Printf("[WARN] Dashboard method not allowed: %s", r.Method)
 		jsonError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
@@ -182,69 +320,128 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if classroomCode == "" {
+		log.Printf("[WARN] Dashboard request missing classroom code")
 		jsonError(w, http.StatusBadRequest, "Classroom code required")
 		return
 	}
 
-	if db == nil {
-		jsonError(w, http.StatusServiceUnavailable, "Database not connected")
+	if supabaseURL == "" || supabaseKey == "" {
+		log.Printf("[ERROR] Supabase API credentials not configured in environment")
+		jsonError(w, http.StatusServiceUnavailable, "Supabase API credentials not configured")
 		return
 	}
 
-	// We pass session token if available
-	sessionToken := r.Header.Get("x-session-token")
-	if sessionToken == "" {
-		sessionToken = r.Header.Get("Authorization")
-	}
+	log.Printf("[INFO] Fetching dashboard natively for classroom: %s", classroomCode)
 
-	var rawJSON string
-	// Set local session context for the connection session if needed or query function directly
-	err := db.QueryRow("SELECT get_classroom_dashboard($1)::text", classroomCode).Scan(&rawJSON)
-	if err != nil {
-		log.Printf("[ERROR] Dashboard fetch error: %v", err)
-		// Fallback query if get_classroom_dashboard RPC fails due to session context
-		var fallbackStudents []map[string]interface{}
-		rows, err2 := db.Query(`
-			SELECT student_token, json_agg(json_build_object(
-				'title', title, 'filename', filename, 'file_hash', file_hash, 'study_status', study_status, 'external_help_required', external_help_required, 'updated_at', updated_at
-			) ORDER BY updated_at DESC) as notebooks
-			FROM student_notebooks WHERE classroom_code = $1 GROUP BY student_token`, classroomCode)
+	// 1. Fetch registered student accounts for classroom
+	userURL := fmt.Sprintf("%s/rest/v1/user_accounts?classroom_code=eq.%s&role=eq.student&select=username", supabaseURL, classroomCode)
+	uReq, uErr := http.NewRequest(http.MethodGet, userURL, nil)
+	studentMap := make(map[string][]map[string]interface{})
+	alertMap := make(map[string]int)
 
-		if err2 == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var token, nbsJSON string
-				if err3 := rows.Scan(&token, &nbsJSON); err3 == nil {
-					var nbs []map[string]interface{}
-					_ = json.Unmarshal([]byte(nbsJSON), &nbs)
-					fallbackStudents = append(fallbackStudents, map[string]interface{}{
-						"token": token,
-						"notebooks": nbs,
-						"logs": []interface{}{},
-						"alertsCount": 0,
-						"lastUpdate": 0,
-					})
+	if uErr == nil {
+		uReq.Header.Set("apikey", supabaseKey)
+		uReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+		if uRes, err := httpClient.Do(uReq); err == nil && uRes.StatusCode == http.StatusOK {
+			defer uRes.Body.Close()
+			uBody, _ := io.ReadAll(uRes.Body)
+			var rawUsers []map[string]interface{}
+			if json.Unmarshal(uBody, &rawUsers) == nil {
+				for _, u := range rawUsers {
+					if uname, ok := u["username"].(string); ok && uname != "" {
+						studentMap[uname] = []map[string]interface{}{}
+					}
 				}
 			}
-			jsonResponse(w, http.StatusOK, fallbackStudents)
-			return
 		}
+	}
 
+	// 2. Fetch Notebooks for classroom
+	nbURL := fmt.Sprintf("%s/rest/v1/student_notebooks?classroom_code=eq.%s&select=*", supabaseURL, classroomCode)
+	nbReq, err := http.NewRequest(http.MethodGet, nbURL, nil)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nbReq.Header.Set("apikey", supabaseKey)
+	nbReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+
+	nbRes, err := httpClient.Do(nbReq)
+	if err != nil {
+		log.Printf("[ERROR] Dashboard notebook query HTTP error: %v", err)
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("Dashboard fetch failed: %v", err))
 		return
 	}
+	defer nbRes.Body.Close()
 
-	var result []interface{}
-	_ = json.Unmarshal([]byte(rawJSON), &result)
-	if result == nil {
-		result = []interface{}{}
+	nbBody, _ := io.ReadAll(nbRes.Body)
+	var rawNbs []map[string]interface{}
+	_ = json.Unmarshal(nbBody, &rawNbs)
+
+	// 3. Group notebooks & count alerts by student_token
+	for _, nb := range rawNbs {
+		st, _ := nb["student_token"].(string)
+		if st != "" {
+			studentMap[st] = append(studentMap[st], nb)
+			if help, ok := nb["external_help_required"].(bool); ok && help {
+				alertMap[st]++
+			}
+		}
 	}
-	jsonResponse(w, http.StatusOK, result)
+
+	// 4. Fetch Review Logs (optional/best-effort)
+	logURL := fmt.Sprintf("%s/rest/v1/student_review_logs?select=*", supabaseURL)
+	lReq, lErr := http.NewRequest(http.MethodGet, logURL, nil)
+	logMap := make(map[string][]map[string]interface{})
+	if lErr == nil {
+		lReq.Header.Set("apikey", supabaseKey)
+		lReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+		if lRes, err := httpClient.Do(lReq); err == nil && lRes.StatusCode == http.StatusOK {
+			defer lRes.Body.Close()
+			lBody, _ := io.ReadAll(lRes.Body)
+			var rawLogs []map[string]interface{}
+			if json.Unmarshal(lBody, &rawLogs) == nil {
+				for _, lg := range rawLogs {
+					st, _ := lg["student_token"].(string)
+					if st != "" {
+						logMap[st] = append(logMap[st], lg)
+					}
+				}
+			}
+		}
+	}
+
+	// 5. Assemble student list payload for Vue Dashboard
+	var students []map[string]interface{}
+	for token, nbs := range studentMap {
+		studentLogs := logMap[token]
+		if studentLogs == nil {
+			studentLogs = []map[string]interface{}{}
+		}
+		students = append(students, map[string]interface{}{
+			"token":       token,
+			"notebooks":   nbs,
+			"logs":        studentLogs,
+			"alertsCount": alertMap[token],
+			"lastUpdate":  time.Now().UnixMilli(),
+		})
+	}
+
+	if students == nil {
+		students = []map[string]interface{}{}
+	}
+
+	log.Printf("[INFO] Dashboard fetched natively with %d students for classroom %s", len(students), classroomCode)
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"is_locked": false,
+		"students":  students,
+	})
 }
 
 func handleAssignments(w http.ResponseWriter, r *http.Request) {
-	if db == nil {
-		jsonError(w, http.StatusServiceUnavailable, "Database not connected")
+	if supabaseURL == "" || supabaseKey == "" {
+		jsonError(w, http.StatusServiceUnavailable, "Supabase API credentials not configured")
 		return
 	}
 
@@ -256,28 +453,27 @@ func handleAssignments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		rows, err := db.Query("SELECT id, classroom_code, title, download_url, created_at FROM teacher_assignments WHERE classroom_code = $1 ORDER BY created_at DESC", classroomCode)
+		targetURL := fmt.Sprintf("%s/rest/v1/teacher_assignments?classroom_code=eq.%s&order=created_at.desc", supabaseURL, classroomCode)
+		httpReq, err := http.NewRequest(http.MethodGet, targetURL, nil)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		defer rows.Close()
+		httpReq.Header.Set("apikey", supabaseKey)
+		httpReq.Header.Set("Authorization", "Bearer "+supabaseKey)
 
-		var list []map[string]interface{}
-		for rows.Next() {
-			var id, classCode, title, url, createdAt string
-			if err := rows.Scan(&id, &classCode, &title, &url, &createdAt); err == nil {
-				list = append(list, map[string]interface{}{
-					"id":             id,
-					"classroom_code": classCode,
-					"title":          title,
-					"download_url":   url,
-					"created_at":     createdAt,
-				})
-			}
+		res, err := httpClient.Do(httpReq)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		defer res.Body.Close()
+
+		respBody, _ := io.ReadAll(res.Body)
+		var list interface{}
+		_ = json.Unmarshal(respBody, &list)
 		if list == nil {
-			list = []map[string]interface{}{}
+			list = []interface{}{}
 		}
 		jsonResponse(w, http.StatusOK, list)
 
@@ -293,9 +489,32 @@ func handleAssignments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		_, err := db.Exec("INSERT INTO teacher_assignments (id, classroom_code, title, download_url) VALUES ($1, $2, $3, $4)", req.ID, req.ClassroomCode, req.Title, req.DownloadURL)
+		payload, _ := json.Marshal(map[string]interface{}{
+			"id":             req.ID,
+			"classroom_code": req.ClassroomCode,
+			"title":          req.Title,
+			"download_url":   req.DownloadURL,
+		})
+
+		httpReq, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/rest/v1/teacher_assignments", supabaseURL), bytes.NewBuffer(payload))
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("apikey", supabaseKey)
+		httpReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+
+		res, err := httpClient.Do(httpReq)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode >= 400 {
+			respBody, _ := io.ReadAll(res.Body)
+			jsonError(w, res.StatusCode, string(respBody))
 			return
 		}
 		jsonResponse(w, http.StatusCreated, map[string]bool{"success": true})
@@ -307,14 +526,36 @@ func handleAssignments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		_, err := db.Exec("DELETE FROM teacher_assignments WHERE id = $1", id)
+		targetURL := fmt.Sprintf("%s/rest/v1/teacher_assignments?id=eq.%s", supabaseURL, id)
+		httpReq, err := http.NewRequest(http.MethodDelete, targetURL, nil)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		httpReq.Header.Set("apikey", supabaseKey)
+		httpReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+
+		res, err := httpClient.Do(httpReq)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer res.Body.Close()
+
 		jsonResponse(w, http.StatusOK, map[string]bool{"success": true})
 
 	default:
 		jsonError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
+}
+
+func handleSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Sync endpoint ready",
+	})
 }

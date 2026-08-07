@@ -18,7 +18,19 @@ import (
 
 // Production Fallbacks (Update these constants when deploying your production server)
 const DefaultProductionSyncURL = "https://your-supabase-project.supabase.co/rest/v1/rpc/handle_cloud_sync"
+const DefaultProductionCloudServerURL = "http://localhost:8080"
 const DefaultProductionAnonKey = "your-supabase-anon-key"
+
+// ResolveCloudServerURL returns the effective Cloud Server URL (e.g. Render / Fly.io / localhost).
+// Resolution order: CLOUD_SERVER_URL / VITE_API_URL env var → DefaultProductionCloudServerURL.
+func ResolveCloudServerURL() string {
+	for _, envKey := range []string{"CLOUD_SERVER_URL", "VITE_API_URL"} {
+		if env := os.Getenv(envKey); env != "" {
+			return strings.TrimSuffix(env, "/")
+		}
+	}
+	return DefaultProductionCloudServerURL
+}
 
 // ResolveCloudSyncURL returns the effective sync URL.
 // Resolution order: stored SQLite value → CLOUD_SYNC_URL / SUPABASE_URL / VITE_SUPABASE_URL env var → DefaultProductionSyncURL.

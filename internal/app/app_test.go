@@ -833,3 +833,77 @@ func TestAggregateQueueTasks(t *testing.T) {
 		}
 	})
 }
+
+func TestLoginStudent_AutomaticProfileCreation(t *testing.T) {
+	initCleanTestDB(t)
+
+	// Mock Supabase login server
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"session_token":  "mock-session-token-123",
+			"role":           "student",
+			"classroom_code": "BCD601",
+			"username":       "testing_user",
+		})
+	}))
+	defer ts.Close()
+
+	app := &App{
+		ctx:  context.Background(),
+		repo: testRepo,
+	}
+
+	// Set CloudSyncURL to point to mock server
+	settings, err := testRepo.GetUserSettings()
+	if err != nil {
+		t.Fatalf("GetUserSettings failed: %v", err)
+	}
+	settings.CloudSyncURL = ts.URL + "/rest/v1/rpc/handle_cloud_sync"
+	if err := testRepo.UpdateUserSettings(*settings); err != nil {
+		t.Fatalf("UpdateUserSettings failed: %v", err)
+	}
+
+	// 1. First login to BCD601 -> Should automatically create a new study profile named BCD601
+	res := app.LoginStudent("testing_user", "password123")
+	if res["error"] != nil {
+		t.Fatalf("LoginStudent failed: %v", res["error"])
+	}
+
+	profiles, err := testRepo.GetProfiles()
+	if err != nil {
+		t.Fatalf("GetProfiles failed: %v", err)
+	}
+	if len(profiles) != 1 {
+		t.Fatalf("expected 1 profile automatically created, got %d", len(profiles))
+	}
+	p1 := profiles[0]
+	if p1.ClassroomCode != "BCD601" {
+		t.Errorf("expected classroom code BCD601, got %q", p1.ClassroomCode)
+	}
+	if p1.Name != "BCD601" {
+		t.Errorf("expected profile name BCD601, got %q", p1.Name)
+	}
+
+	updatedSettings, err := testRepo.GetUserSettings()
+	if err != nil {
+		t.Fatalf("GetUserSettings after login failed: %v", err)
+	}
+	if updatedSettings.ActiveProfileID != p1.ID {
+		t.Errorf("expected active_profile_id %s, got %s", p1.ID, updatedSettings.ActiveProfileID)
+	}
+
+	// 2. Login again to the SAME classroom BCD601 -> Should reuse the existing BCD601 profile
+	res2 := app.LoginStudent("testing_user", "password123")
+	if res2["error"] != nil {
+		t.Fatalf("LoginStudent 2 failed: %v", res2["error"])
+	}
+
+	profilesAfter, err := testRepo.GetProfiles()
+	if err != nil {
+		t.Fatalf("GetProfiles after second login failed: %v", err)
+	}
+	if len(profilesAfter) != 1 {
+		t.Fatalf("expected still 1 profile, got %d", len(profilesAfter))
+	}
+}

@@ -37,7 +37,7 @@ export function useAuth(reloadFn, errorRef, successRef) {
         loginUsername.value = ''
         loginPassword.value = ''
         await reloadFn()
-        successRef.value = 'Successfully signed in and cloud sync enabled for active profile!'
+        successRef.value = 'Successfully signed in & classroom study profile active!'
         setTimeout(() => (successRef.value = ''), 4000)
       }
     } catch (err) {
@@ -72,7 +72,7 @@ export function useAuth(reloadFn, errorRef, successRef) {
         signupClassroomCode.value = ''
         isSignUpMode.value = false
         await reloadFn()
-        successRef.value = 'Account created & cloud sync active for active profile!'
+        successRef.value = 'Classroom account created & dedicated study profile active!'
         setTimeout(() => (successRef.value = ''), 4000)
       }
     } catch (err) {

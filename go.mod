@@ -6,13 +6,13 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
-	github.com/lib/pq v1.12.3
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0-20260508143813-8a8cfc36f1a8
 	github.com/sugarme/tokenizer v0.3.0
 	github.com/wailsapp/wails/v2 v2.11.0
 	github.com/yalue/onnxruntime_go v1.27.0
 	github.com/zalando/go-keyring v0.2.8
+	golang.org/x/crypto v0.46.0
 )
 
 require (
@@ -44,7 +44,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
