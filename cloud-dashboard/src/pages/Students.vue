@@ -70,9 +70,11 @@
           <strong style="color: var(--primary);">Student Setup Instructions:</strong>
           <ol style="margin-top: 0.4rem; margin-bottom: 0; padding-left: 1.25rem; color: var(--muted-text);">
             <li>Open the <strong>AI Tutor Desktop App</strong></li>
+            <li>Select (or create) your <strong>Study Profile</strong> for this course</li>
             <li>Navigate to <strong>Settings</strong> &rarr; <strong>Account & Cloud</strong></li>
-            <li>Enter Classroom Code: <code style="color: #fff; background: rgba(255,255,255,0.1); padding: 0.1rem 0.35rem; border-radius: 4px;">{{ classroomCode }}</code></li>
-            <li>Click <strong>Sync with Cloud Now</strong></li>
+            <li>Click <strong>Create Account</strong> (or <strong>Sign In</strong> if already registered)</li>
+            <li>Enter your <strong>Username</strong>, <strong>Password</strong>, and Classroom Code: <code style="color: #fff; background: rgba(255,255,255,0.1); padding: 0.1rem 0.35rem; border-radius: 4px;">{{ classroomCode }}</code></li>
+            <li>Click <strong>Sign Up & Sync</strong></li>
           </ol>
         </div>
       </div>

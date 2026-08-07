@@ -17,7 +17,12 @@
         :class="{ active: activeProfileId === profile.id }"
       >
         <div class="profile-info">
-          <h3>{{ profile.name }}</h3>
+          <div class="profile-title-row">
+            <h3>{{ profile.name }}</h3>
+            <span v-if="profile.classroom_code" class="cloud-badge" :title="`Synced to classroom ${profile.classroom_code}`">
+              ☁️ {{ profile.classroom_code }}
+            </span>
+          </div>
           <p class="deadline">
             Deadline: <strong>{{ formatUnixDate(profile.deadline_at) }}</strong>
           </p>
@@ -111,8 +116,28 @@ defineEmits(['add', 'select', 'edit', 'delete'])
   box-shadow: 0 0 10px rgba(108, 92, 231, 0.15);
 }
 
+.profile-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.cloud-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
 .profile-info h3 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 16px;
 }
 

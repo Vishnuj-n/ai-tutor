@@ -55,14 +55,24 @@
           :settings="settings"
           :is-dev="isDev"
           :disabled="loading || saving"
+          :active-profile-name="activeProfileName"
+          :is-sign-up-mode="isSignUpMode"
           :login-username="loginUsername"
           :login-password="loginPassword"
+          :signup-username="signupUsername"
+          :signup-password="signupPassword"
+          :signup-classroom-code="signupClassroomCode"
           :login-error="loginError"
           :logging-in="loggingIn"
           @login="handleLogin"
+          @signup="handleSignUp"
           @logout="handleLogout"
+          @toggle-mode="toggleAuthMode"
           @update:login-username="loginUsername = $event"
           @update:login-password="loginPassword = $event"
+          @update:signup-username="signupUsername = $event"
+          @update:signup-password="signupPassword = $event"
+          @update:signup-classroom-code="signupClassroomCode = $event"
         />
       </div>
 
@@ -139,7 +149,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { getAppEnv, getCloudConfig, triggerCloudSync } from '../services/appApi'
 
 import { useSettings } from '../composables/useSettings'
@@ -224,13 +234,24 @@ const {
 } = useRAG(settings)
 
 const {
+  isSignUpMode,
   loginUsername,
   loginPassword,
+  signupUsername,
+  signupPassword,
+  signupClassroomCode,
   loginError,
   loggingIn,
+  toggleAuthMode,
   handleLogin,
+  handleSignUp,
   handleLogout,
 } = useAuth(loadAllData, error, success)
+
+const activeProfileName = computed(() => {
+  const p = profiles.value.find((pr) => pr.id === settings.value.active_profile_id)
+  return p ? p.name : ''
+})
 
 async function loadAllData() {
   loading.value = true

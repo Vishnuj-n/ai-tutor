@@ -12,7 +12,7 @@
         >
           <option value="">-- No Profile Selected --</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id">
-            {{ p.name }}
+            {{ p.classroom_code ? `☁️ ${p.name} (${p.classroom_code})` : p.name }}
           </option>
         </select>
       </div>

@@ -1,6 +1,11 @@
 <template>
   <article class="panel form-grid">
-    <h2>Account &amp; Cloud</h2>
+    <div class="header-row">
+      <h2>Account &amp; Cloud</h2>
+      <span v-if="activeProfileName" class="profile-pill">
+        Profile: <strong>{{ activeProfileName }}</strong>
+      </span>
+    </div>
 
     <div v-if="settings.cloud_api_token" class="signed-in-box">
       <div class="status-indicator">
@@ -15,41 +20,106 @@
     </div>
 
     <div v-else class="login-form-container">
-      <p class="field-hint" style="margin-bottom: 1.25rem">
-        Sign in with your student credentials to enable cloud sync and receive assignments.
+      <div class="auth-toggle-bar">
+        <button
+          type="button"
+          class="auth-tab"
+          :class="{ active: !isSignUpMode }"
+          @click="$emit('toggleMode')"
+        >
+          Sign In
+        </button>
+        <button
+          type="button"
+          class="auth-tab"
+          :class="{ active: isSignUpMode }"
+          @click="$emit('toggleMode')"
+        >
+          Create Account
+        </button>
+      </div>
+
+      <p class="field-hint" style="margin-bottom: 0.75rem">
+        {{ isSignUpMode ? 'Register a student account using your classroom code to enable cloud sync.' : 'Sign in with your student credentials to enable cloud sync for this profile.' }}
       </p>
 
       <div v-if="loginError" class="login-error-message">
         {{ loginError }}
       </div>
 
-      <div class="form-group">
-        <label for="student-username">Student Username / ID</label>
-        <input
-          id="student-username"
-          :value="loginUsername"
-          type="text"
-          placeholder="e.g. john_doe"
-          :disabled="loggingIn"
-          @input="$emit('update:loginUsername', $event.target.value)"
-        />
-      </div>
+      <template v-if="!isSignUpMode">
+        <div class="form-group">
+          <label for="student-username">Student Username / ID</label>
+          <input
+            id="student-username"
+            :value="loginUsername"
+            type="text"
+            placeholder="e.g. john_doe"
+            :disabled="loggingIn"
+            @input="$emit('update:loginUsername', $event.target.value)"
+          />
+        </div>
 
-      <div class="form-group">
-        <label for="student-password">Password</label>
-        <input
-          id="student-password"
-          :value="loginPassword"
-          type="password"
-          placeholder="••••••••"
-          :disabled="loggingIn"
-          @input="$emit('update:loginPassword', $event.target.value)"
-        />
-      </div>
+        <div class="form-group">
+          <label for="student-password">Password</label>
+          <input
+            id="student-password"
+            :value="loginPassword"
+            type="password"
+            placeholder="••••••••"
+            :disabled="loggingIn"
+            @input="$emit('update:loginPassword', $event.target.value)"
+          />
+        </div>
 
-      <button type="button" class="sync-btn" :disabled="loggingIn" @click="$emit('login')">
-        {{ loggingIn ? 'Signing In...' : 'Sign In & Sync' }}
-      </button>
+        <button type="button" class="sync-btn" :disabled="loggingIn" @click="$emit('login')">
+          {{ loggingIn ? 'Signing In...' : 'Sign In & Sync' }}
+        </button>
+      </template>
+
+      <template v-else>
+        <div class="form-group">
+          <label for="signup-username">Student Username / ID</label>
+          <input
+            id="signup-username"
+            :value="signupUsername"
+            type="text"
+            placeholder="e.g. john_doe"
+            :disabled="loggingIn"
+            @input="$emit('update:signupUsername', $event.target.value)"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="signup-password">Create Password</label>
+          <input
+            id="signup-password"
+            :value="signupPassword"
+            type="password"
+            placeholder="Min. 6 characters"
+            :disabled="loggingIn"
+            @input="$emit('update:signupPassword', $event.target.value)"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="signup-classroom">Classroom Code</label>
+          <input
+            id="signup-classroom"
+            :value="signupClassroomCode"
+            type="text"
+            placeholder="e.g. BCD601"
+            style="text-transform: uppercase"
+            :disabled="loggingIn"
+            @input="$emit('update:signupClassroomCode', $event.target.value)"
+          />
+          <p class="field-hint">Obtain this 6-character code from your teacher.</p>
+        </div>
+
+        <button type="button" class="sync-btn" :disabled="loggingIn" @click="$emit('signup')">
+          {{ loggingIn ? 'Creating Account...' : 'Sign Up & Sync' }}
+        </button>
+      </template>
     </div>
 
     <div v-if="isDev" class="form-group dev-section">
@@ -73,21 +143,75 @@ defineProps({
   settings: { type: Object, required: true },
   isDev: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
-  loginUsername: { type: String, required: true },
-  loginPassword: { type: String, required: true },
+  activeProfileName: { type: String, default: '' },
+  isSignUpMode: { type: Boolean, default: false },
+  loginUsername: { type: String, default: '' },
+  loginPassword: { type: String, default: '' },
+  signupUsername: { type: String, default: '' },
+  signupPassword: { type: String, default: '' },
+  signupClassroomCode: { type: String, default: '' },
   loginError: { type: String, default: '' },
   loggingIn: { type: Boolean, default: false },
 })
 
 defineEmits([
   'login',
+  'signup',
   'logout',
+  'toggleMode',
   'update:loginUsername',
   'update:loginPassword',
+  'update:signupUsername',
+  'update:signupPassword',
+  'update:signupClassroomCode',
 ])
 </script>
 
 <style scoped>
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.profile-pill {
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 30%, transparent);
+}
+
+.auth-toggle-bar {
+  display: flex;
+  gap: 8px;
+  background: var(--surface-container-low);
+  padding: 4px;
+  border-radius: 10px;
+  margin-bottom: 4px;
+}
+
+.auth-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--muted-text);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.auth-tab.active {
+  background: var(--surface-container-highest);
+  color: var(--primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
 label {
   font-weight: 600;
   font-size: 14px;

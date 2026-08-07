@@ -15,22 +15,35 @@ import (
 	"ai-tutor/internal/utils"
 )
 
+// Production Fallbacks (Update these constants when deploying your production server)
+const DefaultProductionSyncURL = "https://your-supabase-project.supabase.co/rest/v1/rpc/handle_cloud_sync"
+const DefaultProductionAnonKey = "your-supabase-anon-key"
+
 // ResolveCloudSyncURL returns the effective sync URL.
-// Priority: stored SQLite value → CLOUD_SYNC_URL env var → empty (sync skipped).
+// Resolution order: stored SQLite value → CLOUD_SYNC_URL env var → DefaultProductionSyncURL.
 func ResolveCloudSyncURL(storedURL string) string {
 	if storedURL != "" {
 		return storedURL
 	}
-	return os.Getenv("CLOUD_SYNC_URL")
+	if env := os.Getenv("CLOUD_SYNC_URL"); env != "" {
+		return env
+	}
+	return DefaultProductionSyncURL
 }
 
 // ResolveCloudAPIToken returns the effective API token.
-// Priority: stored SQLite value → CLOUD_API_TOKEN env var → empty.
+// Resolution order: stored SQLite value → CLOUD_API_TOKEN / SUPABASE_ANON_KEY env var → DefaultProductionAnonKey.
 func ResolveCloudAPIToken(storedToken string) string {
 	if storedToken != "" {
 		return storedToken
 	}
-	return os.Getenv("CLOUD_API_TOKEN")
+	if env := os.Getenv("CLOUD_API_TOKEN"); env != "" {
+		return env
+	}
+	if env := os.Getenv("SUPABASE_ANON_KEY"); env != "" {
+		return env
+	}
+	return DefaultProductionAnonKey
 }
 
 // NotebookSyncRecord is the minimal notebook identity the server needs.

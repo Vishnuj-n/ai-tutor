@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -453,19 +454,10 @@ func (a *App) LoginStudent(username, password string) map[string]interface{} {
 
 	syncURL := study.ResolveCloudSyncURL(settings.CloudSyncURL)
 	if syncURL == "" {
-		syncURL = os.Getenv("CLOUD_SYNC_URL")
-	}
-	if syncURL == "" {
 		return map[string]interface{}{"error": "Supabase Sync URL is not configured in the environment"}
 	}
 
-	anonKey := os.Getenv("CLOUD_API_TOKEN")
-	if anonKey == "" {
-		anonKey = os.Getenv("SUPABASE_ANON_KEY")
-	}
-	if anonKey == "" {
-		anonKey = settings.CloudAPIToken
-	}
+	anonKey := study.ResolveCloudAPIToken(settings.CloudAPIToken)
 	if anonKey == "" {
 		return map[string]interface{}{"error": "Supabase Anon Key is not configured in the environment"}
 	}
@@ -533,12 +525,87 @@ func (a *App) LoginStudent(username, password string) map[string]interface{} {
 		return map[string]interface{}{"error": "failed to save settings: " + err.Error()}
 	}
 
+	if settings.ActiveProfileID != "" {
+		if err := repo.UpdateProfileCloudCredentials(settings.ActiveProfileID, loginResp.ClassroomCode, loginResp.Username, loginResp.SessionToken); err != nil {
+			log.Printf("warning: failed to save active profile cloud credentials: %v", err)
+		}
+	}
+
 	return map[string]interface{}{
 		"ok":             true,
 		"session_token":  loginResp.SessionToken,
 		"classroom_code": loginResp.ClassroomCode,
 		"username":       loginResp.Username,
 	}
+}
+
+// SignUpStudent handles new student account registration using the Supabase signup_user RPC.
+func (a *App) SignUpStudent(username, password, classroomCode string) map[string]interface{} {
+	repo := a.getRepo()
+	if repo == nil {
+		return map[string]interface{}{"error": errDatabaseNotInitialized}
+	}
+	settings, err := repo.GetUserSettings()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	syncURL := study.ResolveCloudSyncURL(settings.CloudSyncURL)
+	if syncURL == "" {
+		return map[string]interface{}{"error": "Supabase Sync URL is not configured in the environment"}
+	}
+
+	anonKey := study.ResolveCloudAPIToken(settings.CloudAPIToken)
+	if anonKey == "" {
+		return map[string]interface{}{"error": "Supabase Anon Key is not configured in the environment"}
+	}
+
+	baseURL := syncURL
+	if strings.Contains(baseURL, "/rest/v1/rpc/") {
+		idx := strings.Index(baseURL, "/rest/v1/")
+		baseURL = baseURL[:idx]
+	}
+	signupURL := fmt.Sprintf("%s/rest/v1/rpc/signup_user", strings.TrimSuffix(baseURL, "/"))
+
+	type SignupPayload struct {
+		Username      string `json:"p_username"`
+		Password      string `json:"p_password"`
+		Role          string `json:"p_role"`
+		ClassroomCode string `json:"p_classroom_code"`
+	}
+	payload := SignupPayload{
+		Username:      username,
+		Password:      password,
+		Role:          "student",
+		ClassroomCode: classroomCode,
+	}
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return map[string]interface{}{"error": "failed to encode signup payload"}
+	}
+
+	req, err := http.NewRequest("POST", signupURL, strings.NewReader(string(jsonBytes)))
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", anonKey)
+	req.Header.Set("Authorization", "Bearer "+anonKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]interface{}{"error": "network error: " + err.Error()}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return map[string]interface{}{"error": fmt.Sprintf("signup failed: %s", string(bodyBytes))}
+	}
+
+	// On successful signup, perform immediate login to establish active session token
+	return a.LoginStudent(username, password)
 }
 
 // LogoutStudent signs out the student by clearing saved sync credentials from the SQLite store.
@@ -556,6 +623,11 @@ func (a *App) LogoutStudent() map[string]interface{} {
 	settings.StudentUsername = ""
 	if err := repo.UpdateUserSettings(*settings); err != nil {
 		return map[string]interface{}{"error": err.Error()}
+	}
+	if settings.ActiveProfileID != "" {
+		if err := repo.UpdateProfileCloudCredentials(settings.ActiveProfileID, "", "", ""); err != nil {
+			log.Printf("warning: failed to clear active profile cloud credentials: %v", err)
+		}
 	}
 	return map[string]interface{}{"ok": true}
 }

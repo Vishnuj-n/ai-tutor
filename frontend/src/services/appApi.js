@@ -263,6 +263,10 @@ export function loginStudent(username, password) {
   return appBridge().LoginStudent(username, password)
 }
 
+export function signUpStudent(username, password, classroomCode) {
+  return appBridge().SignUpStudent(username, password, classroomCode)
+}
+
 export function logoutStudent() {
   return appBridge().LogoutStudent()
 }

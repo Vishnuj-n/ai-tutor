@@ -510,10 +510,13 @@ type ReadingSessionResponse struct {
 
 // StudyProfile represents a user's study profile (e.g. UPSC prep).
 type StudyProfile struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	DeadlineAt int64  `json:"deadline_at"` // Unix timestamp
-	CreatedAt  string `json:"created_at,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	DeadlineAt      int64  `json:"deadline_at"` // Unix timestamp
+	CreatedAt       string `json:"created_at,omitempty"`
+	ClassroomCode   string `json:"classroom_code,omitempty"`
+	StudentUsername string `json:"student_username,omitempty"`
+	CloudAPIToken   string `json:"cloud_api_token,omitempty"`
 }
 
 // UserSettings represents the application settings.
