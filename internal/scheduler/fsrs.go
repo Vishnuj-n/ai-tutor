@@ -25,6 +25,9 @@ func NextFSRSState(fsrsCard fsrs.Card, rating int, now time.Time) (fsrs.Card, er
 	if fsrsCard.Reps == 0 || fsrsCard.Due.IsZero() {
 		fsrsCard.Due = now
 	}
+	if fsrsCard.State != fsrs.New && fsrsCard.Stability < 0.001 {
+		fsrsCard.Stability = 0.001
+	}
 
 	// 3. Compute all 4 timeline variations simultaneously
 	schedulingCards, err := engine.Repeat(fsrsCard, now)

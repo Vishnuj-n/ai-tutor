@@ -78,6 +78,7 @@
 
       <!-- Review session -->
       <div v-if="reviewing && currentCard" class="review-session">
+        <ErrorMessage :message="error" />
         <!-- Progress row -->
         <div class="progress-row">
           <p class="progress-label">
@@ -390,8 +391,14 @@ async function rate(ratingKey) {
   try {
     if (queueMode.value) {
       const res = await recordCardReview(reviewTaskID.value, targetCardID, validRating.value)
-      if (res.error) {
+      if (res?.error) {
+        if (res.error === 'ErrTaskNotActive') {
+          showToast('This review session has already been completed.', 'info')
+          router.push('/dashboard')
+          return
+        }
         error.value = `Failed to save review: ${res.error}`
+        showToast(res.error, 'error')
         return
       }
 
@@ -520,12 +527,19 @@ async function loadQueueSession(taskID, notebookID = '') {
   console.warn('[FLASHCARD_PIPELINE] frontend_review_task_rendering start', { taskID, notebookID })
   try {
     const activateRes = await activateTask(taskID)
-    if (activateRes?.error && activateRes.code !== 409) {
-      error.value = activateRes.error
-      reviewing.value = false
-      cards.value = []
-      reviewTaskID.value = ''
-      return
+    if (activateRes?.error) {
+      if (activateRes.error === 'ErrTaskCompleted') {
+        showToast('This review task is already completed.', 'info')
+        router.push('/dashboard')
+        return
+      }
+      if (activateRes.code !== 409) {
+        error.value = activateRes.error
+        reviewing.value = false
+        cards.value = []
+        reviewTaskID.value = ''
+        return
+      }
     }
     const res = await getReviewSession(taskID, notebookID)
     if (res.error) {

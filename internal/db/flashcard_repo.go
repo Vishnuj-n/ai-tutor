@@ -195,7 +195,21 @@ func (r *Repository) UpdateFlashcardReviewTx(tx *sql.Tx, cardID string, dueAt in
 		return err
 	}
 	if rows != 1 {
-		return fmt.Errorf("flashcard %s was modified concurrently", cardID)
+		result, err = tx.Exec(`
+			UPDATE fsrs_cards
+			SET state_json = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, string(stateJSON), dueAt, cardID)
+		if err != nil {
+			return err
+		}
+		rows, err = result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return fmt.Errorf("flashcard %s was modified concurrently", cardID)
+		}
 	}
 
 	var validatedTopicID string

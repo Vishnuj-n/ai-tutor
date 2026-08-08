@@ -102,7 +102,9 @@ func (s *StudyService) GenerateFSRSCardsForTopic(topicID, notebookID string, sta
 
 	// Start cards in Review state (bypass learning phase) with day-based offsets
 	initialState := models.FlashcardState{
-		StateCode: 2, // 2 = Review state in models.go
+		StateCode:  2,   // 2 = Review state in models.go
+		Stability:  1.0, // Default initial stability for Review state
+		Difficulty: 5.0, // Default initial difficulty for Review state
 	}
 	now := time.Now().Unix()
 	dueAt := now + 24*60*60 // Default fallback: tomorrow

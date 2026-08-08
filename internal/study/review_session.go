@@ -233,9 +233,14 @@ func FlashcardStateToCard(state models.FlashcardState, dueAt, lastReviewedAt int
 		fsrsState = fsrs.New
 	}
 
+	stability := state.Stability
+	if fsrsState != fsrs.New && stability < 0.001 {
+		stability = 0.001
+	}
+
 	return fsrs.Card{
 		Due:            dueTime,
-		Stability:      state.Stability,
+		Stability:      stability,
 		Difficulty:     state.Difficulty,
 		ScheduledDays:  uint64(state.ScheduledDays),
 		Reps:           uint64(state.Reps),

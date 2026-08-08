@@ -378,10 +378,15 @@ func (a *App) ActivateTask(taskID string) map[string]interface{} {
 	if taskID == models.ReviewTaskDailyID {
 		return map[string]interface{}{"ok": true}
 	}
-	if task, err := repo.GetTaskByID(taskID); err == nil {
-		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s status=%s type=%s notebookID=%s topicID=%s", taskID, task.Status, task.TaskType, task.NotebookID, task.TopicID)
-	} else {
-		utils.Warnf("[QUEUE] ActivateTask precheck taskID=%s loadError=%v", taskID, err)
+	task, err := repo.GetTaskByID(taskID)
+	if err != nil {
+		return mapTaskError(err)
+	}
+	if task.Status == models.StudyTaskStatusActive {
+		return map[string]interface{}{"ok": true}
+	}
+	if task.Status == models.StudyTaskStatusCompleted {
+		return map[string]interface{}{"error": "ErrTaskCompleted", "code": 409}
 	}
 	if err := repo.ActivateTask(taskID); err != nil {
 		return mapTaskError(err)
