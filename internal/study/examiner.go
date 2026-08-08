@@ -25,6 +25,9 @@ func (s *StudyService) GenerateComprehensiveExam(notebookID string, startPage, e
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	if len(contextChunks) == 0 {
+		return map[string]interface{}{"error": "no content found in page range"}
+	}
 
 	// Enforce token budget before proceeding
 	const maxTokensForComprehensiveExam = 8000

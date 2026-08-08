@@ -303,10 +303,6 @@ func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
 			// Validate salvaged cards using the same validation as normal cards
 			validCards := make([]flashcardLLMCard, 0, len(salvaged.Cards))
 			for i, card := range salvaged.Cards {
-				if strings.TrimSpace(card.SourceChunkID) == "" {
-					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=source_chunk_id skipping", i)
-					continue
-				}
 				if strings.TrimSpace(card.Prompt) == "" {
 					utils.Warnf("[FLASHCARD_PARSE] salvage_validation_failed card_index=%d missing_field=prompt skipping", i)
 					continue
@@ -330,13 +326,9 @@ func parseFlashcardLLMResponse(raw string) (*flashcardLLMResponse, error) {
 		return nil, fmt.Errorf("no cards in LLM response")
 	}
 
-	// Schema validation: ensure each card has required fields
+	// Schema validation: ensure each card has required fields (prompt & answer)
 	validCards := make([]flashcardLLMCard, 0, len(out.Cards))
 	for i, card := range out.Cards {
-		if strings.TrimSpace(card.SourceChunkID) == "" {
-			utils.Warnf("[FLASHCARD_PARSE] schema_validation_failed card_index=%d missing_field=source_chunk_id skipping", i)
-			continue
-		}
 		if strings.TrimSpace(card.Prompt) == "" {
 			utils.Warnf("[FLASHCARD_PARSE] schema_validation_failed card_index=%d missing_field=prompt skipping", i)
 			continue
@@ -403,8 +395,8 @@ func salvagePartialCards(raw string) *flashcardLLMResponse {
 				prompt := extractJSONField("{"+cardStr+"}", "prompt")
 				answer := extractJSONField("{"+cardStr+"}", "answer")
 
-				// Only add if we have at least some non-empty required fields
-				if sourceChunkID != "" && prompt != "" && answer != "" {
+				// Only add if we have non-empty prompt and answer
+				if prompt != "" && answer != "" {
 					trimmedPrompt := strings.TrimSpace(prompt)
 					promptKey := trimmedPrompt + "||" + sourceChunkID
 					if !seenPrompts[promptKey] {

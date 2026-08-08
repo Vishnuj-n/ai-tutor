@@ -164,6 +164,9 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	if err != nil {
 		return nil, "", err
 	}
+	if len(contextChunks) == 0 {
+		return nil, "", fmt.Errorf("no content found in page range %d-%d", startPage, endPage)
+	}
 	utils.Warnf("[FLASHCARD_PIPELINE] flashcard_auto_generation_batch generation_source=%s chunk_count=%d token_estimate=%d page_range=%d-%d", generationSource, len(contextChunks), tokenCount, startPage, endPage)
 	contextText := buildContextTextFromChunks(contextChunks)
 
@@ -184,6 +187,9 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 
 	// Build prompt with token budgeting
 	prompt, promptTokenCount, includedChunkIDs := buildMarathonFlashcardPromptWithBudget(notebookTitle, startPage, endPage, contextChunks, targetCount, maxInputTokens, failedQuestions)
+	if len(includedChunkIDs) == 0 {
+		return nil, "", fmt.Errorf("no chunks fit within prompt token budget for page range %d-%d", startPage, endPage)
+	}
 
 	// Log token estimates before generation
 	utils.Warnf("[FLASHCARD_PIPELINE] token_budget_estimate prompt_tokens=%d max_input=%d budget_used_pct=%.2f", promptTokenCount, maxInputTokens, float64(promptTokenCount)/float64(maxInputTokens)*100)
@@ -222,17 +228,21 @@ func (s *StudyService) generateFlashcardsCore(notebookID string, startPage, endP
 	for _, chunkID := range includedChunkIDs {
 		allowedChunkIDs[chunkID] = struct{}{}
 	}
+	defaultChunkID := ""
+	if len(includedChunkIDs) > 0 {
+		defaultChunkID = includedChunkIDs[0]
+	}
+
 	for _, candidate := range parsed.Cards {
 		sourceChunkID := strings.TrimSpace(candidate.SourceChunkID)
 		cardPrompt := strings.TrimSpace(candidate.Prompt)
 		answer := strings.TrimSpace(candidate.Answer)
-		if cardPrompt == "" || answer == "" || sourceChunkID == "" {
-			utils.Warnf("Skipping flashcard: missing required fields")
+		if cardPrompt == "" || answer == "" {
+			utils.Warnf("Skipping flashcard: missing required prompt or answer")
 			continue
 		}
 		if _, ok := allowedChunkIDs[sourceChunkID]; !ok {
-			utils.Warnf("Skipping flashcard: source_chunk_id '%s' not found in allowed chunks (total allowed: %d)", sourceChunkID, len(allowedChunkIDs))
-			continue
+			sourceChunkID = defaultChunkID
 		}
 		id := uuid.NewString()
 		cards = append(cards, models.Flashcard{
@@ -286,7 +296,7 @@ func buildMarathonFlashcardPromptWithBudget(notebookTitle string, startPage, end
 	fmt.Fprintf(&b, "Generate exactly %d flashcards covering pages %d-%d.\n",
 		targetCount, startPage, endPage)
 	b.WriteString("\n=== JSON FORMAT (FOLLOW EXACTLY) ===\n")
-	b.WriteString(`{"cards":[{"source_chunk_id":"chunk_123","prompt":"What is X?","answer":"X is..."},{"source_chunk_id":"chunk_456","prompt":"How does Y work?","answer":"Y works by..."}]}` + "\n")
+	b.WriteString(`{"cards":[{"prompt":"What is X?","answer":"X is..."},{"prompt":"How does Y work?","answer":"Y works by..."}]}` + "\n")
 	b.WriteString("\n=== ATOMIC KNOWLEDGE (CRITICAL) ===\n")
 	b.WriteString("Each card must test exactly ONE concept. Multi-part answers are forbidden.\n")
 	b.WriteString("\n=== PROMPT QUALITY ===\n")
@@ -294,7 +304,6 @@ func buildMarathonFlashcardPromptWithBudget(notebookTitle string, startPage, end
 	b.WriteString("- PREFER 'why', 'how', 'what is', 'explain' questions.\n")
 	b.WriteString("\n=== ANSWER QUALITY ===\n")
 	b.WriteString("- Answers must be short (1-2 sentences max, grounded in source).\n")
-	b.WriteString("- source_chunk_id must exactly match one chunk_id from the provided chunk list.\n")
 	b.WriteString("\n=== ADAPTIVE CONTENT RULES ===\n")
 	b.WriteString("Before generating flashcards, classify the text type:\n")
 	b.WriteString("- FACTUAL/TECHNICAL (exam prep, current affairs, engineering, history): Extract specific facts, dates, definitions, formulas, and concrete data points.\n")

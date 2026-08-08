@@ -260,7 +260,7 @@ func buildQuizPrompt(notebookTitle string, targetCount int, contextParts []strin
 		"correct_answer must match one option exactly.",
 		"AVOID yes/no questions. PREFER 'why', 'how', 'what is', 'explain' questions.",
 		"",
-		"JSON schema: {\"questions\":[{\"source_chunk_id\":string,\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string}]}",
+		"JSON schema: {\"questions\":[{\"prompt\":string,\"options\":[string,string,string,string],\"correct_answer\":string}]}",
 		"Chunks:",
 		strings.Join(contextParts, "\n"),
 	}, "\n")
