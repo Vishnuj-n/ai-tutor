@@ -83,7 +83,11 @@ func initTestProvider(t *testing.T) *llm.Provider {
 			prompt := body.Messages[0].Content
 			switch {
 			case strings.Contains(prompt, "flashcard generator"):
-				content = flashcardJSON(extractRequestedCount(prompt, "Generate exactly "), extractFirstChunkID(prompt))
+				count := extractRequestedCount(prompt, "Generate up to ")
+				if count == 1 {
+					count = extractRequestedCount(prompt, "Generate exactly ")
+				}
+				content = flashcardJSON(count, extractFirstChunkID(prompt))
 			case strings.Contains(prompt, "quiz generator"):
 				content = questionJSON(extractRequestedCount(prompt, "Generate exactly "), extractFirstChunkID(prompt))
 			}
