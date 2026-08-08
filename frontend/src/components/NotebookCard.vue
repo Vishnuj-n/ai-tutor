@@ -21,8 +21,11 @@
       </div>
     </div>
 
+    <div v-if="needsIngestion" class="notebook-topic">
+      <span class="badge new-assignment-badge">⚡ New Assignment — Ingestion Needed</span>
+    </div>
     <div
-      v-if="notebook.topic_id"
+      v-else-if="notebook.topic_id"
       class="notebook-topic"
       style="display: flex; align-items: center; gap: 8px"
     >
@@ -57,14 +60,22 @@
 
     <div class="notebook-actions">
       <button
-        v-if="variant === 'active'"
+        v-if="needsIngestion"
+        class="btn-ingest"
+        title="Extract PDF bookmarks and run AI cleanup"
+        @click="$emit('edit-syllabus', notebook.id, notebook.title)"
+      >
+        ✨ Ingest Book
+      </button>
+      <button
+        v-else-if="variant === 'active'"
         class="btn-sleep"
         @click="$emit('change-status', notebook.id, 'dormant')"
       >
         Sleep
       </button>
       <button
-        v-if="variant === 'dormant'"
+        v-else-if="variant === 'dormant'"
         class="btn-activate"
         :disabled="activeLimitReached"
         @click="$emit('change-status', notebook.id, 'active')"
@@ -111,6 +122,11 @@ const formattedStatus = computed(() => {
 
 const formattedDate = computed(() => {
   return new Date(props.notebook.uploaded_at).toLocaleDateString()
+})
+
+const needsIngestion = computed(() => {
+  return (props.notebook.chunk_count === 0 || !props.notebook.chunk_count) &&
+         (props.notebook.status === 'uploaded' || props.notebook.status === 'draft_ready' || !props.notebook.status)
 })
 
 const variantClass = computed(() =>
@@ -192,6 +208,30 @@ const variantClass = computed(() =>
   color: var(--muted-text);
 }
 
+.new-assignment-badge {
+  background: color-mix(in srgb, #3b82f6 18%, var(--surface-container-low));
+  color: #60a5fa;
+  border: 1px solid color-mix(in srgb, #3b82f6 30%, transparent);
+}
+
+.btn-ingest {
+  background: color-mix(in srgb, #3b82f6 20%, var(--surface-container-low));
+  color: #60a5fa;
+  border: 1px solid color-mix(in srgb, #3b82f6 40%, transparent);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-ingest:hover {
+  background: #3b82f6;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
 .notebook-date {
   font-size: 12px;
   color: var(--muted-text);
@@ -232,18 +272,19 @@ const variantClass = computed(() =>
 .btn-delete {
   flex: 1;
   padding: 8px 12px;
-  border: none;
-  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
+  border-radius: 8px;
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
   font-weight: 600;
-  background: #ffe9e8;
-  color: #b5423d;
+  background: color-mix(in srgb, #ef4444 14%, var(--surface-container-low));
+  color: #f87171;
 }
 
 .btn-delete:hover {
-  opacity: 0.9;
+  background: color-mix(in srgb, #ef4444 28%, var(--surface-container-low));
+  color: #ffffff;
 }
 
 /* ── Active variant ────────────────────────────────── */
@@ -251,7 +292,7 @@ const variantClass = computed(() =>
   border-color: var(--primary);
   box-shadow:
     0 0 0 1px var(--primary),
-    0 4px 12px rgba(108, 92, 231, 0.15);
+    0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .active-icon {
@@ -260,9 +301,9 @@ const variantClass = computed(() =>
 
 /* ── Action buttons ────────────────────────────────── */
 .btn-activate {
-  background: linear-gradient(135deg, var(--primary), #7c3aed);
-  color: white;
-  border: none;
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface-container-low));
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent);
   border-radius: 8px;
   padding: 8px 14px;
   font-weight: 600;
@@ -271,8 +312,9 @@ const variantClass = computed(() =>
 }
 
 .btn-activate:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--on-primary);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(108, 92, 231, 0.3);
 }
 
 .btn-activate:disabled {
@@ -281,9 +323,9 @@ const variantClass = computed(() =>
 }
 
 .btn-sleep {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: white;
-  border: none;
+  background: color-mix(in srgb, #f59e0b 14%, var(--surface-container-low));
+  color: #fbbf24;
+  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
   border-radius: 8px;
   padding: 8px 14px;
   font-weight: 600;
@@ -292,7 +334,8 @@ const variantClass = computed(() =>
 }
 
 .btn-sleep:hover {
+  background: color-mix(in srgb, #f59e0b 26%, var(--surface-container-low));
+  color: #ffffff;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
 }
 </style>

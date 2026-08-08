@@ -483,18 +483,27 @@ func handleAssignments(w http.ResponseWriter, r *http.Request) {
 			ClassroomCode string `json:"classroom_code"`
 			Title         string `json:"title"`
 			DownloadURL   string `json:"download_url"`
+			StartPage     *int   `json:"start_page"`
+			EndPage       *int   `json:"end_page"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, http.StatusBadRequest, "Invalid JSON payload")
 			return
 		}
 
-		payload, _ := json.Marshal(map[string]interface{}{
+		payloadMap := map[string]interface{}{
 			"id":             req.ID,
 			"classroom_code": req.ClassroomCode,
 			"title":          req.Title,
 			"download_url":   req.DownloadURL,
-		})
+		}
+		if req.StartPage != nil {
+			payloadMap["start_page"] = *req.StartPage
+		}
+		if req.EndPage != nil {
+			payloadMap["end_page"] = *req.EndPage
+		}
+		payload, _ := json.Marshal(payloadMap)
 
 		httpReq, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/rest/v1/teacher_assignments", supabaseURL), bytes.NewBuffer(payload))
 		if err != nil {
@@ -554,8 +563,56 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
+
+	var req struct {
+		UserToken     string        `json:"user_token"`
+		ClassroomCode string        `json:"classroom_code"`
+		Notebooks     []interface{} `json:"notebooks"`
+		Logs          []interface{} `json:"logs"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	classCode := strings.TrimSpace(req.ClassroomCode)
+	if classCode == "" || supabaseURL == "" || supabaseKey == "" {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success":       true,
+			"new_notebooks": []interface{}{},
+		})
+		return
+	}
+
+	// Fetch active teacher assignments for the classroom code from Supabase
+	targetURL := fmt.Sprintf("%s/rest/v1/teacher_assignments?classroom_code=eq.%s&order=created_at.desc", supabaseURL, url.QueryEscape(classCode))
+	httpReq, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success":       true,
+			"new_notebooks": []interface{}{},
+		})
+		return
+	}
+	httpReq.Header.Set("apikey", supabaseKey)
+	httpReq.Header.Set("Authorization", "Bearer "+supabaseKey)
+
+	res, err := httpClient.Do(httpReq)
+	if err != nil {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success":       true,
+			"new_notebooks": []interface{}{},
+		})
+		return
+	}
+	defer res.Body.Close()
+
+	respBody, _ := io.ReadAll(res.Body)
+	var assignments []interface{}
+	_ = json.Unmarshal(respBody, &assignments)
+	if assignments == nil {
+		assignments = []interface{}{}
+	}
+
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Sync endpoint ready",
+		"success":       true,
+		"new_notebooks": assignments,
 	})
 }

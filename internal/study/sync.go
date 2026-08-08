@@ -14,12 +14,19 @@ import (
 	"ai-tutor/internal/db"
 	"ai-tutor/internal/models"
 	"ai-tutor/internal/utils"
+
+	pdfreader "github.com/ledongthuc/pdf"
 )
 
-// Production Fallbacks (Update these constants when deploying your production server)
-const DefaultProductionSyncURL = "https://your-supabase-project.supabase.co/rest/v1/rpc/handle_cloud_sync"
-const DefaultProductionCloudServerURL = "http://localhost:8080"
-const DefaultProductionAnonKey = "your-supabase-anon-key"
+// Production Fallbacks (Can be overridden at build-time using -ldflags)
+// Example: go build -ldflags "-X ai-tutor/internal/study.DefaultProductionSyncURL=https://... -X ai-tutor/internal/study.DefaultProductionAnonKey=..."
+var (
+	DefaultProductionSyncURL        = ""
+	DefaultProductionCloudServerURL = "http://localhost:8080"
+	DefaultProductionAnonKey        = ""
+	DefaultResearchAnalyticsURL     = ""
+	DefaultResearchAnalyticsAnonKey = ""
+)
 
 // ResolveCloudServerURL returns the effective Cloud Server URL (e.g. Render / Fly.io / localhost).
 // Resolution order: CLOUD_SERVER_URL / VITE_API_URL env var → DefaultProductionCloudServerURL.
@@ -96,6 +103,8 @@ type AssignedNotebook struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
 	DownloadURL string `json:"download_url"`
+	StartPage   *int   `json:"start_page"`
+	EndPage     *int   `json:"end_page"`
 }
 
 func StartCloudSyncLoop(repo *db.Repository) {
@@ -191,11 +200,9 @@ func TriggerCloudSync(repo *db.Repository) error {
 		if len(syncResp.NewNotebooks) > 0 {
 			utils.Warnf("[SYNC] Found %d new teacher assignments", len(syncResp.NewNotebooks))
 			for _, assigned := range syncResp.NewNotebooks {
-				go func(nb AssignedNotebook) {
-					if err := downloadAndRegisterNotebook(repo, nb); err != nil {
-						utils.Warnf("[SYNC] Failed to download assigned notebook %s: %v", nb.Title, err)
-					}
-				}(assigned)
+				if err := downloadAndRegisterNotebook(repo, assigned); err != nil {
+					utils.Warnf("[SYNC] Failed to download assigned notebook %s: %v", assigned.Title, err)
+				}
 			}
 		}
 
@@ -245,11 +252,11 @@ func syncAnalyticsFallback(repo *db.Repository) error {
 
 	researchURL := os.Getenv("RESEARCH_ANALYTICS_URL")
 	if researchURL == "" {
-		researchURL = "https://rptpauakhdsqinpcnebw.supabase.co/rest/v1/anonymous_analytics_events"
+		researchURL = DefaultResearchAnalyticsURL
 	}
 	researchToken := os.Getenv("RESEARCH_ANALYTICS_ANON_KEY")
 	if researchToken == "" {
-		researchToken = "sb_publishable_aL0Wgco3ZzH_OS64pP4g-w_tWRN_bNf"
+		researchToken = DefaultResearchAnalyticsAnonKey
 	}
 
 	jsonBytes, err := json.Marshal(events)
@@ -323,6 +330,19 @@ func postJSONWithRetry(url string, jsonBytes []byte, headers map[string]string, 
 }
 
 func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error {
+	utils.Warnf("[SYNC] Processing assigned notebook: title=%q, id=%q, url=%q", nb.Title, nb.ID, nb.DownloadURL)
+
+	// Check if already registered
+	if existing, _ := repo.GetNotebookByID(nb.ID); existing != nil {
+		utils.Warnf("[SYNC] Assignment %q (%s) already exists in database, skipping download", nb.Title, nb.ID)
+		if settings, sErr := repo.GetUserSettings(); sErr == nil && settings.ActiveProfileID != "" && (existing.ProfileID == "" || existing.ProfileID == "NULL") {
+			if assignErr := repo.AssignNotebookToProfile(nb.ID, settings.ActiveProfileID); assignErr == nil {
+				utils.Warnf("[SYNC] Associated existing notebook %s with active profile %s", nb.ID, settings.ActiveProfileID)
+			}
+		}
+		return nil
+	}
+
 	// 1. Create a local path for the downloaded PDF
 	baseDir := os.Getenv("APPDATA")
 	if baseDir == "" {
@@ -335,18 +355,21 @@ func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error
 	}
 	dataDir := filepath.Join(baseDir, "ai-tutor", "notebooks")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		utils.Warnf("[SYNC] Failed to create notebook directory: %v", err)
 		return err
 	}
 	localPath := filepath.Join(dataDir, nb.ID+".pdf")
+
 	// 2. Download from remote URL
+	utils.Warnf("[SYNC] Downloading PDF from URL: %s", nb.DownloadURL)
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest("GET", nb.DownloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create GET request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("HTTP GET failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -356,7 +379,7 @@ func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error
 
 	out, err := os.Create(localPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create local PDF file: %w", err)
 	}
 	defer func() { _ = out.Close() }()
 
@@ -367,10 +390,11 @@ func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error
 		return fmt.Errorf("download rejected: Content-Length %d exceeds 100 MiB limit", resp.ContentLength)
 	}
 	limitedBody := &io.LimitedReader{R: resp.Body, N: maxDownloadBytes + 1}
-	if _, err = io.Copy(out, limitedBody); err != nil {
+	written, err := io.Copy(out, limitedBody)
+	if err != nil {
 		_ = out.Close()
 		_ = os.Remove(localPath)
-		return err
+		return fmt.Errorf("failed to write PDF data to file: %w", err)
 	}
 	_ = out.Close()
 	if limitedBody.N <= 0 {
@@ -378,19 +402,36 @@ func downloadAndRegisterNotebook(repo *db.Repository, nb AssignedNotebook) error
 		return fmt.Errorf("download aborted: response exceeded 100 MiB limit")
 	}
 
+	utils.Warnf("[SYNC] Downloaded %d bytes to %s", written, localPath)
+
 	// 3. Register in SQLite
-	// Note: We register with status 'uploaded' and indexer will process it normally.
 	fileHash, hashErr := utils.FileSHA256(localPath)
 	if hashErr != nil {
 		_ = os.Remove(localPath)
 		return fmt.Errorf("failed to compute file hash: %w", hashErr)
 	}
-	err = repo.CreateNotebook(nb.ID, nb.Title, localPath, "pdf", "", fileHash, 0)
-	if err != nil {
-		_ = os.Remove(localPath)
-		return fmt.Errorf("failed to insert notebook to database: %w", err)
+
+	pageCount := 0
+	if f, r, pErr := pdfreader.Open(localPath); pErr == nil {
+		pageCount = r.NumPage()
+		_ = f.Close()
 	}
 
-	utils.Warnf("[SYNC] Automatically registered newly assigned notebook: %s", nb.Title)
+	err = repo.CreateNotebook(nb.ID, nb.Title, localPath, "pdf", "", fileHash, pageCount)
+	if err != nil {
+		_ = os.Remove(localPath)
+		return fmt.Errorf("failed to insert notebook into database: %w", err)
+	}
+
+	// Assign to active profile if configured
+	if settings, sErr := repo.GetUserSettings(); sErr == nil && settings.ActiveProfileID != "" {
+		if assignErr := repo.AssignNotebookToProfile(nb.ID, settings.ActiveProfileID); assignErr != nil {
+			utils.Warnf("[SYNC] Warning: failed to assign downloaded notebook to profile %s: %v", settings.ActiveProfileID, assignErr)
+		} else {
+			utils.Warnf("[SYNC] Assigned notebook %s to active profile %s", nb.ID, settings.ActiveProfileID)
+		}
+	}
+
+	utils.Warnf("[SYNC] Successfully registered newly assigned notebook: %s (ID: %s, Hash: %s)", nb.Title, nb.ID, fileHash)
 	return nil
 }

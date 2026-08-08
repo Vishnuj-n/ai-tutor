@@ -40,8 +40,12 @@ CREATE TABLE IF NOT EXISTS teacher_assignments (
     classroom_code TEXT NOT NULL,
     title TEXT NOT NULL,
     download_url TEXT NOT NULL CHECK (download_url ILIKE 'http://%' OR download_url ILIKE 'https://%'),
+    start_page INTEGER,
+    end_page INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+ALTER TABLE teacher_assignments ADD COLUMN IF NOT EXISTS start_page INTEGER;
+ALTER TABLE teacher_assignments ADD COLUMN IF NOT EXISTS end_page INTEGER;
 CREATE INDEX IF NOT EXISTS idx_teacher_assignments_classroom ON teacher_assignments(classroom_code);
 
 CREATE TABLE IF NOT EXISTS public.user_accounts (

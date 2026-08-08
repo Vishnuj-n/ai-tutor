@@ -216,45 +216,31 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 		return map[string]interface{}{"error": fmt.Sprintf("failed to update notebook status: %v", err)}
 	}
 
-	// Fast path: bookmarks only, no LLM call
 	if !regenerate {
-		result, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, nil)
-		if err == nil && len(result.Chapters) > 0 {
-			chapters := result.Chapters
-			draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
-			draftJSON, err := json.Marshal(draftToPersist)
-			if err != nil {
-				return map[string]interface{}{"error": fmt.Sprintf("failed to marshal draft: %v", err)}
-			}
-			if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
-				return map[string]interface{}{"error": fmt.Sprintf("failed to persist syllabus draft: %v", err)}
-			}
-			if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
-				return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
-			}
-			return map[string]interface{}{
-				"notebook_id":   notebookID,
-				"page_count":    doc.PageCount,
-				"chapters":      chapters,
-				"status":        "draft_ready",
-				"fallback_used": false,
+		var chapters []models.SyllabusChapterDraft
+		fallbackUsed := false
+
+		if s, err := repo.GetUserSettings(); err == nil && s != nil && strings.TrimSpace(s.ClassroomCode) == "" {
+			if res, err := a.notebookService.DraftSyllabusChapters(nb.FileType, nb.FilePath, doc, nil); err == nil && len(res.Chapters) > 0 {
+				chapters = res.Chapters
 			}
 		}
-		// No bookmarks found — create a single "General" chapter covering all pages
-		// User can edit this manually or click "AI Clean Up" for smarter extraction
-		endPage := doc.PageCount
-		chapters := []models.SyllabusChapterDraft{{
-			Title:     "General",
-			StartPage: 1,
-			EndPage:   endPage,
-		}}
-		draftToPersist := models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters}
-		draftJSON, err := json.Marshal(draftToPersist)
+
+		if len(chapters) == 0 {
+			fallbackUsed = true
+			title := strings.TrimSpace(nb.Title)
+			if title == "" {
+				title = "General"
+			}
+			chapters = []models.SyllabusChapterDraft{{Title: title, StartPage: 1, EndPage: doc.PageCount}}
+		}
+
+		draftJSON, err := json.Marshal(models.SyllabusDraft{PageCount: doc.PageCount, Chapters: chapters})
 		if err != nil {
-			return map[string]interface{}{"error": fmt.Sprintf("failed to marshal fallback draft: %v", err)}
+			return map[string]interface{}{"error": fmt.Sprintf("failed to marshal draft: %v", err)}
 		}
 		if err := repo.UpdateNotebookSyllabusDraft(notebookID, string(draftJSON)); err != nil {
-			return map[string]interface{}{"error": fmt.Sprintf("failed to persist fallback draft: %v", err)}
+			return map[string]interface{}{"error": fmt.Sprintf("failed to persist syllabus draft: %v", err)}
 		}
 		if err := repo.UpdateNotebookStatus(notebookID, "draft_ready"); err != nil {
 			return map[string]interface{}{"error": fmt.Sprintf("failed to update status to draft_ready: %v", err)}
@@ -264,7 +250,7 @@ func (a *App) DraftNotebookSyllabus(notebookID string, regenerate bool) map[stri
 			"page_count":    doc.PageCount,
 			"chapters":      chapters,
 			"status":        "draft_ready",
-			"fallback_used": true,
+			"fallback_used": fallbackUsed,
 		}
 	}
 

@@ -344,19 +344,19 @@ func TestActivateTask_RejectsNonPendingTask(t *testing.T) {
 	}
 
 	task := models.StudyQueueTask{
-		ID:         "task-already-active",
+		ID:         "task-already-completed",
 		NotebookID: notebookID,
 		TaskType:   models.StudyTaskTypeQuiz,
-		Status:     models.StudyTaskStatusActive,
+		Status:     models.StudyTaskStatusCompleted,
 		Priority:   1,
 	}
 	if err := testRepo.InsertStudyTask(task); err != nil {
 		t.Fatalf("InsertStudyTask failed: %v", err)
 	}
 
-	resp := app.ActivateTask("task-already-active")
+	resp := app.ActivateTask("task-already-completed")
 	if code, ok := resp["code"].(int); !ok || code != 409 {
-		t.Fatalf("expected code 409 for non-pending task, got: %#v", resp)
+		t.Fatalf("expected code 409 for completed task, got: %#v", resp)
 	}
 }
 

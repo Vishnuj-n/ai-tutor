@@ -17,13 +17,102 @@
     </div>
 
     <div class="bottom-actions">
-      <button class="sync-link" type="button">Sync</button>
+      <button
+        v-if="isCloudAccount"
+        class="sync-link"
+        :class="{ 'sync-success': syncState === 'success', 'sync-error': syncState === 'error' }"
+        type="button"
+        @click="handleSync"
+        :disabled="syncing"
+        title="Sync with Cloud"
+      >
+        <span class="menu-icon">{{ syncIcon }}</span>
+        <span>{{ syncLabel }}</span>
+      </button>
       <RouterLink to="/settings" class="menu-item bottom-item">Settings</RouterLink>
     </div>
   </aside>
 </template>
 
 <script setup>
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { triggerCloudSync, getUserSettings, getCloudConfig } from '../services/appApi'
+
+const syncing = ref(false)
+const syncState = ref('idle')
+const isCloudAccount = ref(false)
+let syncTimer = null
+
+const syncIcon = computed(() => {
+  if (syncState.value === 'success') return '✓'
+  if (syncState.value === 'error') return '⚠️'
+  return '☁️'
+})
+
+const syncLabel = computed(() => {
+  if (syncState.value === 'syncing') return 'Syncing...'
+  if (syncState.value === 'success') return 'Sync successful'
+  if (syncState.value === 'error') return 'Sync failed'
+  return 'Sync Cloud'
+})
+
+async function checkCloudAccount() {
+  try {
+    const [settingsRes, configRes] = await Promise.all([
+      getUserSettings(),
+      getCloudConfig(),
+    ])
+    const isConfigured = configRes?.configured === true
+    const hasCloudCreds = !!(settingsRes?.cloud_api_token || settingsRes?.classroom_code)
+    isCloudAccount.value = isConfigured && hasCloudCreds
+  } catch (err) {
+    console.warn('[SIDEBAR] Failed to check cloud account status:', err)
+    isCloudAccount.value = false
+  }
+}
+
+async function handleSync() {
+  if (syncing.value) return
+  if (syncTimer) {
+    clearTimeout(syncTimer)
+    syncTimer = null
+  }
+  syncing.value = true
+  syncState.value = 'syncing'
+  try {
+    const res = await triggerCloudSync()
+    if (res?.error) {
+      console.warn('[SIDEBAR] Cloud sync error:', res.error)
+      syncState.value = 'error'
+    } else {
+      console.log('[SIDEBAR] Cloud sync completed successfully')
+      syncState.value = 'success'
+    }
+  } catch (err) {
+    console.warn('[SIDEBAR] Cloud sync exception:', err)
+    syncState.value = 'error'
+  } finally {
+    syncing.value = false
+    syncTimer = setTimeout(() => {
+      syncState.value = 'idle'
+      syncTimer = null
+    }, 4000)
+  }
+}
+
+onMounted(() => {
+  checkCloudAccount()
+  window.addEventListener('settings-updated', checkCloudAccount)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('settings-updated', checkCloudAccount)
+  if (syncTimer) {
+    clearTimeout(syncTimer)
+    syncTimer = null
+  }
+})
+
 const topItems = [
   { to: '/dashboard', label: 'Dashboard', icon: '▦' },
   { to: '/reader', label: 'Reader', icon: '◫' },
@@ -146,13 +235,50 @@ const topItems = [
 }
 
 .sync-link {
-  border: 0;
-  background: transparent;
-  color: var(--muted-text);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
   font-size: 14px;
-  font-weight: 600;
-  text-align: left;
+  font-weight: 500;
   padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  width: 100%;
+}
+
+.sync-link:hover:not(:disabled) {
+  background: var(--surface-container-highest);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.sync-link.sync-success {
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.4);
+  background: color-mix(in srgb, #10b981 12%, var(--surface-container-low));
+}
+
+.sync-link.sync-success .menu-icon {
+  color: #10b981;
+}
+
+.sync-link.sync-error {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+  background: color-mix(in srgb, #ef4444 12%, var(--surface-container-low));
+}
+
+.sync-link.sync-error .menu-icon {
+  color: #ef4444;
+}
+
+.sync-link:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .bottom-item {

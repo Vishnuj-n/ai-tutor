@@ -199,6 +199,58 @@ func TestDraftNotebookSyllabus_FallbackCreatesEditableChapter(t *testing.T) {
 	}
 }
 
+func TestDraftNotebookSyllabus_CloudProfileSkipsBookmarkExtraction(t *testing.T) {
+	initTestDB(t)
+	uploadDir := t.TempDir()
+	service := notebook.NewService(uploadDir, notebook.WithExtractPDFFunc(func(filePath string, doc *notebook.ExtractedDocument) error {
+		doc.PageCount = 10
+		doc.WordCount = 500
+		doc.Sections = []notebook.ExtractedSection{{Heading: "Overview", Text: "Cloud assignment sample text", PageNum: 1}}
+		return nil
+	}))
+	app := &App{
+		repo:            testRepo,
+		notebookService: service,
+	}
+
+	// Set ClassroomCode on settings to simulate active Cloud Profile
+	settings, err := testRepo.GetUserSettings()
+	if err != nil {
+		t.Fatalf("GetUserSettings failed: %v", err)
+	}
+	settings.ClassroomCode = "CLASS123"
+	if err := testRepo.UpdateUserSettings(*settings); err != nil {
+		t.Fatalf("UpdateUserSettings failed: %v", err)
+	}
+
+	uploadResult, err := service.SaveUploadedFile([]byte("Cloud assignment sample text"), "assignment.txt")
+	if err != nil {
+		t.Fatalf("SaveUploadedFile failed: %v", err)
+	}
+
+	if err := testRepo.CreateNotebook(uploadResult.ID, "Cloud Assignment Title", uploadResult.FilePath, uploadResult.FileType, "", "", 10); err != nil {
+		t.Fatalf("CreateNotebook failed: %v", err)
+	}
+
+	resp := app.DraftNotebookSyllabus(uploadResult.ID, false)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("expected successful draft response, got error: %v", resp["error"])
+	}
+
+	fallbackUsed, ok := resp["fallback_used"].(bool)
+	if !ok || !fallbackUsed {
+		t.Fatalf("expected fallback_used=true for Cloud Profile initial draft, got %#v", resp["fallback_used"])
+	}
+
+	chapters, ok := resp["chapters"].([]models.SyllabusChapterDraft)
+	if !ok || len(chapters) != 1 {
+		t.Fatalf("expected 1 default chapter draft for Cloud Profile, got %#v", resp["chapters"])
+	}
+	if chapters[0].Title != "Cloud Assignment Title" {
+		t.Fatalf("expected chapter title 'Cloud Assignment Title', got %q", chapters[0].Title)
+	}
+}
+
 func TestConfirmNotebookSyllabus_PersistsBoundsAndPageAwareChunks(t *testing.T) {
 	initTestDB(t)
 	uploadDir := t.TempDir()

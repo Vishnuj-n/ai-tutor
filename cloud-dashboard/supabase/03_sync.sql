@@ -47,7 +47,7 @@ BEGIN
   END IF;
 
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
-    'id', id, 'title', title, 'download_url', download_url
+    'id', id, 'title', title, 'download_url', download_url, 'start_page', start_page, 'end_page', end_page
   )), '[]'::jsonb) INTO ret_notebooks
   FROM teacher_assignments WHERE classroom_code = p_classroom_code;
 
