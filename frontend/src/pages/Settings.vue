@@ -299,19 +299,13 @@ watch(
 )
 
 onMounted(async () => {
-  try {
-    const envRes = await getAppEnv()
-    isDev.value = envRes?.env === 'dev'
-  } catch (_) {
-    isDev.value = false
-  }
-  try {
-    const cfgRes = await getCloudConfig()
-    cloudConfigured.value = cfgRes?.configured === true
-  } catch (_) {
-    cloudConfigured.value = false
-  }
-  await loadAllData()
+  const [envRes, cfgRes] = await Promise.all([
+    getAppEnv().catch(() => null),
+    getCloudConfig().catch(() => null),
+    loadAllData(),
+  ])
+  isDev.value = envRes?.env === 'dev'
+  cloudConfigured.value = cfgRes?.configured === true
 })
 
 onUnmounted(() => {

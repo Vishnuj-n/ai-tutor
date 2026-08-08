@@ -308,8 +308,7 @@ async function loadAgenda() {
       return
     }
 
-    await loadActiveProfilePace()
-    await loadFlashcardTimeline(tzOffset)
+    await Promise.all([loadActiveProfilePace(), loadFlashcardTimeline(tzOffset)])
   } catch (err) {
     error.value = err.message || 'Failed to load tasks'
   } finally {

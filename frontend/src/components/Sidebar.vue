@@ -36,7 +36,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { triggerCloudSync, getUserSettings, getCloudConfig } from '../services/appApi'
+import { triggerCloudSync, getUserSettings } from '../services/appApi'
 
 const syncing = ref(false)
 const syncState = ref('idle')
@@ -57,18 +57,8 @@ const syncLabel = computed(() => {
 })
 
 async function checkCloudAccount() {
-  try {
-    const [settingsRes, configRes] = await Promise.all([
-      getUserSettings(),
-      getCloudConfig(),
-    ])
-    const isConfigured = configRes?.configured === true
-    const hasCloudCreds = !!(settingsRes?.cloud_api_token || settingsRes?.classroom_code)
-    isCloudAccount.value = isConfigured && hasCloudCreds
-  } catch (err) {
-    console.warn('[SIDEBAR] Failed to check cloud account status:', err)
-    isCloudAccount.value = false
-  }
+  const s = await getUserSettings().catch(() => null)
+  isCloudAccount.value = !!(s?.cloud_api_token || s?.classroom_code)
 }
 
 async function handleSync() {
