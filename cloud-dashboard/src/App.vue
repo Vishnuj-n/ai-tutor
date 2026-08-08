@@ -1,13 +1,13 @@
 <template>
-  <div class="dashboard-container">
-    <Navbar />
+  <div class="dashboard-container ds-root" :class="{ light: isLight }">
+    <Navbar :is-light="isLight" @toggle-theme="toggleTheme" />
 
     <main class="main-content">
       <!-- Toast Notification -->
       <div
         v-if="toastMessage"
         class="animate-fade-in"
-        style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;"
+        style="background: var(--ds-success-bg); border: 1px solid var(--ds-success-ring); color: var(--ds-success); padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;"
       >
         <div style="flex: 1;">{{ toastMessage }}</div>
       </div>
@@ -23,9 +23,18 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted } from 'vue';
+import { ref, provide, onMounted, onUnmounted } from 'vue';
 import Navbar from './components/Navbar.vue';
 import { useDashboard } from './composables/useDashboard';
+
+const isLight = ref(localStorage.getItem('cloud_dashboard_theme') === 'light');
+
+function toggleTheme() {
+  isLight.value = !isLight.value;
+  localStorage.setItem('cloud_dashboard_theme', isLight.value ? 'light' : 'dark');
+}
+
+provide('theme', { isLight, toggleTheme });
 
 const {
   toastMessage,
@@ -59,3 +68,4 @@ onUnmounted(() => {
 <style>
 /* Global dashboard styles loaded from style.css */
 </style>
+

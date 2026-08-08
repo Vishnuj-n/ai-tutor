@@ -1,56 +1,55 @@
 <template>
-  <div class="students-page">
+  <div class="students-page fade-in">
     <section class="section-card">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
-        <h2 class="section-title" style="margin-bottom: 0; border: none; padding: 0;">
-          Student Profiles
-        </h2>
+        <div>
+          <h2 class="section-title" style="margin-bottom: 0; border: none; padding: 0;">
+            Student Profiles
+          </h2>
+          <div class="micro-label" style="margin-top: 0.25rem;">CONNECTED CLASSROOM ACCOUNTS</div>
+        </div>
 
-        <div style="display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;">
           <div class="search-container">
-            <span class="search-icon">Find:</span>
             <input
               ref="searchInputRef"
               type="text"
               v-model="searchQuery"
               class="search-input"
               placeholder="Filter student or topic..."
-              style="background: var(--surface-low); border: 1px solid var(--border); padding: 0.4rem 0.8rem; border-radius: 6px; color: #fff; font-size: 0.85rem;"
+              style="width: 220px;"
             />
             <kbd class="search-kbd">/</kbd>
           </div>
 
           <button
-            class="btn btn-secondary"
+            class="btn-ghost"
             @click="toggleClassroomLock"
-            style="padding: 0.45rem 0.85rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem;"
-            :style="isLocked ? 'border-color: var(--danger); color: var(--danger); background: var(--danger-glow);' : 'border-color: var(--success); color: var(--success);'"
+            :style="isLocked ? 'border-color: var(--ds-danger-ring); color: var(--ds-danger); background: var(--ds-danger-bg);' : 'border-color: var(--ds-success-ring); color: var(--ds-success);'"
             :title="isLocked ? 'Classroom is LOCKED. Click to allow new student joins.' : 'Classroom is OPEN. Click to block new student joins.'"
           >
             <span>{{ isLocked ? '🔒 Locked' : '🔓 Open' }}</span>
           </button>
 
           <button
-            class="btn btn-secondary"
-            :class="{ active: filterAlerts }"
+            class="btn-ghost"
+            :class="{ danger: filterAlerts }"
             @click="filterAlerts = !filterAlerts"
-            style="padding: 0.45rem 0.85rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem;"
-            :style="filterAlerts ? 'border-color: var(--danger); color: var(--danger); background: var(--danger-glow);' : ''"
+            :style="filterAlerts ? 'border-color: var(--ds-danger-ring); color: var(--ds-danger); background: var(--ds-danger-bg);' : ''"
           >
             Alerts Only
           </button>
 
           <button
-            class="btn btn-secondary"
+            class="btn-ghost"
             @click="exportClassroomCSV"
             :disabled="students.length === 0"
-            style="padding: 0.45rem 0.85rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem;"
             title="Export classroom stats to CSV"
           >
             Export CSV
           </button>
 
-          <button class="btn" @click="() => fetchData(false)" style="padding: 0.45rem 0.85rem; font-size: 0.8rem;" :disabled="loading">
+          <button class="btn" @click="() => fetchData(false)" :disabled="loading">
             <span v-if="loading" class="loading-spinner" style="width: 12px; height: 12px; border-width: 2px;"></span>
             {{ loading ? 'Syncing...' : 'Refresh' }}
           </button>
@@ -59,21 +58,21 @@
 
       <div v-if="loading && students.length === 0" class="text-center" style="padding: 4rem 2rem;">
         <div class="loading-spinner"></div>
-        <p class="muted" style="margin-top: 1rem; font-size: 0.9rem;">Fetching classroom database...</p>
+        <p class="muted" style="margin-top: 1rem; font-size: 0.85rem;">Fetching classroom database...</p>
       </div>
-      <div v-else-if="filteredStudents.length === 0" class="text-center" style="padding: 3rem 2rem; border: 1px dashed var(--border); border-radius: 12px; background: rgba(255,255,255,0.01);">
-        <h3 style="margin-top: 0.75rem; margin-bottom: 0.35rem; color: #fff;">No students synced yet for "{{ classroomCode }}"</h3>
-        <p class="muted" style="margin-bottom: 1.25rem; font-size: 0.85rem; max-width: 460px; margin-left: auto; margin-right: auto;">
+      <div v-else-if="filteredStudents.length === 0" class="text-center" style="padding: 3rem 2rem; border: 1px dashed var(--ds-border-hi); border-radius: 12px; background: var(--ds-surface-low);">
+        <h3 style="margin-top: 0.75rem; margin-bottom: 0.35rem; color: var(--ds-fg);">No students synced yet for "{{ classroomCode }}"</h3>
+        <p class="muted" style="margin-bottom: 1.25rem; font-size: 0.82rem; max-width: 460px; margin-left: auto; margin-right: auto;">
           Students connect to your analytical workspace using your classroom code. Once connected, their flashcard review logs and study progress will stream here live.
         </p>
-        <div style="background: var(--surface-low); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: left; max-width: 480px; margin: 0 auto; font-size: 0.8rem; line-height: 1.5;">
-          <strong style="color: var(--primary);">Student Setup Instructions:</strong>
-          <ol style="margin-top: 0.4rem; margin-bottom: 0; padding-left: 1.25rem; color: var(--muted-text);">
-            <li>Open the <strong>AI Tutor Desktop App</strong></li>
+        <div style="background: var(--ds-surface); border: 1px solid var(--ds-border-hi); border-radius: 10px; padding: 1.25rem; text-align: left; max-width: 480px; margin: 0 auto; font-size: 0.8rem; line-height: 1.5;">
+          <strong style="color: var(--ds-primary);">Student Setup Instructions:</strong>
+          <ol style="margin-top: 0.5rem; margin-bottom: 0; padding-left: 1.25rem; color: var(--ds-muted);">
+            <li>Open the <strong>StudyLoop Desktop App</strong></li>
             <li>Select (or create) your <strong>Study Profile</strong> for this course</li>
             <li>Navigate to <strong>Settings</strong> &rarr; <strong>Account & Cloud</strong></li>
-            <li>Click <strong>Create Account</strong> (or <strong>Sign In</strong> if already registered)</li>
-            <li>Enter your <strong>Username</strong>, <strong>Password</strong>, and Classroom Code: <code style="color: #fff; background: rgba(255,255,255,0.1); padding: 0.1rem 0.35rem; border-radius: 4px;">{{ classroomCode }}</code></li>
+            <li>Click <strong>Create Account</strong> (or <strong>Sign In</strong>)</li>
+            <li>Enter your credentials and Classroom Code: <code style="color: var(--ds-fg); background: var(--ds-surface-hi); padding: 0.15rem 0.4rem; border-radius: 4px; font-family: var(--ds-mono);">{{ classroomCode }}</code></li>
             <li>Click <strong>Sign Up & Sync</strong></li>
           </ol>
         </div>
@@ -85,7 +84,7 @@
           :key="student.token"
           class="student-row animate-fade-in"
           :class="{ expanded: expandedStudents[student.token] }"
-          :style="{ animationDelay: `${(index + 2) * 50}ms` }"
+          :style="{ animationDelay: `${(index + 2) * 40}ms` }"
         >
           <div
             class="student-header"
@@ -104,30 +103,30 @@
               <div>
                 <div class="student-name">token:{{ student.token.substring(0, 12) }}...</div>
                 <div class="student-meta">
-                  {{ student.notebooks.length }} Notebooks &bull; {{ student.logs.length }} reviews synced &bull; Last updated {{ formatRelativeTime(student.lastUpdate) }}
+                  {{ student.notebooks.length }} Notebooks &bull; {{ student.logs.length }} reviews synced &bull; Updated {{ formatRelativeTime(student.lastUpdate) }}
                 </div>
               </div>
             </div>
 
             <div class="student-metrics" style="display: flex; align-items: center; gap: 0.75rem;">
-              <div v-if="student.alertsCount > 0" class="alert-indicator" style="animation: hazard-pulse 2s infinite ease-in-out;">
+              <span v-if="student.alertsCount > 0" class="badge" style="background: var(--ds-danger-bg); border: 1px solid var(--ds-danger-ring); color: var(--ds-danger); font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 999px; font-weight: 600;">
                 {{ student.alertsCount }} Alert{{ student.alertsCount > 1 ? 's' : '' }}
-              </div>
+              </span>
               <button
-                class="btn btn-secondary"
+                class="btn-ghost danger"
                 @click.stop="removeStudent(student.token)"
-                style="padding: 0.25rem 0.55rem; font-size: 0.75rem; border-color: rgba(239, 68, 68, 0.4); color: var(--danger);"
+                style="padding: 0.2rem 0.5rem; font-size: 0.72rem;"
                 title="Remove student from classroom"
               >
                 Remove
               </button>
               <svg
-                width="12"
-                height="12"
+                width="14"
+                height="14"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="3"
+                stroke-width="2.5"
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 style="transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);"
@@ -140,15 +139,15 @@
 
           <div class="student-details-wrapper">
             <div class="student-details">
-              <div class="student-details-content">
-                <div v-if="student.logs.length > 0" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem;">
-                  <div class="heatmap-title-container">
-                    <span style="font-size: 0.75rem; font-weight: 600; color: var(--muted-text); letter-spacing: 0.05em;">RETENTION HISTORY (CHRONOLOGICAL)</span>
-                    <div class="heatmap-legend">
-                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-1"></span> Fail</span>
-                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-2"></span> Hard</span>
-                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-3"></span> Good</span>
-                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-legend-box rating-4"></span> Easy</span>
+              <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                <div v-if="student.logs.length > 0" style="border-bottom: 1px solid var(--ds-border); padding-bottom: 1.25rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <span class="micro-label">RETENTION HISTORY (CHRONOLOGICAL)</span>
+                    <div style="display: flex; gap: 0.75rem; font-size: 0.7rem; color: var(--ds-muted);">
+                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-node rating-1" style="width:10px;height:10px;display:inline-block;"></span> Fail</span>
+                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-node rating-2" style="width:10px;height:10px;display:inline-block;"></span> Hard</span>
+                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-node rating-3" style="width:10px;height:10px;display:inline-block;"></span> Good</span>
+                      <span style="display: flex; align-items: center; gap: 0.2rem;"><span class="heatmap-node rating-4" style="width:10px;height:10px;display:inline-block;"></span> Easy</span>
                     </div>
                   </div>
 
@@ -161,35 +160,34 @@
                     >
                       <div class="tooltip-text">
                         <div><strong>{{ formatRatingLabel(log.rating) }}</strong></div>
-                        <div style="margin-top: 0.15rem; color: var(--muted-text);">Interval: {{ log.scheduled_days }}d &bull; Pg {{ log.page_number }}</div>
-                        <div style="font-size: 0.65rem; color: var(--muted-text); margin-top: 0.15rem;">{{ formatTime(log.reviewed_at) }}</div>
+                        <div style="margin-top: 0.15rem; color: var(--ds-muted);">Interval: {{ log.scheduled_days }}d &bull; Pg {{ log.page_number }}</div>
+                        <div style="font-size: 0.65rem; color: var(--ds-muted); margin-top: 0.15rem;">{{ formatTime(log.reviewed_at) }}</div>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <h3 style="margin-top: 0; margin-bottom: 0.85rem; font-size: 0.8rem; font-weight: 600; color: var(--muted-text); letter-spacing: 0.05em; text-transform: uppercase;">
-                    Ingestion & Study Progress
-                  </h3>
-                  <div class="notebooks-grid">
+                  <span class="micro-label" style="display: block; margin-bottom: 0.6rem;">INGESTION & STUDY PROGRESS</span>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem;">
                     <div
                       v-for="nb in student.notebooks"
                       :key="nb.file_hash"
-                      class="notebook-card"
-                      :style="{ borderColor: nb.external_help_required ? 'rgba(239, 68, 68, 0.3)' : 'var(--border)' }"
+                      class="card"
+                      style="padding: 0.85rem; border-radius: 8px;"
+                      :style="{ borderColor: nb.external_help_required ? 'var(--ds-danger-ring)' : 'var(--ds-border)' }"
                     >
-                      <div class="notebook-header">
+                      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;">
                         <div style="min-width: 0; flex: 1;">
-                          <h4 class="notebook-title" :title="nb.title">{{ nb.title }}</h4>
-                          <span class="notebook-filename" :title="nb.filename">{{ nb.filename }}</span>
+                          <div style="font-size: 0.82rem; font-weight: 600; color: var(--ds-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="nb.title">{{ nb.title }}</div>
+                          <div style="font-size: 0.7rem; color: var(--ds-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="nb.filename">{{ nb.filename }}</div>
                         </div>
-                        <span class="status-tag" :class="nb.study_status.toLowerCase()">
+                        <span style="font-size: 0.68rem; font-weight: 600; padding: 0.15rem 0.4rem; border-radius: 4px; background: var(--ds-surface-hi); color: var(--ds-fg); font-family: var(--ds-mono);">
                           {{ nb.study_status }}
                         </span>
                       </div>
 
-                      <div v-if="nb.external_help_required" class="alert-indicator" style="width: 100%; justify-content: center; padding: 0.35rem; margin-top: 0.25rem;">
+                      <div v-if="nb.external_help_required" style="background: var(--ds-danger-bg); border: 1px solid var(--ds-danger-ring); color: var(--ds-danger); border-radius: 6px; padding: 0.3rem; margin-top: 0.5rem; font-size: 0.7rem; text-align: center;">
                         Socratic rescue failed. Needs support!
                       </div>
                     </div>
@@ -197,9 +195,7 @@
                 </div>
 
                 <div>
-                  <h3 style="margin-top: 0.5rem; margin-bottom: 0.85rem; font-size: 0.8rem; font-weight: 600; color: var(--muted-text); letter-spacing: 0.05em; text-transform: uppercase;">
-                    Detailed Spaced Repetition Logs
-                  </h3>
+                  <span class="micro-label" style="display: block; margin-bottom: 0.6rem;">DETAILED SPACED REPETITION LOGS</span>
                   <div v-if="student.logs.length === 0" class="muted" style="font-size: 0.8rem; font-style: italic; padding: 0.5rem 0;">
                     No flashcard reviews completed yet.
                   </div>
@@ -217,34 +213,29 @@
                       </thead>
                       <tbody>
                         <tr v-for="log in student.logs" :key="log.id">
-                          <td style="font-family: var(--font-mono);">{{ formatTime(log.reviewed_at) }}</td>
+                          <td style="font-family: var(--ds-mono);">{{ formatTime(log.reviewed_at) }}</td>
                           <td class="muted" style="font-size: 0.75rem;" :title="'Hash: ' + log.file_hash">
                             {{ getNotebookName(student, log.file_hash) }}
                           </td>
-                          <td style="font-family: var(--font-mono);">{{ log.page_number }}</td>
+                          <td style="font-family: var(--ds-mono);">{{ log.page_number }}</td>
                           <td>
-                            <span class="status-tag dormant" style="padding: 0.1rem 0.3rem; font-size: 0.65rem;">
+                            <span style="font-size: 0.65rem; background: var(--ds-surface-hi); padding: 0.15rem 0.4rem; border-radius: 4px; color: var(--ds-muted); font-family: var(--ds-mono);">
                               {{ log.activity_type }}
                             </span>
                           </td>
                           <td>
-                            <div class="rating-bar" :title="'Rating Code: ' + log.rating">
-                              <span
-                                v-for="dot in 4"
-                                :key="dot"
-                                class="rating-dot"
-                                :class="{
-                                  filled: dot <= log.rating,
-                                  hard: log.rating === 2,
-                                  bad: log.rating === 1
-                                }"
-                              ></span>
-                            </div>
-                            <span style="font-size: 0.7rem; margin-left: 0.4rem; vertical-align: middle;">
+                            <span
+                              style="font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 4px;"
+                              :style="{
+                                background: log.rating === 4 ? 'var(--ds-primary-glow)' : log.rating === 3 ? 'var(--ds-success-bg)' : log.rating === 2 ? 'rgba(245,158,11,0.1)' : 'var(--ds-danger-bg)',
+                                color: log.rating === 4 ? 'var(--ds-primary)' : log.rating === 3 ? 'var(--ds-success)' : log.rating === 2 ? 'var(--ds-warning)' : 'var(--ds-danger)',
+                                border: `1px solid ${log.rating === 4 ? 'var(--ds-primary-ring)' : log.rating === 3 ? 'var(--ds-success-ring)' : log.rating === 2 ? 'rgba(245,158,11,0.3)' : 'var(--ds-danger-ring)'}`
+                              }"
+                            >
                               {{ formatRatingLabel(log.rating) }}
                             </span>
                           </td>
-                          <td style="font-family: var(--font-mono);">{{ log.scheduled_days }}d</td>
+                          <td style="font-family: var(--ds-mono);">{{ log.scheduled_days }}d</td>
                         </tr>
                       </tbody>
                     </table>
@@ -294,3 +285,4 @@ function getNotebookName(student, fileHash) {
   return `${fileHash.substring(0, 10)}...`;
 }
 </script>
+

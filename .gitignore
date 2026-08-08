@@ -30,3 +30,4 @@ doc/NOTES/
 doc/ORIGINAL_NOTES/
 __pycache__/
 bin/
+cloud-dashboard/dist
