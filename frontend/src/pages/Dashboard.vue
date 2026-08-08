@@ -20,6 +20,15 @@
 
     <!-- Status Banners -->
     <StatusBanner
+      v-if="pendingIngestionBook"
+      variant="warning"
+      icon="⚡"
+      title="New Assignment — Ingestion Needed"
+      :subtitle="`${pendingIngestionBook.title} is ready for chapter extraction and ingestion.`"
+      action-label="✨ Ingest Book"
+      @action="goToIngestBook(pendingIngestionBook.id)"
+    />
+    <StatusBanner
       v-if="userSettings.skip_to_reading_active"
       variant="info"
       icon="⚡"
@@ -276,8 +285,33 @@ const hasSocraticRescueTask = computed(() => {
   return tasks.value.some((t) => t.action_type === 'socratic_remedial')
 })
 
+// ponytail: pending ingestion notification state
+const pendingIngestionBook = ref(null)
+
+async function checkPendingIngestion() {
+  try {
+    const res = await getNotebooks()
+    if (Array.isArray(res)) {
+      const draft = res.find(
+        (n) =>
+          !n.error &&
+          (n.chunk_count === 0 || !n.chunk_count) &&
+          (n.status === 'uploaded' || n.status === 'draft_ready' || !n.status)
+      )
+      pendingIngestionBook.value = draft || null
+    }
+  } catch (err) {
+    console.error('Failed to check pending ingestion books:', err)
+  }
+}
+
+function goToIngestBook(notebookId) {
+  router.push({ path: '/notebooks', query: { ingest: notebookId } })
+}
+
 // --- Lifecycle ---
 onMounted(async () => {
+  void checkPendingIngestion()
   try {
     const envRes = await getAppEnv()
     if (envRes && envRes.env) {

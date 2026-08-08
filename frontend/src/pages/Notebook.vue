@@ -133,6 +133,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   getAvailableTopics,
   getNotebooks as fetchNotebooks,
@@ -160,6 +161,7 @@ import NotebookSyllabusModal from '../components/NotebookSyllabusModal.vue'
 import { useDialog } from '../composables/useDialog'
 
 const { confirm: confirmDialog } = useDialog()
+const route = useRoute()
 
 const uploadProgress = ref(0)
 const uploadError = ref('')
@@ -256,6 +258,16 @@ onMounted(async () => {
   // Load available topics and notebooks
   await loadTopics()
   await loadNotebooks()
+
+  // ponytail: auto-open syllabus draft if redirected from dashboard ingestion banner
+  if (route.query.ingest) {
+    const targetNb =
+      dormantNotebooks.value.find((n) => n.id === route.query.ingest) ||
+      activeNotebooks.value.find((n) => n.id === route.query.ingest)
+    if (targetNb) {
+      void openSyllabusDraft(targetNb.id, targetNb.title)
+    }
+  }
 })
 
 onUnmounted(() => {
