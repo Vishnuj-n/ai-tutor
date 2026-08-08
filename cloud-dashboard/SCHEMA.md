@@ -82,6 +82,8 @@ Created by teachers to push downloadable study materials to students.
 | `classroom_code` | `TEXT` | No | — | Target classroom code |
 | `title` | `TEXT` | No | — | Assignment title |
 | `download_url` | `TEXT` | No | — | HTTP/HTTPS URL for the assignment file |
+| `start_page` | `INTEGER` | Yes | `NULL` | Optional starting page number for page-range ingestion |
+| `end_page` | `INTEGER` | Yes | `NULL` | Optional ending page number for page-range ingestion |
 | `created_at` | `TIMESTAMPTZ` | No | `now()` | Creation timestamp |
 
 * **Constraints:** `CHECK (download_url ILIKE 'http://%' OR download_url ILIKE 'https://%')`

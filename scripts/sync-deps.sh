@@ -58,7 +58,9 @@ fi
 
 # Resolve app version — read from VERSION file if present, otherwise default to v1.0.0
 APP_VERSION="v1.0.0"
-if [ -f "VERSION" ]; then
+if [ -f "internal/app/VERSION" ]; then
+    APP_VERSION="$(cat internal/app/VERSION | tr -d '[:space:]')"
+elif [ -f "VERSION" ]; then
     APP_VERSION="$(cat VERSION | tr -d '[:space:]')"
 fi
 

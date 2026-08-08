@@ -17,6 +17,8 @@
 
     <!-- Upload Section -->
     <NotebookUpload
+      :is-cloud-profile="isCloudProfile"
+      :classroom-code="classroomCode"
       :upload-progress="uploadProgress"
       :ingestion-status-message="ingestionStatusMessage"
       :indexing-status-message="indexingStatusMessage"
@@ -192,6 +194,8 @@ const isDraftingSyllabus = ref(false)
 const draftingNotebookTitle = ref('')
 const isAICleaning = ref(false)
 const activeProfileID = ref('')
+const classroomCode = ref('')
+const isCloudProfile = computed(() => !!classroomCode.value.trim())
 let loadNotebooksToken = 0
 const ragEnabled = ref(false)
 const ragNotebookChapter = ref(true)
@@ -237,6 +241,7 @@ onMounted(async () => {
     const settings = await getUserSettings()
     if (settings && !settings.error) {
       activeProfileID.value = settings.active_profile_id || ''
+      classroomCode.value = settings.classroom_code || ''
       ragEnabled.value = settings.rag_enabled || false
       if (typeof settings.rag_notebook_chapter !== 'undefined') {
         ragNotebookChapter.value = settings.rag_notebook_chapter

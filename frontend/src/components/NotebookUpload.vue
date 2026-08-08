@@ -1,46 +1,58 @@
 <template>
   <div class="upload-section">
     <div class="upload-card">
-      <div class="upload-icon">📄</div>
-      <h3>Upload Document</h3>
-      <p>Drag and drop or click to select PDF, TXT, or MD files</p>
-
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".pdf,.txt,.md"
-        style="display: none"
-        @change="handleFileSelect"
-      />
-
-      <div
-        class="drop-zone"
-        :class="{ dragging: isDragging }"
-        @click="triggerFilePicker"
-        @dragover.prevent="isDragging = true"
-        @dragleave.prevent="isDragging = false"
-        @drop.prevent="handleFileDrop"
-      >
-        <p class="drop-title">Drop files here</p>
-        <button type="button" class="upload-cta">Choose File</button>
-        <p class="drop-hint">or drag and drop PDF, TXT, MD up to 50 MB</p>
+      <div v-if="isCloudProfile" class="cloud-locked-container" style="text-align: center; padding: 1.5rem 1rem;">
+        <div class="upload-icon" style="font-size: 3rem;">☁️</div>
+        <h3 style="margin-top: 0.5rem;">Cloud Classroom Active</h3>
+        <p style="max-width: 480px; margin: 0.5rem auto 0; color: var(--muted-text); font-size: 0.9rem;">
+          Direct PDF uploads are disabled for Cloud Profiles. Study materials published by your teacher in classroom
+          <strong v-if="classroomCode" style="color: var(--accent);">{{ classroomCode }}</strong>
+          will download automatically.
+        </p>
       </div>
 
-      <div v-if="uploadProgress > 0 && uploadProgress < 100" class="progress">
-        <div class="progress-bar" :style="{ width: uploadProgress + '%' }"></div>
-        <span>{{ uploadProgress }}%</span>
-        <p v-if="ingestionStatusMessage" class="progress-label">{{ ingestionStatusMessage }}</p>
-      </div>
+      <template v-else>
+        <div class="upload-icon">📄</div>
+        <h3>Upload Document</h3>
+        <p>Drag and drop or click to select PDF, TXT, or MD files</p>
 
-      <div v-if="indexingStatusMessage" class="progress indexing-progress">
-        <p class="progress-label">{{ indexingStatusMessage }}</p>
-      </div>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".pdf,.txt,.md"
+          style="display: none"
+          @change="handleFileSelect"
+        />
 
-      <div v-if="uploadError" class="error-message">
-        {{ uploadError }}
-      </div>
+        <div
+          class="drop-zone"
+          :class="{ dragging: isDragging }"
+          @click="triggerFilePicker"
+          @dragover.prevent="isDragging = true"
+          @dragleave.prevent="isDragging = false"
+          @drop.prevent="handleFileDrop"
+        >
+          <p class="drop-title">Drop files here</p>
+          <button type="button" class="upload-cta">Choose File</button>
+          <p class="drop-hint">or drag and drop PDF, TXT, MD up to 50 MB</p>
+        </div>
 
-      <div v-if="successMessage" class="success-message">{{ successMessage }}</div>
+        <div v-if="uploadProgress > 0 && uploadProgress < 100" class="progress">
+          <div class="progress-bar" :style="{ width: uploadProgress + '%' }"></div>
+          <span>{{ uploadProgress }}%</span>
+          <p v-if="ingestionStatusMessage" class="progress-label">{{ ingestionStatusMessage }}</p>
+        </div>
+
+        <div v-if="indexingStatusMessage" class="progress indexing-progress">
+          <p class="progress-label">{{ indexingStatusMessage }}</p>
+        </div>
+
+        <div v-if="uploadError" class="error-message">
+          {{ uploadError }}
+        </div>
+
+        <div v-if="successMessage" class="success-message">{{ successMessage }}</div>
+      </template>
     </div>
   </div>
 </template>
@@ -49,6 +61,8 @@
 import { ref } from 'vue'
 
 defineProps({
+  isCloudProfile: { type: Boolean, default: false },
+  classroomCode: { type: String, default: '' },
   uploadProgress: { type: Number, default: 0 },
   ingestionStatusMessage: { type: String, default: '' },
   indexingStatusMessage: { type: String, default: '' },

@@ -20,6 +20,9 @@ func getAppVersion() string {
 	if ver != "" {
 		return strings.TrimPrefix(ver, "v")
 	}
+	if data, err := os.ReadFile("internal/app/VERSION"); err == nil {
+		return strings.TrimPrefix(strings.TrimSpace(string(data)), "v")
+	}
 	if data, err := os.ReadFile("VERSION"); err == nil {
 		return strings.TrimPrefix(strings.TrimSpace(string(data)), "v")
 	}
@@ -34,7 +37,11 @@ func (a *App) CheckForUpdates() map[string]interface{} {
 	client := http.Client{
 		Timeout: 5 * time.Second,
 	}
-	resp, err := client.Get("https://raw.githubusercontent.com/Vishnuj-n/studyloop/main/VERSION")
+	resp, err := client.Get("https://raw.githubusercontent.com/Vishnuj-n/studyloop/main/internal/app/VERSION")
+	if err == nil && resp.StatusCode == http.StatusNotFound {
+		_ = resp.Body.Close()
+		resp, err = client.Get("https://raw.githubusercontent.com/Vishnuj-n/studyloop/main/VERSION")
+	}
 	if err != nil {
 		return map[string]interface{}{
 			"update_available": false,

@@ -8,7 +8,9 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
 
 $appVersion = "v1.0.0"
-if (Test-Path ".\VERSION") {
+if (Test-Path ".\internal\app\VERSION") {
+    $appVersion = (Get-Content ".\internal\app\VERSION" -Raw).Trim()
+} elseif (Test-Path ".\VERSION") {
     $appVersion = (Get-Content ".\VERSION" -Raw).Trim()
 }
 if (-not $appVersion.StartsWith("v")) {

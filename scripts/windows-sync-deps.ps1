@@ -65,7 +65,9 @@ Write-Host "Step 4: Validating and acquiring RAG assets..."
 
 # Resolve app version — read from VERSION file if present, otherwise default to v1.0.0
 $appVersion = "v1.0.0"
-if (Test-Path ".\VERSION") {
+if (Test-Path ".\internal\app\VERSION") {
+    $appVersion = (Get-Content ".\internal\app\VERSION" -Raw).Trim()
+} elseif (Test-Path ".\VERSION") {
     $appVersion = (Get-Content ".\VERSION" -Raw).Trim()
 }
 

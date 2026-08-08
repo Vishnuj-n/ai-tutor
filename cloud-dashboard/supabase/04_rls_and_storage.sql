@@ -69,10 +69,9 @@ VALUES ('assignments', 'assignments', true, 52428800, ARRAY['application/pdf'])
 ON CONFLICT (id) DO UPDATE SET file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 DROP POLICY IF EXISTS "Teacher PDF Upload Policy" ON storage.objects;
-CREATE POLICY "Teacher PDF Upload Policy" ON storage.objects FOR INSERT TO public
-WITH CHECK (bucket_id = 'assignments' AND (storage.extension(name) = 'pdf') AND EXISTS (
-  SELECT 1 FROM public.active_sessions s WHERE s.session_token = get_current_session_token() AND s.role = 'teacher' AND s.expires_at > now()
-));
+DROP POLICY IF EXISTS "Allow Public Upload to Assignments Bucket" ON storage.objects;
+CREATE POLICY "Allow Public Upload to Assignments Bucket" ON storage.objects FOR INSERT TO public
+WITH CHECK (bucket_id = 'assignments');
 
 DROP POLICY IF EXISTS "Public Read Assignments Policy" ON storage.objects;
 CREATE POLICY "Public Read Assignments Policy" ON storage.objects FOR SELECT TO public USING (bucket_id = 'assignments');

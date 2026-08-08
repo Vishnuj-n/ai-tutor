@@ -266,14 +266,15 @@ def main():
     tag_name = args.tag
 
     if not tag_name:
-        if not os.path.exists("VERSION"):
+        version_file = os.path.join("internal", "app", "VERSION") if os.path.exists(os.path.join("internal", "app", "VERSION")) else "VERSION"
+        if not os.path.exists(version_file):
             print(
                 "VERSION file not found and no tag supplied.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-        with open("VERSION", encoding="utf-8") as f:
+        with open(version_file, encoding="utf-8") as f:
             tag_name = f.read().strip()
 
     if not tag_name.startswith("v"):

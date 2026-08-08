@@ -46,6 +46,41 @@
           />
         </div>
 
+        <div style="display: flex; gap: 1rem;">
+          <div class="form-group" style="flex: 1;">
+            <label for="assign-start-page">Start Page (Optional)</label>
+            <input
+              id="assign-start-page"
+              v-model.number="newStartPage"
+              type="number"
+              min="1"
+              placeholder="e.g. 1"
+            />
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label for="assign-end-page">End Page (Optional)</label>
+            <input
+              id="assign-end-page"
+              v-model.number="newEndPage"
+              type="number"
+              min="1"
+              placeholder="e.g. 25"
+            />
+          </div>
+        </div>
+
+        <!-- Native HTML PDF Preview Drawer for Form Upload -->
+        <div v-if="newUrl" class="pdf-preview-drawer" style="margin-top: 1rem;">
+          <h4 style="font-size: 0.8rem; text-transform: uppercase; color: var(--muted-text); margin-bottom: 0.5rem;">
+            PDF Preview (Page 1)
+          </h4>
+          <iframe
+            :src="`${newUrl}#page=1`"
+            style="width: 100%; height: 350px; border: 1px solid var(--border); border-radius: 8px; background: #fff;"
+            title="PDF Preview"
+          ></iframe>
+        </div>
+
         <button class="btn" style="width: 100%; margin-top: 0.5rem;" :disabled="publishing">
           <span v-if="publishing" class="loading-spinner" style="width: 12px; height: 12px; border-width: 2px;"></span>
           {{ publishing ? 'Publishing...' : 'Publish to Class' }}
@@ -72,20 +107,42 @@
             class="assignment-item"
           >
             <div class="assignment-info">
-              <h4 class="assignment-title" :title="asm.title">PDF: {{ asm.title }}</h4>
+              <h4 class="assignment-title" :title="asm.title">
+                PDF: {{ asm.title }}
+                <span v-if="asm.start_page || asm.end_page" class="badge" style="font-size: 0.75rem; margin-left: 0.5rem; color: var(--accent);">
+                  Pages {{ asm.start_page || 1 }}–{{ asm.end_page || 'End' }}
+                </span>
+              </h4>
               <a :href="asm.download_url" target="_blank" class="assignment-url" :title="asm.download_url">
                 {{ asm.download_url }}
               </a>
               <span class="assignment-date">Published {{ formatDate(asm.created_at) }}</span>
             </div>
-            <button
-              class="btn btn-secondary btn-danger"
-              style="padding: 0.35rem 0.55rem; font-size: 0.75rem; border-radius: 6px; min-height: unset;"
-              @click="deleteAssignment(asm.id)"
-              title="Remove assignment"
-            >
-              Delete
-            </button>
+            <div style="display: flex; gap: 0.5rem;">
+              <button
+                class="btn btn-secondary"
+                style="padding: 0.35rem 0.55rem; font-size: 0.75rem; border-radius: 6px; min-height: unset;"
+                @click="previewAssignmentUrl = previewAssignmentUrl === asm.download_url ? null : asm.download_url"
+              >
+                {{ previewAssignmentUrl === asm.download_url ? 'Close Preview' : 'Preview' }}
+              </button>
+              <button
+                class="btn btn-secondary btn-danger"
+                style="padding: 0.35rem 0.55rem; font-size: 0.75rem; border-radius: 6px; min-height: unset;"
+                @click="deleteAssignment(asm.id)"
+                title="Remove assignment"
+              >
+                Delete
+              </button>
+            </div>
+            <!-- Active Assignment PDF Preview Drawer -->
+            <div v-if="previewAssignmentUrl === asm.download_url" style="width: 100%; margin-top: 0.75rem;">
+              <iframe
+                :src="`${asm.download_url}#page=${asm.start_page || 1}`"
+                style="width: 100%; height: 350px; border: 1px solid var(--border); border-radius: 8px; background: #fff;"
+                title="Assignment PDF Preview"
+              ></iframe>
+            </div>
           </div>
         </div>
       </div>
@@ -94,11 +151,16 @@
 </template>
 
 <script setup>
+import { ref } from 'vue';
 import { useDashboard } from '../composables/useDashboard';
+
+const previewAssignmentUrl = ref(null);
 
 const {
   newTitle,
   newUrl,
+  newStartPage,
+  newEndPage,
   publishing,
   uploadingPdf,
   assignments,

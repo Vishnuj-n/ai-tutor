@@ -34,6 +34,8 @@ const searchInputRef = ref(null);
 
 const newTitle = ref('');
 const newUrl = ref('');
+const newStartPage = ref('');
+const newEndPage = ref('');
 const publishing = ref(false);
 const uploadingPdf = ref(false);
 
@@ -620,7 +622,9 @@ async function publishAssignment() {
     id: asmId,
     classroom_code: classroomCode.value,
     title: newTitle.value.trim(),
-    download_url: newUrl.value.trim()
+    download_url: newUrl.value.trim(),
+    start_page: newStartPage.value !== '' && newStartPage.value !== null ? parseInt(newStartPage.value, 10) : null,
+    end_page: newEndPage.value !== '' && newEndPage.value !== null ? parseInt(newEndPage.value, 10) : null
   };
 
   try {
@@ -643,6 +647,8 @@ async function publishAssignment() {
 
     newTitle.value = '';
     newUrl.value = '';
+    newStartPage.value = '';
+    newEndPage.value = '';
 
     showToast('Assignment published successfully!');
     fetchAssignments();
@@ -820,6 +826,8 @@ export function useDashboard() {
     searchInputRef,
     newTitle,
     newUrl,
+    newStartPage,
+    newEndPage,
     publishing,
     uploadingPdf,
     stats,

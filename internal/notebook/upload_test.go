@@ -178,6 +178,24 @@ func TestExtractDocumentPDFBranchViaSeam(t *testing.T) {
 	}
 }
 
+func TestExtractDocumentRangeMarkdown(t *testing.T) {
+	mdContent := "# Section 1\nAlpha content\n# Section 2\nBeta content\n# Section 3\nGamma content"
+	mdPath := writeTempFile(t, t.TempDir(), "notes.md", []byte(mdContent))
+	service := NewService(t.TempDir())
+
+	doc, err := service.ExtractDocumentRange(mdPath, "md", 2, 2)
+	if err != nil {
+		t.Fatalf("ExtractDocumentRange returned error: %v", err)
+	}
+
+	if len(doc.Sections) != 1 {
+		t.Fatalf("expected 1 section for page range [2,2], got %d", len(doc.Sections))
+	}
+	if doc.Sections[0].Heading != "Section 2" || doc.Sections[0].PageNum != 2 {
+		t.Fatalf("unexpected section in range: %#v", doc.Sections[0])
+	}
+}
+
 func TestSaveUploadedFileFromPathAndCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
 	service := NewService(tmpDir)

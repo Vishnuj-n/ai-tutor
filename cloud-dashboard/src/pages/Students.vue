@@ -208,7 +208,7 @@
                       <thead>
                         <tr>
                           <th>Time</th>
-                          <th>Notebook Hash</th>
+                          <th>Notebook</th>
                           <th>Page</th>
                           <th>Type</th>
                           <th>Rating</th>
@@ -218,8 +218,8 @@
                       <tbody>
                         <tr v-for="log in student.logs" :key="log.id">
                           <td style="font-family: var(--font-mono);">{{ formatTime(log.reviewed_at) }}</td>
-                          <td class="muted" style="font-family: var(--font-mono); font-size: 0.7rem;" :title="log.file_hash">
-                            {{ log.file_hash.substring(0, 10) }}...
+                          <td class="muted" style="font-size: 0.75rem;" :title="'Hash: ' + log.file_hash">
+                            {{ getNotebookName(student, log.file_hash) }}
                           </td>
                           <td style="font-family: var(--font-mono);">{{ log.page_number }}</td>
                           <td>
@@ -282,4 +282,15 @@ const {
   formatTime,
   formatRelativeTime
 } = useDashboard();
+
+function getNotebookName(student, fileHash) {
+  if (!fileHash) return 'Unknown Notebook';
+  if (student && student.notebooks) {
+    const nb = student.notebooks.find(n => n.file_hash === fileHash);
+    if (nb) {
+      return nb.title || nb.filename || `${fileHash.substring(0, 10)}...`;
+    }
+  }
+  return `${fileHash.substring(0, 10)}...`;
+}
 </script>

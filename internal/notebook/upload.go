@@ -246,6 +246,11 @@ func (s *Service) DeleteFile(filePath string) error {
 
 // ExtractDocument loads and normalizes notebook text content for ingestion.
 func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedDocument, error) {
+	return s.ExtractDocumentRange(filePath, fileType, 0, 0)
+}
+
+// ExtractDocumentRange loads and normalizes notebook text content for ingestion with optional page range bounds [startPage, endPage].
+func (s *Service) ExtractDocumentRange(filePath string, fileType string, startPage, endPage int) (*ExtractedDocument, error) {
 	fileType = strings.ToLower(fileType)
 
 	doc := &ExtractedDocument{
@@ -264,11 +269,13 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		}
 		doc.PageCount = 1
 		doc.WordCount = len(strings.Fields(content))
-		doc.Sections = []ExtractedSection{{
-			Heading: "Document",
-			Text:    content,
-			PageNum: 1,
-		}}
+		if (startPage <= 0 || startPage <= 1) && (endPage <= 0 || endPage >= 1) {
+			doc.Sections = []ExtractedSection{{
+				Heading: "Document",
+				Text:    content,
+				PageNum: 1,
+			}}
+		}
 
 	case "md":
 		raw, err := s.readFile(filePath)
@@ -279,34 +286,47 @@ func (s *Service) ExtractDocument(filePath string, fileType string) (*ExtractedD
 		if strings.TrimSpace(content) == "" {
 			return nil, fmt.Errorf("document has no readable content")
 		}
-		// Split markdown by headings to create sections
 		sections := splitMarkdownByHeadings(content)
 		if len(sections) == 0 {
-			// Fallback to single section if no headings found
 			doc.PageCount = 1
 			doc.WordCount = len(strings.Fields(content))
-			doc.Sections = []ExtractedSection{{
-				Heading: "Document",
-				Text:    content,
-				PageNum: 1,
-			}}
+			if (startPage <= 0 || startPage <= 1) && (endPage <= 0 || endPage >= 1) {
+				doc.Sections = []ExtractedSection{{
+					Heading: "Document",
+					Text:    content,
+					PageNum: 1,
+				}}
+			}
 		} else {
 			doc.PageCount = len(sections)
 			doc.WordCount = 0
-			doc.Sections = make([]ExtractedSection, len(sections))
+			doc.Sections = make([]ExtractedSection, 0, len(sections))
 			for i, sec := range sections {
-				doc.Sections[i] = ExtractedSection{
+				pageNum := i + 1
+				if startPage > 0 && pageNum < startPage {
+					continue
+				}
+				if endPage > 0 && pageNum > endPage {
+					continue
+				}
+				doc.Sections = append(doc.Sections, ExtractedSection{
 					Heading: sec.Heading,
 					Text:    sec.Text,
-					PageNum: i + 1,
-				}
+					PageNum: pageNum,
+				})
 				doc.WordCount += len(strings.Fields(sec.Text))
 			}
 		}
 
 	case "pdf":
-		if err := s.extractPDF(filePath, doc); err != nil {
-			return nil, err
+		if startPage <= 0 && endPage <= 0 {
+			if err := s.extractPDF(filePath, doc); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := s.extractPDFRange(filePath, doc, startPage, endPage); err != nil {
+				return nil, err
+			}
 		}
 
 	default:
@@ -438,7 +458,7 @@ func (s *Service) ExtractMetadata(filePath string, fileType string) (*FileMetada
 
 }
 
-func (s *Service) extractPDFSample(filePath string, doc *ExtractedDocument, maxPages int) error {
+func (s *Service) extractPDFRange(filePath string, doc *ExtractedDocument, startPage, endPage int) error {
 	file, reader, err := s.openPDF(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read pdf: %w", err)
@@ -450,9 +470,16 @@ func (s *Service) extractPDFSample(filePath string, doc *ExtractedDocument, maxP
 	totalPages := reader.NumPage()
 	doc.PageCount = totalPages
 
-	limit := min(maxPages, totalPages)
+	minP := 1
+	if startPage > 0 {
+		minP = startPage
+	}
+	maxP := totalPages
+	if endPage > 0 && endPage < totalPages {
+		maxP = endPage
+	}
 
-	for pageIndex := 1; pageIndex <= limit; pageIndex++ {
+	for pageIndex := minP; pageIndex <= maxP && pageIndex <= totalPages; pageIndex++ {
 		page := reader.Page(pageIndex)
 		if page.V.IsNull() {
 			continue
@@ -508,8 +535,12 @@ func (s *Service) extractPDFSample(filePath string, doc *ExtractedDocument, maxP
 	return nil
 }
 
+func (s *Service) extractPDFSample(filePath string, doc *ExtractedDocument, maxPages int) error {
+	return s.extractPDFRange(filePath, doc, 1, maxPages)
+}
+
 func (s *Service) extractPDFDocument(filePath string, doc *ExtractedDocument) error {
-	return s.extractPDFSample(filePath, doc, math.MaxInt32)
+	return s.extractPDFRange(filePath, doc, 0, 0)
 }
 
 type wordSpan struct {
